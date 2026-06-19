@@ -1,0 +1,107 @@
+from __future__ import annotations
+
+from typing import Any, Callable
+
+
+def data_range_for_axis(fig, data_axis: str, *, numeric_values: Callable[[Any], list[float]]) -> list[float] | None:
+    vals: list[float] = []
+    for tr in fig.data:
+        vals.extend(numeric_values(getattr(tr, data_axis, [])))
+    if not vals:
+        return None
+    return [min(vals), max(vals)]
+
+
+def range_from_min_max(
+    fig,
+    data_axis: str,
+    min_value,
+    max_value,
+    *,
+    numeric_values: Callable[[Any], list[float]],
+) -> list[float] | None:
+    data_range = data_range_for_axis(fig, data_axis, numeric_values=numeric_values)
+    if data_range is None:
+        data_range = [0.0, 1.0]
+    lo, hi = data_range
+    if min_value is not None:
+        lo = min_value
+    if max_value is not None:
+        hi = max_value
+    try:
+        if float(lo) == float(hi):
+            hi = float(hi) + 1.0
+    except Exception:
+        pass
+    return [lo, hi]
+
+
+def apply_axis_settings(
+    fig,
+    settings: dict[str, Any],
+    global_style: dict[str, Any],
+    *,
+    coerce_axis_range: Callable[[Any], list[Any] | None],
+    range_from_min_max_fn: Callable[..., list[float] | None],
+) -> tuple[list[Any] | None, list[Any] | None, list[Any] | None]:
+    x_range = coerce_axis_range(settings.get("x_range"))
+    y_range = coerce_axis_range(settings.get("y_range"))
+    y2_range = coerce_axis_range(settings.get("y2_range"))
+
+    if x_range is None and (settings.get("x_min") is not None or settings.get("x_max") is not None):
+        x_range = range_from_min_max_fn(fig, "x", settings.get("x_min"), settings.get("x_max"))
+    if y_range is None and (settings.get("y_min") is not None or settings.get("y_max") is not None):
+        y_range = range_from_min_max_fn(fig, "y", settings.get("y_min"), settings.get("y_max"))
+
+    if x_range is not None:
+        fig.update_xaxes(range=x_range)
+    if y_range is not None:
+        fig.update_yaxes(range=y_range)
+    if y2_range is not None:
+        fig.update_layout(yaxis2=dict(range=y2_range))
+
+    if settings.get("x_dtick") is not None:
+        fig.update_xaxes(dtick=settings.get("x_dtick"))
+    if settings.get("y_dtick") is not None:
+        fig.update_yaxes(dtick=settings.get("y_dtick"))
+    if settings.get("x_nticks") is not None:
+        fig.update_xaxes(nticks=int(settings.get("x_nticks")))
+    elif settings.get("type") != "time":
+        fig.update_xaxes(nticks=int(global_style.get("numeric_axis_nticks", 6)))
+    if settings.get("y_nticks") is not None:
+        fig.update_yaxes(nticks=int(settings.get("y_nticks")))
+    elif settings.get("type") != "time":
+        fig.update_yaxes(nticks=int(global_style.get("numeric_axis_nticks", 6)))
+
+    if settings.get("x_title") is not None:
+        fig.update_xaxes(title_text=settings.get("x_title"))
+    if settings.get("y_title") is not None:
+        fig.update_yaxes(title_text=settings.get("y_title"))
+    if settings.get("x_tickformat") is not None:
+        fig.update_xaxes(tickformat=settings.get("x_tickformat"))
+    if settings.get("y_tickformat") is not None:
+        fig.update_yaxes(tickformat=settings.get("y_tickformat"))
+    if settings.get("x_ticksuffix") is not None:
+        fig.update_xaxes(ticksuffix=settings.get("x_ticksuffix"))
+    if settings.get("y_ticksuffix") is not None:
+        fig.update_yaxes(ticksuffix=settings.get("y_ticksuffix"))
+
+    y2_update: dict[str, Any] = {}
+    if settings.get("y2_title") is not None:
+        y2_update["title"] = dict(text=settings.get("y2_title"))
+    if settings.get("y2_tickformat") is not None:
+        y2_update["tickformat"] = settings.get("y2_tickformat")
+    if settings.get("y2_ticksuffix") is not None:
+        y2_update["ticksuffix"] = settings.get("y2_ticksuffix")
+    if settings.get("y2_nticks") is not None:
+        y2_update["nticks"] = int(settings.get("y2_nticks"))
+    if settings.get("y2_overlaying") is not None:
+        y2_update["overlaying"] = settings.get("y2_overlaying")
+    if settings.get("y2_side") is not None:
+        y2_update["side"] = settings.get("y2_side")
+    if settings.get("y2_showgrid") is not None:
+        y2_update["showgrid"] = bool(settings.get("y2_showgrid"))
+    if y2_update:
+        fig.update_layout(yaxis2=y2_update)
+
+    return x_range, y_range, y2_range

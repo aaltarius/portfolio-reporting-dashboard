@@ -1,0 +1,28 @@
+# Normalizza i line ending: LF nel repo, conversione automatica su checkout
+* text=auto
+
+# Python e testi sempre LF
+*.py    text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+*.txt   text eol=lf
+*.ini   text eol=lf
+*.toml  text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf
+*.js    text eol=lf
+*.php   text eol=lf
+
+# Batch Windows sempre CRLF
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# Binari: nessuna conversione
+*.gz    binary
+*.parquet binary
+*.pkl   binary
+*.pickle binary
+*.pyc   binary
+*.pyd   binary

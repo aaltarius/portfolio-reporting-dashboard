@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Carrello operazioni</title>
+<style>
+  :root{
+    --bg:#ffffff; --surface:#f4f4f5; --border:#d9d9de; --font:#1b1b1f;
+    --muted:#8a8a93; --green:#1f9d55; --red:#d64545; --purple:#7c4dff;
+    --yellow:#caa017; --blue:#2f6fdb; --orange:#e08a1e;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:transparent;overflow:hidden;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--font);  line-height:1.35;
+  }
+  #root{
+    border:1px solid var(--border); border-radius:14px; background:var(--bg);
+    padding:8px; width:100%; max-width:100%; display:flex; flex-direction:column; gap:8px;
+    box-sizing:border-box; overflow:hidden;
+  }
+  .cart-container{display:grid; grid-template-columns:minmax(0,2fr) minmax(230px,1fr); gap:10px; align-items:stretch; width:100%; min-width:0;}
+  .form-section{min-width:0; overflow:auto;}
+  .receipt-section{display:flex; flex-direction:column; gap:6px; min-width:0; overflow:hidden;}
+  .sect-label{
+    font-size:.94rem; text-transform:uppercase; letter-spacing:.07em;
+    font-weight:800; color:var(--muted); margin:0 0 6px;
+  }
+  .grid{
+    display:grid; grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:6px 8px; align-items:end;
+  }
+  .fld{display:flex; flex-direction:column; gap:2px; min-width:0;}
+  .fld.wide{grid-column:span 2;}
+  .fld label{font-size:.94rem; font-weight:700; color:var(--muted); white-space:nowrap;}
+  .fld input,.fld select{
+    width:100%; height:34px; padding:0 6px; font-size:14px;
+    border:1px solid var(--border); border-radius:7px; background:var(--bg);
+    color:var(--font); outline:none;
+  }
+  .fld input:focus,.fld select:focus{border-color:var(--blue);}
+  .fld input:disabled,.fld select:disabled{background:var(--surface); color:var(--muted);}
+  .fld.chk{justify-content:flex-end;}
+  .chk-row{display:flex; align-items:center; gap:5px; height:34px;}
+  .chk-row input{width:15px; height:15px;}
+  .chk-row span{font-size:.94rem; font-weight:700; color:var(--font);}
+  .hint{
+    margin:7px 0 0; font-size:.94rem; color:var(--muted); min-height:14px;
+  }
+  .hint.warn{color:var(--orange); font-weight:700;}
+  .hint.ok{color:var(--font);}
+  .add-row{display:flex; gap:8px; margin-top:8px;}
+  button{
+    font-family:inherit; cursor:pointer; border-radius:8px; font-weight:700;
+    font-size:14px; border:1px solid var(--border);
+  }
+  button:disabled{cursor:not-allowed; opacity:.5;}
+
+  .btn-submit-inline{
+    flex:0 0 150px; height:30px; padding:0 14px;
+    background:var(--green); color:#fff; border-color:var(--green);
+    font-weight:800;
+  }
+  .btn-submit-inline:disabled{opacity:.45;}
+
+  .btn-add{
+    flex:1; height:34px; background:var(--blue); color:#fff; border-color:var(--blue);
+  }
+  .btn-add.editing{background:var(--orange); border-color:var(--orange);}
+  hr.sep{border:0; border-top:1px dashed var(--border); margin:12px 0 8px;}
+  .receipt{
+    flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:2px;
+    border:1px solid var(--border); border-radius:6px; padding:4px; background:var(--surface);
+    min-height:170px; max-height:360px;
+  }
+  .r-empty{
+    color:var(--muted); font-size:.94rem; text-align:center; padding:14px 0;
+  }
+  .r-row{
+    display:flex; align-items:center; gap:8px; padding:5px 8px;
+    border:1px solid var(--border); border-radius:8px; background:var(--surface);
+  }
+  .r-row:hover{border-color:var(--blue);}
+  .r-idx{
+    font-size:.94rem; font-weight:800; color:var(--muted); min-width:16px;
+  }
+  .r-main{flex:1; min-width:0; cursor:pointer;}
+  .r-head{font-weight:700;}
+  .r-ev{font-weight:800;}
+  .r-sub{font-size:.94rem; color:var(--muted); margin-top:1px;}
+  .r-del{
+    width:22px; height:22px; line-height:1; padding:0; background:var(--bg);
+    color:var(--red); border-color:var(--border); font-size:14px;
+  }
+  .r-del:hover{background:var(--red); color:#fff; border-color:var(--red);}
+  .foot{
+    display:flex; align-items:center; gap:8px; margin-top:8px; flex-wrap:wrap; width:100%;
+    position:sticky; bottom:0; z-index:20;
+    padding:8px 8px 6px;
+    border:1px solid var(--border);
+    border-radius:10px;
+    background:var(--bg);
+    box-shadow:0 -4px 12px rgba(15,23,42,.08);
+  }
+  .foot-info{font-size:.94rem; color:var(--muted); flex:1; min-width:130px;}
+  .foot-info b{color:var(--font);}
+  .btn-clear{
+    height:36px; padding:0 12px; background:var(--bg); color:var(--font);
+  }
+  .btn-submit{
+    height:36px; padding:0 18px; background:var(--green); color:#fff; border-color:var(--green);
+    font-weight:800; min-width:170px;
+  }
+  .mono{font-variant-numeric:tabular-nums;}
+
+  @media (max-width:900px){
+    .cart-container{grid-template-columns:1fr;}
+    .receipt{min-height:150px; max-height:260px;}
+  }
+  @media (max-width:560px){
+    .grid{grid-template-columns:1fr;}
+    .fld.wide{grid-column:span 1;}
+    .foot{align-items:stretch;}
+    .btn-clear,.btn-submit{width:100%;}
+  }
+
+</style>
+</head>
+<body>
+<div id="root">
+  <div class="cart-container">
+    <div class="form-section">
+      <div class="sect-label" id="formLabel">Nuova operazione</div>
+      <div class="grid">
+        <div class="fld"><label>Data</label><input type="date" id="f_data" /></div>
+        <div class="fld">
+          <label>Evento</label>
+          <select id="f_evento">
+            <option value="">— scegli —</option>
+            <optgroup label="Titolo">
+              <option value="ACQUISTO">ACQUISTO</option>
+              <option value="VENDITA">VENDITA</option>
+              <option value="RIMBORSO A SCADENZA">RIMBORSO A SCADENZA</option>
+              <option value="CEDOLA">CEDOLA</option>
+              <option value="DIVIDENDO">DIVIDENDO</option>
+            </optgroup>
+            <optgroup label="Cassa / costi">
+              <option value="VERSAMENTO">VERSAMENTO</option>
+              <option value="PRELIEVO">PRELIEVO</option>
+              <option value="COMMISSIONE">COMMISSIONE</option>
+              <option value="IMPOSTA">IMPOSTA</option>
+            </optgroup>
+          </select>
+        </div>
+        <div class="fld"><label>Ticker</label><select id="f_ticker"><option value="">—</option></select></div>
+        <div class="fld"><label>Qtà</label><input type="number" id="f_qty" min="0" step="any" placeholder="0" /></div>
+        <div class="fld"><label>Prezzo €</label><input type="number" id="f_prezzo" min="0" step="any" placeholder="0" /></div>
+        <div class="fld"><label>Importo €</label><input type="number" id="f_importo" min="0" step="any" placeholder="0" /></div>
+        <div class="fld"><label>Comm. €</label><input type="number" id="f_comm" min="0" step="any" placeholder="0" /></div>
+        <div class="fld"><label>Aliquota %</label><input type="number" id="f_aliquota" min="0" max="100" step="any" placeholder="0" /></div>
+        <div class="fld chk"><div class="chk-row"><input type="checkbox" id="f_autoliq" /><span>Auto-liq.</span></div></div>
+        <div class="fld wide"><label>Note</label><input type="text" id="f_note" maxlength="120" placeholder="—" /></div>
+      </div>
+      <div class="hint" id="hint"></div>
+      <div class="add-row">
+        <button class="btn-add" id="btn_add">Aggiungi riga</button>
+        <button class="btn-submit-inline" id="btn_submit_top" disabled>✅ Registra</button>
+      </div>
+    </div>
+
+    <div class="receipt-section">
+      <div class="sect-label">Scontrino operazioni</div>
+      <div class="receipt" id="receipt"><div class="r-empty">Nessuna voce. Compila una riga e premi «Aggiungi al carrello».</div></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div class="foot-info" id="foot_info">0 voci</div>
+    <button class="btn-clear" id="btn_clear" disabled>Svuota</button>
+    <button class="btn-submit" id="btn_submit" disabled>✅ Registra operazioni</button>
+  </div>
+</div>
+
+<script>
+/* ── Glue protocollo componente Streamlit (postMessage, no build) ── */
+const Streamlit = (function(){
+  let renderCb = null;
+  function send(type, data){
+    window.parent.postMessage(Object.assign({isStreamlitMessage:true, type:type}, data||{}), "*");
+  }
+  window.addEventListener("message", function(e){
+    if(e.data && e.data.type === "streamlit:render" && renderCb){
+      renderCb(e.data.args || {});
+    }
+  });
+  return {
+    setReady:      ()=>send("streamlit:componentReady", {apiVersion:1}),
+    setFrameHeight:(h)=>send("streamlit:setFrameHeight", {height:h}),
+    setValue:      (v)=>send("streamlit:setComponentValue", {value:v, dataType:"json"}),
+    onRender:      (cb)=>{ renderCb = cb; }
+  };
+})();
+
+/* ── Stato ── */
+const TRADE = ["ACQUISTO","VENDITA","RIMBORSO A SCADENZA"];
+const PROVENTO = ["CEDOLA","DIVIDENDO"];
+const CASH = ["VERSAMENTO","PRELIEVO","COMMISSIONE","IMPOSTA"];
+let TICKERS = {};      // mappa ticker -> info
+let cart = [];         // voci confermate
+let editIndex = -1;    // indice voce in modifica (-1 = nessuna)
+let processing = false;
+
+const $ = (id)=>document.getElementById(id);
+const els = {
+  data:$("f_data"), evento:$("f_evento"), ticker:$("f_ticker"),
+  qty:$("f_qty"), prezzo:$("f_prezzo"), importo:$("f_importo"),
+  comm:$("f_comm"), aliquota:$("f_aliquota"), autoliq:$("f_autoliq"),
+  note:$("f_note"), hint:$("hint"), add:$("btn_add"), clear:$("btn_clear"),
+  submit:$("btn_submit"), submitTop:$("btn_submit_top"), receipt:$("receipt"), footInfo:$("foot_info"),
+  formLabel:$("formLabel")
+};
+
+/* ── Utilità ── */
+function num(el){ const v = parseFloat(el.value); return (isFinite(v) && v>0) ? v : 0; }
+function fmtEur(v){ return (Number(v)||0).toLocaleString("it-IT",{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function fmtQty(v){ return (Number(v)||0).toLocaleString("it-IT",{minimumFractionDigits:0,maximumFractionDigits:4}); }
+function itDate(iso){ if(!iso) return "—"; const p=iso.split("-"); return p.length===3 ? p[2]+"/"+p[1]+"/"+p[0] : iso; }
+function syncHeight(){
+  const h = Math.max(360, document.getElementById("root").getBoundingClientRect().height + 4);
+  Streamlit.setFrameHeight(Math.min(h, 640));
+}
+
+function triplet(q,p,i){
+  q=Math.max(q||0,0); p=Math.max(p||0,0); i=Math.max(i||0,0);
+  const hq=q>0, hp=p>0, hi=i>0;
+  if(hq&&hp) i=q*p;
+  else if(hq&&hi) p = q>0 ? i/q : 0;
+  else if(hp&&hi) q = p>0 ? i/p : 0;
+  return {q:q,p:p,i:i};
+}
+function tkSupports(tk, evento){
+  const info = TICKERS[tk];
+  if(!info) return false;
+  if(evento==="ACQUISTO") return true;
+  if(evento==="VENDITA") return info.held > 1e-12;
+  if(evento==="RIMBORSO A SCADENZA") return info.held > 1e-12 && info.redemption;
+  if(evento==="CEDOLA") return info.coupon;
+  if(evento==="DIVIDENDO") return info.dividend;
+  return false;
+}
+function defaultAliquota(evento, tk){
+  if(evento==="DIVIDENDO") return 26;
+  if(evento==="CEDOLA") return (TICKERS[tk] && TICKERS[tk].is_gov) ? 12.5 : 26;
+  return 0;
+}
+
+/* ── Abilitazione campi in base all'evento ── */
+function applyEventoState(){
+  const ev = els.evento.value;
+  const isTrade = TRADE.includes(ev);
+  const isProv = PROVENTO.includes(ev);
+  const isCash = CASH.includes(ev);
+  const tickerNeeded = isTrade || isProv || ev==="COMMISSIONE" || ev==="IMPOSTA";
+
+  els.ticker.disabled = !tickerNeeded;
+  if(!tickerNeeded) els.ticker.value = "";
+
+  els.qty.disabled = !isTrade;
+  els.prezzo.disabled = !isTrade;
+  els.importo.disabled = !(isTrade || isProv || isCash);
+  els.comm.disabled = !isTrade;
+  els.aliquota.disabled = !isProv;
+  els.autoliq.disabled = ev !== "ACQUISTO";
+
+  if(!isTrade){ els.qty.value=""; els.prezzo.value=""; els.comm.value=""; }
+  if(ev==="ACQUISTO"){ els.autoliq.checked = true; } else { els.autoliq.checked = false; }
+  if(isProv){
+    const d = defaultAliquota(ev, els.ticker.value);
+    els.aliquota.value = d > 0 ? d : "";
+  } else {
+    els.aliquota.value = "";
+  }
+  refreshHint();
+}
+
+/* ── Suggerimento calcolo terzo campo ── */
+function refreshHint(){
+  const ev = els.evento.value;
+  els.hint.className = "hint";
+  if(TRADE.includes(ev)){
+    const q=num(els.qty), p=num(els.prezzo), i=num(els.importo);
+    const pos = (q>0?1:0)+(p>0?1:0)+(i>0?1:0);
+    if(pos===2){
+      const t = triplet(q,p,i);
+      els.hint.classList.add("ok");
+      els.hint.textContent = "→ Qtà " + fmtQty(t.q) + "  ·  Prezzo " + fmtEur(t.p)
+        + "  ·  Controvalore " + fmtEur(t.i) + " €";
+    } else {
+      els.hint.classList.add("warn");
+      els.hint.textContent = "Compila esattamente 2 campi su 3 tra Qtà, Prezzo e Importo: il terzo è calcolato.";
+    }
+  } else if(PROVENTO.includes(ev)){
+    els.hint.textContent = "Aliquota a 0 = applicata l'aliquota standard in fase di registrazione.";
+  } else if(CASH.includes(ev)){
+    els.hint.textContent = "Indica l'Importo €. Il ticker è facoltativo solo per commissioni e imposte.";
+  } else {
+    els.hint.textContent = "";
+  }
+}
+
+/* ── Validazione e lettura riga ── */
+function readRow(){
+  const ev = els.evento.value;
+  const data = els.data.value;
+  const tk = els.ticker.value;
+  if(!data) return {err:"indica la Data"};
+  if(!ev) return {err:"seleziona l'Evento"};
+
+  if(TRADE.includes(ev)){
+    if(!tk) return {err:"seleziona il Ticker"};
+    if(!tkSupports(tk, ev)) return {err:"l'evento "+ev+" non è ammesso per "+tk};
+    const q=num(els.qty), p=num(els.prezzo), i=num(els.importo);
+    const pos = (q>0?1:0)+(p>0?1:0)+(i>0?1:0);
+    if(pos!==2) return {err:"compila esattamente 2 campi tra Qtà, Prezzo e Importo"};
+    const t = triplet(q,p,i);
+    if(t.q<=0 || t.p<=0 || t.i<=0) return {err:"i valori calcolati non sono validi"};
+    if((ev==="VENDITA"||ev==="RIMBORSO A SCADENZA")){
+      const held = TICKERS[tk] ? TICKERS[tk].held : 0;
+      if(t.q > held + 1e-9) return {err:"quantità "+fmtQty(t.q)+" superiore alle "+fmtQty(held)+" disponibili"};
+    }
+    return {item:{
+      data:data, evento:ev, ticker:tk,
+      qty:q, prezzo:p, importo:i,
+      comm:num(els.comm), aliquota:0,
+      auto_liq:(ev==="ACQUISTO" && els.autoliq.checked),
+      note:els.note.value.trim()
+    }};
+  }
+  if(PROVENTO.includes(ev)){
+    if(!tk) return {err:"seleziona il Ticker"};
+    if(!tkSupports(tk, ev)) return {err:"l'evento "+ev+" non è ammesso per "+tk};
+    const i=num(els.importo);
+    if(i<=0) return {err:"indica un Importo € maggiore di 0"};
+    const al = parseFloat(els.aliquota.value);
+    const alv = (isFinite(al) && al>0) ? al : 0;
+    if(alv>100) return {err:"aliquota oltre il 100%"};
+    return {item:{
+      data:data, evento:ev, ticker:tk,
+      qty:0, prezzo:0, importo:i, comm:0,
+      aliquota:alv, auto_liq:false, note:els.note.value.trim()
+    }};
+  }
+  // cassa
+  const i=num(els.importo);
+  if(i<=0) return {err:"indica un Importo € maggiore di 0"};
+  return {item:{
+    data:data, evento:ev, ticker:(ev==="COMMISSIONE"||ev==="IMPOSTA") ? tk : "",
+    qty:0, prezzo:0, importo:i, comm:0,
+    aliquota:0, auto_liq:false, note:els.note.value.trim()
+  }};
+}
+
+/* ── Descrizione voce nello scontrino ── */
+function describe(it){
+  if(TRADE.includes(it.evento)){
+    const t = triplet(it.qty, it.prezzo, it.importo);
+    let sub = fmtQty(t.q)+" × "+fmtEur(t.p)+" = "+fmtEur(t.i)+" €";
+    if(it.comm>0) sub += "  ·  comm. "+fmtEur(it.comm)+" €";
+    if(it.auto_liq) sub += "  ·  auto-liq.";
+    return {ev:it.evento, head:it.ticker, sub:sub};
+  }
+  if(PROVENTO.includes(it.evento)){
+    const al = it.aliquota>0 ? (it.aliquota+"%") : "std";
+    return {ev:it.evento, head:it.ticker, sub:"lordo "+fmtEur(it.importo)+" €  ·  aliquota "+al};
+  }
+  return {ev:it.evento, head:(it.ticker||""), sub:fmtEur(it.importo)+" €"};
+}
+function cashEffect(it){
+  if(it.evento==="ACQUISTO"){
+    const t = triplet(it.qty,it.prezzo,it.importo);
+    return -(t.i + (Number(it.comm)||0));
+  }
+  if(it.evento==="VENDITA"||it.evento==="RIMBORSO A SCADENZA"){
+    const t = triplet(it.qty,it.prezzo,it.importo);
+    return t.i - it.comm;
+  }
+  if(PROVENTO.includes(it.evento)){
+    const al = it.aliquota>0 ? it.aliquota : 0;
+    return it.importo - it.importo*al/100;
+  }
+  if(it.evento==="VERSAMENTO") return it.importo;
+  return -it.importo;
+}
+
+/* ── Rendering scontrino ── */
+function evColor(ev){
+  if(ev==="ACQUISTO") return "var(--green)";
+  if(ev==="VENDITA") return "var(--red)";
+  if(ev==="RIMBORSO A SCADENZA") return "var(--purple)";
+  if(ev==="CEDOLA") return "var(--purple)";
+  if(ev==="DIVIDENDO") return "var(--yellow)";
+  if(ev==="VERSAMENTO") return "var(--green)";
+  if(ev==="PRELIEVO") return "var(--red)";
+  return "var(--muted)";
+}
+function renderReceipt(){
+  els.receipt.innerHTML = "";
+  if(cart.length===0){
+    const e = document.createElement("div");
+    e.className = "r-empty";
+    e.textContent = "Nessuna voce. Compila una riga e premi «Aggiungi al carrello».";
+    els.receipt.appendChild(e);
+  } else {
+    cart.forEach(function(it, idx){
+      const d = describe(it);
+      const row = document.createElement("div");
+      row.className = "r-row";
+      const ix = document.createElement("div");
+      ix.className = "r-idx"; ix.textContent = (idx+1);
+      const main = document.createElement("div");
+      main.className = "r-main";
+      main.title = "Clic per modificare questa voce";
+      main.innerHTML =
+        '<div class="r-head"><span class="r-ev" style="color:'+evColor(it.evento)+'">'+it.evento+'</span>'
+        + (d.head ? ' · '+d.head : '') + ' <span style="color:var(--muted);font-weight:600">· '+itDate(it.data)+'</span></div>'
+        + '<div class="r-sub mono">'+d.sub+'</div>';
+      main.onclick = function(){ loadForEdit(idx); };
+      const del = document.createElement("button");
+      del.className = "r-del"; del.textContent = "✕"; del.title = "Rimuovi";
+      del.onclick = function(){ removeItem(idx); };
+      row.appendChild(ix); row.appendChild(main); row.appendChild(del);
+      els.receipt.appendChild(row);
+    });
+  }
+  let net = 0;
+  cart.forEach(function(it){ net += cashEffect(it); });
+  const sign = net>=0 ? "+" : "−";
+  els.footInfo.innerHTML = "<b>"+cart.length+"</b> voci  ·  effetto cassa stimato <b class='mono'>"
+    + sign + fmtEur(Math.abs(net)) + " €</b>"
+    + (cart.length>0 ? "  ·  premi <b>Registra operazioni</b>" : "");
+  els.clear.disabled = (cart.length===0);
+  els.submit.disabled = (cart.length===0) || processing;
+  if(els.submitTop){ els.submitTop.disabled = (cart.length===0) || processing; }
+  syncHeight();
+}
+
+/* ── Azioni ── */
+function clearInputs(keepContext){
+  const ev = keepContext ? els.evento.value : "";
+  const dt = els.data.value;
+  els.qty.value=""; els.prezzo.value=""; els.importo.value="";
+  els.comm.value=""; els.aliquota.value=""; els.note.value="";
+  els.ticker.value="";
+  if(!keepContext){ els.evento.value=""; }
+  els.data.value = dt;
+  applyEventoState();
+}
+function exitEditMode(){
+  editIndex = -1;
+  els.add.classList.remove("editing");
+  els.add.textContent = "Aggiungi al carrello";
+  els.formLabel.textContent = "Nuova operazione";
+}
+function addOrUpdate(){
+  const r = readRow();
+  if(r.err){
+    els.hint.className = "hint warn";
+    els.hint.textContent = "Voce non aggiunta: " + r.err + ".";
+    syncHeight();
+    return;
+  }
+  if(editIndex >= 0){
+    cart[editIndex] = r.item;
+    exitEditMode();
+  } else {
+    cart.push(r.item);
+  }
+  clearInputs(true);
+  renderReceipt();
+}
+function removeItem(idx){
+  cart.splice(idx,1);
+  if(editIndex===idx) exitEditMode();
+  else if(editIndex>idx) editIndex--;
+  renderReceipt();
+}
+function loadForEdit(idx){
+  const it = cart[idx];
+  editIndex = idx;
+  els.data.value = it.data;
+  els.evento.value = it.evento;
+  applyEventoState();
+  els.ticker.value = it.ticker || "";
+  if(TRADE.includes(it.evento)){
+    els.qty.value = it.qty>0 ? it.qty : "";
+    els.prezzo.value = it.prezzo>0 ? it.prezzo : "";
+    els.importo.value = it.importo>0 ? it.importo : "";
+    els.comm.value = it.comm>0 ? it.comm : "";
+    els.autoliq.checked = !!it.auto_liq;
+  } else {
+    els.importo.value = it.importo>0 ? it.importo : "";
+    if(PROVENTO.includes(it.evento)) els.aliquota.value = it.aliquota>0 ? it.aliquota : "";
+  }
+  els.note.value = it.note || "";
+  els.add.classList.add("editing");
+  els.add.textContent = "Aggiorna voce";
+  els.formLabel.textContent = "Modifica voce " + (idx+1);
+  refreshHint();
+  syncHeight();
+}
+function submitCart(){
+  if(cart.length===0 || processing) return;
+  processing = true;
+  els.submit.disabled = true;
+  els.submit.textContent = "Registrazione…";
+  const nonce = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2,8);
+  Streamlit.setValue({nonce:nonce, items:cart.slice()});
+}
+
+/* ── Listener ── */
+els.evento.addEventListener("change", function(){ if(editIndex<0) {} applyEventoState(); syncHeight(); });
+els.ticker.addEventListener("change", function(){
+  const ev = els.evento.value;
+  if(PROVENTO.includes(ev)){
+    const d = defaultAliquota(ev, els.ticker.value);
+    if(d>0) els.aliquota.value = d;
+  }
+});
+["qty","prezzo","importo"].forEach(function(k){
+  els[k].addEventListener("input", function(){ refreshHint(); syncHeight(); });
+});
+els.add.addEventListener("click", addOrUpdate);
+els.clear.addEventListener("click", function(){
+  cart = []; exitEditMode(); clearInputs(false); renderReceipt();
+});
+els.submit.addEventListener("click", submitCart);
+window.addEventListener("resize", syncHeight);
+
+/* ── Bootstrap ── */
+function populateTickers(list){
+  TICKERS = {};
+  const sel = els.ticker;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">—</option>';
+  (list||[]).forEach(function(t){
+    TICKERS[t.ticker] = t;
+    const o = document.createElement("option");
+    o.value = t.ticker;
+    o.textContent = t.ticker + (t.nome && t.nome!==t.ticker ? " — " + t.nome : "");
+    sel.appendChild(o);
+  });
+  if(TICKERS[cur]) sel.value = cur;
+}
+function applyPalette(p){
+  if(!p) return;
+  const r = document.documentElement.style;
+  Object.keys(p).forEach(function(k){ r.setProperty("--"+k, p[k]); });
+}
+
+function forceWideDialog(){
+  try{
+    const dialog = document.closest ? document.documentElement.closest('[role="dialog"]') : null;
+    if(!dialog) return;
+    dialog.style.width = "95vw !important";
+    dialog.style.maxWidth = "1400px !important";
+    const content = dialog.querySelector('[data-testid="stDialogContainer"]');
+    if(content){
+      content.style.width = "100% !important";
+      content.style.maxWidth = "100% !important";
+    }
+    const inner = dialog.querySelector('div[style*="position"]');
+    if(inner) inner.style.width = "100% !important";
+  }catch(e){}
+  setTimeout(forceWideDialog, 500);
+}
+
+Streamlit.onRender(function(args){
+  applyPalette(args.palette);
+  populateTickers(args.tickers);
+  if(!els.data.value){
+    els.data.value = new Date().toISOString().slice(0,10);
+  }
+  processing = false;
+  els.submit.textContent = "Conferma e inserisci";
+  els.submit.disabled = (cart.length===0);
+  forceWideDialog();
+  syncHeight();
+});
+
+if(els.submitTop){
+  els.submitTop.onclick = function(){
+    if(cart.length===0 || processing) return;
+    processing = true;
+    renderReceipt();
+    Streamlit.setValue({nonce:String(Date.now())+"_"+Math.random().toString(16).slice(2), items:cart});
+  };
+}
+
+Streamlit.setReady();
+</script>
+</body>
+</html>

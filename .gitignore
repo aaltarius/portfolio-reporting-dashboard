@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Streamlit
+.streamlit/
+.cache/
+
+# Temporary/cache directories
+.data/
+data/prices/.backups/
+
+# Dati personali portafoglio (mai nel repo)
+data/portfolio/
+data/prices/
+data/logs/
+data/ai_reports/
+data/cache/
+backups/
+
+# Configurazione (tutta, incluse impostazioni personali)
+data/config/
+
+# Piani e specifiche interne di sviluppo
+docs/superpowers/
+
+# Documenti interni di sviluppo
+HANDOFF_LUNEDI.md
+portfolio_dashboard_brief_per_altra_ai_v2.md
+
+# OS
+.DS_Store
+Thumbs.db
