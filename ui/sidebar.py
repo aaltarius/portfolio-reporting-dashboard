@@ -148,8 +148,16 @@ def render_sidebar(data: dict) -> None:
             pending_instrument_updates: list[tuple[dict, float, str, str]] = []
             material_quote_diffs: list[str] = []
             material_quote_changes: list[dict[str, object]] = []
+            from core.finance import compute_portfolio_state as _cps
+            _ptf_df = _cps(data, include_closed=True).get("df", pd.DataFrame())
+            _open_tickers_set = (
+                set(_ptf_df[_ptf_df["Quote"] > 0.0001]["Ticker"].tolist())
+                if not _ptf_df.empty else None
+            )
             for i, s in enumerate(data["strumenti"]):
                 pg.progress((i + 1) / max(n, 1), text=f"{s['ticker']}...")
+                if _open_tickers_set is not None and str(s.get("ticker", "")) not in _open_tickers_set:
+                    continue
                 ticker = str(s.get("ticker", ""))
                 current_price_before = s.get("prezzo")
                 today_prices = (data.get("storico_prezzi") or {}).get(ts, {}) if wd else {}

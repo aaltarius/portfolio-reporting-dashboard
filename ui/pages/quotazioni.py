@@ -273,6 +273,7 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             show_ticker_detail_charts = True  # Abilita i grafici per strumento su 2 colonne (4.9.11)
             show_instrument_flow_chart = is_complete_view
 
+            _open_tk = tuple(sorted(ctx.da["Ticker"].tolist())) if not ctx.da.empty else ()
             quotazioni_bundle = get_quotazioni_dataset_bundle(
                 data=data,
                 dh_hist=dh,
@@ -283,6 +284,7 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 quotes_data_sig=_quotes_data_sig,
                 flow_data_sig=_flow_data_sig,
                 settings=settings,
+                open_tickers=_open_tk,
             )
             tkd = quotazioni_bundle.valid_tickers
             info_map = quotazioni_bundle.info_map

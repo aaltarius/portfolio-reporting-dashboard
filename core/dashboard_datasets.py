@@ -533,10 +533,12 @@ def _build_quotazioni_dataset_bundle_cached(
     _is_complete_view: bool,
     _include_ticker_detail_charts: bool,
     _include_instrument_flow_chart: bool,
+    _open_tickers: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     _ = bundle_sig
     info_map = {s["ticker"]: s for s in _data.get("strumenti", [])}
-    valid_tickers = get_valid_quote_tickers_by_category(_data, _dh_hist)
+    _open_set = frozenset(_open_tickers) if _open_tickers else None
+    valid_tickers = get_valid_quote_tickers_by_category(_data, _dh_hist, open_tickers=_open_set)
 
     category_groups: dict[str, list[str]] = {}
     for tk in valid_tickers:
@@ -686,15 +688,17 @@ def get_quotazioni_dataset_bundle(
     quotes_data_sig: str,
     flow_data_sig: str,
     settings: dict[str, Any] | None = None,
+    open_tickers: tuple[str, ...] = (),
 ) -> QuotazioniDatasetBundle:
     """Bundle shared per la pagina Quotazioni."""
     visible_categories = _resolve_dataset_category_codes(settings)
     category_sig = "|".join(visible_categories)
+    open_tickers_sig = "|".join(sorted(open_tickers)) if open_tickers else ""
     bundle_sig = (
         f"quotes={quotes_data_sig}|flow={flow_data_sig}|complete={int(bool(is_complete_view))}"
         f"|ticker_details={int(bool(include_ticker_detail_charts))}"
         f"|instrument_flow={int(bool(include_instrument_flow_chart))}"
-        f"|cats={category_sig}"
+        f"|cats={category_sig}|open={open_tickers_sig}"
     )
     with profile_step("Quotazioni", "load/build cached bundle shared", detail=f"sig={bundle_sig}", count=len(getattr(dh_hist, "columns", []))):
         cached_bundle = _build_quotazioni_dataset_bundle_cached(
@@ -706,6 +710,7 @@ def get_quotazioni_dataset_bundle(
             bool(is_complete_view),
             bool(include_ticker_detail_charts),
             bool(include_instrument_flow_chart),
+            tuple(open_tickers),
         )
     return QuotazioniDatasetBundle(
         valid_tickers=list(cached_bundle.get("valid_tickers", []) or []),
