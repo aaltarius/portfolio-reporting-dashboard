@@ -221,8 +221,12 @@ def _compute_home_category_deltas(
         ticker = col[3:]
         cat = ticker_to_cat.get(ticker, "Altro")
 
-        v_last = float(last[col]) if pd.notna(last[col]) else 0
-        v_prev = float(prev[col]) if pd.notna(prev[col]) else 0
+        # Skip instruments where either last or prev row is NaN (avoids closing-event spikes)
+        if not (pd.notna(last[col]) and pd.notna(prev[col])):
+            continue
+
+        v_last = float(last[col])
+        v_prev = float(prev[col])
         delta = v_last - v_prev
 
         if cat not in category_deltas:
