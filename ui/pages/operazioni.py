@@ -30,7 +30,7 @@ from core.validators import (
     validate_price,
     validate_quantity,
 )
-from core.finance import append_evento_portafoglio
+from core.finance import append_evento_portafoglio, compute_portfolio_state
 from core.market_data import deduce_type, find_name, find_ticker, get_price
 from core.services import (
     get_portfolio_operations,
@@ -1459,6 +1459,108 @@ def _render_centro_operativo(data: dict[str, Any], ctx: SimpleNamespace, theme) 
     )
 
 
+def _build_strumenti_chiusi_section(data: dict[str, Any]) -> None:
+    """Renders closed-instrument summary at the bottom of the Operazioni page."""
+    chiusi = [s for s in data.get("strumenti", []) if s.get("stato", "aperto") == "chiuso"]
+    if not chiusi:
+        return
+
+    render_section_title(
+        "Strumenti chiusi",
+        comment=(
+            "Riepilogo degli strumenti che hanno concluso il loro ciclo di vita nel portafoglio. "
+            "I dati si riferiscono all'intero periodo di detenzione: "
+            "P/L realizzato, cedole e dividendi incassati, imposte pagate, return totale."
+        ),
+        gap_after="xs",
+    )
+
+    # Financial data for closed positions
+    df_positions = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
+
+    # First buy date per ticker from events
+    first_buy: dict[str, str] = {}
+    for ev in get_registro_eventi(data):
+        tk = str(ev.get("ticker", "") or "")
+        if ev.get("tipo_evento") == "ACQUISTO" and tk and tk not in first_buy:
+            first_buy[tk] = str(ev.get("data", "") or "")
+
+    theme = get_theme_context()
+    rows = []
+    for s in chiusi:
+        ticker = str(s.get("ticker", "") or "")
+        nome = str(s.get("nome", ticker) or ticker)
+        tipo = macro_cat(str(s.get("tipo", "") or ""))
+        data_apertura = fmtds(first_buy.get(ticker, "")) if first_buy.get(ticker) else "—"
+        data_chius = fmtds(str(s.get("data_chiusura", "") or "")) if s.get("data_chiusura") else "—"
+        motivo = str(s.get("motivo_chiusura", "") or "—")
+
+        pos_row = df_positions[df_positions["Ticker"] == ticker] if not df_positions.empty else pd.DataFrame()
+        if pos_row.empty:
+            pl_netto = cedole = dividendi = imposte = 0.0
+        else:
+            r = pos_row.iloc[0]
+            pl_netto = _safe_float(r.get("P/L Realizzato Netto", 0.0))
+            cedole = _safe_float(r.get("Cedole nette", 0.0))
+            dividendi = _safe_float(r.get("Dividendi netti", 0.0))
+            imposte = _safe_float(r.get("Imposte €", 0.0))
+
+        return_totale = pl_netto + cedole + dividendi
+        rows.append({
+            "Ticker": ticker,
+            "Nome": nome,
+            "Tipo": tipo,
+            "Aperto il": data_apertura,
+            "Chiuso il": data_chius,
+            "Motivo": motivo,
+            "P/L Realizzato €": pl_netto,
+            "Cedole/Div. netti €": cedole + dividendi,
+            "Imposte €": imposte,
+            "Return Totale €": return_totale,
+        })
+
+    if not rows:
+        return
+
+    df_chiusi = pd.DataFrame(rows)
+
+    def _style_chiusi(row):
+        styles = []
+        for col in row.index:
+            s = ""
+            if col == "Tipo":
+                s = f"color:{macro_color(str(row['Tipo'] or ''))};font-weight:700;"
+            elif col == "Return Totale €":
+                try:
+                    v = float(row[col])
+                    c = theme.color_green if v >= 0 else theme.color_red
+                    s = f"color:{c};font-weight:700;"
+                except (TypeError, ValueError):
+                    pass
+            elif col in {"P/L Realizzato €", "Cedole/Div. netti €"}:
+                try:
+                    v = float(row[col])
+                    c = theme.color_green if v >= 0 else theme.color_red
+                    s = f"color:{c};font-weight:600;"
+                except (TypeError, ValueError):
+                    pass
+            styles.append(s)
+        return styles
+
+    styled = df_chiusi.style.format({
+        "P/L Realizzato €": lambda v: fmt_eur_it(v, 2, signed=True),
+        "Cedole/Div. netti €": lambda v: fmt_eur_it(v, 2, signed=True),
+        "Imposte €": lambda v: fmt_eur_it(v, 2),
+        "Return Totale €": lambda v: fmt_eur_it(v, 2, signed=True),
+    }).apply(_style_chiusi, axis=1)
+
+    render_styled_table(styled, height="content")
+    legend_block(
+        "P/L Realizzato = differenza tra prezzo di rimborso/vendita e prezzo medio di carico, al netto di commissioni. "
+        "Return Totale include anche cedole e dividendi netti incassati nel periodo di detenzione."
+    )
+
+
 def render_operazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
     """
     Pure rendering for operazioni page (transaction log).
@@ -1607,5 +1709,8 @@ def render_operazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             render_styled_table(styled_cash, height=520)
         else:
             st.info(t(settings, "operations.cash_empty", "Nessun movimento di liquidità registrato."))
+
+        # ─── Strumenti chiusi ──────────────────────────────────────
+        _build_strumenti_chiusi_section(data)
 
         back_to_top(show_prev=True, show_next=True, nav_key="operazioni")
