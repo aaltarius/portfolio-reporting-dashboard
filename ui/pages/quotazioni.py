@@ -163,9 +163,11 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             _render_top_data_kpis(data, theme, settings)
         vertical_gap("md")
         with profile_step("Quotazioni", "preparazione tabella diagnostica quotazioni"):
+            _open_tickers = set(ctx.da["Ticker"].tolist()) if not ctx.da.empty else None
             strumenti_attivi = [
                 item for item in (data.get("strumenti", []) or [])
                 if str(item.get("ticker") or "").strip()
+                and (_open_tickers is None or str(item.get("ticker") or "").strip() in _open_tickers)
             ]
             active_tickers = [str(item.get("ticker") or "").strip() for item in strumenti_attivi]
             qdf = getattr(ctx, "quotes_refresh_df", build_quotes_refresh_df(quotes_log, active_tickers)).copy()

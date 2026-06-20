@@ -108,7 +108,7 @@ def build_runtime_context_data(
         if col.startswith("PL_") and dfh[col].dtype != "float64":
             dfh[col] = dfh[col].astype("float64")
 
-    active_tickers = [str(item.get("ticker") or "") for item in (data.get("strumenti", []) or []) if str(item.get("ticker") or "")]
+    active_tickers = da["Ticker"].tolist() if not da.empty else []
     quotes_refresh_df = build_quotes_refresh_df(quotes_log, active_tickers)
     quotazioni_stats = get_quotazioni_stats(quotes_refresh_df)
     category_breakdown = get_category_allocation_breakdown(da, settings)

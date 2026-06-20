@@ -1461,7 +1461,14 @@ def _render_centro_operativo(data: dict[str, Any], ctx: SimpleNamespace, theme) 
 
 def _build_strumenti_chiusi_section(data: dict[str, Any]) -> None:
     """Renders closed-instrument summary at the bottom of the Operazioni page."""
-    chiusi = [s for s in data.get("strumenti", []) if s.get("stato", "aperto") == "chiuso"]
+    df_positions = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
+    if df_positions.empty:
+        return
+    df_chiusi_pos = df_positions[df_positions["Quote"] <= 0.0001]
+    if df_chiusi_pos.empty:
+        return
+    chiusi_tickers = set(df_chiusi_pos["Ticker"].tolist())
+    chiusi = [s for s in data.get("strumenti", []) if s.get("ticker") in chiusi_tickers]
     if not chiusi:
         return
 
@@ -1475,15 +1482,18 @@ def _build_strumenti_chiusi_section(data: dict[str, Any]) -> None:
         gap_after="xs",
     )
 
-    # Financial data for closed positions
-    df_positions = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
-
-    # First buy date per ticker from events
+    # Derive first buy and closing event dates from the event log
     first_buy: dict[str, str] = {}
+    last_close: dict[str, str] = {}
+    close_motivo: dict[str, str] = {}
     for ev in get_registro_eventi(data):
         tk = str(ev.get("ticker", "") or "")
-        if ev.get("tipo_evento") == "ACQUISTO" and tk and tk not in first_buy:
+        tipo_ev = str(ev.get("tipo_evento", "") or "")
+        if tipo_ev == "ACQUISTO" and tk and tk not in first_buy:
             first_buy[tk] = str(ev.get("data", "") or "")
+        elif tipo_ev in ("VENDITA", "RIMBORSO A SCADENZA") and tk:
+            last_close[tk] = str(ev.get("data", "") or "")
+            close_motivo[tk] = tipo_ev
 
     theme = get_theme_context()
     rows = []
@@ -1492,8 +1502,9 @@ def _build_strumenti_chiusi_section(data: dict[str, Any]) -> None:
         nome = str(s.get("nome", ticker) or ticker)
         tipo = macro_cat(str(s.get("tipo", "") or ""))
         data_apertura = fmtds(first_buy.get(ticker, "")) if first_buy.get(ticker) else "—"
-        data_chius = fmtds(str(s.get("data_chiusura", "") or "")) if s.get("data_chiusura") else "—"
-        motivo = str(s.get("motivo_chiusura", "") or "—")
+        _close_date = last_close.get(ticker) or str(s.get("data_chiusura", "") or "")
+        data_chius = fmtds(_close_date) if _close_date else "—"
+        motivo = close_motivo.get(ticker) or str(s.get("motivo_chiusura", "") or "—")
 
         pos_row = df_positions[df_positions["Ticker"] == ticker] if not df_positions.empty else pd.DataFrame()
         if pos_row.empty:
