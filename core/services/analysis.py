@@ -13,29 +13,40 @@ from core.data_models import ThemeConfig
 
 def build_pl_delta_series(df_history: pd.DataFrame, theme: ThemeConfig) -> dict[str, list[Any]]:
     """
-    Builds P/L delta series with theme-aware color assignment.
+    Builds P/L delta series for the home daily bar chart.
 
-    Extracts calculation logic from page rendering:
-    - Computes delta (change) from previous P/L value
-    - Assigns theme colors: green for increase/zero, red for decrease
-    - Formats delta text for display
+    Uses per-instrument PL_ columns to compute the daily delta, including only
+    instruments that have valid (non-NaN) values in BOTH the current and previous
+    row. This excludes the price-jump caused by instrument closings (RIMBORSO A
+    SCADENZA / VENDITA) between the last storico entry and today's synthetic row.
 
-    Args:
-        df_history: DataFrame with "P/L" column (historical P/L values)
-        theme: ThemeConfig object with color_green and color_red
-
-    Returns:
-        Dict with keys:
-        - "deltas": List[float] - P/L changes from previous value (NaN for first)
-        - "colors": List[str] - theme colors for each delta
-        - "delta_text": List[str] - formatted delta text for display
+    Falls back to df_history["P/L"].diff() when no PL_ columns exist.
     """
     from core.formatting import fmt_num_it
 
     if df_history.empty or "P/L" not in df_history.columns:
         return {"deltas": [], "colors": [], "delta_text": []}
 
-    delta_prev = df_history["P/L"].diff()
+    pl_cols = [c for c in df_history.columns if c.startswith("PL_")]
+    n = len(df_history)
+
+    if pl_cols:
+        deltas: list[float] = [float("nan")] * n
+        for i in range(1, n):
+            curr = df_history.iloc[i]
+            prev = df_history.iloc[i - 1]
+            # Only count instruments open (non-NaN) in BOTH rows.
+            # Instruments that closed between prev and curr have NaN in curr → skipped.
+            delta = sum(
+                float(curr[col]) - float(prev[col])
+                for col in pl_cols
+                if pd.notna(curr[col]) and pd.notna(prev[col])
+            )
+            deltas[i] = delta
+        delta_prev = pd.Series(deltas, index=df_history.index, dtype=float)
+    else:
+        delta_prev = df_history["P/L"].diff()
+
     colors = [
         theme.color_green if (pd.isna(v) or v >= 0) else theme.color_red
         for v in delta_prev

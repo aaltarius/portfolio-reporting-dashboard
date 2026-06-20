@@ -246,7 +246,13 @@ def _build_last_day_summary(
     last = dfh.iloc[-1]
     prev = dfh.iloc[-2]
     delta_valore = float(last["Valore"]) - float(prev["Valore"])
-    raw_delta_pl = float(last["P/L"]) - float(prev["P/L"])
+    # Compute delta only from instruments open in BOTH rows (avoids closing-event spikes)
+    _pl_cols_all = [c for c in dfh.columns if c.startswith("PL_")]
+    raw_delta_pl = sum(
+        float(last[col]) - float(prev[col])
+        for col in _pl_cols_all
+        if pd.notna(last[col]) and pd.notna(prev[col])
+    ) if _pl_cols_all else float(last["P/L"]) - float(prev["P/L"])
     delta_capitale = float(last.get("Capitale", 0.0)) - float(prev.get("Capitale", 0.0))
     last_date = fmtds(last["Data"])
     prev_date = fmtds(prev["Data"])
