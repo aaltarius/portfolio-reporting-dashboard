@@ -29,7 +29,9 @@ def get_valid_quote_tickers_by_category(data: dict[str, Any], dh: pd.DataFrame) 
     strumenti = data.get("strumenti", [])
     tickers = [
         s["ticker"] for s in strumenti
-        if s.get("ticker") in dh.columns and dh[s["ticker"]].notna().sum() > 0
+        if s.get("ticker") in dh.columns
+        and dh[s["ticker"]].notna().sum() > 0
+        and s.get("stato", "aperto") != "chiuso"
     ]
     ordered_categories = [code for code in ASSET_CATEGORY_REGISTRY.keys() if code != "ALTRO"]
     categorized = {cat: [] for cat in ordered_categories}
