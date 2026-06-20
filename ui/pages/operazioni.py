@@ -366,7 +366,10 @@ def form_operazione_dialog(data: dict[str, Any], ctx: SimpleNamespace) -> None:
                     if evento_sel == "RIMBORSO A SCADENZA" or (
                         evento_sel == "VENDITA" and actual_qty >= qty_disp - 1e-9  # tolleranza float
                     ):
-                        _set_stato_strumento(data, tk_sel, "chiuso", str(data_sel), evento_sel)
+                        _tipo_sel = next((s.get("tipo","") for s in data.get("strumenti",[]) if s.get("ticker")==tk_sel), "")
+                        # GOV → chiuso definitivamente; ETF/ETC/FND → osservato (tornano monitorabili)
+                        _stato_post_chiusura = "chiuso" if macro_cat(_tipo_sel) == "GOV" else "osservato"
+                        _set_stato_strumento(data, tk_sel, _stato_post_chiusura, str(data_sel), evento_sel)
                     elif evento_sel == "ACQUISTO":
                         strum_cur = next(
                             (s for s in data.get("strumenti", []) if s.get("ticker") == tk_sel), {}
@@ -1467,18 +1470,12 @@ def _build_strumenti_chiusi_section(data: dict[str, Any]) -> None:
     df_chiusi_pos = df_positions[df_positions["Quote"] <= 0.0001]
     if df_chiusi_pos.empty:
         return
-    # Solo GOV chiusi definitivamente (BTP/BOT scadono e non si ri-acquistano).
-    # Tripla rilevazione: stato=="chiuso", portfolio state qty=0, eventi RIMBORSO/VENDITA.
-    _ev_op = get_registro_eventi(data)
-    _tickers_acquisto_op = {str(ev.get("ticker") or "") for ev in _ev_op if ev.get("tipo_evento") == "ACQUISTO"}
-    _tickers_rimborso_op = {str(ev.get("ticker") or "") for ev in _ev_op if ev.get("tipo_evento") in ("RIMBORSO A SCADENZA", "VENDITA")}
-    _strumenti_map = {str(s.get("ticker") or ""): s for s in data.get("strumenti", [])}
-    _cat_op = lambda tk: macro_cat(str(_strumenti_map.get(tk, {}).get("tipo", "") or ""))
-    _dc_tickers = set(df_chiusi_pos["Ticker"].tolist())
-    _chiusi_by_stato_op = {str(s.get("ticker") or "") for s in data.get("strumenti", []) if s.get("stato") == "chiuso" and _cat_op(str(s.get("ticker") or "")) == "GOV"}
-    _chiusi_by_state_op = {tk for tk in (_dc_tickers & _tickers_acquisto_op) if _cat_op(tk) == "GOV"}
-    _chiusi_by_events_op = {tk for tk in (_tickers_acquisto_op & _tickers_rimborso_op) if _cat_op(tk) == "GOV"}
-    chiusi_tickers = _chiusi_by_stato_op | _chiusi_by_state_op | _chiusi_by_events_op
+    # Strumenti con stato=="chiuso": GOV rimborsati/venduti definitivamente.
+    chiusi_tickers = {
+        str(s.get("ticker") or "")
+        for s in data.get("strumenti", [])
+        if s.get("stato") == "chiuso" and str(s.get("ticker") or "")
+    }
     chiusi = [s for s in data.get("strumenti", []) if s.get("ticker") in chiusi_tickers]
     if not chiusi:
         return

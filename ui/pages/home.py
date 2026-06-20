@@ -994,8 +994,6 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             )
             _render_portfolio_table_section(da, dfh_top, data, proventi, tv, theme, settings, macro_summary=macro_summary, chart_loader=_chart_loader)
             _render_performance_charts(da, tv, theme, settings, chart_loader=_chart_loader)
-            vertical_gap("sm")
-            _render_dettaglio_kpi_finanziari(ctx)
 
         vertical_gap("md")
         if should_render_section("Portafoglio", "Analisi per Macro-Categoria", settings):
