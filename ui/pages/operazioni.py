@@ -1467,7 +1467,10 @@ def _build_strumenti_chiusi_section(data: dict[str, Any]) -> None:
     df_chiusi_pos = df_positions[df_positions["Quote"] <= 0.0001]
     if df_chiusi_pos.empty:
         return
-    chiusi_tickers = set(df_chiusi_pos["Ticker"].tolist())
+    # Solo strumenti effettivamente acquistati e poi chiusi (non "osservati" con qty=0)
+    _dc_tickers = set(df_chiusi_pos["Ticker"].tolist())
+    _tickers_con_acquisto = {str(ev.get("ticker") or "") for ev in get_registro_eventi(data) if ev.get("tipo_evento") == "ACQUISTO"}
+    chiusi_tickers = _dc_tickers & _tickers_con_acquisto
     chiusi = [s for s in data.get("strumenti", []) if s.get("ticker") in chiusi_tickers]
     if not chiusi:
         return

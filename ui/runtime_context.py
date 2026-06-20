@@ -108,7 +108,18 @@ def build_runtime_context_data(
         if col.startswith("PL_") and dfh[col].dtype != "float64":
             dfh[col] = dfh[col].astype("float64")
 
-    active_tickers = da["Ticker"].tolist() if not da.empty else []
+    # chiusi = posizioni con qty=0 che hanno almeno un ACQUISTO in registro
+    # (distingue "chiuso" da "osservato" che ha sempre qty=0 ma non ha ACQUISTO)
+    _dc_tickers = set(dc["Ticker"].tolist()) if not dc.empty else set()
+    _tickers_con_acquisto = {str(ev.get("ticker") or "") for ev in eventi if ev.get("tipo_evento") == "ACQUISTO"}
+    chiusi_tickers: frozenset[str] = frozenset(_dc_tickers & _tickers_con_acquisto)
+
+    # active_tickers = tutti gli strumenti TRANNE quelli confermati chiusi
+    active_tickers = [
+        str(s.get("ticker") or "")
+        for s in (data.get("strumenti") or [])
+        if str(s.get("ticker") or "") and str(s.get("ticker") or "") not in chiusi_tickers
+    ]
     quotes_refresh_df = build_quotes_refresh_df(quotes_log, active_tickers)
     quotazioni_stats = get_quotazioni_stats(quotes_refresh_df)
     category_breakdown = get_category_allocation_breakdown(da, settings)
@@ -143,6 +154,7 @@ def build_runtime_context_data(
         "da": da,
         "dc": dc,
         "df": df,
+        "chiusi_tickers": chiusi_tickers,
         "btp_calendar_df": btp_calendar_df,
         "tv": tv,
         "tc": tc,

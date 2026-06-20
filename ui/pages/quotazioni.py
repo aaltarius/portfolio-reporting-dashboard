@@ -163,11 +163,11 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             _render_top_data_kpis(data, theme, settings)
         vertical_gap("md")
         with profile_step("Quotazioni", "preparazione tabella diagnostica quotazioni"):
-            _open_tickers = set(ctx.da["Ticker"].tolist()) if not ctx.da.empty else None
+            _chiusi = getattr(ctx, "chiusi_tickers", frozenset())
             strumenti_attivi = [
                 item for item in (data.get("strumenti", []) or [])
                 if str(item.get("ticker") or "").strip()
-                and (_open_tickers is None or str(item.get("ticker") or "").strip() in _open_tickers)
+                and str(item.get("ticker") or "").strip() not in _chiusi
             ]
             active_tickers = [str(item.get("ticker") or "").strip() for item in strumenti_attivi]
             qdf = getattr(ctx, "quotes_refresh_df", build_quotes_refresh_df(quotes_log, active_tickers)).copy()
@@ -273,7 +273,7 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             show_ticker_detail_charts = True  # Abilita i grafici per strumento su 2 colonne (4.9.11)
             show_instrument_flow_chart = is_complete_view
 
-            _open_tk = tuple(sorted(ctx.da["Ticker"].tolist())) if not ctx.da.empty else ()
+            _closed_tk = tuple(sorted(getattr(ctx, "chiusi_tickers", frozenset())))
             quotazioni_bundle = get_quotazioni_dataset_bundle(
                 data=data,
                 dh_hist=dh,
@@ -284,7 +284,7 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 quotes_data_sig=_quotes_data_sig,
                 flow_data_sig=_flow_data_sig,
                 settings=settings,
-                open_tickers=_open_tk,
+                closed_tickers=_closed_tk,
             )
             tkd = quotazioni_bundle.valid_tickers
             info_map = quotazioni_bundle.info_map

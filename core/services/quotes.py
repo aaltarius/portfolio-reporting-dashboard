@@ -23,7 +23,7 @@ def get_quotazioni_stats(qdf: pd.DataFrame) -> dict[str, int]:
 def get_valid_quote_tickers_by_category(
     data: dict[str, Any],
     dh: pd.DataFrame,
-    open_tickers: frozenset[str] | None = None,
+    closed_tickers: frozenset[str] | None = None,
 ) -> list[str]:
     """Restituisce ticker con storico quotazioni valido, ordinati per macro-categoria."""
     from persistence.storage import macro_cat
@@ -35,7 +35,7 @@ def get_valid_quote_tickers_by_category(
         s["ticker"] for s in strumenti
         if s.get("ticker") in dh.columns
         and dh[s["ticker"]].notna().sum() > 0
-        and (open_tickers is None or s.get("ticker") in open_tickers)
+        and (closed_tickers is None or s.get("ticker") not in closed_tickers)
     ]
     ordered_categories = [code for code in ASSET_CATEGORY_REGISTRY.keys() if code != "ALTRO"]
     categorized = {cat: [] for cat in ordered_categories}

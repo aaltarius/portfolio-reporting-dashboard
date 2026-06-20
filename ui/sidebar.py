@@ -149,14 +149,14 @@ def render_sidebar(data: dict) -> None:
             material_quote_diffs: list[str] = []
             material_quote_changes: list[dict[str, object]] = []
             from core.finance import compute_portfolio_state as _cps
+            from persistence.storage import get_registro_eventi as _gre
             _ptf_df = _cps(data, include_closed=True).get("df", pd.DataFrame())
-            _open_tickers_set = (
-                set(_ptf_df[_ptf_df["Quote"] > 0.0001]["Ticker"].tolist())
-                if not _ptf_df.empty else None
-            )
+            _dc_tickers = set(_ptf_df[_ptf_df["Quote"] <= 0.0001]["Ticker"].tolist()) if not _ptf_df.empty else set()
+            _tickers_con_acquisto = {str(ev.get("ticker") or "") for ev in _gre(data) if ev.get("tipo_evento") == "ACQUISTO"}
+            _chiusi_tickers_set = _dc_tickers & _tickers_con_acquisto
             for i, s in enumerate(data["strumenti"]):
                 pg.progress((i + 1) / max(n, 1), text=f"{s['ticker']}...")
-                if _open_tickers_set is not None and str(s.get("ticker", "")) not in _open_tickers_set:
+                if str(s.get("ticker", "")) in _chiusi_tickers_set:
                     continue
                 ticker = str(s.get("ticker", ""))
                 current_price_before = s.get("prezzo")
