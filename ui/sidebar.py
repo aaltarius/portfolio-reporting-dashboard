@@ -152,9 +152,14 @@ def render_sidebar(data: dict) -> None:
             from persistence.storage import get_registro_eventi as _gre
             _ptf_df = _cps(data, include_closed=True).get("df", pd.DataFrame())
             _dc_tickers = set(_ptf_df[_ptf_df["Quote"] <= 0.0001]["Ticker"].tolist()) if not _ptf_df.empty else set()
-            _tickers_con_acquisto = {str(ev.get("ticker") or "") for ev in _gre(data) if ev.get("tipo_evento") == "ACQUISTO"}
+            _ev_sb = _gre(data)
+            _tickers_acquisto_sb = {str(ev.get("ticker") or "") for ev in _ev_sb if ev.get("tipo_evento") == "ACQUISTO"}
+            _tickers_rimborso_sb = {str(ev.get("ticker") or "") for ev in _ev_sb if ev.get("tipo_evento") in ("RIMBORSO A SCADENZA", "VENDITA")}
             _ticker_cat_map_sb = {str(s.get("ticker") or ""): macro_cat(str(s.get("tipo", "") or "")) for s in (data.get("strumenti") or [])}
-            _chiusi_tickers_set = {tk for tk in (_dc_tickers & _tickers_con_acquisto) if _ticker_cat_map_sb.get(tk) == "GOV"}
+            _chiusi_by_stato_sb = {str(s.get("ticker") or "") for s in (data.get("strumenti") or []) if s.get("stato") == "chiuso" and _ticker_cat_map_sb.get(str(s.get("ticker") or "")) == "GOV"}
+            _chiusi_by_state_sb = {tk for tk in (_dc_tickers & _tickers_acquisto_sb) if _ticker_cat_map_sb.get(tk) == "GOV"}
+            _chiusi_by_events_sb = {tk for tk in (_tickers_acquisto_sb & _tickers_rimborso_sb) if _ticker_cat_map_sb.get(tk) == "GOV"}
+            _chiusi_tickers_set = _chiusi_by_stato_sb | _chiusi_by_state_sb | _chiusi_by_events_sb
             for i, s in enumerate(data["strumenti"]):
                 pg.progress((i + 1) / max(n, 1), text=f"{s['ticker']}...")
                 if str(s.get("ticker", "")) in _chiusi_tickers_set:

@@ -1467,15 +1467,18 @@ def _build_strumenti_chiusi_section(data: dict[str, Any]) -> None:
     df_chiusi_pos = df_positions[df_positions["Quote"] <= 0.0001]
     if df_chiusi_pos.empty:
         return
-    # Solo GOV acquistati e poi chiusi (BTP/BOT scadono definitivamente).
-    # ETF/ETC/FND venduti tornano a "osservato" e non compaiono qui.
-    _dc_tickers = set(df_chiusi_pos["Ticker"].tolist())
-    _tickers_con_acquisto = {str(ev.get("ticker") or "") for ev in get_registro_eventi(data) if ev.get("tipo_evento") == "ACQUISTO"}
+    # Solo GOV chiusi definitivamente (BTP/BOT scadono e non si ri-acquistano).
+    # Tripla rilevazione: stato=="chiuso", portfolio state qty=0, eventi RIMBORSO/VENDITA.
+    _ev_op = get_registro_eventi(data)
+    _tickers_acquisto_op = {str(ev.get("ticker") or "") for ev in _ev_op if ev.get("tipo_evento") == "ACQUISTO"}
+    _tickers_rimborso_op = {str(ev.get("ticker") or "") for ev in _ev_op if ev.get("tipo_evento") in ("RIMBORSO A SCADENZA", "VENDITA")}
     _strumenti_map = {str(s.get("ticker") or ""): s for s in data.get("strumenti", [])}
-    chiusi_tickers = {
-        tk for tk in (_dc_tickers & _tickers_con_acquisto)
-        if macro_cat(str(_strumenti_map.get(tk, {}).get("tipo", "") or "")) == "GOV"
-    }
+    _cat_op = lambda tk: macro_cat(str(_strumenti_map.get(tk, {}).get("tipo", "") or ""))
+    _dc_tickers = set(df_chiusi_pos["Ticker"].tolist())
+    _chiusi_by_stato_op = {str(s.get("ticker") or "") for s in data.get("strumenti", []) if s.get("stato") == "chiuso" and _cat_op(str(s.get("ticker") or "")) == "GOV"}
+    _chiusi_by_state_op = {tk for tk in (_dc_tickers & _tickers_acquisto_op) if _cat_op(tk) == "GOV"}
+    _chiusi_by_events_op = {tk for tk in (_tickers_acquisto_op & _tickers_rimborso_op) if _cat_op(tk) == "GOV"}
+    chiusi_tickers = _chiusi_by_stato_op | _chiusi_by_state_op | _chiusi_by_events_op
     chiusi = [s for s in data.get("strumenti", []) if s.get("ticker") in chiusi_tickers]
     if not chiusi:
         return

@@ -108,19 +108,26 @@ def build_runtime_context_data(
         if col.startswith("PL_") and dfh[col].dtype != "float64":
             dfh[col] = dfh[col].astype("float64")
 
-    # chiusi = posizioni GOV con qty=0 che hanno almeno un ACQUISTO in registro.
-    # I GOV (BTP, BOT, ecc.) scadono e si chiudono definitivamente.
-    # ETF/ETC/FND venduti tornano invece a "osservato" e rimangono in quotazioni.
-    _dc_tickers = set(dc["Ticker"].tolist()) if not dc.empty else set()
-    _tickers_con_acquisto = {str(ev.get("ticker") or "") for ev in eventi if ev.get("tipo_evento") == "ACQUISTO"}
+    # chiusi = GOV scaduti/rimborsati definitivamente (BTP, BOT ecc.).
+    # ETF/ETC/FND venduti restano "osservati" e rimangono in quotazioni.
+    # Tripla rilevazione per robustezza contro cache stale del portfolio state:
+    #   1. campo stato=="chiuso" (impostato da _set_stato_strumento al momento della chiusura)
+    #   2. qty=0 nel portfolio state corrente (da dc) con evento ACQUISTO presente
+    #   3. evento RIMBORSO A SCADENZA presente con evento ACQUISTO precedente (puro eventi)
     _ticker_cat_map = {
         str(s.get("ticker") or ""): macro_cat(str(s.get("tipo", "") or ""))
         for s in (data.get("strumenti") or [])
     }
-    chiusi_tickers: frozenset[str] = frozenset(
-        tk for tk in (_dc_tickers & _tickers_con_acquisto)
-        if _ticker_cat_map.get(tk) == "GOV"
-    )
+    _tickers_acquisto = {str(ev.get("ticker") or "") for ev in eventi if ev.get("tipo_evento") == "ACQUISTO"}
+    _tickers_rimborso = {str(ev.get("ticker") or "") for ev in eventi if ev.get("tipo_evento") in ("RIMBORSO A SCADENZA", "VENDITA")}
+    _chiusi_by_stato = {
+        str(s.get("ticker") or "") for s in (data.get("strumenti") or [])
+        if s.get("stato") == "chiuso" and _ticker_cat_map.get(str(s.get("ticker") or "")) == "GOV"
+    }
+    _dc_tickers = set(dc["Ticker"].tolist()) if not dc.empty else set()
+    _chiusi_by_state = {tk for tk in (_dc_tickers & _tickers_acquisto) if _ticker_cat_map.get(tk) == "GOV"}
+    _chiusi_by_events = {tk for tk in (_tickers_acquisto & _tickers_rimborso) if _ticker_cat_map.get(tk) == "GOV"}
+    chiusi_tickers: frozenset[str] = frozenset(_chiusi_by_stato | _chiusi_by_state | _chiusi_by_events)
 
     # active_tickers = tutti gli strumenti TRANNE quelli confermati chiusi
     active_tickers = [

@@ -77,8 +77,9 @@ def _get_freshness_badge(last_refresh_dt: Any) -> str:
         return "⚪"
 
 
-def _render_top_data_kpis(data: dict[str, Any], theme, settings: dict[str, Any] | None = None) -> None:
+def _render_top_data_kpis(data: dict[str, Any], theme, settings: dict[str, Any] | None = None, chiusi_tickers: frozenset | None = None) -> None:
     """Mostra KPI per storico prezzi e strumenti per categoria."""
+    _chiusi = chiusi_tickers or frozenset()
     c1, c2 = st.columns(2)
     with c1:
         sto = data.get("storico_prezzi", {})
@@ -93,9 +94,10 @@ def _render_top_data_kpis(data: dict[str, Any], theme, settings: dict[str, Any] 
             kpi_card("Storico Prezzi", "Nessuno", "Nessuna base storica disponibile", accent=theme.color_blue)
 
     with c2:
-        instrument_counts = count_instruments_by_category(data.get("strumenti", []), settings)
+        strumenti_attivi_q = [s for s in data.get("strumenti", []) if str(s.get("ticker") or "") not in _chiusi]
+        instrument_counts = count_instruments_by_category(strumenti_attivi_q, settings)
         st.markdown(
-            kpi_compact_category_html(len(data["strumenti"]), instrument_counts, settings),
+            kpi_compact_category_html(len(strumenti_attivi_q), instrument_counts, settings),
             unsafe_allow_html=True,
         )
 
@@ -160,7 +162,7 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         visible_categories = list(get_selected_category_codes(settings))
         categories_text = ", ".join(visible_categories)
         with profile_step("Quotazioni", "render KPI alto pagina"):
-            _render_top_data_kpis(data, theme, settings)
+            _render_top_data_kpis(data, theme, settings, chiusi_tickers=getattr(ctx, "chiusi_tickers", frozenset()))
         vertical_gap("md")
         with profile_step("Quotazioni", "preparazione tabella diagnostica quotazioni"):
             _chiusi = getattr(ctx, "chiusi_tickers", frozenset())
@@ -221,7 +223,7 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             vertical_gap("sm")
             render_section_title(
                 "Ultime quotazioni aggiornate",
-                subtitle=t(settings, "quotes.visible_count", "Letture visibili: {visible} strumenti su {total} presenti in portafoglio.").format(visible=len(qdf), total=len(data.get("strumenti", []))),
+                subtitle=t(settings, "quotes.visible_count", "Letture visibili: {visible} strumenti su {total} presenti in portafoglio.").format(visible=len(qdf), total=sum(1 for s in data.get("strumenti", []) if str(s.get("ticker") or "") not in _chiusi)),
                 comment=t(settings, "quotes.table_note", "La tabella riporta l'ultimo valore letto per ciascuno strumento, il confronto con il dato precedente e l'esito finale della lettura. Clicca sul ticker per aprire il dettaglio con grafico e ultime letture disponibili."),
                 icon="quotes",
                 gap_after="xs",

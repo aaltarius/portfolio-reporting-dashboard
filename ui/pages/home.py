@@ -748,6 +748,122 @@ def _render_category_analysis(
                 st.plotly_chart(fig, width="stretch")
 
 
+def _render_dettaglio_kpi_finanziari(ctx: SimpleNamespace) -> None:
+    """Tabelle sintetiche sotto Proventi: liquidità, P/L storico, total return."""
+    from core.models import get_registro_eventi
+
+    eventi = get_registro_eventi(ctx.data)
+    info_map = {s["ticker"]: s for s in ctx.data.get("strumenti", [])}
+    proventi = ctx.proventi or []
+    da = ctx.da
+    df_full = getattr(ctx, "df", pd.DataFrame())
+
+    # --- 1. LIQUIDITÀ DISPONIBILE ---
+    liq_rows: list[dict] = []
+    for ev in eventi:
+        tipo = ev.get("tipo_evento", "")
+        tk = str(ev.get("ticker") or "")
+        nome = info_map.get(tk, {}).get("nome", tk) if tk else ""
+        importo = float(ev.get("importo_netto") or ev.get("importo_lordo") or 0)
+        if tipo == "VERSAMENTO":
+            liq_rows.append({"Voce": "Versamento", "Dettaglio": "", "Importo": abs(importo)})
+        elif tipo == "PRELIEVO":
+            liq_rows.append({"Voce": "Prelievo", "Dettaglio": "", "Importo": -abs(importo)})
+        elif tipo == "ACQUISTO":
+            liq_rows.append({"Voce": "Acquisto", "Dettaglio": nome or tk, "Importo": -abs(importo)})
+        elif tipo in ("VENDITA", "RIMBORSO A SCADENZA"):
+            liq_rows.append({"Voce": tipo.capitalize(), "Dettaglio": nome or tk, "Importo": abs(importo)})
+    for pv in proventi:
+        t_pv = str(pv.get("tipo_provento") or "Provento")
+        tk = str(pv.get("ticker") or "")
+        nome = info_map.get(tk, {}).get("nome", tk) if tk else ""
+        netto = float(pv.get("importo_netto") or pv.get("importo_lordo") or 0)
+        liq_rows.append({"Voce": t_pv.capitalize(), "Dettaglio": nome or tk, "Importo": netto})
+
+    df_liq = pd.DataFrame(liq_rows)
+    liq_tot = float(getattr(ctx, "liquidita_attuale", 0))
+
+    # --- 2. P/L STORICO per strumento ---
+    pl_rows: list[dict] = []
+    if not df_full.empty and "Ticker" in df_full.columns:
+        for _, row in df_full.iterrows():
+            tk = str(row.get("Ticker") or "")
+            nome = info_map.get(tk, {}).get("nome", tk)
+            pl_real = float(row.get("P/L Realizzato Netto") or 0)
+            pl_open = float(row.get("P/L") or 0)
+            qty = float(row.get("Quote") or 0)
+            stato = "Chiuso" if qty < 1e-4 else "Aperto"
+            if abs(pl_real) > 0.001 or abs(pl_open) > 0.001:
+                pl_rows.append({
+                    "Strumento": nome or tk,
+                    "Ticker": tk,
+                    "Stato": stato,
+                    "P/L realizzato": pl_real,
+                    "P/L latente": pl_open if qty >= 1e-4 else 0.0,
+                })
+    df_pl = pd.DataFrame(pl_rows) if pl_rows else pd.DataFrame(columns=["Strumento", "Ticker", "Stato", "P/L realizzato", "P/L latente"])
+
+    # --- 3. TOTAL RETURN breakdown ---
+    pl_totale = float(getattr(ctx, "pl_totale", 0))
+    pl_latente = float(getattr(ctx, "pl", 0))
+    pl_realizzato = pl_totale - pl_latente
+    prov_netti = float(getattr(ctx, "proventi_netti_totali", 0))
+    total_ret = float(getattr(ctx, "total_return", 0))
+    tr_rows = [
+        {"Componente": "P/L realizzato (posizioni chiuse)", "Importo": pl_realizzato},
+        {"Componente": "P/L latente (posizioni aperte)", "Importo": pl_latente},
+        {"Componente": "Proventi netti (cedole + dividendi)", "Importo": prov_netti},
+        {"Componente": "Total Return", "Importo": total_ret},
+    ]
+
+    # --- RENDER ---
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        render_section_title("Liquidità disponibile", icon="income", gap_after="xs")
+        if df_liq.empty:
+            st.caption("Nessun flusso registrato.")
+        else:
+            agg = df_liq.groupby("Voce", sort=False)["Importo"].sum().reset_index()
+            agg.columns = ["Voce", "Importo"]
+            agg = agg.sort_values("Importo", ascending=False)
+            agg_styled = (
+                agg.style
+                .format({"Importo": lambda v: fmt_eur_it(v, 2)})
+                .apply(lambda s: [f"color:{'#16a34a' if v >= 0 else '#dc2626'}" for v in s], subset=["Importo"])
+            )
+            render_styled_table(agg_styled)
+            st.markdown(f"**Totale disponibile: {fmt_eur_it(liq_tot, 2)}**")
+
+    with c2:
+        render_section_title("P/L storico per strumento", icon="chart", gap_after="xs")
+        if df_pl.empty:
+            st.caption("Nessun P/L rilevato.")
+        else:
+            df_pl_show = df_pl[["Strumento", "Stato", "P/L realizzato", "P/L latente"]].copy()
+            tot_real = df_pl["P/L realizzato"].sum()
+            tot_lat = df_pl["P/L latente"].sum()
+            df_pl_show = pd.concat([df_pl_show, pd.DataFrame([{"Strumento": "Totale", "Stato": "", "P/L realizzato": tot_real, "P/L latente": tot_lat}])], ignore_index=True)
+            pl_styled = (
+                df_pl_show.style
+                .format({
+                    "P/L realizzato": lambda v: fmt_eur_it(v, 2),
+                    "P/L latente": lambda v: fmt_eur_it(v, 2),
+                })
+                .apply(lambda s: [f"color:{'#16a34a' if v >= 0 else '#dc2626'}" if isinstance(v, (int, float)) else "" for v in s], subset=["P/L realizzato", "P/L latente"])
+            )
+            render_styled_table(pl_styled)
+
+    with c3:
+        render_section_title("Total Return", icon="chart", gap_after="xs")
+        df_tr = pd.DataFrame(tr_rows)
+        tr_styled = (
+            df_tr.style
+            .format({"Importo": lambda v: fmt_eur_it(v, 2)})
+            .apply(lambda s: [f"color:{'#16a34a' if v >= 0 else '#dc2626'}" for v in s], subset=["Importo"])
+        )
+        render_styled_table(tr_styled)
+
+
 def _render_proventi_section(proventi: list[dict[str, Any]], data: dict[str, Any]) -> None:
     """Mostra riepilogo proventi (cedole e dividendi)."""
     if proventi:
@@ -829,7 +945,8 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             theme,
         )
         active_count = len(da.index) if not da.empty else 0
-        total_count = len(data.get("strumenti", []))
+        _chiusi_tk = getattr(ctx, "chiusi_tickers", frozenset())
+        total_count = sum(1 for s in data.get("strumenti", []) if str(s.get("ticker") or "") not in _chiusi_tk)
         suffix = f"{active_count} strumenti attivi su {total_count} censiti"
         if should_render_section("Portafoglio", "Controvalore del Portafoglio", settings):
             render_section_title(
@@ -840,6 +957,8 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             )
             _render_portfolio_table_section(da, dfh_top, data, proventi, tv, theme, settings, macro_summary=macro_summary, chart_loader=_chart_loader)
             _render_performance_charts(da, tv, theme, settings, chart_loader=_chart_loader)
+            vertical_gap("sm")
+            _render_dettaglio_kpi_finanziari(ctx)
 
         vertical_gap("md")
         if should_render_section("Portafoglio", "Analisi per Macro-Categoria", settings):
