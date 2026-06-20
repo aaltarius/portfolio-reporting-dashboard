@@ -748,120 +748,157 @@ def _render_category_analysis(
                 st.plotly_chart(fig, width="stretch")
 
 
+def _flow_card(title: str, rows: list[tuple[str, str]], total_label: str, total_val: str, total_ok: bool) -> str:
+    """HTML card per il flowchart finanziario. rows = [(label, valore_formattato), ...]"""
+    tot_color = "#16a34a" if total_ok else "#dc2626"
+    rows_html = "".join(
+        f'<tr><td style="padding:2px 6px;font-size:12px;color:#888;">{lbl}</td>'
+        f'<td style="padding:2px 6px;font-size:12px;font-weight:600;text-align:right;">{val}</td></tr>'
+        for lbl, val in rows
+    )
+    return (
+        f'<div style="border:1px solid #ccc;border-radius:8px;padding:10px 12px;'
+        f'background:var(--background-color,#fff);min-height:120px;">'
+        f'<div style="font-size:12px;font-weight:700;letter-spacing:.04em;'
+        f'text-transform:uppercase;margin-bottom:6px;color:#666;">{title}</div>'
+        f'<table style="width:100%;border-collapse:collapse;">{rows_html}'
+        f'<tr style="border-top:1px solid #ddd;">'
+        f'<td style="padding:4px 6px;font-size:13px;font-weight:700;">{total_label}</td>'
+        f'<td style="padding:4px 6px;font-size:14px;font-weight:800;text-align:right;color:{tot_color};">'
+        f'{total_val}</td></tr></table></div>'
+    )
+
+
+_ARROW_H = '<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:28px;color:#aaa;padding-top:30px;">&#8594;</div>'
+_ARROW_V = '<div style="text-align:center;font-size:24px;color:#aaa;padding:4px 0;">&#8595;</div>'
+
+
 def _render_dettaglio_kpi_finanziari(ctx: SimpleNamespace) -> None:
-    """Tabelle sintetiche sotto Proventi: liquidità, P/L storico, total return."""
+    """Flowchart 2×2: Proventi → Liquidità / P/L storico → Total Return."""
     from core.models import get_registro_eventi
 
     eventi = get_registro_eventi(ctx.data)
     info_map = {s["ticker"]: s for s in ctx.data.get("strumenti", [])}
     proventi = ctx.proventi or []
-    da = ctx.da
     df_full = getattr(ctx, "df", pd.DataFrame())
 
-    # --- 1. LIQUIDITÀ DISPONIBILE ---
-    liq_rows: list[dict] = []
+    # ---- Raccolta dati ----
+    # Proventi aggregati per tipo
+    prov_agg: dict[str, float] = {}
+    for pv in proventi:
+        t = str(pv.get("tipo_provento") or "Provento").capitalize()
+        prov_agg[t] = prov_agg.get(t, 0.0) + float(pv.get("importo_netto") or pv.get("importo_lordo") or 0)
+    prov_netti = float(getattr(ctx, "proventi_netti_totali", 0))
+
+    # Liquidità: flussi aggregati per categoria
+    liq_agg: dict[str, float] = {
+        "Versamenti": 0.0, "Prelievi": 0.0, "Acquisti": 0.0,
+        "Rimborsi/Vendite": 0.0, "Proventi": prov_netti,
+    }
     for ev in eventi:
         tipo = ev.get("tipo_evento", "")
-        tk = str(ev.get("ticker") or "")
-        nome = info_map.get(tk, {}).get("nome", tk) if tk else ""
         importo = float(ev.get("importo_netto") or ev.get("importo_lordo") or 0)
         if tipo == "VERSAMENTO":
-            liq_rows.append({"Voce": "Versamento", "Dettaglio": "", "Importo": abs(importo)})
+            liq_agg["Versamenti"] += abs(importo)
         elif tipo == "PRELIEVO":
-            liq_rows.append({"Voce": "Prelievo", "Dettaglio": "", "Importo": -abs(importo)})
+            liq_agg["Prelievi"] -= abs(importo)
         elif tipo == "ACQUISTO":
-            liq_rows.append({"Voce": "Acquisto", "Dettaglio": nome or tk, "Importo": -abs(importo)})
+            liq_agg["Acquisti"] -= abs(importo)
         elif tipo in ("VENDITA", "RIMBORSO A SCADENZA"):
-            liq_rows.append({"Voce": tipo.capitalize(), "Dettaglio": nome or tk, "Importo": abs(importo)})
-    for pv in proventi:
-        t_pv = str(pv.get("tipo_provento") or "Provento")
-        tk = str(pv.get("ticker") or "")
-        nome = info_map.get(tk, {}).get("nome", tk) if tk else ""
-        netto = float(pv.get("importo_netto") or pv.get("importo_lordo") or 0)
-        liq_rows.append({"Voce": t_pv.capitalize(), "Dettaglio": nome or tk, "Importo": netto})
-
-    df_liq = pd.DataFrame(liq_rows)
+            liq_agg["Rimborsi/Vendite"] += abs(importo)
     liq_tot = float(getattr(ctx, "liquidita_attuale", 0))
 
-    # --- 2. P/L STORICO per strumento ---
-    pl_rows: list[dict] = []
+    # P/L storico per strumento
+    pl_real_tot = 0.0
+    pl_lat_tot = 0.0
+    pl_det_rows: list[tuple[str, str]] = []
     if not df_full.empty and "Ticker" in df_full.columns:
         for _, row in df_full.iterrows():
             tk = str(row.get("Ticker") or "")
-            nome = info_map.get(tk, {}).get("nome", tk)
+            nome = info_map.get(tk, {}).get("nome", tk) or tk
             pl_real = float(row.get("P/L Realizzato Netto") or 0)
             pl_open = float(row.get("P/L") or 0)
             qty = float(row.get("Quote") or 0)
-            stato = "Chiuso" if qty < 1e-4 else "Aperto"
-            if abs(pl_real) > 0.001 or abs(pl_open) > 0.001:
-                pl_rows.append({
-                    "Strumento": nome or tk,
-                    "Ticker": tk,
-                    "Stato": stato,
-                    "P/L realizzato": pl_real,
-                    "P/L latente": pl_open if qty >= 1e-4 else 0.0,
-                })
-    df_pl = pd.DataFrame(pl_rows) if pl_rows else pd.DataFrame(columns=["Strumento", "Ticker", "Stato", "P/L realizzato", "P/L latente"])
-
-    # --- 3. TOTAL RETURN breakdown ---
+            pl_real_tot += pl_real
+            if qty >= 1e-4:
+                pl_lat_tot += pl_open
+            if abs(pl_real) > 0.001 or (qty >= 1e-4 and abs(pl_open) > 0.001):
+                lbl = f"{nome[:22]}{'…' if len(nome)>22 else ''}"
+                val_parts = []
+                if abs(pl_real) > 0.001:
+                    val_parts.append(f"R:{fmt_eur_it(pl_real,0)}")
+                if qty >= 1e-4 and abs(pl_open) > 0.001:
+                    val_parts.append(f"L:{fmt_eur_it(pl_open,0)}")
+                pl_det_rows.append((lbl, " ".join(val_parts)))
     pl_totale = float(getattr(ctx, "pl_totale", 0))
-    pl_latente = float(getattr(ctx, "pl", 0))
-    pl_realizzato = pl_totale - pl_latente
-    prov_netti = float(getattr(ctx, "proventi_netti_totali", 0))
+
+    # Total Return
     total_ret = float(getattr(ctx, "total_return", 0))
-    tr_rows = [
-        {"Componente": "P/L realizzato (posizioni chiuse)", "Importo": pl_realizzato},
-        {"Componente": "P/L latente (posizioni aperte)", "Importo": pl_latente},
-        {"Componente": "Proventi netti (cedole + dividendi)", "Importo": prov_netti},
-        {"Componente": "Total Return", "Importo": total_ret},
+    total_ret_pct = float(getattr(ctx, "total_return_pct", 0))
+    cap_netto = float(getattr(ctx, "capitale_netto_versato", 0))
+
+    # ---- Build cards HTML ----
+    card_prov = _flow_card(
+        "Proventi incassati",
+        [(t, fmt_eur_it(v, 2)) for t, v in prov_agg.items()],
+        "Totale netto",
+        fmt_eur_it(prov_netti, 2),
+        prov_netti >= 0,
+    )
+    liq_rows_html = [
+        (k, fmt_eur_it(v, 2)) for k, v in liq_agg.items() if abs(v) > 0.001
     ]
+    card_liq = _flow_card(
+        "Liquidità disponibile",
+        liq_rows_html,
+        "Saldo attuale",
+        fmt_eur_it(liq_tot, 2),
+        liq_tot >= 0,
+    )
+    card_pl = _flow_card(
+        "P/L per strumento",
+        pl_det_rows[:10],
+        "P/L totale (R+L)",
+        fmt_eur_it(pl_totale, 2),
+        pl_totale >= 0,
+    )
+    card_tr = _flow_card(
+        "Total Return",
+        [
+            ("P/L realizzato", fmt_eur_it(pl_real_tot, 2)),
+            ("P/L latente", fmt_eur_it(pl_lat_tot, 2)),
+            ("Proventi netti", fmt_eur_it(prov_netti, 2)),
+            ("Capitale netto versato", fmt_eur_it(cap_netto, 2)),
+        ],
+        f"= {fmt_eur_it(total_ret, 2)}",
+        f"({fmt_pct_it(total_ret_pct, 2)})",
+        total_ret >= 0,
+    )
 
-    # --- RENDER ---
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        render_section_title("Liquidità disponibile", icon="income", gap_after="xs")
-        if df_liq.empty:
-            st.caption("Nessun flusso registrato.")
-        else:
-            agg = df_liq.groupby("Voce", sort=False)["Importo"].sum().reset_index()
-            agg.columns = ["Voce", "Importo"]
-            agg = agg.sort_values("Importo", ascending=False)
-            agg_styled = (
-                agg.style
-                .format({"Importo": lambda v: fmt_eur_it(v, 2)})
-                .apply(lambda s: [f"color:{'#16a34a' if v >= 0 else '#dc2626'}" for v in s], subset=["Importo"])
-            )
-            render_styled_table(agg_styled)
-            st.markdown(f"**Totale disponibile: {fmt_eur_it(liq_tot, 2)}**")
+    # ---- Layout 2×2 con frecce ----
+    render_section_title("Riepilogo flussi finanziari", icon="chart", gap_after="xs")
+    r1c1, r1arr, r1c2 = st.columns([6, 1, 6])
+    with r1c1:
+        st.markdown(card_prov, unsafe_allow_html=True)
+    with r1arr:
+        st.markdown(_ARROW_H, unsafe_allow_html=True)
+    with r1c2:
+        st.markdown(card_liq, unsafe_allow_html=True)
 
-    with c2:
-        render_section_title("P/L storico per strumento", icon="chart", gap_after="xs")
-        if df_pl.empty:
-            st.caption("Nessun P/L rilevato.")
-        else:
-            df_pl_show = df_pl[["Strumento", "Stato", "P/L realizzato", "P/L latente"]].copy()
-            tot_real = df_pl["P/L realizzato"].sum()
-            tot_lat = df_pl["P/L latente"].sum()
-            df_pl_show = pd.concat([df_pl_show, pd.DataFrame([{"Strumento": "Totale", "Stato": "", "P/L realizzato": tot_real, "P/L latente": tot_lat}])], ignore_index=True)
-            pl_styled = (
-                df_pl_show.style
-                .format({
-                    "P/L realizzato": lambda v: fmt_eur_it(v, 2),
-                    "P/L latente": lambda v: fmt_eur_it(v, 2),
-                })
-                .apply(lambda s: [f"color:{'#16a34a' if v >= 0 else '#dc2626'}" if isinstance(v, (int, float)) else "" for v in s], subset=["P/L realizzato", "P/L latente"])
-            )
-            render_styled_table(pl_styled)
+    # frecce verticali
+    vc1, _, vc2 = st.columns([6, 1, 6])
+    with vc1:
+        st.markdown(_ARROW_V, unsafe_allow_html=True)
+    with vc2:
+        st.markdown(_ARROW_V, unsafe_allow_html=True)
 
-    with c3:
-        render_section_title("Total Return", icon="chart", gap_after="xs")
-        df_tr = pd.DataFrame(tr_rows)
-        tr_styled = (
-            df_tr.style
-            .format({"Importo": lambda v: fmt_eur_it(v, 2)})
-            .apply(lambda s: [f"color:{'#16a34a' if v >= 0 else '#dc2626'}" for v in s], subset=["Importo"])
-        )
-        render_styled_table(tr_styled)
+    r2c1, r2arr, r2c2 = st.columns([6, 1, 6])
+    with r2c1:
+        st.markdown(card_pl, unsafe_allow_html=True)
+    with r2arr:
+        st.markdown(_ARROW_H, unsafe_allow_html=True)
+    with r2c2:
+        st.markdown(card_tr, unsafe_allow_html=True)
 
 
 def _render_proventi_section(proventi: list[dict[str, Any]], data: dict[str, Any]) -> None:

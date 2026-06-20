@@ -695,7 +695,7 @@ def get_quotazioni_dataset_bundle(
     category_sig = "|".join(visible_categories)
     closed_tickers_sig = "|".join(sorted(closed_tickers)) if closed_tickers else ""
     bundle_sig = (
-        f"quotes={quotes_data_sig}|flow={flow_data_sig}|complete={int(bool(is_complete_view))}"
+        f"v2|quotes={quotes_data_sig}|flow={flow_data_sig}|complete={int(bool(is_complete_view))}"
         f"|ticker_details={int(bool(include_ticker_detail_charts))}"
         f"|instrument_flow={int(bool(include_instrument_flow_chart))}"
         f"|cats={category_sig}|closed={closed_tickers_sig}"

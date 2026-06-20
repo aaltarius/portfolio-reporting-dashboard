@@ -160,10 +160,9 @@ def render_sidebar(data: dict) -> None:
             _chiusi_by_state_sb = {tk for tk in (_dc_tickers & _tickers_acquisto_sb) if _ticker_cat_map_sb.get(tk) == "GOV"}
             _chiusi_by_events_sb = {tk for tk in (_tickers_acquisto_sb & _tickers_rimborso_sb) if _ticker_cat_map_sb.get(tk) == "GOV"}
             _chiusi_tickers_set = _chiusi_by_stato_sb | _chiusi_by_state_sb | _chiusi_by_events_sb
-            for i, s in enumerate(data["strumenti"]):
-                pg.progress((i + 1) / max(n, 1), text=f"{s['ticker']}...")
-                if str(s.get("ticker", "")) in _chiusi_tickers_set:
-                    continue
+            _strumenti_attivi_sb = [s for s in data["strumenti"] if str(s.get("ticker", "")) not in _chiusi_tickers_set]
+            for i, s in enumerate(_strumenti_attivi_sb):
+                pg.progress((i + 1) / max(len(_strumenti_attivi_sb), 1), text=f"{s['ticker']}...")
                 ticker = str(s.get("ticker", ""))
                 current_price_before = s.get("prezzo")
                 today_prices = (data.get("storico_prezzi") or {}).get(ts, {}) if wd else {}
