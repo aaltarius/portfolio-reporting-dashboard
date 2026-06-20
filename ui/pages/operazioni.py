@@ -1467,10 +1467,15 @@ def _build_strumenti_chiusi_section(data: dict[str, Any]) -> None:
     df_chiusi_pos = df_positions[df_positions["Quote"] <= 0.0001]
     if df_chiusi_pos.empty:
         return
-    # Solo strumenti effettivamente acquistati e poi chiusi (non "osservati" con qty=0)
+    # Solo GOV acquistati e poi chiusi (BTP/BOT scadono definitivamente).
+    # ETF/ETC/FND venduti tornano a "osservato" e non compaiono qui.
     _dc_tickers = set(df_chiusi_pos["Ticker"].tolist())
     _tickers_con_acquisto = {str(ev.get("ticker") or "") for ev in get_registro_eventi(data) if ev.get("tipo_evento") == "ACQUISTO"}
-    chiusi_tickers = _dc_tickers & _tickers_con_acquisto
+    _strumenti_map = {str(s.get("ticker") or ""): s for s in data.get("strumenti", [])}
+    chiusi_tickers = {
+        tk for tk in (_dc_tickers & _tickers_con_acquisto)
+        if macro_cat(str(_strumenti_map.get(tk, {}).get("tipo", "") or "")) == "GOV"
+    }
     chiusi = [s for s in data.get("strumenti", []) if s.get("ticker") in chiusi_tickers]
     if not chiusi:
         return

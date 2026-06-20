@@ -108,11 +108,19 @@ def build_runtime_context_data(
         if col.startswith("PL_") and dfh[col].dtype != "float64":
             dfh[col] = dfh[col].astype("float64")
 
-    # chiusi = posizioni con qty=0 che hanno almeno un ACQUISTO in registro
-    # (distingue "chiuso" da "osservato" che ha sempre qty=0 ma non ha ACQUISTO)
+    # chiusi = posizioni GOV con qty=0 che hanno almeno un ACQUISTO in registro.
+    # I GOV (BTP, BOT, ecc.) scadono e si chiudono definitivamente.
+    # ETF/ETC/FND venduti tornano invece a "osservato" e rimangono in quotazioni.
     _dc_tickers = set(dc["Ticker"].tolist()) if not dc.empty else set()
     _tickers_con_acquisto = {str(ev.get("ticker") or "") for ev in eventi if ev.get("tipo_evento") == "ACQUISTO"}
-    chiusi_tickers: frozenset[str] = frozenset(_dc_tickers & _tickers_con_acquisto)
+    _ticker_cat_map = {
+        str(s.get("ticker") or ""): macro_cat(str(s.get("tipo", "") or ""))
+        for s in (data.get("strumenti") or [])
+    }
+    chiusi_tickers: frozenset[str] = frozenset(
+        tk for tk in (_dc_tickers & _tickers_con_acquisto)
+        if _ticker_cat_map.get(tk) == "GOV"
+    )
 
     # active_tickers = tutti gli strumenti TRANNE quelli confermati chiusi
     active_tickers = [

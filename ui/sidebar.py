@@ -153,7 +153,8 @@ def render_sidebar(data: dict) -> None:
             _ptf_df = _cps(data, include_closed=True).get("df", pd.DataFrame())
             _dc_tickers = set(_ptf_df[_ptf_df["Quote"] <= 0.0001]["Ticker"].tolist()) if not _ptf_df.empty else set()
             _tickers_con_acquisto = {str(ev.get("ticker") or "") for ev in _gre(data) if ev.get("tipo_evento") == "ACQUISTO"}
-            _chiusi_tickers_set = _dc_tickers & _tickers_con_acquisto
+            _ticker_cat_map_sb = {str(s.get("ticker") or ""): macro_cat(str(s.get("tipo", "") or "")) for s in (data.get("strumenti") or [])}
+            _chiusi_tickers_set = {tk for tk in (_dc_tickers & _tickers_con_acquisto) if _ticker_cat_map_sb.get(tk) == "GOV"}
             for i, s in enumerate(data["strumenti"]):
                 pg.progress((i + 1) / max(n, 1), text=f"{s['ticker']}...")
                 if str(s.get("ticker", "")) in _chiusi_tickers_set:
