@@ -127,10 +127,10 @@ from ui.charts.ranges import (
     visible_y_ranges_for_x_range as _compute_visible_y_ranges_for_x_range,
 )
 
-CHART_SETTINGS_VERSION = "2026-06-21-v4"
+CHART_SETTINGS_VERSION = "2026-06-21-v5"
 # Bump CHART_SETTINGS_VERSION ogni volta che si modifica annotations.py,
 # perché la cache figure si basa solo sull'hash di questo file.
-_ANNOTATIONS_VERSION = "2026-06-21-v4"  # sync con annotations.py
+_ANNOTATIONS_VERSION = "2026-06-21-v5"  # sync con annotations.py
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 1) STILE GLOBALE — MODIFICA QUI PER CAMBIARE TUTTA LA DASHBOARD
@@ -147,11 +147,13 @@ GLOBAL_STYLE: dict[str, Any] = {
     'show_legends': True,
     'show_buttons': True,
 
-    # Linee verticali sui grafici temporali (trimestri e anni).
-    # Impostare False per disattivare globalmente senza toccare altro codice.
-    'quarter_gridlines': True,   # linee verticali a ogni confine di trimestre (Jan/Apr/Jul/Oct)
-    'quarter_labels': True,      # etichette T1/T2/T3/T4 al centro di ogni intervallo
-    'year_labels': True,         # etichetta anno in grassetto sulla linea Q1 (1 gennaio)
+    # Linee verticali sui grafici temporali.
+    # Valori possibili: 'quarter' | 'year' | None
+    #   'quarter' → linee a ogni confine trimestrale + etichette T1/T2/T3/T4 + anno su Q1
+    #   'year'    → solo linea e scritta anno (1 gennaio)
+    #   None      → niente
+    # Il singolo grafico può sovrascrivere con 'quarter_mode': ... nel suo dict in CHART_SETTINGS.
+    'quarter_mode': 'quarter',
 
     # ────────────────────────────────────────────────────────────────────────
     # GRAFICI TEMPORALI / ANCORAGGIO A DESTRA
@@ -610,7 +612,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'margin_delta': {'t': 0, 'b': -20, 'l': 0, 'r': -50},
      'y_title': 'Indice di rendimento (Base 100)',
      'y_nticks': 6,
-     'quarter_gridlines': False,
+     'quarter_mode': None,
      'title': None},
 
     'quotazioni_instrument_performance_time_v2': {'type': 'time',
@@ -625,7 +627,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'y_title': 'Indice dal 1° investimento (Base 100)',
      'y_nticks': 8,
      'x_nticks': 15,
-     'quarter_gridlines': False,
+     'quarter_mode': None,
      'title': '<b>Rendimento dello strumento</b>',
      'show_extrema': True},
 
@@ -1066,7 +1068,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'y_title': 'Indice dal 1° investimento (Base 100)',
      'y_nticks': 8,
      'x_nticks': 15,
-     'quarter_gridlines': False,
+     'quarter_mode': None,
      'title': '<b>Rendimento Omogeneizzato per Tipologia</b>',
      'show_extrema': True},
 
@@ -1079,7 +1081,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'y_nticks': 6,
      'y_tickformat': '.0f',
      'y_ticksuffix': '%',
-     'quarter_gridlines': False,
+     'quarter_mode': None,
      'title': '<b>Drawdown per Strumento</b>'},
 
     'quotazioni_correlation_instruments': {'type': 'heatmap',
@@ -1542,7 +1544,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'y_title': 'Indice dal 1° investimento (Base 100)',
      'y_nticks': 8,
      'x_nticks': 15,
-     'quarter_gridlines': False,
+     'quarter_mode': None,
      'title': '<b>Rendimento dello strumento</b>',
      'show_extrema': True},
 
