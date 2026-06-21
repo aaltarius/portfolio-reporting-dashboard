@@ -902,26 +902,37 @@ def _render_reddito_scadenze(ctx: SimpleNamespace, settings: dict[str, Any], the
         return
 
     summary = build_income_scadenze_summary(ctx.data, getattr(ctx, "da", pd.DataFrame()), calendar_df)
-    k1, k2, k3 = st.columns(3)
+    k1, k2, k3, k4 = st.columns(4)
     with k1:
         kpi_card("Cedole attese 12 mesi", fmt_eur_it(summary["expected_net_income_12m"], 2), "reddito netto prospettico", accent=theme.color_green, value_color=theme.color_green)
     with k2:
         kpi_card("Rimborsi 12 mesi", fmt_eur_it(summary["expected_redemptions_12m"], 2), "capitale atteso a scadenza", accent=theme.color_orange, value_color=theme.color_orange)
     with k3:
         kpi_card("Yield su GOV attuali", fmt_pct_it(summary["yield_on_value_12m"], 2), "cedole 12 mesi / valore di mercato GOV", accent=theme.color_blue, value_color=theme.color_blue)
+    with k4:
+        dur = summary.get("duration_media_ponderata")
+        dur_val = f"{dur:.2f} anni" if dur is not None else "—"
+        dur_sub = "sensibilità al tasso: −X% per +1% tassi" if dur is not None else "dati insufficienti"
+        if dur is not None:
+            dur_sub = f"−{dur:.2f}% per ogni +1% sui tassi"
+        kpi_card("Duration media GOV", dur_val, dur_sub, accent=theme.color_purple, value_color=theme.color_purple)
     vertical_gap("sm")
 
     if summary["gov_details_df"] is not None and not summary["gov_details_df"].empty:
         render_section_title(
             "Yield prospettico GOV per strumento",
-            comment="Confronto tra controvalore residuo e cedole nette attese nei prossimi 12 mesi.",
+            comment="YTM lordo annualizzato, Duration Modificata e cedole nette attese nei prossimi 12 mesi.",
             icon="income",
             gap_after="xs",
         )
+        fmt_dur = lambda v: f"{v:.2f} anni" if v is not None and not (isinstance(v, float) and v != v) else "—"
+        fmt_ytm = lambda v: fmt_pct_it(v, 2) if v is not None and not (isinstance(v, float) and v != v) else "—"
         styled = summary["gov_details_df"].style.format({
             "Valore di Mercato": lambda v: fmt_eur_it(v, 2),
             "Cedole 12 mesi": lambda v: fmt_eur_it(v, 2),
             "Yield su valore": lambda v: fmt_pct_it(v, 2),
+            "YTM": fmt_ytm,
+            "Duration mod.": fmt_dur,
         })
         render_styled_table(styled, height="content")
 
@@ -931,7 +942,18 @@ def _render_reddito_scadenze(ctx: SimpleNamespace, settings: dict[str, Any], the
         icon="income",
         gap_after="xs",
     )
-    render_btp_calendar(calendar_df, theme)
+    _da = getattr(ctx, "da", pd.DataFrame())
+    _pmc_map: dict[str, float] = {}
+    if not _da.empty and "Ticker" in _da.columns and "PMC" in _da.columns:
+        for _, _row in _da.iterrows():
+            _t = str(_row.get("Ticker") or "")
+            _pmc = _row.get("PMC")
+            if _t and _pmc is not None:
+                try:
+                    _pmc_map[_t] = float(_pmc)
+                except (ValueError, TypeError):
+                    pass
+    render_btp_calendar(calendar_df, theme, pmc_map=_pmc_map)
 
 
 def _render_flussi_acquisti(ctx: SimpleNamespace, theme) -> None:
@@ -967,7 +989,12 @@ def _render_flussi_acquisti(ctx: SimpleNamespace, theme) -> None:
             purchase_df["category"] = purchase_df["ticker"].map(lambda tk: macro_cat(info_map.get(tk, {}).get("tipo", "")))
             purchase_summary = (
                 purchase_df.groupby(["ticker"], dropna=False)
-                .agg(rate_count=("ticker", "size"), min_price=("prezzo_unitario", "min"), max_price=("prezzo_unitario", "max"))
+                .agg(
+                    n_acquisti=("ticker", "size"),
+                    qty_totale=("quantita", "sum"),
+                    min_price=("prezzo_unitario", "min"),
+                    max_price=("prezzo_unitario", "max"),
+                )
                 .reset_index()
                 .rename(columns={"ticker": "Ticker"})
             )
@@ -976,8 +1003,8 @@ def _render_flussi_acquisti(ctx: SimpleNamespace, theme) -> None:
             purchase_summary = purchase_summary[purchase_summary["category"] != "GOV"].copy()
             if not purchase_summary.empty:
                 render_section_title(
-                    "Rate di acquisto per strumento",
-                    comment="Conta quante volte gli strumenti ad accumulo sono stati acquistati e mette a confronto PMC attuale e range dei prezzi di acquisto.",
+                    "Acquisti per strumento",
+                    comment="Numero di acquisti effettuati e quote totali detenute per strumento, con confronto PMC e range prezzi di acquisto.",
                     gap_after="xs",
                 )
                 installments_fig = build_purchase_installments_chart(purchase_summary, theme)

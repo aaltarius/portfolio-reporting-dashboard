@@ -14,7 +14,25 @@ from ui.theme import ThemeConfig
 from ui.theme import macro_color
 
 
-def render_btp_calendar(calendar_df: pd.DataFrame, theme: ThemeConfig | None = None) -> None:
+_ALIQUOTA_BTP = 0.125
+
+
+def _stima_imposte_scadenza(lordo: float, pmc: float | None) -> float | None:
+    """Stima l'imposta sulla plusvalenza a rimborso per un BTP.
+
+    Restituisce None se PMC non disponibile (la cella mostrerà '—').
+    """
+    if pmc is None:
+        return None
+    gain_frac = max(0.0, (100.0 - pmc) / 100.0)
+    return lordo * gain_frac * _ALIQUOTA_BTP
+
+
+def render_btp_calendar(
+    calendar_df: pd.DataFrame,
+    theme: ThemeConfig | None = None,
+    pmc_map: dict[str, float] | None = None,
+) -> None:
     """Render BTP timeline with possession span, coupons and maturity."""
     if calendar_df is None or calendar_df.empty:
         return
@@ -321,33 +339,104 @@ def render_btp_calendar(calendar_df: pd.DataFrame, theme: ThemeConfig | None = N
     table_rows = events.copy()
     if table_rows.empty:
         return
+
     table_rows["Data"] = table_rows["data"].dt.strftime("%d/%m/%Y")
     table_rows["Evento"] = table_rows["tipo_evento"].map({"cedola": "Cedola", "scadenza": "Scadenza"})
-    table_rows["Importo netto"] = table_rows["importo"].map(lambda v: fmt_eur_it(v, 2))
     row_states = table_rows["stato_evento"].astype(str).reset_index(drop=True)
 
+    # ── Calcola Lordo, Imposte, Netto per ogni riga ──────────────────────
+    lordinata: list[float] = []
+    imposte_list: list[float | None] = []
+    netta: list[float] = []
+
+    for _, row in table_rows.iterrows():
+        tipo = str(row.get("tipo_evento") or "")
+        importo = float(row.get("importo") or 0.0)
+        importo_lordo = float(row.get("importo_lordo") or importo)
+
+        if tipo == "cedola":
+            lordo_v = importo_lordo
+            netto_v = importo
+            imp_v: float | None = lordo_v - netto_v
+        elif tipo == "scadenza":
+            lordo_v = importo_lordo
+            ticker = str(row.get("ticker") or "")
+            pmc = pmc_map.get(ticker) if pmc_map else None
+            imp_v = _stima_imposte_scadenza(lordo_v, pmc)
+            netto_v = lordo_v - imp_v if imp_v is not None else lordo_v
+        else:
+            lordo_v = importo_lordo
+            imp_v = None
+            netto_v = importo
+
+        lordinata.append(lordo_v)
+        imposte_list.append(imp_v)
+        netta.append(netto_v)
+
+    table_rows["_lordo"] = lordinata
+    table_rows["_imposte"] = imposte_list
+    table_rows["_netto"] = netta
+
+    def _fmt_imp(v: float | None) -> str:
+        return fmt_eur_it(v, 2) if v is not None else "—"
+
+    table_rows["Lordo"] = table_rows["_lordo"].map(lambda v: fmt_eur_it(v, 2))
+    table_rows["Imposte"] = table_rows["_imposte"].map(_fmt_imp)
+    table_rows["Netto"] = table_rows["_netto"].map(lambda v: fmt_eur_it(v, 2))
+
+    display_df = (
+        table_rows[["ticker", "Data", "Evento", "Lordo", "Imposte", "Netto"]]
+        .rename(columns={"ticker": "Ticker"})
+        .reset_index(drop=True)
+    )
+
+    # ── Riga Totale ───────────────────────────────────────────────────────
+    tot_lordo = float(table_rows["_lordo"].sum())
+    # Somma imposte solo dove disponibile (non None)
+    imp_nonnull = [v for v in imposte_list if v is not None]
+    tot_imposte: float | None = sum(imp_nonnull) if imp_nonnull else None
+    tot_netto = float(table_rows["_netto"].sum())
+    totale_row = pd.DataFrame([{
+        "Ticker": "Totale",
+        "Data": "",
+        "Evento": "",
+        "Lordo": fmt_eur_it(tot_lordo, 2),
+        "Imposte": _fmt_imp(tot_imposte),
+        "Netto": fmt_eur_it(tot_netto, 2),
+    }])
+    display_df = pd.concat([display_df, totale_row], ignore_index=True)
+
+    # ── Stile (strikethrough sulle incassate, bold sul totale) ────────────
+    # row_states ha len = righe originali; la riga totale è aggiuntiva
     def _row_style(row: pd.Series) -> list[str]:
-        is_incassata = bool(row.name is not None and row.name < len(row_states) and row_states.iloc[row.name] == "incassata")
+        idx = row.name
+        is_totale = (idx == len(row_states))
+        is_incassata = (
+            not is_totale
+            and idx < len(row_states)
+            and row_states.iloc[idx] == "incassata"
+        )
         styles: list[str] = []
         for col in row.index:
-            base = ""
-            if is_incassata:
+            if is_totale:
+                styles.append("font-weight:700;")
+            elif is_incassata:
                 base = "color:#DC2626; text-decoration:line-through;"
                 if col == "Ticker":
                     base += " font-weight:700;"
                 elif col == "Evento":
                     base += " font-weight:600;"
-            styles.append(base)
+                styles.append(base)
+            else:
+                styles.append("")
         return styles
 
-    display_df = table_rows[["ticker", "Data", "Evento", "Importo netto"]].rename(columns={"ticker": "Ticker"}).reset_index(drop=True)
-    incassata_mask = row_states.eq("incassata")
-    for col in ["Ticker", "Data", "Evento", "Importo netto"]:
-        display_df.loc[incassata_mask, col] = display_df.loc[incassata_mask, col].map(_strike_text)
-    styler = (
-        display_df.style
-        .apply(_row_style, axis=1)
-    )
+    # Applica strikethrough al testo (solo righe originali, non la riga Totale)
+    incassata_indices = [i for i, s in enumerate(row_states) if s == "incassata"]
+    for col in ["Ticker", "Data", "Evento", "Lordo", "Imposte", "Netto"]:
+        display_df.loc[incassata_indices, col] = display_df.loc[incassata_indices, col].map(_strike_text)
+
+    styler = display_df.style.apply(_row_style, axis=1)
     render_styled_table(
         styler,
         height="content",
@@ -355,6 +444,8 @@ def render_btp_calendar(calendar_df: pd.DataFrame, theme: ThemeConfig | None = N
             "Ticker": st.column_config.TextColumn(width="small"),
             "Data": st.column_config.TextColumn(width="small"),
             "Evento": st.column_config.TextColumn(width="small"),
-            "Importo netto": st.column_config.TextColumn(width="small"),
+            "Lordo": st.column_config.TextColumn(width="small"),
+            "Imposte": st.column_config.TextColumn(width="small"),
+            "Netto": st.column_config.TextColumn(width="small"),
         },
     )
