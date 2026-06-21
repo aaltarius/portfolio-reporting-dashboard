@@ -127,7 +127,10 @@ from ui.charts.ranges import (
     visible_y_ranges_for_x_range as _compute_visible_y_ranges_for_x_range,
 )
 
-CHART_SETTINGS_VERSION = "2026-06-21-v1"
+CHART_SETTINGS_VERSION = "2026-06-21-v3"
+# Bump CHART_SETTINGS_VERSION ogni volta che si modifica annotations.py,
+# perché la cache figure si basa solo sull'hash di questo file.
+_ANNOTATIONS_VERSION = "2026-06-21-v3"  # sync con annotations.py
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 1) STILE GLOBALE — MODIFICA QUI PER CAMBIARE TUTTA LA DASHBOARD
@@ -143,7 +146,12 @@ GLOBAL_STYLE: dict[str, Any] = {
     'show_titles': True,
     'show_legends': True,
     'show_buttons': True,
-    'quarter_gridlines': True,  # linee verticali trimestre/anno sui grafici temporali
+
+    # Linee verticali sui grafici temporali (trimestri e anni).
+    # Impostare False per disattivare globalmente senza toccare altro codice.
+    'quarter_gridlines': True,   # linee verticali a ogni confine di trimestre (Jan/Apr/Jul/Oct)
+    'quarter_labels': True,      # etichette T1/T2/T3/T4 al centro di ogni intervallo
+    'year_labels': True,         # etichetta anno in grassetto sulla linea Q1 (1 gennaio)
 
     # ────────────────────────────────────────────────────────────────────────
     # GRAFICI TEMPORALI / ANCORAGGIO A DESTRA

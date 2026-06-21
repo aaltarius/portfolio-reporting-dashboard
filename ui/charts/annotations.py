@@ -205,14 +205,17 @@ def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str,
     così le linee esistono su tutto lo storico e sono visibili qualunque bottone
     temporale l'utente selezioni (1M, 3M, 1Y, ALL, …).
 
-    Logica densità basata sul totale dati:
-      < 90 gg   → niente
-      90–730 gg → modalità trimestrale (Jan/Apr/Jul/Oct + etichette Tq al centro)
-      > 730 gg  → modalità annuale (solo 1 gen + anno)
+    Flag indipendenti in global_style:
+      quarter_gridlines: True  — linee verticali a ogni confine trimestrale
+      quarter_labels:    True  — etichette T1/T2/T3/T4 al centro di ogni intervallo
+      year_labels:       True  — etichetta anno in grassetto sulla linea Q1
     """
     if settings.get("type") != "time":
         return
-    if not global_style.get("quarter_gridlines", True):
+    show_lines = global_style.get("quarter_gridlines", True)
+    show_q_labels = global_style.get("quarter_labels", True)
+    show_y_labels = global_style.get("year_labels", True)
+    if not show_lines and not show_q_labels and not show_y_labels:
         return
 
     min_dt, max_dt = _data_range(fig)
@@ -223,9 +226,6 @@ def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str,
     if span_days < 90:
         return
 
-    # Sempre modalità trimestrale: linee a Jan/Apr/Jul/Oct su tutto lo storico.
-    # Anno in grassetto sulla linea Q1; Tq al centro dell'intervallo.
-    # La densità visiva si adatta naturalmente allo zoom/bottone attivo.
     all_bounds = _all_quarter_starts(min_dt.year, max_dt.year)
     max_d = max_dt.date()
 
@@ -241,15 +241,14 @@ def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str,
         if d > max_d:
             break
 
-        # Linea verticale su ogni confine trimestrale
-        new_shapes.append(dict(
-            type="line", x0=d.isoformat(), x1=d.isoformat(),
-            y0=0, y1=1, yref="paper", xref="x",
-            line=dict(color=line_color, width=2, dash="dot"),
-            layer="below",
-        ))
-        # Anno in grassetto solo su Q1
-        if q == 1:
+        if show_lines:
+            new_shapes.append(dict(
+                type="line", x0=d.isoformat(), x1=d.isoformat(),
+                y0=0, y1=1, yref="paper", xref="x",
+                line=dict(color=line_color, width=2, dash="dot"),
+                layer="below",
+            ))
+        if show_y_labels and q == 1:
             new_anns.append(dict(
                 x=d.isoformat(), y=0.99,
                 yref="paper", xref="x",
@@ -258,8 +257,7 @@ def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str,
                 font=dict(size=11, color=year_color, family=font_family),
                 yanchor="top", xanchor="left", xshift=4,
             ))
-        # Etichetta Tq al centro dell'intervallo tra questa linea e la prossima
-        if i + 1 < len(all_bounds):
+        if show_q_labels and i + 1 < len(all_bounds):
             next_d = all_bounds[i + 1][2]
             mid_ts = _pd.Timestamp(d) + (_pd.Timestamp(next_d) - _pd.Timestamp(d)) / 2
             new_anns.append(dict(
