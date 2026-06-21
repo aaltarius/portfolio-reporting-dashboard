@@ -38,22 +38,22 @@ _TYPE_MAP: dict[str, str] = {
 # Tipi che si riferiscono a un titolo (portano ISIN, Shares, ecc.)
 _SECURITY_TYPES = {"Compra", "Vendi", "Interessi", "Dividendo", "Commissioni", "Tasse"}
 
-# Colonne nell'ordine esatto del CSVExporter.java di PP
+# Colonne con nomi italiani (PP installato in italiano — ricavati dall'errore di mappatura)
 _COLUMNS = [
-    "Date",
-    "Type",
-    "Value",
-    "Transaction Currency",
-    "Gross Amount",
-    "Currency Gross Amount",
-    "Exchange Rate",
-    "Fees",
-    "Taxes",
-    "Shares",
+    "Data",
+    "Tipo",
+    "Valore",
+    "Valuta Operazione",
+    "Importo Lordo",
+    "Importo lordo valuta",
+    "Tasso di cambio",
+    "Commissioni",
+    "Tasse",
+    "Azioni",
     "ISIN",
     "WKN",
-    "Ticker Symbol",
-    "Security Name",
+    "Simbolo Titolo",
+    "Nome Titolo",
     "Note",
 ]
 
