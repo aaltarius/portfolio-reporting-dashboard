@@ -3,36 +3,39 @@
 Genera un CSV compatibile con Portfolio Performance (pp.name) a partire
 dal registro_eventi interno dell'applicazione.
 
-Formato CSV di PP (separatore ";", header obbligatorio):
+Formato CSV di PP (separatore ";", decimale ","):
   Date;Type;Value;Transaction Currency;Gross Amount;Currency Gross Amount;
   Exchange Rate;Fees;Taxes;Shares;ISIN;WKN;Ticker Symbol;Security Name;Note
 
-Documentazione PP: https://help.portfolio-performance.info/en/reference/file/import/
+Nomi e tipi ricavati direttamente dai sorgenti Java di PP:
+  - CSVExporter.java     → ordine e nomi colonne
+  - labels.properties   → stringhe esatte dei tipi transazione
+  - TextUtil.java        → separatore ";" se decimale = "," (locale europeo)
 """
 from __future__ import annotations
 
-import csv
 import io
 from typing import Any
 
-# ─── Mapping tipo_evento → tipo PP ──────────────────────────────────────────
+# ─── Mapping tipo_evento → stringa esatta di PP (da labels.properties) ───────
+# Nota: "Dividend" senza 's'; "Withdrawal" (rinominato da "Removal" a gen 2026)
 
 _TYPE_MAP: dict[str, str] = {
     "ACQUISTO":            "Buy",
     "VENDITA":             "Sell",
-    "RIMBORSO A SCADENZA": "Sell",
-    "CEDOLA":              "Interest",
-    "DIVIDENDO":           "Dividends",
+    "RIMBORSO A SCADENZA": "Sell",        # rimborso obbligazione = vendita a valore nominale
+    "CEDOLA":              "Interest",    # cedola obbligazionaria
+    "DIVIDENDO":           "Dividend",    # dividendo azionario (NON "Dividends")
     "VERSAMENTO":          "Deposit",
-    "PRELIEVO":            "Removal",
+    "PRELIEVO":            "Withdrawal",  # NON "Removal" (deprecato da PP gen 2026)
     "COMMISSIONE":         "Fees",
     "IMPOSTA":             "Taxes",
 }
 
-# Tipi che riguardano un titolo specifico (hanno Shares, ISIN, ecc.)
-_SECURITY_TYPES = {"Buy", "Sell", "Interest", "Dividends", "Fees", "Taxes"}
+# Tipi che si riferiscono a un titolo (portano ISIN, Shares, ecc.)
+_SECURITY_TYPES = {"Buy", "Sell", "Interest", "Dividend", "Fees", "Taxes"}
 
-# Colonne nell'ordine esatto richiesto da PP
+# Colonne nell'ordine esatto del CSVExporter.java di PP
 _COLUMNS = [
     "Date",
     "Type",
@@ -51,9 +54,11 @@ _COLUMNS = [
     "Note",
 ]
 
+# Separatore colonne: ";" perché PP su locale europeo (decimale = ",") usa ";"
+_SEP = ";"
+
 
 def _build_instrument_lookup(strumenti: list[dict]) -> dict[str, dict]:
-    """Dizionario ticker → record strumento."""
     lookup: dict[str, dict] = {}
     for s in strumenti or []:
         ticker = str(s.get("ticker", "")).strip().upper()
@@ -62,10 +67,13 @@ def _build_instrument_lookup(strumenti: list[dict]) -> dict[str, dict]:
     return lookup
 
 
-def _fmt(value: float | None, decimals: int = 2) -> str:
+def _fmt_amount(value: float | None, decimals: int = 2) -> str:
+    """Formatta un importo con virgola decimale (formato europeo atteso da PP)."""
     if value is None or value != value:  # NaN check
         return ""
-    return f"{value:.{decimals}f}"
+    formatted = f"{value:.{decimals}f}"
+    # Sostituisce il punto decimale con la virgola (locale europeo/italiano)
+    return formatted.replace(".", ",")
 
 
 def build_portfolio_performance_csv(data: dict[str, Any]) -> str:
@@ -73,73 +81,75 @@ def build_portfolio_performance_csv(data: dict[str, Any]) -> str:
     Converte registro_eventi nel CSV di Portfolio Performance.
 
     Args:
-        data: dizionario portafoglio caricato da persistence.storage.load_data()
+        data: dizionario portafoglio da persistence.storage.load_data()
 
     Returns:
-        Stringa CSV completa (encoding UTF-8, separatore ;).
+        Stringa CSV (UTF-8, separatore ";", decimale ",") pronta per il download.
     """
     eventi: list[dict] = data.get("registro_eventi") or []
     strumenti_list: list[dict] = data.get("strumenti") or []
     lookup = _build_instrument_lookup(strumenti_list)
 
     output = io.StringIO()
-    writer = csv.DictWriter(
-        output,
-        fieldnames=_COLUMNS,
-        delimiter=";",
-        lineterminator="\r\n",
-        extrasaction="ignore",
-        quoting=csv.QUOTE_MINIMAL,
-    )
-    writer.writeheader()
 
-    # Ordina per data per avere lo storico cronologico in PP
-    sorted_eventi = sorted(
-        eventi,
-        key=lambda e: str(e.get("data") or ""),
-    )
+    # Header
+    output.write(_SEP.join(_COLUMNS) + "\r\n")
+
+    # Ordina cronologicamente
+    sorted_eventi = sorted(eventi, key=lambda e: str(e.get("data") or ""))
 
     for ev in sorted_eventi:
         tipo_interno = str(ev.get("tipo_evento", "")).strip().upper()
         pp_type = _TYPE_MAP.get(tipo_interno)
         if not pp_type:
-            continue  # evento non mappabile (es. note interne)
+            continue
 
         ticker = str(ev.get("ticker", "") or "").strip().upper()
         strumento = lookup.get(ticker, {})
         isin = str(strumento.get("isin", "") or "").strip()
         nome = str(strumento.get("nome", ticker) or ticker).strip()
 
-        importo_lordo = ev.get("importo_lordo") or 0.0
-        commissioni = ev.get("commissioni") or 0.0
-        imposte = ev.get("imposte") or 0.0
-        quantita = ev.get("quantita") or 0.0
-        importo_netto = ev.get("importo_netto") or 0.0
+        importo_lordo = float(ev.get("importo_lordo") or 0.0)
+        commissioni   = float(ev.get("commissioni")   or 0.0)
+        imposte       = float(ev.get("imposte")       or 0.0)
+        quantita      = float(ev.get("quantita")      or 0.0)
+        importo_netto = float(ev.get("importo_netto") or 0.0)
 
-        # PP vuole il valore netto come "Value" (positivo per entrate, negativo per uscite)
-        # Per Buy/Fees/Taxes/Removal PP si aspetta il valore come uscita di cassa (positivo)
-        if pp_type in {"Buy", "Fees", "Taxes", "Removal"}:
-            value = abs(importo_netto)
-        else:
-            value = abs(importo_netto)
+        is_security = pp_type in _SECURITY_TYPES
 
-        row: dict[str, str] = {
-            "Date":                    str(ev.get("data", "") or ""),
-            "Type":                    pp_type,
-            "Value":                   _fmt(value),
-            "Transaction Currency":    "EUR",
-            "Gross Amount":            _fmt(abs(importo_lordo)) if pp_type in _SECURITY_TYPES else "",
-            "Currency Gross Amount":   "EUR" if pp_type in _SECURITY_TYPES and importo_lordo else "",
-            "Exchange Rate":           "",
-            "Fees":                    _fmt(abs(commissioni)) if commissioni else "",
-            "Taxes":                   _fmt(abs(imposte)) if imposte else "",
-            "Shares":                  _fmt(abs(quantita), 6) if pp_type in _SECURITY_TYPES and quantita else "",
-            "ISIN":                    isin if pp_type in _SECURITY_TYPES else "",
-            "WKN":                     "",
-            "Ticker Symbol":           ticker if pp_type in _SECURITY_TYPES else "",
-            "Security Name":           nome if pp_type in _SECURITY_TYPES else "",
-            "Note":                    str(ev.get("note", "") or ""),
-        }
-        writer.writerow(row)
+        # PP vuole sempre il valore come numero positivo; il segno è implicito nel Type
+        value = abs(importo_netto)
+
+        # Gross Amount = importo lordo prima di fee/tasse; se zero usa quantita*prezzo
+        gross = abs(importo_lordo)
+        if gross == 0 and is_security:
+            prezzo = float(ev.get("prezzo_unitario") or 0.0)
+            gross = abs(quantita * prezzo)
+
+        row = [
+            str(ev.get("data", "") or ""),                                  # Date
+            pp_type,                                                         # Type
+            _fmt_amount(value),                                              # Value
+            "EUR",                                                           # Transaction Currency
+            _fmt_amount(gross) if is_security and gross else "",            # Gross Amount
+            "EUR" if is_security and gross else "",                         # Currency Gross Amount
+            "",                                                              # Exchange Rate
+            _fmt_amount(abs(commissioni)) if commissioni else "",           # Fees
+            _fmt_amount(abs(imposte)) if imposte else "",                   # Taxes
+            _fmt_amount(abs(quantita), 6) if is_security and quantita else "", # Shares
+            isin if is_security else "",                                     # ISIN
+            "",                                                              # WKN
+            ticker if is_security else "",                                   # Ticker Symbol
+            nome if is_security else "",                                     # Security Name
+            str(ev.get("note", "") or ""),                                  # Note
+        ]
+
+        # Metti in virgolette i campi che contengono il separatore ";"
+        def _quote(s: str) -> str:
+            if _SEP in s or '"' in s:
+                return '"' + s.replace('"', '""') + '"'
+            return s
+
+        output.write(_SEP.join(_quote(f) for f in row) + "\r\n")
 
     return output.getvalue()
