@@ -858,12 +858,14 @@ def _process_op_cart_items(
                 validate_price(float(prezzo_op), info_map.get(ticker, {}).get("tipo"))
                 validate_number_input(float(lordo_op), 0.01, 1_000_000_000.0)
                 validate_number_input(float(comm), 0.0, 1_000_000.0)
-                netto_op = -(lordo_op + comm) if evento == "ACQUISTO" else (lordo_op - comm)
+                imposte_op = float(raw.get("imposte", 0.0) or 0.0) if evento == "RIMBORSO A SCADENZA" else 0.0
+                validate_number_input(float(imposte_op), 0.0, 1_000_000.0)
+                netto_op = -(lordo_op + comm + imposte_op) if evento == "ACQUISTO" else (lordo_op - comm - imposte_op)
                 if evento == "ACQUISTO" and auto_liq:
                     clean.append({
                         "_kind": "auto_versa",
                         "data": str(data_obj),
-                        "importo": lordo_op + comm,
+                        "importo": lordo_op + comm + imposte_op,
                         "ticker": ticker,
                     })
                 clean.append({
@@ -875,7 +877,7 @@ def _process_op_cart_items(
                     "prezzo_unitario": prezzo_op,
                     "importo_lordo": lordo_op,
                     "commissioni": comm,
-                    "imposte": 0.0,
+                    "imposte": imposte_op,
                     "importo_netto": netto_op,
                     "ignore_cash_check": bool(auto_liq),
                     "note": note,

@@ -159,7 +159,7 @@
         <div class="fld"><label>Prezzo €</label><input type="number" id="f_prezzo" min="0" step="any" placeholder="0" /></div>
         <div class="fld"><label>Importo €</label><input type="number" id="f_importo" min="0" step="any" placeholder="0" /></div>
         <div class="fld"><label>Comm. €</label><input type="number" id="f_comm" min="0" step="any" placeholder="0" /></div>
-        <div class="fld"><label>Aliquota %</label><input type="number" id="f_aliquota" min="0" max="100" step="any" placeholder="0" /></div>
+        <div class="fld"><label id="lbl_aliquota">Aliquota %</label><input type="number" id="f_aliquota" min="0" step="any" placeholder="0" /></div>
         <div class="fld chk"><div class="chk-row"><input type="checkbox" id="f_autoliq" /><span>Auto-liq.</span></div></div>
         <div class="fld wide"><label>Note</label><input type="text" id="f_note" maxlength="120" placeholder="—" /></div>
       </div>
@@ -219,7 +219,7 @@ const els = {
   comm:$("f_comm"), aliquota:$("f_aliquota"), autoliq:$("f_autoliq"),
   note:$("f_note"), hint:$("hint"), add:$("btn_add"), clear:$("btn_clear"),
   submit:$("btn_submit"), submitTop:$("btn_submit_top"), receipt:$("receipt"), footInfo:$("foot_info"),
-  formLabel:$("formLabel")
+  formLabel:$("formLabel"), lblAliquota:$("lbl_aliquota")
 };
 
 /* ── Utilità ── */
@@ -271,7 +271,10 @@ function applyEventoState(){
   els.prezzo.disabled = !isTrade;
   els.importo.disabled = !(isTrade || isProv || isCash);
   els.comm.disabled = !isTrade;
-  els.aliquota.disabled = !isProv;
+  const isRimborso = (ev === "RIMBORSO A SCADENZA");
+  els.aliquota.disabled = !isProv && !isRimborso;
+  els.aliquota.max = isRimborso ? "" : "100";
+  els.lblAliquota.textContent = isRimborso ? "Imposte €" : "Aliquota %";
   els.autoliq.disabled = ev !== "ACQUISTO";
 
   if(!isTrade){ els.qty.value=""; els.prezzo.value=""; els.comm.value=""; }
@@ -279,7 +282,7 @@ function applyEventoState(){
   if(isProv){
     const d = defaultAliquota(ev, els.ticker.value);
     els.aliquota.value = d > 0 ? d : "";
-  } else {
+  } else if(!isRimborso) {
     els.aliquota.value = "";
   }
   refreshHint();
@@ -333,7 +336,9 @@ function readRow(){
     return {item:{
       data:data, evento:ev, ticker:tk,
       qty:q, prezzo:p, importo:i,
-      comm:num(els.comm), aliquota:0,
+      comm:num(els.comm),
+      imposte: ev==="RIMBORSO A SCADENZA" ? num(els.aliquota) : 0,
+      aliquota:0,
       auto_liq:(ev==="ACQUISTO" && els.autoliq.checked),
       note:els.note.value.trim()
     }};
@@ -368,6 +373,7 @@ function describe(it){
     const t = triplet(it.qty, it.prezzo, it.importo);
     let sub = fmtQty(t.q)+" × "+fmtEur(t.p)+" = "+fmtEur(t.i)+" €";
     if(it.comm>0) sub += "  ·  comm. "+fmtEur(it.comm)+" €";
+    if(it.imposte>0) sub += "  ·  imposte "+fmtEur(it.imposte)+" €";
     if(it.auto_liq) sub += "  ·  auto-liq.";
     return {ev:it.evento, head:it.ticker, sub:sub};
   }
@@ -384,7 +390,7 @@ function cashEffect(it){
   }
   if(it.evento==="VENDITA"||it.evento==="RIMBORSO A SCADENZA"){
     const t = triplet(it.qty,it.prezzo,it.importo);
-    return t.i - it.comm;
+    return t.i - it.comm - (it.imposte||0);
   }
   if(PROVENTO.includes(it.evento)){
     const al = it.aliquota>0 ? it.aliquota : 0;
@@ -502,6 +508,7 @@ function loadForEdit(idx){
   } else {
     els.importo.value = it.importo>0 ? it.importo : "";
     if(PROVENTO.includes(it.evento)) els.aliquota.value = it.aliquota>0 ? it.aliquota : "";
+    else if(it.evento==="RIMBORSO A SCADENZA") els.aliquota.value = it.imposte>0 ? it.imposte : "";
   }
   els.note.value = it.note || "";
   els.add.classList.add("editing");
@@ -548,10 +555,13 @@ function populateTickers(list){
     TICKERS[t.ticker] = t;
     const o = document.createElement("option");
     o.value = t.ticker;
-    o.textContent = t.ticker + (t.nome && t.nome!==t.ticker ? " — " + t.nome : "");
+    o.textContent = t.ticker + _heldLabel(t) + (t.nome && t.nome!==t.ticker ? " — " + t.nome : "");
     sel.appendChild(o);
   });
   if(TICKERS[cur]) sel.value = cur;
+}
+function _heldLabel(t){
+  return t.held > 1e-9 ? " (" + fmtQty(t.held) + " qt.)" : "";
 }
 function applyPalette(p){
   if(!p) return;
