@@ -127,10 +127,10 @@ from ui.charts.ranges import (
     visible_y_ranges_for_x_range as _compute_visible_y_ranges_for_x_range,
 )
 
-CHART_SETTINGS_VERSION = "2026-06-21-v3"
+CHART_SETTINGS_VERSION = "2026-06-21-v4"
 # Bump CHART_SETTINGS_VERSION ogni volta che si modifica annotations.py,
 # perché la cache figure si basa solo sull'hash di questo file.
-_ANNOTATIONS_VERSION = "2026-06-21-v3"  # sync con annotations.py
+_ANNOTATIONS_VERSION = "2026-06-21-v4"  # sync con annotations.py
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 1) STILE GLOBALE — MODIFICA QUI PER CAMBIARE TUTTA LA DASHBOARD
@@ -610,6 +610,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'margin_delta': {'t': 0, 'b': -20, 'l': 0, 'r': -50},
      'y_title': 'Indice di rendimento (Base 100)',
      'y_nticks': 6,
+     'quarter_gridlines': False,
      'title': None},
 
     'quotazioni_instrument_performance_time_v2': {'type': 'time',
@@ -624,6 +625,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'y_title': 'Indice dal 1° investimento (Base 100)',
      'y_nticks': 8,
      'x_nticks': 15,
+     'quarter_gridlines': False,
      'title': '<b>Rendimento dello strumento</b>',
      'show_extrema': True},
 
@@ -1064,6 +1066,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'y_title': 'Indice dal 1° investimento (Base 100)',
      'y_nticks': 8,
      'x_nticks': 15,
+     'quarter_gridlines': False,
      'title': '<b>Rendimento Omogeneizzato per Tipologia</b>',
      'show_extrema': True},
 
@@ -1076,6 +1079,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'y_nticks': 6,
      'y_tickformat': '.0f',
      'y_ticksuffix': '%',
+     'quarter_gridlines': False,
      'title': '<b>Drawdown per Strumento</b>'},
 
     'quotazioni_correlation_instruments': {'type': 'heatmap',
@@ -1538,6 +1542,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'y_title': 'Indice dal 1° investimento (Base 100)',
      'y_nticks': 8,
      'x_nticks': 15,
+     'quarter_gridlines': False,
      'title': '<b>Rendimento dello strumento</b>',
      'show_extrema': True},
 

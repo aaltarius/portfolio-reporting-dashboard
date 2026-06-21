@@ -212,9 +212,10 @@ def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str,
     """
     if settings.get("type") != "time":
         return
-    show_lines = global_style.get("quarter_gridlines", True)
-    show_q_labels = global_style.get("quarter_labels", True)
-    show_y_labels = global_style.get("year_labels", True)
+    # Il setting per-grafico sovrascrive il globale; se assente si usa il globale.
+    show_lines = settings.get("quarter_gridlines", global_style.get("quarter_gridlines", True))
+    show_q_labels = settings.get("quarter_labels", global_style.get("quarter_labels", True))
+    show_y_labels = settings.get("year_labels", global_style.get("year_labels", True))
     if not show_lines and not show_q_labels and not show_y_labels:
         return
 
