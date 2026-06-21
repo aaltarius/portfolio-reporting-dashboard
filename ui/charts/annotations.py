@@ -167,8 +167,9 @@ def normalise_annotations(
 # ── Linee verticali di trimestre / anno ──────────────────────────────────────
 
 def _display_range(fig) -> tuple[_pd.Timestamp | None, _pd.Timestamp | None]:
-    """Legge il range X già impostato sul layout (dopo force_time_default_range).
-    Fallback: estrae min/max dalle tracce."""
+    """Legge SOLO il range X già impostato sul layout (dopo force_time_default_range).
+    Nessun fallback alle tracce: se il range non è esplicitamente impostato
+    sul layout, restituisce (None, None) e le linee non vengono aggiunte."""
     try:
         rng = getattr(fig.layout.xaxis, "range", None)
         if rng and len(rng) == 2:
@@ -178,51 +179,33 @@ def _display_range(fig) -> tuple[_pd.Timestamp | None, _pd.Timestamp | None]:
                 return (t0, t1) if t0 <= t1 else (t1, t0)
     except Exception:
         pass
-    # fallback: estremi delle tracce
-    all_ts: list[_pd.Timestamp] = []
-    for trace in fig.data:
-        x = getattr(trace, "x", None)
-        if x is None:
-            continue
-        for v in x:
-            if v is None:
-                continue
-            try:
-                ts = _pd.Timestamp(v)
-                if not _pd.isna(ts):
-                    all_ts.append(ts)
-            except Exception:
-                continue
-    if not all_ts:
-        return None, None
-    return min(all_ts), max(all_ts)
+    return None, None
 
 
-def _quarter_boundaries(min_dt: _pd.Timestamp, max_dt: _pd.Timestamp) -> list[tuple[int, int, _date]]:
-    """Restituisce [(year, quarter, date)] per ogni confine di trimestre nel range."""
+def _all_quarter_starts(from_year: int, to_year: int) -> list[tuple[int, int, _date]]:
+    """Tutti i confini di trimestre da from_year a to_year incluso (+ 1 extra per midpoint)."""
     result: list[tuple[int, int, _date]] = []
-    year = min_dt.year
-    while True:
+    for year in range(from_year, to_year + 2):
         for q, month in enumerate([1, 4, 7, 10], start=1):
-            d = _date(year, month, 1)
-            if d > max_dt.date():
-                return result
-            if d >= min_dt.date():
-                result.append((year, q, d))
-        year += 1
-        if year > max_dt.year + 2:
-            break
+            result.append((year, q, _date(year, month, 1)))
     return result
 
 
 def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str, Any]) -> None:
     """Aggiunge linee verticali di trimestre/anno ai grafici temporali.
 
-    Usa il range X già impostato sul layout (range visibile di default),
-    non l'intero storico dei dati. Logica densità sul range visibile:
-      < 90 gg  → niente
-      90–730 gg → linee trimestrali; T1 ha anno su riga sopra + "T1" sotto
-      > 730 gg  → solo linee annuali (1 gen) + etichetta anno
+    Range visibile: legge fig.layout.xaxis.range (impostato da force_time_default_range).
+    Se non è impostato, non aggiunge nulla (niente fallback alle tracce).
+
+    Logica densità sul range visibile:
+      < 90 gg   → niente
+      90–730 gg → modalità trimestrale:
+                   - linee verticali a ogni confine Q (Jan/Apr/Jul/Oct)
+                   - anno (bold) sulla linea di Q1, y=0.96
+                   - etichetta Tq centrata nell'intervallo tra due linee, y=0.88
+      > 730 gg  → modalità annuale:
+                   - linea verticale solo a Jan 1
+                   - anno (bold) sulla linea, y=0.96
     """
     if settings.get("type") != "time":
         return
@@ -238,61 +221,77 @@ def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str,
         return
 
     quarterly_mode = span_days <= 730
-    boundaries = _quarter_boundaries(min_dt, max_dt)
-    if not boundaries:
-        return
+
+    # Genera tutti i confini nel range (+ 1 extra dopo max_dt per calcolare midpoint dell'ultimo Tq)
+    all_bounds = _all_quarter_starts(min_dt.year, max_dt.year)
+    max_d = max_dt.date()
+    min_d = min_dt.date()
 
     font_family = global_style.get("font_family", "Inter, Arial, sans-serif")
-    line_color = "rgba(150,150,150,0.20)"
-    year_color = "rgba(100,100,100,0.70)"
-    q_color = "rgba(130,130,130,0.55)"
+    line_color = "rgba(140,140,140,0.40)"
+    year_color = "rgba(90,90,90,0.75)"
+    q_color = "rgba(120,120,120,0.60)"
 
     new_shapes: list[dict[str, Any]] = []
     new_anns: list[dict[str, Any]] = []
 
-    for year, q, d in boundaries:
-        if not quarterly_mode and q != 1:
-            continue
-        x_str = d.isoformat()
-        new_shapes.append(dict(
-            type="line",
-            x0=x_str, x1=x_str,
-            y0=0, y1=1,
-            yref="paper", xref="x",
-            line=dict(color=line_color, width=1, dash="dot"),
-            layer="below",
-        ))
+    for i, (year, q, d) in enumerate(all_bounds):
+        if d > max_d:
+            break  # oltre il range visibile
 
         if quarterly_mode:
-            # Anno in bold sull'etichetta di T1, su riga sopra rispetto al label Tq
-            if q == 1:
-                # Riga superiore: anno
+            # Linea su ogni confine di trimestre che cade nel range
+            if d >= min_d:
+                new_shapes.append(dict(
+                    type="line", x0=d.isoformat(), x1=d.isoformat(),
+                    y0=0, y1=1, yref="paper", xref="x",
+                    line=dict(color=line_color, width=1.5, dash="dot"),
+                    layer="below",
+                ))
+                # Anno solo su Q1, alla linea
+                if q == 1:
+                    new_anns.append(dict(
+                        x=d.isoformat(), y=0.96,
+                        yref="paper", xref="x",
+                        text=f"<b>{year}</b>",
+                        showarrow=False,
+                        font=dict(size=8, color=year_color, family=font_family),
+                        yanchor="top", xanchor="left", xshift=3,
+                    ))
+
+            # Etichetta Tq centrata tra questa linea e la prossima
+            # (anche se d < min_d, il midpoint potrebbe essere nel range visibile)
+            if i + 1 < len(all_bounds):
+                next_d = all_bounds[i + 1][2]
+                mid_ts = _pd.Timestamp(d) + (_pd.Timestamp(next_d) - _pd.Timestamp(d)) / 2
+                mid_d = mid_ts.date()
+                if min_d <= mid_d <= max_d:
+                    new_anns.append(dict(
+                        x=mid_ts.isoformat(), y=0.88,
+                        yref="paper", xref="x",
+                        text=f"T{q}",
+                        showarrow=False,
+                        font=dict(size=8, color=q_color, family=font_family),
+                        yanchor="top", xanchor="center",
+                    ))
+
+        else:
+            # Modalità annuale: solo confini Q1 (1 gennaio)
+            if q == 1 and d >= min_d:
+                new_shapes.append(dict(
+                    type="line", x0=d.isoformat(), x1=d.isoformat(),
+                    y0=0, y1=1, yref="paper", xref="x",
+                    line=dict(color=line_color, width=1.5, dash="dot"),
+                    layer="below",
+                ))
                 new_anns.append(dict(
-                    x=x_str, y=0.99,
+                    x=d.isoformat(), y=0.96,
                     yref="paper", xref="x",
                     text=f"<b>{year}</b>",
                     showarrow=False,
                     font=dict(size=8, color=year_color, family=font_family),
                     yanchor="top", xanchor="left", xshift=3,
                 ))
-            # Riga inferiore: etichetta trimestre (stessa x, y più bassa)
-            new_anns.append(dict(
-                x=x_str, y=0.91,
-                yref="paper", xref="x",
-                text=f"T{q}",
-                showarrow=False,
-                font=dict(size=8, color=q_color, family=font_family),
-                yanchor="top", xanchor="left", xshift=3,
-            ))
-        else:
-            new_anns.append(dict(
-                x=x_str, y=0.99,
-                yref="paper", xref="x",
-                text=f"<b>{year}</b>",
-                showarrow=False,
-                font=dict(size=8, color=year_color, family=font_family),
-                yanchor="top", xanchor="left", xshift=3,
-            ))
 
     if new_shapes:
         existing = list(getattr(fig.layout, "shapes", []) or [])
