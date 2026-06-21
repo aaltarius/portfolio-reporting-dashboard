@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from datetime import date as _date
 from typing import Any, Callable
+
+import pandas as _pd
 
 
 def is_baseline_annotation(text: str) -> bool:
@@ -159,3 +162,111 @@ def normalise_annotations(
         fig.update_layout(annotations=new_anns)
     except Exception:
         pass
+
+
+# ── Linee verticali di trimestre / anno ──────────────────────────────────────
+
+def _collect_x_dates(fig) -> tuple[_pd.Timestamp | None, _pd.Timestamp | None]:
+    all_ts: list[_pd.Timestamp] = []
+    for trace in fig.data:
+        x = getattr(trace, "x", None)
+        if x is None:
+            continue
+        for v in x:
+            if v is None:
+                continue
+            try:
+                ts = _pd.Timestamp(v)
+                if not _pd.isna(ts):
+                    all_ts.append(ts)
+            except Exception:
+                continue
+    if not all_ts:
+        return None, None
+    return min(all_ts), max(all_ts)
+
+
+def _quarter_boundaries(min_dt: _pd.Timestamp, max_dt: _pd.Timestamp) -> list[tuple[int, int, _date]]:
+    """Restituisce [(year, quarter, date)] per ogni confine di trimestre nel range."""
+    result: list[tuple[int, int, _date]] = []
+    year = min_dt.year
+    while True:
+        for q, month in enumerate([1, 4, 7, 10], start=1):
+            d = _date(year, month, 1)
+            if d > max_dt.date():
+                return result
+            if d >= min_dt.date():
+                result.append((year, q, d))
+        year += 1
+        if year > max_dt.year + 2:
+            break
+    return result
+
+
+def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str, Any]) -> None:
+    """Aggiunge linee verticali di trimestre/anno ai grafici temporali.
+
+    Logica densità:
+      < 90 gg  → niente
+      90–730 gg → linee trimestrali + etichette T1/T2/T3/T4 (T1 include l'anno)
+      > 730 gg  → solo linee annuali (1 gen) + etichetta anno
+    """
+    if settings.get("type") != "time":
+        return
+    if not global_style.get("quarter_gridlines", True):
+        return
+
+    min_dt, max_dt = _collect_x_dates(fig)
+    if min_dt is None or max_dt is None:
+        return
+
+    span_days = (max_dt - min_dt).days
+    if span_days < 90:
+        return
+
+    quarterly_mode = span_days <= 730
+    boundaries = _quarter_boundaries(min_dt, max_dt)
+    if not boundaries:
+        return
+
+    font_family = global_style.get("font_family", "Inter, Arial, sans-serif")
+    line_color = "rgba(150,150,150,0.20)"
+    label_color = "rgba(120,120,120,0.60)"
+
+    new_shapes: list[dict[str, Any]] = []
+    new_anns: list[dict[str, Any]] = []
+
+    for year, q, d in boundaries:
+        if not quarterly_mode and q != 1:
+            continue
+        x_str = d.isoformat()
+        new_shapes.append(dict(
+            type="line",
+            x0=x_str, x1=x_str,
+            y0=0, y1=1,
+            yref="paper", xref="x",
+            line=dict(color=line_color, width=1, dash="dot"),
+            layer="below",
+        ))
+        if quarterly_mode:
+            text = f"<b>{year}</b> T{q}" if q == 1 else f"T{q}"
+        else:
+            text = f"<b>{year}</b>"
+        new_anns.append(dict(
+            x=x_str,
+            y=0.99,
+            yref="paper", xref="x",
+            text=text,
+            showarrow=False,
+            font=dict(size=8, color=label_color, family=font_family),
+            yanchor="top",
+            xanchor="left",
+            xshift=3,
+        ))
+
+    if new_shapes:
+        existing = list(getattr(fig.layout, "shapes", []) or [])
+        fig.update_layout(shapes=existing + new_shapes)
+    if new_anns:
+        existing = list(getattr(fig.layout, "annotations", []) or [])
+        fig.update_layout(annotations=existing + new_anns)

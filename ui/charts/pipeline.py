@@ -26,6 +26,7 @@ def apply_settings_pipeline(
     normalise_baseline_lines: Callable[[Any, dict[str, Any]], None],
     normalise_baseline_axis_titles: Callable[[Any, dict[str, Any]], None],
     normalise_annotations: Callable[[Any, dict[str, Any]], None],
+    add_quarter_gridlines: Callable[[Any, dict[str, Any]], None],
 ):
     """Orchestra il pipeline finale di apply_settings senza conoscere Plotly-specific internals."""
     clear_all_range_controls(fig)
@@ -50,6 +51,7 @@ def apply_settings_pipeline(
     normalise_baseline_lines(fig, settings)
     normalise_baseline_axis_titles(fig, settings)
     normalise_annotations(fig, settings)
+    add_quarter_gridlines(fig, settings)  # deve stare dopo normalise_annotations
     return fig
 
 

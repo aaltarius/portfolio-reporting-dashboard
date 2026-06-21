@@ -48,6 +48,7 @@ from ui.charts.axis_refs import (
     trace_yaxis_layout_name as _trace_yaxis_layout_name,
 )
 from ui.charts.annotations import (
+    add_quarter_gridlines as _add_quarter_gridlines_runtime,
     is_baseline_annotation as _is_baseline_annotation,
     normalise_annotations as _apply_annotation_normalisation,
     normalise_baseline_axis_titles as _apply_baseline_axis_title_normalisation,
@@ -142,6 +143,7 @@ GLOBAL_STYLE: dict[str, Any] = {
     'show_titles': True,
     'show_legends': True,
     'show_buttons': True,
+    'quarter_gridlines': True,  # linee verticali trimestre/anno sui grafici temporali
 
     # ────────────────────────────────────────────────────────────────────────
     # GRAFICI TEMPORALI / ANCORAGGIO A DESTRA
@@ -610,7 +612,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'dynamic_y_to_initial_range': True,
      'dynamic_y_by_button': True,
      'dynamic_y_padding': 0.08,
-     'margin_delta': {'t': 0, 'b': -20, 'l': 0, 'r': -20},
+     'margin_delta': {'t': 0, 'b': -50, 'l': 0, 'r': -20},
      'y_title': 'Indice dal 1° investimento (Base 100)',
      'y_nticks': 8,
      'x_nticks': 15,
@@ -629,7 +631,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'dynamic_y_to_initial_range': True,
      'dynamic_y_by_button': True,
      'dynamic_y_padding': 0.08,
-     'margin_delta': {'t': 0, 'b': 0, 'l': 0, 'r': -50},
+     'margin_delta': {'t': 0, 'b': 0, 'l': 0, 'r': 10},
      'skip_weekends': True,
      'y_nticks': 10,
      'x_nticks': 15,
@@ -647,7 +649,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'dynamic_y_by_button': False,
      'y_range': [0, 100],
      'dynamic_y_padding': 0.0,
-     'margin_delta': {'t': 0, 'b': -30, 'l': 0, 'r': -50},
+     'margin_delta': {'t': 0, 'b': -30, 'l': 0, 'r': 10},
      'skip_weekends': True,
      'y_nticks': 10,
      'x_nticks': 15,
@@ -679,21 +681,21 @@ CHARTS: dict[str, dict[str, Any]] = {
      'title': '<b>Concentrazione e distribuzione del portafoglio</b>'},
 
     'home_instrument_pie': {'type': 'pie',
-     'height': 360,
+     'height': 380,
      'legend': 'right',
      'show_buttons': False,
      'margin_delta': {'t': 0, 'b': 10, 'l': 0, 'r': 0},
      'title': '<b>Allocazione globale per strumento</b>'},
 
     'home_category_pie': {'type': 'pie',
-     'height': 360,
+     'height': 380,
      'legend': 'right',
      'show_buttons': False,
      'margin_delta': {'t': 0, 'b': 10, 'l': 0, 'r': 0},
      'title': '<b>Allocazione globale per categoria</b>'},
 
     'home_instrument_bar_perf': {'type': 'bar',
-     'height': 400,
+     'height': 420,
      'legend': 'off',
      'show_buttons': False,
      'margin_delta': {'t': 0, 'b': 0, 'l': 0, 'r': -50},
@@ -708,7 +710,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'title': '<b>Performance % per strumento</b>'},
 
     'home_instrument_bar_pl': {'type': 'bar',
-     'height': 400,
+     'height': 420,
      'legend': 'off',
      'show_buttons': False,
      'margin_delta': {'t': 0, 'b': 0, 'l': 0, 'r': -50},
@@ -918,7 +920,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'legend': 'bottom',
      'show_buttons': True,
      'default_button': '3M',
-     'margin_delta': {'t': 0, 'b': -10, 'l': 0, 'r': -20},
+     'margin_delta': {'t': 0, 'b': -50, 'l': 0, 'r': -20},
      'money_axis': 'auto',
      'y_nticks': 15,
      'title': '<b>Contributo al P/L (Area Stacked)</b>',
@@ -1141,6 +1143,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'show_buttons': False,
      'margin_delta': {'t': 0, 'b': 0, 'l': 0, 'r': -20},
      'bar_padding': 0.5,
+     'y_title': 'N. acquisti',
      'y_nticks': 16,
      'y2_title': 'Prezzi acquisto (€)',
      'y2_range': [0, 200],
@@ -1150,7 +1153,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'y2_nticks': 16,
      'y2_tickformat': ',.2f',
      'x_tickangle': 0,
-     'title': '<b>Rate di acquisto per strumento (piani di accumulo)</b>'},
+     'title': '<b>Acquisti per strumento</b>'},
 
     # ------------------------------------------------------------------
     # SUMMARY
@@ -1846,6 +1849,9 @@ def _normalise_annotations(fig, settings: dict[str, Any]) -> None:
         is_undefined=_is_undefined,
     )
 
+def _add_quarter_gridlines(fig, settings: dict[str, Any]) -> None:
+    _add_quarter_gridlines_runtime(fig, settings, GLOBAL_STYLE)
+
 def _apply_axis_settings(fig, settings: dict[str, Any]) -> tuple[list[Any] | None, list[Any] | None, list[Any] | None]:
     """Applica range/tickformat/nticks e restituisce i range forzati per riapplicarli dopo il padding barre."""
     return _apply_axis_settings_runtime(
@@ -1969,4 +1975,5 @@ def apply_settings(fig, chart_id: str):
         normalise_baseline_lines=_normalise_baseline_lines,
         normalise_baseline_axis_titles=_normalise_baseline_axis_titles,
         normalise_annotations=_normalise_annotations,
+        add_quarter_gridlines=_add_quarter_gridlines,
     )
