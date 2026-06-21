@@ -462,15 +462,4 @@ def render_btp_calendar(
             overwrite=False,
         )
     )
-    render_styled_table(
-        styler,
-        height="content",
-        column_config={
-            "Ticker": st.column_config.TextColumn(width="small"),
-            "Data": st.column_config.TextColumn(width="small"),
-            "Evento": st.column_config.TextColumn(width="small"),
-            "Lordo": st.column_config.TextColumn(width="small"),
-            "Imposte": st.column_config.TextColumn(width="small"),
-            "Netto": st.column_config.TextColumn(width="small"),
-        },
-    )
+    render_styled_table(styler, height="content", static=True)
