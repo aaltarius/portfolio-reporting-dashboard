@@ -436,6 +436,9 @@ def render_btp_calendar(
             return "—"
         return fmt_eur_it(float(v), 2)
 
+    def _fmt_money_strike(v: object) -> str:
+        return _strike_text(_fmt_money(v))
+
     # Stesso pattern della tabella "Yield prospettico GOV" sulla stessa pagina:
     # .style.format() lascia il dtype float → Streamlit right-allinea da solo.
     styler = (
@@ -444,4 +447,9 @@ def render_btp_calendar(
         .apply(_row_style, axis=1)
         .format({"Lordo": _fmt_money, "Imposte": _fmt_money, "Netto": _fmt_money})
     )
+    if incassata_indices:
+        styler = styler.format(
+            _fmt_money_strike,
+            subset=pd.IndexSlice[incassata_indices, ["Lordo", "Imposte", "Netto"]],
+        )
     render_styled_table(styler, height="content")
