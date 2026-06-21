@@ -228,9 +228,9 @@ def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str,
     min_d = min_dt.date()
 
     font_family = global_style.get("font_family", "Inter, Arial, sans-serif")
-    line_color = "rgba(140,140,140,0.40)"
-    year_color = "rgba(90,90,90,0.75)"
-    q_color = "rgba(120,120,120,0.60)"
+    line_color = "rgba(120,120,120,0.60)"
+    year_color = "rgba(80,80,80,0.85)"
+    q_color = "rgba(100,100,100,0.70)"
 
     new_shapes: list[dict[str, Any]] = []
     new_anns: list[dict[str, Any]] = []
@@ -245,18 +245,18 @@ def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str,
                 new_shapes.append(dict(
                     type="line", x0=d.isoformat(), x1=d.isoformat(),
                     y0=0, y1=1, yref="paper", xref="x",
-                    line=dict(color=line_color, width=1.5, dash="dot"),
+                    line=dict(color=line_color, width=2, dash="dot"),
                     layer="below",
                 ))
-                # Anno solo su Q1, alla linea
+                # Anno solo su Q1, in alto sulla linea
                 if q == 1:
                     new_anns.append(dict(
-                        x=d.isoformat(), y=0.96,
+                        x=d.isoformat(), y=0.99,
                         yref="paper", xref="x",
                         text=f"<b>{year}</b>",
                         showarrow=False,
-                        font=dict(size=8, color=year_color, family=font_family),
-                        yanchor="top", xanchor="left", xshift=3,
+                        font=dict(size=11, color=year_color, family=font_family),
+                        yanchor="top", xanchor="left", xshift=4,
                     ))
 
             # Etichetta Tq centrata tra questa linea e la prossima
@@ -267,11 +267,11 @@ def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str,
                 mid_d = mid_ts.date()
                 if min_d <= mid_d <= max_d:
                     new_anns.append(dict(
-                        x=mid_ts.isoformat(), y=0.88,
+                        x=mid_ts.isoformat(), y=0.99,
                         yref="paper", xref="x",
                         text=f"T{q}",
                         showarrow=False,
-                        font=dict(size=8, color=q_color, family=font_family),
+                        font=dict(size=11, color=q_color, family=font_family),
                         yanchor="top", xanchor="center",
                     ))
 
@@ -281,16 +281,16 @@ def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str,
                 new_shapes.append(dict(
                     type="line", x0=d.isoformat(), x1=d.isoformat(),
                     y0=0, y1=1, yref="paper", xref="x",
-                    line=dict(color=line_color, width=1.5, dash="dot"),
+                    line=dict(color=line_color, width=2, dash="dot"),
                     layer="below",
                 ))
                 new_anns.append(dict(
-                    x=d.isoformat(), y=0.96,
+                    x=d.isoformat(), y=0.99,
                     yref="paper", xref="x",
                     text=f"<b>{year}</b>",
                     showarrow=False,
-                    font=dict(size=8, color=year_color, family=font_family),
-                    yanchor="top", xanchor="left", xshift=3,
+                    font=dict(size=11, color=year_color, family=font_family),
+                    yanchor="top", xanchor="left", xshift=4,
                 ))
 
     if new_shapes:

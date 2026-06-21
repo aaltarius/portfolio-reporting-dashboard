@@ -127,7 +127,7 @@ from ui.charts.ranges import (
     visible_y_ranges_for_x_range as _compute_visible_y_ranges_for_x_range,
 )
 
-CHART_SETTINGS_VERSION = "2026-05-09-v1"
+CHART_SETTINGS_VERSION = "2026-06-21-v1"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 1) STILE GLOBALE — MODIFICA QUI PER CAMBIARE TUTTA LA DASHBOARD
