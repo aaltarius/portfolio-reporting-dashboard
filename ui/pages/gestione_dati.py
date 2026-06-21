@@ -812,7 +812,39 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 st.info("Nessun backup disponibile.")
 
         # ─────────────────────────────────────────────
-        # 3. Cache grafici
+        # 3. Esporta per Portfolio Performance
+        # ─────────────────────────────────────────────
+        _section_line()
+        render_section_title(
+            "Esporta per Portfolio Performance",
+            comment="Genera un CSV importabile in Portfolio Performance (app open source). Include tutte le transazioni: acquisti, vendite, cedole, dividendi, rimborsi, versamenti e prelievi.",
+            icon="data",
+        )
+
+        with st.expander("Esporta transazioni → Portfolio Performance", expanded=False):
+            legend_block(
+                "Il file CSV generato è compatibile con Portfolio Performance (portfolio-performance.info). "
+                "Per importarlo: apri PP → File → Importa → CSV. "
+                "Assicurati che il conto deposito e il conto liquidità siano già creati in PP prima di importare."
+            )
+            try:
+                from core.services.portfolio_performance_export import build_portfolio_performance_csv
+                n_eventi = len(data.get("registro_eventi") or [])
+                st.caption(f"Registro eventi: {n_eventi} record da esportare.")
+                pp_csv = build_portfolio_performance_csv(data)
+                st.download_button(
+                    "⬇️ Scarica portfolio_performance.csv",
+                    data=pp_csv.encode("utf-8-sig"),  # BOM per compatibilità Excel/PP
+                    file_name="portfolio_performance.csv",
+                    mime="text/csv",
+                    width="stretch",
+                    key="datahub_download_pp_csv",
+                )
+            except Exception as _pp_exc:
+                st.error(f"Errore generazione CSV: {_pp_exc}")
+
+        # ─────────────────────────────────────────────
+        # 4. Cache grafici
         # ─────────────────────────────────────────────
         _section_line()
         render_section_title(
@@ -992,7 +1024,7 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             st.error(f"Errore nella gestione cache: {e}")
 
         # ─────────────────────────────────────────────
-        # 4. Import quotazioni e log
+        # 5. Import quotazioni e log
         # ─────────────────────────────────────────────
         _section_line()
         render_section_title(
