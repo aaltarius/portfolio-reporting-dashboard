@@ -232,6 +232,8 @@ def form_operazione_dialog(data: dict[str, Any], ctx: SimpleNamespace) -> None:
         qty_disp = _safe_float(row_sel.iloc[0].get("Quote", 0)) if not row_sel.empty else 0.0
         pmc_disp = _safe_float(row_sel.iloc[0].get("PMC", 0)) if not row_sel.empty else 0.0
         prezzo_att = _safe_float(strum_sel.get("prezzo", 0))
+        if qty_disp > 1e-12:
+            st.caption(f"Quote disponibili: **{fmt_qty_it(qty_disp, 4)}**")
 
         ops_consentite = ["ACQUISTO"]
         if qty_disp > 1e-12:
@@ -1359,7 +1361,12 @@ def strumenti_dialog(data: dict[str, Any], ctx: SimpleNamespace) -> None:
 
     with tab_chiusi:
         st.markdown("##### Strumenti chiusi")
-        chiusi = [s for s in data.get("strumenti", []) if s.get("stato", "aperto") == "chiuso"]
+        _ev_tab = get_registro_eventi(data)
+        _rimborso_tab = {str(ev.get("ticker") or "") for ev in _ev_tab if ev.get("tipo_evento") == "RIMBORSO A SCADENZA"}
+        chiusi = [
+            s for s in data.get("strumenti", [])
+            if s.get("stato") == "chiuso" or str(s.get("ticker") or "") in _rimborso_tab
+        ]
         if not chiusi:
             st.info("Nessuno strumento chiuso.")
         else:
@@ -1464,21 +1471,24 @@ def _render_centro_operativo(data: dict[str, Any], ctx: SimpleNamespace, theme) 
 
 def _build_strumenti_chiusi_section(data: dict[str, Any]) -> None:
     """Renders closed-instrument summary at the bottom of the Operazioni page."""
-    df_positions = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
-    if df_positions.empty:
-        return
-    df_chiusi_pos = df_positions[df_positions["Quote"] <= 0.0001]
-    if df_chiusi_pos.empty:
-        return
-    # Strumenti con stato=="chiuso": GOV rimborsati/venduti definitivamente.
+    # Fonte primaria: stato=="chiuso". Fallback: evento RIMBORSO A SCADENZA (sempre GOV).
+    _ev_chiusi = get_registro_eventi(data)
+    _rimborso_op = {
+        str(ev.get("ticker") or "")
+        for ev in _ev_chiusi
+        if ev.get("tipo_evento") == "RIMBORSO A SCADENZA" and str(ev.get("ticker") or "")
+    }
     chiusi_tickers = {
         str(s.get("ticker") or "")
         for s in data.get("strumenti", [])
-        if s.get("stato") == "chiuso" and str(s.get("ticker") or "")
+        if str(s.get("ticker") or "")
+        and (s.get("stato") == "chiuso" or str(s.get("ticker") or "") in _rimborso_op)
     }
     chiusi = [s for s in data.get("strumenti", []) if s.get("ticker") in chiusi_tickers]
     if not chiusi:
         return
+    # Portfolio state: usato solo per P/L realizzato (fallback a 0 se assente)
+    df_positions = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
 
     render_section_title(
         "Strumenti chiusi",
