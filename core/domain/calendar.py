@@ -171,6 +171,7 @@ def build_btp_calendar(data: dict) -> pd.DataFrame:
             "data_fine",
             "data",
             "importo",
+            "importo_lordo",
             "importo_label",
             "tipo_evento",
             "stato_evento",
