@@ -162,7 +162,7 @@
         <div class="fld"><label>Aliquota %</label><input type="number" id="f_aliquota" min="0" max="100" step="any" placeholder="0" /></div>
         <div class="fld"><label>Imposte €</label><input type="number" id="f_imposte_eur" min="0" step="any" placeholder="0" /></div>
         <div class="fld chk"><div class="chk-row"><input type="checkbox" id="f_autoliq" /><span>Auto-liq.</span></div></div>
-        <div class="fld wide"><label>Note</label><input type="text" id="f_note" maxlength="120" placeholder="—" /></div>
+        <div class="fld wide"><label>Note</label><input type="text" id="f_note" maxlength="120" placeholder="—" list="note_suggestions" autocomplete="off" /><datalist id="note_suggestions"></datalist></div>
       </div>
       <div class="hint" id="hint"></div>
       <div class="add-row">
@@ -209,6 +209,7 @@ const TRADE = ["ACQUISTO","VENDITA","RIMBORSO A SCADENZA"];
 const PROVENTO = ["CEDOLA","DIVIDENDO"];
 const CASH = ["VERSAMENTO","PRELIEVO","COMMISSIONE","IMPOSTA"];
 let TICKERS = {};      // mappa ticker -> info
+let NOTES_BY_EVENT = {}; // mappa tipo_evento -> [note]
 let cart = [];         // voci confermate
 let editIndex = -1;    // indice voce in modifica (-1 = nessuna)
 let processing = false;
@@ -218,7 +219,7 @@ const els = {
   data:$("f_data"), evento:$("f_evento"), ticker:$("f_ticker"),
   qty:$("f_qty"), prezzo:$("f_prezzo"), importo:$("f_importo"),
   comm:$("f_comm"), aliquota:$("f_aliquota"), impostEur:$("f_imposte_eur"), autoliq:$("f_autoliq"),
-  note:$("f_note"), hint:$("hint"), add:$("btn_add"), clear:$("btn_clear"),
+  note:$("f_note"), noteSuggestions:$("note_suggestions"), hint:$("hint"), add:$("btn_add"), clear:$("btn_clear"),
   submit:$("btn_submit"), submitTop:$("btn_submit_top"), receipt:$("receipt"), footInfo:$("foot_info"),
   formLabel:$("formLabel")
 };
@@ -257,6 +258,18 @@ function defaultAliquota(evento, tk){
   return 0;
 }
 
+/* ── Suggerimenti note per tipo evento ── */
+function refreshNoteSuggestions(){
+  const ev = els.evento.value;
+  const notes = NOTES_BY_EVENT[ev] || [];
+  els.noteSuggestions.innerHTML = "";
+  notes.forEach(function(n){
+    const o = document.createElement("option");
+    o.value = n;
+    els.noteSuggestions.appendChild(o);
+  });
+}
+
 /* ── Abilitazione campi in base all'evento ── */
 function applyEventoState(){
   const ev = els.evento.value;
@@ -286,6 +299,7 @@ function applyEventoState(){
     els.aliquota.value = "";
   }
   if(!impostEurEnabled) els.impostEur.value = "";
+  refreshNoteSuggestions();
   refreshHint();
 }
 
@@ -598,6 +612,8 @@ function forceWideDialog(){
 Streamlit.onRender(function(args){
   applyPalette(args.palette);
   populateTickers(args.tickers);
+  if(args.notes && typeof args.notes === "object") NOTES_BY_EVENT = args.notes;
+  refreshNoteSuggestions();
   if(!els.data.value){
     els.data.value = new Date().toISOString().slice(0,10);
   }

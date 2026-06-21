@@ -798,6 +798,20 @@ def _op_cart_tickers(data: dict[str, Any], ctx: SimpleNamespace) -> list[dict[st
     return out
 
 
+def _op_cart_notes(data: dict[str, Any]) -> dict[str, list[str]]:
+    """Estrae le ultime note distinte per tipo evento da registro_eventi."""
+    from collections import defaultdict
+    seen: dict[str, list[str]] = defaultdict(list)
+    for ev in reversed(get_registro_eventi(data)):
+        nota = str(ev.get("note", "") or "").strip()
+        tipo = str(ev.get("tipo_evento", "") or "")
+        if nota and tipo and nota not in seen[tipo]:
+            seen[tipo].append(nota)
+            if len(seen[tipo]) >= 8:
+                continue
+    return dict(seen)
+
+
 def _process_op_cart_items(
     data: dict[str, Any], ctx: SimpleNamespace, items: list[dict[str, Any]]
 ) -> tuple[int, list[dict[str, Any]]]:
@@ -965,6 +979,7 @@ def nuove_operazioni_dialog(data: dict[str, Any], ctx: SimpleNamespace) -> None:
         result = component(
             tickers=tickers,
             palette=_op_cart_palette(theme),
+            notes=_op_cart_notes(data),
             key="operation_entry_confirm_top_widget_v1",
             default=None,
         )
@@ -1173,6 +1188,36 @@ def _delete_event_by_id(data: dict[str, Any], event_id: str) -> bool:
     save_data(data)
     invalidate_portfolio_cache("eliminazione evento da Centro Operativo")
     return True
+
+
+def _update_event_by_id(data: dict[str, Any], event_id: str, updates: dict[str, Any]) -> bool:
+    """Aggiorna i campi di un evento per ID e riallinea i registri derivati."""
+    event_id = str(event_id or "")
+    for ev in data.get("registro_eventi", []):
+        if str(_normalize_event_record(ev).get("event_id", "")) == event_id:
+            ev.update(updates)
+            tipo = ev.get("tipo_evento", "")
+            # Ricalcola netto in base al tipo
+            if tipo in {"ACQUISTO", "VENDITA", "RIMBORSO A SCADENZA"}:
+                lordo = _safe_float(ev.get("quantita", 0)) * _safe_float(ev.get("prezzo_unitario", 0))
+                ev["importo_lordo"] = lordo
+                comm = _safe_float(ev.get("commissioni", 0))
+                imp = _safe_float(ev.get("imposte", 0))
+                ev["importo_netto"] = -(lordo + comm + imp) if tipo == "ACQUISTO" else (lordo - comm - imp)
+            elif tipo in {"CEDOLA", "DIVIDENDO"}:
+                lordo = _safe_float(ev.get("importo_lordo", 0))
+                aliquota = _safe_float(ev.get("aliquota", 0))
+                ev["imposte"] = lordo * aliquota
+                ev["importo_netto"] = lordo - ev["imposte"]
+            elif tipo == "VERSAMENTO":
+                ev["importo_netto"] = _safe_float(ev.get("importo_lordo", 0))
+            elif tipo in {"PRELIEVO", "COMMISSIONE", "IMPOSTA"}:
+                ev["importo_netto"] = -_safe_float(ev.get("importo_lordo", 0))
+            _rebuild_legacy_registers_after_event_delete(data)
+            save_data(data)
+            invalidate_portfolio_cache("modifica evento da Centro Operativo")
+            return True
+    return False
 
 
 def _instrument_linked_events(data: dict[str, Any], ticker: str) -> list[dict[str, Any]]:
@@ -1388,9 +1433,64 @@ def strumenti_dialog(data: dict[str, Any], ctx: SimpleNamespace) -> None:
             st.dataframe(df_chiusi, hide_index=True, use_container_width=True)
 
 
+def _render_event_edit_form(data: dict[str, Any], ev: dict[str, Any], form_prefix: str) -> None:
+    """Form di modifica per un evento (TRADE, PROVENTO o CASH)."""
+    tipo = str(ev.get("tipo_evento", "") or "")
+    event_id = ev.get("event_id", "")
+
+    # Parse data corrente
+    raw_date = ev.get("data", "")
+    try:
+        default_date = date.fromisoformat(str(raw_date)[:10])
+    except Exception:
+        default_date = date.today()
+
+    eid_slug = str(event_id or "").replace("-", "")[:16]
+    with st.form(f"{form_prefix}_{eid_slug}"):
+        new_date = st.date_input("Data", value=default_date)
+        new_note = st.text_input("Note", value=str(ev.get("note", "") or ""), max_chars=120)
+
+        if tipo in {"ACQUISTO", "VENDITA", "RIMBORSO A SCADENZA"}:
+            c1, c2 = st.columns(2)
+            new_qty = c1.number_input("Qtà", value=float(_safe_float(ev.get("quantita", 0))), min_value=0.0, step=0.0001, format="%.4f")
+            new_prezzo = c2.number_input("Prezzo €", value=float(_safe_float(ev.get("prezzo_unitario", 0))), min_value=0.0, step=0.01, format="%.4f")
+            c3, c4 = st.columns(2)
+            new_comm = c3.number_input("Commissioni €", value=float(_safe_float(ev.get("commissioni", 0))), min_value=0.0, step=0.01, format="%.2f")
+            new_imp = c4.number_input(
+                "Imposte €",
+                value=float(_safe_float(ev.get("imposte", 0))),
+                min_value=0.0,
+                step=0.01,
+                format="%.2f",
+                disabled=(tipo == "ACQUISTO"),
+            )
+        elif tipo in {"CEDOLA", "DIVIDENDO"}:
+            c1, c2 = st.columns(2)
+            new_lordo = c1.number_input("Importo lordo €", value=float(_safe_float(ev.get("importo_lordo", 0))), min_value=0.0, step=0.01, format="%.2f")
+            new_aliq = c2.number_input("Aliquota %", value=float(_safe_float(ev.get("aliquota", 0)) * 100), min_value=0.0, max_value=100.0, step=0.5, format="%.1f")
+        else:  # CASH
+            new_importo = st.number_input("Importo €", value=float(_safe_float(ev.get("importo_lordo", 0))), min_value=0.0, step=0.01, format="%.2f")
+
+        if st.form_submit_button("💾 Salva modifiche", type="primary"):
+            updates: dict[str, Any] = {"data": str(new_date), "note": new_note}
+            if tipo in {"ACQUISTO", "VENDITA", "RIMBORSO A SCADENZA"}:
+                updates.update({"quantita": new_qty, "prezzo_unitario": new_prezzo, "commissioni": new_comm})
+                if tipo != "ACQUISTO":
+                    updates["imposte"] = new_imp
+            elif tipo in {"CEDOLA", "DIVIDENDO"}:
+                updates.update({"importo_lordo": new_lordo, "aliquota": new_aliq / 100.0})
+            else:
+                updates["importo_lordo"] = new_importo
+            if _update_event_by_id(data, event_id, updates):
+                queue_success("Operazione aggiornata.")
+                st.rerun()
+            else:
+                st.error("Evento non trovato.")
+
+
 @st.dialog("📝 Operazioni di portafoglio")
 def gestisci_operazioni_dialog(data: dict[str, Any], ctx: SimpleNamespace) -> None:
-    """Popup per eliminare operazioni/proventi di portafoglio."""
+    """Popup per modificare o eliminare operazioni/proventi di portafoglio."""
     _render_centro_operativo_dialog_style()
     eventi = [ev for ev in get_registro_eventi(data) if ev.get("tipo_evento") in PORTFOLIO_EVENT_TYPES]
     if not eventi:
@@ -1398,26 +1498,32 @@ def gestisci_operazioni_dialog(data: dict[str, Any], ctx: SimpleNamespace) -> No
         return
 
     idx = st.selectbox(
-        "Operazione da eliminare",
+        "Seleziona operazione",
         range(len(eventi)),
         format_func=lambda i: _event_display_label(eventi[i]),
-        key="centro_delete_port_event_idx",
+        key="centro_port_event_idx",
     )
     ev = eventi[idx]
     _render_event_preview(ev)
 
-    confirm = st.checkbox("Confermo l'eliminazione definitiva dell'operazione selezionata", key="centro_delete_port_event_confirm")
-    if st.button("🗑️ Elimina operazione", width="stretch", type="primary", disabled=not confirm):
-        if _delete_event_by_id(data, ev.get("event_id")):
-            queue_success("Operazione eliminata.")
-            st.rerun()
-        else:
-            st.error("Evento non trovato o già eliminato.")
+    tab_edit, tab_del = st.tabs(["✏️ Modifica", "🗑️ Elimina"])
+
+    with tab_edit:
+        _render_event_edit_form(data, ev, "fep")
+
+    with tab_del:
+        confirm = st.checkbox("Confermo l'eliminazione definitiva dell'operazione selezionata", key="centro_delete_port_event_confirm")
+        if st.button("🗑️ Elimina operazione", width="stretch", type="primary", disabled=not confirm):
+            if _delete_event_by_id(data, ev.get("event_id")):
+                queue_success("Operazione eliminata.")
+                st.rerun()
+            else:
+                st.error("Evento non trovato o già eliminato.")
 
 
 @st.dialog("💵 Movimenti di liquidità")
 def gestisci_liquidita_dialog(data: dict[str, Any], ctx: SimpleNamespace) -> None:
-    """Popup per eliminare movimenti di liquidità."""
+    """Popup per modificare o eliminare movimenti di liquidità."""
     _render_centro_operativo_dialog_style()
     eventi = [ev for ev in get_registro_eventi(data) if ev.get("tipo_evento") in CASH_EVENT_TYPES]
     if not eventi:
@@ -1425,21 +1531,27 @@ def gestisci_liquidita_dialog(data: dict[str, Any], ctx: SimpleNamespace) -> Non
         return
 
     idx = st.selectbox(
-        "Movimento da eliminare",
+        "Seleziona movimento",
         range(len(eventi)),
         format_func=lambda i: _event_display_label(eventi[i]),
-        key="centro_delete_cash_event_idx",
+        key="centro_cash_event_idx",
     )
     ev = eventi[idx]
     _render_event_preview(ev)
 
-    confirm = st.checkbox("Confermo l'eliminazione definitiva del movimento selezionato", key="centro_delete_cash_event_confirm")
-    if st.button("🗑️ Elimina movimento", width="stretch", type="primary", disabled=not confirm):
-        if _delete_event_by_id(data, ev.get("event_id")):
-            queue_success("Movimento eliminato.")
-            st.rerun()
-        else:
-            st.error("Evento non trovato o già eliminato.")
+    tab_edit, tab_del = st.tabs(["✏️ Modifica", "🗑️ Elimina"])
+
+    with tab_edit:
+        _render_event_edit_form(data, ev, "fec")
+
+    with tab_del:
+        confirm = st.checkbox("Confermo l'eliminazione definitiva del movimento selezionato", key="centro_delete_cash_event_confirm")
+        if st.button("🗑️ Elimina movimento", width="stretch", type="primary", disabled=not confirm):
+            if _delete_event_by_id(data, ev.get("event_id")):
+                queue_success("Movimento eliminato.")
+                st.rerun()
+            else:
+                st.error("Evento non trovato o già eliminato.")
 
 
 def _render_centro_operativo(data: dict[str, Any], ctx: SimpleNamespace, theme) -> None:

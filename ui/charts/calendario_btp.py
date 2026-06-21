@@ -446,7 +446,22 @@ def render_btp_calendar(
     for col in ["Ticker", "Data", "Evento", "Lordo", "Imposte", "Netto"]:
         display_df.loc[incassata_indices, col] = display_df.loc[incassata_indices, col].map(_strike_text)
 
-    styler = display_df.style.apply(_row_style, axis=1)
+    # col0=Ticker, col1=Data, col2=Evento, col3=Lordo, col4=Imposte, col5=Netto
+    styler = (
+        display_df.style
+        .apply(_row_style, axis=1)
+        .set_properties(
+            subset=["Lordo", "Imposte", "Netto"],
+            **{"text-align": "right"},
+        )
+        .set_table_styles(
+            [
+                {"selector": "th.col3,th.col4,th.col5", "props": [("text-align", "right")]},
+                {"selector": "td.col3,td.col4,td.col5", "props": [("text-align", "right")]},
+            ],
+            overwrite=False,
+        )
+    )
     render_styled_table(
         styler,
         height="content",
