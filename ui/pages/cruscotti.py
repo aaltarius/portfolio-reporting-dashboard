@@ -1112,7 +1112,7 @@ def render_cruscotti(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             return
 
         setattr(ctx, "_advanced_analysis_bundle_v5", analitica_bundle.analysis_bundle)
-        tab_labels_with_analitica = tab_labels + ["Analitica", "Benchmark", "Reddito", "Acquisti", "Accumuli"]
+        tab_labels_with_analitica = tab_labels + ["Analitica", "Benchmark", "Flussi & Acquisti", "Cedole & Scadenze", "Accumuli"]
 
         # Ancora reale usata dalla barra finale delle sottoschede per tornare
         # all'inizio dell'area Cruscotti dopo il cambio scheda.
@@ -1138,12 +1138,12 @@ def render_cruscotti(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 render_benchmark(ctx, summary_bundle=summary_bundle)
 
         with inner_tabs[len(tab_labels) + 2]:
-            with profile_step("Cruscotti", "render tab Reddito"):
-                _render_reddito_scadenze(ctx, settings, theme, cache_strategy)
+            with profile_step("Cruscotti", "render tab Flussi & Acquisti"):
+                _render_flussi_acquisti(ctx, theme)
 
         with inner_tabs[len(tab_labels) + 3]:
-            with profile_step("Cruscotti", "render tab Acquisti"):
-                _render_flussi_acquisti(ctx, theme)
+            with profile_step("Cruscotti", "render tab Cedole & Scadenze"):
+                _render_reddito_scadenze(ctx, settings, theme, cache_strategy)
 
         with inner_tabs[len(tab_labels) + 4]:
             with profile_step("Cruscotti", "render tab Accumuli"):
