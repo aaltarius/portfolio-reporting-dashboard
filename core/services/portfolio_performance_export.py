@@ -17,23 +17,26 @@ from __future__ import annotations
 import io
 from typing import Any
 
-# ─── Mapping tipo_evento → stringa esatta di PP (da labels.properties) ───────
-# Nota: "Dividend" senza 's'; "Withdrawal" (rinominato da "Removal" a gen 2026)
+# ─── Mapping tipo_evento → stringa esatta di PP (locale italiano) ────────────
+# Stringhe ricavate dall'errore di parsing di PP:
+# {Deposito, Prelievo, Interessi, Interessi passivi, Dividendo, Commissioni,
+#  Rimborso commissioni, Tasse, Rimborso tasse, Compra, Vendi,
+#  Trasferimento (in entrata), Trasferimento (in uscita)}
 
 _TYPE_MAP: dict[str, str] = {
-    "ACQUISTO":            "Buy",
-    "VENDITA":             "Sell",
-    "RIMBORSO A SCADENZA": "Sell",        # rimborso obbligazione = vendita a valore nominale
-    "CEDOLA":              "Interest",    # cedola obbligazionaria
-    "DIVIDENDO":           "Dividend",    # dividendo azionario (NON "Dividends")
-    "VERSAMENTO":          "Deposit",
-    "PRELIEVO":            "Withdrawal",  # NON "Removal" (deprecato da PP gen 2026)
-    "COMMISSIONE":         "Fees",
-    "IMPOSTA":             "Taxes",
+    "ACQUISTO":            "Compra",
+    "VENDITA":             "Vendi",
+    "RIMBORSO A SCADENZA": "Vendi",       # rimborso obbligazione = vendita a valore nominale
+    "CEDOLA":              "Interessi",   # cedola obbligazionaria
+    "DIVIDENDO":           "Dividendo",   # dividendo azionario
+    "VERSAMENTO":          "Deposito",
+    "PRELIEVO":            "Prelievo",
+    "COMMISSIONE":         "Commissioni",
+    "IMPOSTA":             "Tasse",
 }
 
 # Tipi che si riferiscono a un titolo (portano ISIN, Shares, ecc.)
-_SECURITY_TYPES = {"Buy", "Sell", "Interest", "Dividend", "Fees", "Taxes"}
+_SECURITY_TYPES = {"Compra", "Vendi", "Interessi", "Dividendo", "Commissioni", "Tasse"}
 
 # Colonne nell'ordine esatto del CSVExporter.java di PP
 _COLUMNS = [
