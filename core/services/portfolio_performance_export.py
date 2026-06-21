@@ -15,6 +15,7 @@ Nomi e tipi ricavati direttamente dai sorgenti Java di PP:
 from __future__ import annotations
 
 import io
+import zipfile
 from typing import Any
 
 # ─── Mapping tipo_evento → stringa esatta di PP (locale italiano) ────────────
@@ -156,3 +157,64 @@ def build_portfolio_performance_csv(data: dict[str, Any]) -> str:
         output.write(_SEP.join(_quote(f) for f in row) + "\r\n")
 
     return output.getvalue()
+
+
+def build_portfolio_performance_prices_zip(data: dict[str, Any], tickers: list[str] | None = None) -> bytes:
+    """
+    Genera uno ZIP con un CSV di prezzi storici per ogni strumento.
+
+    Ogni file si chiama {ISIN}_{ticker}.csv e contiene:
+        Data;Quotazione
+        2024-01-02;98,50
+        ...
+
+    PP importa i prezzi per singolo titolo: seleziona titolo → "Dati storici" → Importa CSV.
+
+    Args:
+        data:    dizionario portafoglio
+        tickers: lista di ticker da includere (None = tutti con storico prezzi)
+
+    Returns:
+        Bytes dello ZIP pronto per st.download_button.
+    """
+    storico: dict[str, dict] = data.get("storico_prezzi") or {}
+    strumenti_list: list[dict] = data.get("strumenti") or []
+    lookup = _build_instrument_lookup(strumenti_list)
+
+    # Raccogli tutti i ticker presenti nello storico
+    all_tickers: set[str] = set()
+    for day_prices in storico.values():
+        all_tickers.update(day_prices.keys())
+
+    target = set(tickers) if tickers else all_tickers
+
+    # Raggruppa per ticker: {ticker: [(date_str, price), ...]}
+    per_ticker: dict[str, list[tuple[str, float]]] = {}
+    for date_str in sorted(storico.keys()):
+        day = storico[date_str]
+        for ticker, price in day.items():
+            if ticker not in target:
+                continue
+            try:
+                p = float(price)
+            except (TypeError, ValueError):
+                continue
+            per_ticker.setdefault(ticker, []).append((date_str, p))
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for ticker, rows in sorted(per_ticker.items()):
+            if not rows:
+                continue
+            strumento = lookup.get(ticker.upper(), {})
+            isin = str(strumento.get("isin", "") or "").strip()
+            safe_ticker = ticker.replace("/", "-").replace("\\", "-")
+            filename = f"{isin}_{safe_ticker}.csv" if isin else f"{safe_ticker}.csv"
+
+            csv_content = "Data;Quotazione\r\n"
+            for date_str, price in rows:
+                csv_content += f"{date_str};{_fmt_amount(price)}\r\n"
+
+            zf.writestr(filename, csv_content.encode("utf-8-sig"))
+
+    return buf.getvalue()

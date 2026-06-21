@@ -834,7 +834,7 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 pp_csv = build_portfolio_performance_csv(data)
                 st.download_button(
                     "⬇️ Scarica portfolio_performance.csv",
-                    data=pp_csv.encode("utf-8-sig"),  # BOM per compatibilità Excel/PP
+                    data=pp_csv.encode("utf-8-sig"),
                     file_name="portfolio_performance.csv",
                     mime="text/csv",
                     width="stretch",
@@ -842,6 +842,32 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 )
             except Exception as _pp_exc:
                 st.error(f"Errore generazione CSV: {_pp_exc}")
+
+        with st.expander("Esporta prezzi storici → Portfolio Performance", expanded=False):
+            legend_block(
+                "Genera uno ZIP con un file CSV di prezzi storici per ogni strumento. "
+                "Utile per BTP e fondi FAM che PP non riesce a quotare automaticamente. "
+                "Come importare: in PP seleziona il titolo → tab 'Dati storici' → tasto Importa → scegli il file CSV corrispondente."
+            )
+            try:
+                from core.services.portfolio_performance_export import build_portfolio_performance_prices_zip
+                sp = data.get("storico_prezzi") or {}
+                n_dates = len(sp)
+                all_tickers: set = set()
+                for d in sp.values():
+                    all_tickers.update(d.keys())
+                st.caption(f"Storico prezzi: {n_dates} date, {len(all_tickers)} strumenti.")
+                pp_zip = build_portfolio_performance_prices_zip(data)
+                st.download_button(
+                    "⬇️ Scarica prezzi_storici_pp.zip",
+                    data=pp_zip,
+                    file_name="prezzi_storici_pp.zip",
+                    mime="application/zip",
+                    width="stretch",
+                    key="datahub_download_pp_prices_zip",
+                )
+            except Exception as _pp_exc2:
+                st.error(f"Errore generazione ZIP prezzi: {_pp_exc2}")
 
         # ─────────────────────────────────────────────
         # 4. Cache grafici
