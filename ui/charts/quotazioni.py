@@ -52,12 +52,12 @@ def build_quote_history_time_chart(ticker, instrument, normalized_series, benchm
             fig.add_vline(
                 x=pd.Timestamp(purchase_date).timestamp() * 1000,
                 line_dash="dot",
-                line_color="rgba(100,116,139,0.55)",
+                line_color="rgba(220,38,38,0.70)",
                 line_width=1.5,
                 annotation_text="Acquisto",
                 annotation_position="top right",
                 annotation_font_size=10,
-                annotation_font_color="rgba(100,116,139,0.85)",
+                annotation_font_color="rgba(220,38,38,0.90)",
             )
         except Exception:
             pass

@@ -166,20 +166,27 @@ def normalise_annotations(
 
 # ── Linee verticali di trimestre / anno ──────────────────────────────────────
 
-def _display_range(fig) -> tuple[_pd.Timestamp | None, _pd.Timestamp | None]:
-    """Legge SOLO il range X già impostato sul layout (dopo force_time_default_range).
-    Nessun fallback alle tracce: se il range non è esplicitamente impostato
-    sul layout, restituisce (None, None) e le linee non vengono aggiunte."""
-    try:
-        rng = getattr(fig.layout.xaxis, "range", None)
-        if rng and len(rng) == 2:
-            t0 = _pd.Timestamp(rng[0])
-            t1 = _pd.Timestamp(rng[1])
-            if not _pd.isna(t0) and not _pd.isna(t1):
-                return (t0, t1) if t0 <= t1 else (t1, t0)
-    except Exception:
-        pass
-    return None, None
+def _data_range(fig) -> tuple[_pd.Timestamp | None, _pd.Timestamp | None]:
+    """Estremi dell'asse X dalle tracce (intero storico dei dati, non il range visibile).
+    Le shapes/annotations devono coprire tutto lo storico così che siano visibili
+    su qualsiasi bottone temporale l'utente selezioni."""
+    all_ts: list[_pd.Timestamp] = []
+    for trace in fig.data:
+        x = getattr(trace, "x", None)
+        if x is None:
+            continue
+        for v in x:
+            if v is None:
+                continue
+            try:
+                ts = _pd.Timestamp(v)
+                if not _pd.isna(ts):
+                    all_ts.append(ts)
+            except Exception:
+                continue
+    if not all_ts:
+        return None, None
+    return min(all_ts), max(all_ts)
 
 
 def _all_quarter_starts(from_year: int, to_year: int) -> list[tuple[int, int, _date]]:
@@ -194,25 +201,21 @@ def _all_quarter_starts(from_year: int, to_year: int) -> list[tuple[int, int, _d
 def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str, Any]) -> None:
     """Aggiunge linee verticali di trimestre/anno ai grafici temporali.
 
-    Range visibile: legge fig.layout.xaxis.range (impostato da force_time_default_range).
-    Se non è impostato, non aggiunge nulla (niente fallback alle tracce).
+    Usa l'INTERO range dei dati dalle tracce (non il range visibile iniziale):
+    così le linee esistono su tutto lo storico e sono visibili qualunque bottone
+    temporale l'utente selezioni (1M, 3M, 1Y, ALL, …).
 
-    Logica densità sul range visibile:
+    Logica densità basata sul totale dati:
       < 90 gg   → niente
-      90–730 gg → modalità trimestrale:
-                   - linee verticali a ogni confine Q (Jan/Apr/Jul/Oct)
-                   - anno (bold) sulla linea di Q1, y=0.96
-                   - etichetta Tq centrata nell'intervallo tra due linee, y=0.88
-      > 730 gg  → modalità annuale:
-                   - linea verticale solo a Jan 1
-                   - anno (bold) sulla linea, y=0.96
+      90–730 gg → modalità trimestrale (Jan/Apr/Jul/Oct + etichette Tq al centro)
+      > 730 gg  → modalità annuale (solo 1 gen + anno)
     """
     if settings.get("type") != "time":
         return
     if not global_style.get("quarter_gridlines", True):
         return
 
-    min_dt, max_dt = _display_range(fig)
+    min_dt, max_dt = _data_range(fig)
     if min_dt is None or max_dt is None:
         return
 
@@ -222,7 +225,7 @@ def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str,
 
     quarterly_mode = span_days <= 730
 
-    # Genera tutti i confini nel range (+ 1 extra dopo max_dt per calcolare midpoint dell'ultimo Tq)
+    # Genera tutti i confini sull'intero storico (+ 1 extra per il midpoint dell'ultimo Tq)
     all_bounds = _all_quarter_starts(min_dt.year, max_dt.year)
     max_d = max_dt.date()
     min_d = min_dt.date()
@@ -237,47 +240,42 @@ def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str,
 
     for i, (year, q, d) in enumerate(all_bounds):
         if d > max_d:
-            break  # oltre il range visibile
+            break  # oltre lo storico dei dati
 
         if quarterly_mode:
-            # Linea su ogni confine di trimestre che cade nel range
-            if d >= min_d:
-                new_shapes.append(dict(
-                    type="line", x0=d.isoformat(), x1=d.isoformat(),
-                    y0=0, y1=1, yref="paper", xref="x",
-                    line=dict(color=line_color, width=2, dash="dot"),
-                    layer="below",
+            # Linea su ogni confine di trimestre (sull'intero storico)
+            new_shapes.append(dict(
+                type="line", x0=d.isoformat(), x1=d.isoformat(),
+                y0=0, y1=1, yref="paper", xref="x",
+                line=dict(color=line_color, width=2, dash="dot"),
+                layer="below",
+            ))
+            # Anno solo su Q1
+            if q == 1:
+                new_anns.append(dict(
+                    x=d.isoformat(), y=0.99,
+                    yref="paper", xref="x",
+                    text=f"<b>{year}</b>",
+                    showarrow=False,
+                    font=dict(size=11, color=year_color, family=font_family),
+                    yanchor="top", xanchor="left", xshift=4,
                 ))
-                # Anno solo su Q1, in alto sulla linea
-                if q == 1:
-                    new_anns.append(dict(
-                        x=d.isoformat(), y=0.99,
-                        yref="paper", xref="x",
-                        text=f"<b>{year}</b>",
-                        showarrow=False,
-                        font=dict(size=11, color=year_color, family=font_family),
-                        yanchor="top", xanchor="left", xshift=4,
-                    ))
-
-            # Etichetta Tq centrata tra questa linea e la prossima
-            # (anche se d < min_d, il midpoint potrebbe essere nel range visibile)
+            # Etichetta Tq al centro dell'intervallo tra questa linea e la prossima
             if i + 1 < len(all_bounds):
                 next_d = all_bounds[i + 1][2]
                 mid_ts = _pd.Timestamp(d) + (_pd.Timestamp(next_d) - _pd.Timestamp(d)) / 2
-                mid_d = mid_ts.date()
-                if min_d <= mid_d <= max_d:
-                    new_anns.append(dict(
-                        x=mid_ts.isoformat(), y=0.99,
-                        yref="paper", xref="x",
-                        text=f"T{q}",
-                        showarrow=False,
-                        font=dict(size=11, color=q_color, family=font_family),
-                        yanchor="top", xanchor="center",
-                    ))
+                new_anns.append(dict(
+                    x=mid_ts.isoformat(), y=0.99,
+                    yref="paper", xref="x",
+                    text=f"T{q}",
+                    showarrow=False,
+                    font=dict(size=11, color=q_color, family=font_family),
+                    yanchor="top", xanchor="center",
+                ))
 
         else:
-            # Modalità annuale: solo confini Q1 (1 gennaio)
-            if q == 1 and d >= min_d:
+            # Modalità annuale: solo 1 gennaio (sull'intero storico)
+            if q == 1:
                 new_shapes.append(dict(
                     type="line", x0=d.isoformat(), x1=d.isoformat(),
                     y0=0, y1=1, yref="paper", xref="x",
