@@ -384,38 +384,29 @@ def render_btp_calendar(
     table_rows["_imposte"] = imposte_list
     table_rows["_netto"] = netta
 
-    def _fmt_imp(v: float | None) -> str:
-        return fmt_eur_it(v, 2) if v is not None else "—"
+    # ── Mantieni i valori monetari come float (uguale alla tabella GOV yield
+    #    sulla stessa pagina): Streamlit right-allinea automaticamente i float.
+    #    Imposte=None → NaN, formattato come "—" dal format(). ────────────────
+    import math as _math
 
-    table_rows["Lordo"] = table_rows["_lordo"].map(lambda v: fmt_eur_it(v, 2))
-    table_rows["Imposte"] = table_rows["_imposte"].map(_fmt_imp)
-    table_rows["Netto"] = table_rows["_netto"].map(lambda v: fmt_eur_it(v, 2))
+    tot_lordo = float(table_rows["_lordo"].sum())
+    imp_nonnull = [v for v in imposte_list if v is not None]
+    tot_imposte_v = sum(imp_nonnull) if imp_nonnull else float("nan")
+    tot_netto = float(table_rows["_netto"].sum())
 
     display_df = (
-        table_rows[["ticker", "Data", "Evento", "Lordo", "Imposte", "Netto"]]
-        .rename(columns={"ticker": "Ticker"})
+        table_rows[["ticker", "Data", "Evento", "_lordo", "_imposte", "_netto"]]
+        .rename(columns={"ticker": "Ticker", "_lordo": "Lordo", "_imposte": "Imposte", "_netto": "Netto"})
         .reset_index(drop=True)
     )
+    # Converti None → NaN nella colonna Imposte per mantenere dtype float
+    display_df["Imposte"] = pd.to_numeric(display_df["Imposte"], errors="coerce")
 
-    # ── Riga Totale ───────────────────────────────────────────────────────
-    tot_lordo = float(table_rows["_lordo"].sum())
-    # Somma imposte solo dove disponibile (non None)
-    imp_nonnull = [v for v in imposte_list if v is not None]
-    tot_imposte: float | None = sum(imp_nonnull) if imp_nonnull else None
-    tot_netto = float(table_rows["_netto"].sum())
     totale_row = pd.DataFrame([{
-        "Ticker": "Totale",
-        "Data": "",
-        "Evento": "",
-        "Lordo": fmt_eur_it(tot_lordo, 2),
-        "Imposte": _fmt_imp(tot_imposte),
-        "Netto": fmt_eur_it(tot_netto, 2),
+        "Ticker": "Totale", "Data": "", "Evento": "",
+        "Lordo": tot_lordo, "Imposte": tot_imposte_v, "Netto": tot_netto,
     }])
     display_df = pd.concat([display_df, totale_row], ignore_index=True)
-
-    # ── Stile (stesso schema della tabella P/L nella pagina: set_table_styles
-    #    con selettori td/th globali + static=True) ───────────────────────────
-    _right_cols = {"Lordo", "Imposte", "Netto"}
 
     def _row_style(row: pd.Series) -> list[str]:
         idx = row.name
@@ -426,7 +417,7 @@ def render_btp_calendar(
             and row_states.iloc[idx] == "incassata"
         )
         styles: list[str] = []
-        for col in row.index:
+        for _ in row.index:
             if is_totale:
                 styles.append("font-weight:700;")
             elif is_incassata:
@@ -435,24 +426,22 @@ def render_btp_calendar(
                 styles.append("")
         return styles
 
-    # Applica strikethrough al testo (solo righe originali)
+    # Applica strikethrough al testo sulle colonne stringa (Ticker, Data, Evento)
     incassata_indices = [i for i, s in enumerate(row_states) if s == "incassata"]
-    for col in ["Ticker", "Data", "Evento", "Lordo", "Imposte", "Netto"]:
+    for col in ["Ticker", "Data", "Evento"]:
         display_df.loc[incassata_indices, col] = display_df.loc[incassata_indices, col].map(_strike_text)
 
-    # col1=Ticker, col2=Data, col3=Evento, col4=Lordo, col5=Imposte, col6=Netto
+    def _fmt_money(v: object) -> str:
+        if v is None or (isinstance(v, float) and _math.isnan(v)):
+            return "—"
+        return fmt_eur_it(float(v), 2)
+
+    # Stesso pattern della tabella "Yield prospettico GOV" sulla stessa pagina:
+    # .style.format() lascia il dtype float → Streamlit right-allinea da solo.
     styler = (
         display_df.style
         .hide(axis="index")
         .apply(_row_style, axis=1)
-        .set_table_styles(
-            [
-                {"selector": "th", "props": [("text-align", "right"), ("font-size", "0.80rem"), ("font-weight", "700"), ("padding", "7px 10px"), ("white-space", "nowrap")]},
-                {"selector": "th:nth-child(-n+3)", "props": [("text-align", "left")]},
-                {"selector": "td", "props": [("text-align", "right"), ("font-size", "0.88rem"), ("padding", "6px 10px"), ("font-variant-numeric", "tabular-nums")]},
-                {"selector": "td:nth-child(-n+3)", "props": [("text-align", "left")]},
-            ],
-            overwrite=False,
-        )
+        .format({"Lordo": _fmt_money, "Imposte": _fmt_money, "Netto": _fmt_money})
     )
-    render_styled_table(styler, height="content", static=True)
+    render_styled_table(styler, height="content")
