@@ -8,6 +8,7 @@ import streamlit as st
 
 from ui.charts.runtime import finalize_chart
 from ui.charts.settings import apply_settings
+from ui.components import render_styled_table
 from ui.formatting import fmt_eur_it
 from ui.theme import ThemeConfig
 from ui.theme import macro_color
@@ -412,42 +413,46 @@ def render_btp_calendar(
     }])
     display_df = pd.concat([display_df, totale_row], ignore_index=True)
 
-    # ── Render HTML diretto (pandas Styler/st.dataframe ignorano text-align) ──
-    n_orig = len(row_states)
-    cols = ["Ticker", "Data", "Evento", "Lordo", "Imposte", "Netto"]
-    right_cols = {"Lordo", "Imposte", "Netto"}
+    # ── Stile (stesso schema della tabella P/L nella pagina: set_table_styles
+    #    con selettori td/th globali + static=True) ───────────────────────────
+    _right_cols = {"Lordo", "Imposte", "Netto"}
 
-    TH = (
-        "padding:7px 10px;font-size:0.80rem;font-weight:700;text-transform:uppercase;"
-        "letter-spacing:.04em;color:#64748b;border-bottom:2px solid #e2e8f0;"
-        "background:#f8fafc;white-space:nowrap;"
-    )
-    TD = "padding:7px 10px;font-size:0.88rem;border-bottom:1px solid #f0f4f8;"
-
-    html_parts = [
-        '<div style="overflow-x:auto;margin:6px 0 2px 0;">',
-        '<table style="width:100%;border-collapse:collapse;font-family:inherit;">',
-        "<thead><tr>",
-    ]
-    for col in cols:
-        align = "right" if col in right_cols else "left"
-        html_parts.append(f'<th style="{TH}text-align:{align};">{col}</th>')
-    html_parts.append("</tr></thead><tbody>")
-
-    for i, (_, row) in enumerate(display_df.iterrows()):
-        is_totale = i == n_orig
-        is_incassata = not is_totale and i < n_orig and row_states.iloc[i] == "incassata"
-        html_parts.append("<tr>")
-        for col in cols:
-            val = str(row[col]) if row[col] is not None else "—"
-            align = "right" if col in right_cols else "left"
-            td_style = f"{TD}text-align:{align};"
+    def _row_style(row: pd.Series) -> list[str]:
+        idx = row.name
+        is_totale = idx == len(row_states)
+        is_incassata = (
+            not is_totale
+            and idx < len(row_states)
+            and row_states.iloc[idx] == "incassata"
+        )
+        styles: list[str] = []
+        for col in row.index:
             if is_totale:
-                td_style += "font-weight:700;border-top:2px solid #e2e8f0;border-bottom:none;"
+                styles.append("font-weight:700;")
             elif is_incassata:
-                td_style += "color:#DC2626;text-decoration:line-through;"
-            html_parts.append(f'<td style="{td_style}">{val}</td>')
-        html_parts.append("</tr>")
+                styles.append("color:#DC2626;text-decoration:line-through;")
+            else:
+                styles.append("")
+        return styles
 
-    html_parts.append("</tbody></table></div>")
-    st.markdown("".join(html_parts), unsafe_allow_html=True)
+    # Applica strikethrough al testo (solo righe originali)
+    incassata_indices = [i for i, s in enumerate(row_states) if s == "incassata"]
+    for col in ["Ticker", "Data", "Evento", "Lordo", "Imposte", "Netto"]:
+        display_df.loc[incassata_indices, col] = display_df.loc[incassata_indices, col].map(_strike_text)
+
+    # col1=Ticker, col2=Data, col3=Evento, col4=Lordo, col5=Imposte, col6=Netto
+    styler = (
+        display_df.style
+        .hide(axis="index")
+        .apply(_row_style, axis=1)
+        .set_table_styles(
+            [
+                {"selector": "th", "props": [("text-align", "right"), ("font-size", "0.80rem"), ("font-weight", "700"), ("padding", "7px 10px"), ("white-space", "nowrap")]},
+                {"selector": "th:nth-child(-n+3)", "props": [("text-align", "left")]},
+                {"selector": "td", "props": [("text-align", "right"), ("font-size", "0.88rem"), ("padding", "6px 10px"), ("font-variant-numeric", "tabular-nums")]},
+                {"selector": "td:nth-child(-n+3)", "props": [("text-align", "left")]},
+            ],
+            overwrite=False,
+        )
+    )
+    render_styled_table(styler, height="content", static=True)
