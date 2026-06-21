@@ -223,12 +223,11 @@ def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str,
     if span_days < 90:
         return
 
-    quarterly_mode = span_days <= 730
-
-    # Genera tutti i confini sull'intero storico (+ 1 extra per il midpoint dell'ultimo Tq)
+    # Sempre modalità trimestrale: linee a Jan/Apr/Jul/Oct su tutto lo storico.
+    # Anno in grassetto sulla linea Q1; Tq al centro dell'intervallo.
+    # La densità visiva si adatta naturalmente allo zoom/bottone attivo.
     all_bounds = _all_quarter_starts(min_dt.year, max_dt.year)
     max_d = max_dt.date()
-    min_d = min_dt.date()
 
     font_family = global_style.get("font_family", "Inter, Arial, sans-serif")
     line_color = "rgba(120,120,120,0.60)"
@@ -240,56 +239,37 @@ def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str,
 
     for i, (year, q, d) in enumerate(all_bounds):
         if d > max_d:
-            break  # oltre lo storico dei dati
+            break
 
-        if quarterly_mode:
-            # Linea su ogni confine di trimestre (sull'intero storico)
-            new_shapes.append(dict(
-                type="line", x0=d.isoformat(), x1=d.isoformat(),
-                y0=0, y1=1, yref="paper", xref="x",
-                line=dict(color=line_color, width=2, dash="dot"),
-                layer="below",
+        # Linea verticale su ogni confine trimestrale
+        new_shapes.append(dict(
+            type="line", x0=d.isoformat(), x1=d.isoformat(),
+            y0=0, y1=1, yref="paper", xref="x",
+            line=dict(color=line_color, width=2, dash="dot"),
+            layer="below",
+        ))
+        # Anno in grassetto solo su Q1
+        if q == 1:
+            new_anns.append(dict(
+                x=d.isoformat(), y=0.99,
+                yref="paper", xref="x",
+                text=f"<b>{year}</b>",
+                showarrow=False,
+                font=dict(size=11, color=year_color, family=font_family),
+                yanchor="top", xanchor="left", xshift=4,
             ))
-            # Anno solo su Q1
-            if q == 1:
-                new_anns.append(dict(
-                    x=d.isoformat(), y=0.99,
-                    yref="paper", xref="x",
-                    text=f"<b>{year}</b>",
-                    showarrow=False,
-                    font=dict(size=11, color=year_color, family=font_family),
-                    yanchor="top", xanchor="left", xshift=4,
-                ))
-            # Etichetta Tq al centro dell'intervallo tra questa linea e la prossima
-            if i + 1 < len(all_bounds):
-                next_d = all_bounds[i + 1][2]
-                mid_ts = _pd.Timestamp(d) + (_pd.Timestamp(next_d) - _pd.Timestamp(d)) / 2
-                new_anns.append(dict(
-                    x=mid_ts.isoformat(), y=0.99,
-                    yref="paper", xref="x",
-                    text=f"T{q}",
-                    showarrow=False,
-                    font=dict(size=11, color=q_color, family=font_family),
-                    yanchor="top", xanchor="center",
-                ))
-
-        else:
-            # Modalità annuale: solo 1 gennaio (sull'intero storico)
-            if q == 1:
-                new_shapes.append(dict(
-                    type="line", x0=d.isoformat(), x1=d.isoformat(),
-                    y0=0, y1=1, yref="paper", xref="x",
-                    line=dict(color=line_color, width=2, dash="dot"),
-                    layer="below",
-                ))
-                new_anns.append(dict(
-                    x=d.isoformat(), y=0.99,
-                    yref="paper", xref="x",
-                    text=f"<b>{year}</b>",
-                    showarrow=False,
-                    font=dict(size=11, color=year_color, family=font_family),
-                    yanchor="top", xanchor="left", xshift=4,
-                ))
+        # Etichetta Tq al centro dell'intervallo tra questa linea e la prossima
+        if i + 1 < len(all_bounds):
+            next_d = all_bounds[i + 1][2]
+            mid_ts = _pd.Timestamp(d) + (_pd.Timestamp(next_d) - _pd.Timestamp(d)) / 2
+            new_anns.append(dict(
+                x=mid_ts.isoformat(), y=0.99,
+                yref="paper", xref="x",
+                text=f"T{q}",
+                showarrow=False,
+                font=dict(size=11, color=q_color, family=font_family),
+                yanchor="top", xanchor="center",
+            ))
 
     if new_shapes:
         existing = list(getattr(fig.layout, "shapes", []) or [])
