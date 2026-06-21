@@ -166,7 +166,19 @@ def normalise_annotations(
 
 # ── Linee verticali di trimestre / anno ──────────────────────────────────────
 
-def _collect_x_dates(fig) -> tuple[_pd.Timestamp | None, _pd.Timestamp | None]:
+def _display_range(fig) -> tuple[_pd.Timestamp | None, _pd.Timestamp | None]:
+    """Legge il range X già impostato sul layout (dopo force_time_default_range).
+    Fallback: estrae min/max dalle tracce."""
+    try:
+        rng = getattr(fig.layout.xaxis, "range", None)
+        if rng and len(rng) == 2:
+            t0 = _pd.Timestamp(rng[0])
+            t1 = _pd.Timestamp(rng[1])
+            if not _pd.isna(t0) and not _pd.isna(t1):
+                return (t0, t1) if t0 <= t1 else (t1, t0)
+    except Exception:
+        pass
+    # fallback: estremi delle tracce
     all_ts: list[_pd.Timestamp] = []
     for trace in fig.data:
         x = getattr(trace, "x", None)
@@ -206,9 +218,10 @@ def _quarter_boundaries(min_dt: _pd.Timestamp, max_dt: _pd.Timestamp) -> list[tu
 def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str, Any]) -> None:
     """Aggiunge linee verticali di trimestre/anno ai grafici temporali.
 
-    Logica densità:
+    Usa il range X già impostato sul layout (range visibile di default),
+    non l'intero storico dei dati. Logica densità sul range visibile:
       < 90 gg  → niente
-      90–730 gg → linee trimestrali + etichette T1/T2/T3/T4 (T1 include l'anno)
+      90–730 gg → linee trimestrali; T1 ha anno su riga sopra + "T1" sotto
       > 730 gg  → solo linee annuali (1 gen) + etichetta anno
     """
     if settings.get("type") != "time":
@@ -216,7 +229,7 @@ def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str,
     if not global_style.get("quarter_gridlines", True):
         return
 
-    min_dt, max_dt = _collect_x_dates(fig)
+    min_dt, max_dt = _display_range(fig)
     if min_dt is None or max_dt is None:
         return
 
@@ -231,7 +244,8 @@ def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str,
 
     font_family = global_style.get("font_family", "Inter, Arial, sans-serif")
     line_color = "rgba(150,150,150,0.20)"
-    label_color = "rgba(120,120,120,0.60)"
+    year_color = "rgba(100,100,100,0.70)"
+    q_color = "rgba(130,130,130,0.55)"
 
     new_shapes: list[dict[str, Any]] = []
     new_anns: list[dict[str, Any]] = []
@@ -248,21 +262,37 @@ def add_quarter_gridlines(fig, settings: dict[str, Any], global_style: dict[str,
             line=dict(color=line_color, width=1, dash="dot"),
             layer="below",
         ))
+
         if quarterly_mode:
-            text = f"<b>{year}</b> T{q}" if q == 1 else f"T{q}"
+            # Anno in bold sull'etichetta di T1, su riga sopra rispetto al label Tq
+            if q == 1:
+                # Riga superiore: anno
+                new_anns.append(dict(
+                    x=x_str, y=0.99,
+                    yref="paper", xref="x",
+                    text=f"<b>{year}</b>",
+                    showarrow=False,
+                    font=dict(size=8, color=year_color, family=font_family),
+                    yanchor="top", xanchor="left", xshift=3,
+                ))
+            # Riga inferiore: etichetta trimestre (stessa x, y più bassa)
+            new_anns.append(dict(
+                x=x_str, y=0.91,
+                yref="paper", xref="x",
+                text=f"T{q}",
+                showarrow=False,
+                font=dict(size=8, color=q_color, family=font_family),
+                yanchor="top", xanchor="left", xshift=3,
+            ))
         else:
-            text = f"<b>{year}</b>"
-        new_anns.append(dict(
-            x=x_str,
-            y=0.99,
-            yref="paper", xref="x",
-            text=text,
-            showarrow=False,
-            font=dict(size=8, color=label_color, family=font_family),
-            yanchor="top",
-            xanchor="left",
-            xshift=3,
-        ))
+            new_anns.append(dict(
+                x=x_str, y=0.99,
+                yref="paper", xref="x",
+                text=f"<b>{year}</b>",
+                showarrow=False,
+                font=dict(size=8, color=year_color, family=font_family),
+                yanchor="top", xanchor="left", xshift=3,
+            ))
 
     if new_shapes:
         existing = list(getattr(fig.layout, "shapes", []) or [])
