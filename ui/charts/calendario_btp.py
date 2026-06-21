@@ -410,6 +410,8 @@ def render_btp_calendar(
 
     # ── Stile (strikethrough sulle incassate, bold sul totale) ────────────
     # row_states ha len = righe originali; la riga totale è aggiuntiva
+    _right_cols = {"Lordo", "Imposte", "Netto"}
+
     def _row_style(row: pd.Series) -> list[str]:
         idx = row.name
         is_totale = (idx == len(row_states))
@@ -420,17 +422,18 @@ def render_btp_calendar(
         )
         styles: list[str] = []
         for col in row.index:
+            ra = "text-align:right;" if col in _right_cols else ""
             if is_totale:
-                styles.append("font-weight:700;")
+                styles.append(f"font-weight:700;{ra}")
             elif is_incassata:
-                base = "color:#DC2626; text-decoration:line-through;"
+                base = f"color:#DC2626; text-decoration:line-through;{ra}"
                 if col == "Ticker":
                     base += " font-weight:700;"
                 elif col == "Evento":
                     base += " font-weight:600;"
                 styles.append(base)
             else:
-                styles.append("")
+                styles.append(ra)
         return styles
 
     # Applica strikethrough al testo (solo righe originali, non la riga Totale)

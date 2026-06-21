@@ -225,7 +225,19 @@ def form_operazione_dialog(data: dict[str, Any], ctx: SimpleNamespace) -> None:
     )
 
     if area_op == "Titolo":
-        tk_sel = st.selectbox("Seleziona titolo", tks_ops, key="ops_dialog_ticker")
+        _da_qty: dict[str, float] = {}
+        if not da.empty and "Ticker" in da.columns and "Quote" in da.columns:
+            for _, _r in da.iterrows():
+                _t = str(_r.get("Ticker") or "")
+                _q = _safe_float(_r.get("Quote", 0))
+                if _t:
+                    _da_qty[_t] = _q
+
+        def _fmt_tk(t: str) -> str:
+            q = _da_qty.get(t, 0.0)
+            return f"{t} ({fmt_qty_it(q, 0)} quote)" if q > 1e-12 else t
+
+        tk_sel = st.selectbox("Seleziona titolo", tks_ops, format_func=_fmt_tk, key="ops_dialog_ticker")
         strum_sel = next((s for s in data["strumenti"] if s["ticker"] == tk_sel), {})
         row_sel = da[da["Ticker"] == tk_sel] if not da.empty else pd.DataFrame()
 
@@ -394,45 +406,44 @@ def form_operazione_dialog(data: dict[str, Any], ctx: SimpleNamespace) -> None:
                     logger.warning("Validazione operazione fallita: evento=%s ticker=%s errore=%s", evento_sel, tk_sel, e)
                     st.error(str(e))
         else:
-            with st.form(f"form_ops_dialog_{tk_sel}_{evento_sel}"):
-                lordo_pr = st.number_input("Importo lordo €", min_value=0.0, step=0.01, format="%.2f")
-                default_aliq = 12.5 if evento_sel == "CEDOLA" and macro_cat(strum_sel.get("tipo", "")) == "GOV" else 26.0
-                aliq_pr = st.number_input("Aliquota imposta %", min_value=0.0, max_value=100.0, value=float(default_aliq), step=0.5, format="%.1f")
-                imposta_pr = lordo_pr * aliq_pr / 100.0
-                netto_pr = lordo_pr - imposta_pr
-                note_pr = st.text_input("Note", value=_default_note)
-                st.caption(f"Imposta: **{fmt_eur_it(imposta_pr, 2)}** · Netto: **{fmt_eur_it(netto_pr, 2)}**")
+            lordo_pr = st.number_input("Importo lordo €", min_value=0.0, step=0.01, format="%.2f", key=f"ops_dialog_lordo_{tk_sel}_{evento_sel}")
+            default_aliq = 12.5 if evento_sel == "CEDOLA" and macro_cat(strum_sel.get("tipo", "")) == "GOV" else 26.0
+            aliq_pr = st.number_input("Aliquota imposta %", min_value=0.0, max_value=100.0, value=float(default_aliq), step=0.5, format="%.1f", key=f"ops_dialog_aliq_{tk_sel}_{evento_sel}")
+            imposta_pr = lordo_pr * aliq_pr / 100.0
+            netto_pr = lordo_pr - imposta_pr
+            note_pr = st.text_input("Note", value=_default_note, key=f"ops_dialog_note_prov_{tk_sel}_{evento_sel}")
+            st.caption(f"Imposta: **{fmt_eur_it(imposta_pr, 2)}** · Netto: **{fmt_eur_it(netto_pr, 2)}**")
 
-                if st.form_submit_button("✅ Registra provento", width="stretch"):
-                    try:
-                        validate_date(data_sel)
-                        validate_number_input(float(lordo_pr), 0.01, 1_000_000_000.0)
-                        validate_number_input(float(aliq_pr), 0.0, 100.0)
-                        append_evento_portafoglio(data, {
-                            "event_id": _new_event_id(data),
-                            "data": str(data_sel),
-                            "ticker": tk_sel,
-                            "tipo_evento": evento_sel,
-                            "importo_lordo": lordo_pr,
-                            "imposte": imposta_pr,
-                            "aliquota": aliq_pr / 100.0,
-                            "importo_netto": netto_pr,
-                            "note": note_pr,
-                        })
-                        save_data(data)
-                        logger.info(
-                            "Provento registrato: evento=%s ticker=%s lordo=%.2f netto=%.2f",
-                            evento_sel,
-                            tk_sel,
-                            float(lordo_pr),
-                            float(netto_pr),
-                        )
-                        queue_success("Provento registrato")
-                        invalidate_portfolio_cache("operazione o movimento registrato")
-                        st.rerun()
-                    except ValueError as e:
-                        logger.warning("Validazione provento fallita: evento=%s ticker=%s errore=%s", evento_sel, tk_sel, e)
-                        st.error(str(e))
+            if st.button("✅ Registra provento", width="stretch", key=f"ops_dialog_submit_prov_{tk_sel}_{evento_sel}"):
+                try:
+                    validate_date(data_sel)
+                    validate_number_input(float(lordo_pr), 0.01, 1_000_000_000.0)
+                    validate_number_input(float(aliq_pr), 0.0, 100.0)
+                    append_evento_portafoglio(data, {
+                        "event_id": _new_event_id(data),
+                        "data": str(data_sel),
+                        "ticker": tk_sel,
+                        "tipo_evento": evento_sel,
+                        "importo_lordo": lordo_pr,
+                        "imposte": imposta_pr,
+                        "aliquota": aliq_pr / 100.0,
+                        "importo_netto": netto_pr,
+                        "note": note_pr,
+                    })
+                    save_data(data)
+                    logger.info(
+                        "Provento registrato: evento=%s ticker=%s lordo=%.2f netto=%.2f",
+                        evento_sel,
+                        tk_sel,
+                        float(lordo_pr),
+                        float(netto_pr),
+                    )
+                    queue_success("Provento registrato")
+                    invalidate_portfolio_cache("operazione o movimento registrato")
+                    st.rerun()
+                except ValueError as e:
+                    logger.warning("Validazione provento fallita: evento=%s ticker=%s errore=%s", evento_sel, tk_sel, e)
+                    st.error(str(e))
     else:
         evento_cash = st.selectbox("Movimento", ["VERSAMENTO", "PRELIEVO", "COMMISSIONE", "IMPOSTA"], key="ops_dialog_cash")
         with st.form(f"form_cash_dialog_{evento_cash}"):
