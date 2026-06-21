@@ -858,7 +858,7 @@ def _process_op_cart_items(
                 validate_price(float(prezzo_op), info_map.get(ticker, {}).get("tipo"))
                 validate_number_input(float(lordo_op), 0.01, 1_000_000_000.0)
                 validate_number_input(float(comm), 0.0, 1_000_000.0)
-                imposte_op = float(raw.get("imposte", 0.0) or 0.0) if evento == "RIMBORSO A SCADENZA" else 0.0
+                imposte_op = float(raw.get("imposte", 0.0) or 0.0) if evento in {"RIMBORSO A SCADENZA", "VENDITA"} else 0.0
                 validate_number_input(float(imposte_op), 0.0, 1_000_000.0)
                 netto_op = -(lordo_op + comm + imposte_op) if evento == "ACQUISTO" else (lordo_op - comm - imposte_op)
                 if evento == "ACQUISTO" and auto_liq:

@@ -357,7 +357,12 @@ def render_btp_calendar(
         importo_lordo = float(_il) if _il is not None and pd.notna(_il) else importo
 
         if tipo == "cedola":
-            lordo_v = importo_lordo
+            _il2 = row.get("importo_lordo")
+            if _il2 is not None and pd.notna(_il2) and float(_il2) > importo * (1.0 + 1e-6):
+                lordo_v = float(_il2)
+            else:
+                # importo_lordo assente/uguale al netto (cache stale): calcoliamo dal netto
+                lordo_v = importo / (1.0 - _ALIQUOTA_BTP) if _ALIQUOTA_BTP < 1.0 else importo
             netto_v = importo
             imp_v: float | None = lordo_v - netto_v
         elif tipo == "scadenza":

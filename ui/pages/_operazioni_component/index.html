@@ -159,7 +159,8 @@
         <div class="fld"><label>Prezzo €</label><input type="number" id="f_prezzo" min="0" step="any" placeholder="0" /></div>
         <div class="fld"><label>Importo €</label><input type="number" id="f_importo" min="0" step="any" placeholder="0" /></div>
         <div class="fld"><label>Comm. €</label><input type="number" id="f_comm" min="0" step="any" placeholder="0" /></div>
-        <div class="fld"><label id="lbl_aliquota">Aliquota %</label><input type="number" id="f_aliquota" min="0" step="any" placeholder="0" /></div>
+        <div class="fld"><label>Aliquota %</label><input type="number" id="f_aliquota" min="0" max="100" step="any" placeholder="0" /></div>
+        <div class="fld"><label>Imposte €</label><input type="number" id="f_imposte_eur" min="0" step="any" placeholder="0" /></div>
         <div class="fld chk"><div class="chk-row"><input type="checkbox" id="f_autoliq" /><span>Auto-liq.</span></div></div>
         <div class="fld wide"><label>Note</label><input type="text" id="f_note" maxlength="120" placeholder="—" /></div>
       </div>
@@ -216,10 +217,10 @@ const $ = (id)=>document.getElementById(id);
 const els = {
   data:$("f_data"), evento:$("f_evento"), ticker:$("f_ticker"),
   qty:$("f_qty"), prezzo:$("f_prezzo"), importo:$("f_importo"),
-  comm:$("f_comm"), aliquota:$("f_aliquota"), autoliq:$("f_autoliq"),
+  comm:$("f_comm"), aliquota:$("f_aliquota"), impostEur:$("f_imposte_eur"), autoliq:$("f_autoliq"),
   note:$("f_note"), hint:$("hint"), add:$("btn_add"), clear:$("btn_clear"),
   submit:$("btn_submit"), submitTop:$("btn_submit_top"), receipt:$("receipt"), footInfo:$("foot_info"),
-  formLabel:$("formLabel"), lblAliquota:$("lbl_aliquota")
+  formLabel:$("formLabel")
 };
 
 /* ── Utilità ── */
@@ -271,10 +272,9 @@ function applyEventoState(){
   els.prezzo.disabled = !isTrade;
   els.importo.disabled = !(isTrade || isProv || isCash);
   els.comm.disabled = !isTrade;
-  const isRimborso = (ev === "RIMBORSO A SCADENZA");
-  els.aliquota.disabled = !isProv && !isRimborso;
-  els.aliquota.max = isRimborso ? "" : "100";
-  els.lblAliquota.textContent = isRimborso ? "Imposte €" : "Aliquota %";
+  els.aliquota.disabled = !isProv;
+  const impostEurEnabled = (ev === "VENDITA" || ev === "RIMBORSO A SCADENZA");
+  els.impostEur.disabled = !impostEurEnabled;
   els.autoliq.disabled = ev !== "ACQUISTO";
 
   if(!isTrade){ els.qty.value=""; els.prezzo.value=""; els.comm.value=""; }
@@ -282,9 +282,10 @@ function applyEventoState(){
   if(isProv){
     const d = defaultAliquota(ev, els.ticker.value);
     els.aliquota.value = d > 0 ? d : "";
-  } else if(!isRimborso) {
+  } else {
     els.aliquota.value = "";
   }
+  if(!impostEurEnabled) els.impostEur.value = "";
   refreshHint();
 }
 
@@ -297,9 +298,14 @@ function refreshHint(){
     const pos = (q>0?1:0)+(p>0?1:0)+(i>0?1:0);
     if(pos===2){
       const t = triplet(q,p,i);
+      const comm = num(els.comm);
+      const imp = (ev==="VENDITA"||ev==="RIMBORSO A SCADENZA") ? num(els.impostEur) : 0;
       els.hint.classList.add("ok");
-      els.hint.textContent = "→ Qtà " + fmtQty(t.q) + "  ·  Prezzo " + fmtEur(t.p)
-        + "  ·  Controvalore " + fmtEur(t.i) + " €";
+      let htxt = "→ Qtà " + fmtQty(t.q) + "  ·  Prezzo " + fmtEur(t.p) + "  ·  Controvalore " + fmtEur(t.i) + " €";
+      if((ev==="VENDITA"||ev==="RIMBORSO A SCADENZA") && (comm>0||imp>0)){
+        htxt += "  ·  netto " + fmtEur(t.i - comm - imp) + " €";
+      }
+      els.hint.textContent = htxt;
     } else {
       els.hint.classList.add("warn");
       els.hint.textContent = "Compila esattamente 2 campi su 3 tra Qtà, Prezzo e Importo: il terzo è calcolato.";
@@ -337,7 +343,7 @@ function readRow(){
       data:data, evento:ev, ticker:tk,
       qty:q, prezzo:p, importo:i,
       comm:num(els.comm),
-      imposte: ev==="RIMBORSO A SCADENZA" ? num(els.aliquota) : 0,
+      imposte: (ev==="RIMBORSO A SCADENZA" || ev==="VENDITA") ? num(els.impostEur) : 0,
       aliquota:0,
       auto_liq:(ev==="ACQUISTO" && els.autoliq.checked),
       note:els.note.value.trim()
@@ -457,7 +463,7 @@ function clearInputs(keepContext){
   const ev = keepContext ? els.evento.value : "";
   const dt = els.data.value;
   els.qty.value=""; els.prezzo.value=""; els.importo.value="";
-  els.comm.value=""; els.aliquota.value=""; els.note.value="";
+  els.comm.value=""; els.aliquota.value=""; els.impostEur.value=""; els.note.value="";
   els.ticker.value="";
   if(!keepContext){ els.evento.value=""; }
   els.data.value = dt;
@@ -505,10 +511,12 @@ function loadForEdit(idx){
     els.importo.value = it.importo>0 ? it.importo : "";
     els.comm.value = it.comm>0 ? it.comm : "";
     els.autoliq.checked = !!it.auto_liq;
+    if(it.evento==="VENDITA" || it.evento==="RIMBORSO A SCADENZA"){
+      els.impostEur.value = it.imposte>0 ? it.imposte : "";
+    }
   } else {
     els.importo.value = it.importo>0 ? it.importo : "";
     if(PROVENTO.includes(it.evento)) els.aliquota.value = it.aliquota>0 ? it.aliquota : "";
-    else if(it.evento==="RIMBORSO A SCADENZA") els.aliquota.value = it.imposte>0 ? it.imposte : "";
   }
   els.note.value = it.note || "";
   els.add.classList.add("editing");
@@ -538,6 +546,7 @@ els.ticker.addEventListener("change", function(){
 ["qty","prezzo","importo"].forEach(function(k){
   els[k].addEventListener("input", function(){ refreshHint(); syncHeight(); });
 });
+els.impostEur.addEventListener("input", function(){ refreshHint(); syncHeight(); });
 els.add.addEventListener("click", addOrUpdate);
 els.clear.addEventListener("click", function(){
   cart = []; exitEditMode(); clearInputs(false); renderReceipt();
