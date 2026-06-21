@@ -111,6 +111,7 @@ def build_btp_calendar(data: dict) -> pd.DataFrame:
                 "data_fine": scadenza,
                 "data": purchase_date,
                 "importo": 0.0,
+                "importo_lordo": 0.0,
                 "tipo_evento": "possesso",
                 "stato_evento": "in_corso",
             }

@@ -22,6 +22,7 @@ def _stima_imposte_scadenza(lordo: float, pmc: float | None) -> float | None:
 
     Restituisce None se PMC non disponibile (la cella mostrerà '—').
     """
+    # Formula valida per BTP con nominale=100: gain_frac = (100-PMC)/100, lordo = nominale*quantita
     if pmc is None:
         return None
     gain_frac = max(0.0, (100.0 - pmc) / 100.0)
@@ -352,7 +353,8 @@ def render_btp_calendar(
     for _, row in table_rows.iterrows():
         tipo = str(row.get("tipo_evento") or "")
         importo = float(row.get("importo") or 0.0)
-        importo_lordo = float(row.get("importo_lordo") or importo)
+        _il = row.get("importo_lordo")
+        importo_lordo = float(_il) if _il is not None and pd.notna(_il) else importo
 
         if tipo == "cedola":
             lordo_v = importo_lordo
