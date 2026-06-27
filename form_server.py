@@ -17,9 +17,11 @@ from typing import Optional
 
 try:
     from fastapi import File, UploadFile
+    from starlette.requests import Request
 except ImportError:
     File = None  # type: ignore[assignment]
     UploadFile = None  # type: ignore[assignment]
+    Request = None  # type: ignore[assignment]
 
 logger = logging.getLogger("portafoglio.form_server")
 
