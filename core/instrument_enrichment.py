@@ -409,11 +409,13 @@ def enrich_all(
         ticker = str(s.get("ticker") or "?")
         try:
             enrich_strumento(s)
-            ok += 1
         except Exception as exc:
-            err += 1
-            msgs.append(f"{ticker}: {exc}")
             s["enrichment_error"] = str(exc)
+        if s.get("enrichment_error"):
+            err += 1
+            msgs.append(f"{ticker}: {s['enrichment_error']}")
+        else:
+            ok += 1
         if on_progress:
             on_progress(i + 1, total, ticker)
     return ok, err, msgs
