@@ -313,31 +313,37 @@ def _parse_pdf_etf(text: str) -> dict:
 
 def _parse_pdf_fam(text: str) -> dict:
     out: dict = {}
-    patterns = {
-        "rendimento_ytd":    r"Da inizio anno\s*\n?\s*([+\-]?[\d,.]+\s*%)",
-        "rendimento_1a":     r"1\s*[Aa]\s*\n?\s*([+\-]?[\d,.]+\s*%)",
-        "rendimento_3a":     r"3\s*[Aa]\s*\n?\s*([+\-]?[\d,.]+\s*%)",
-        "ter":               r"Commissione gestione annua\s+([\d,.]+\s*%)",
-        "categoria_fam":     r"Categoria\s+MS\s+(.+?)(?:\n|Categoria Advice|$)",
-        "data_lancio":       r"Data di lancio\s+([\d/]+)",
-        "livello_rischio":   r"Livello Rischio\s+(\d+)",
-        "composizione_az":   r"Azionario\s+([\d,.]+\s*%)",
-        "composizione_obbl": r"Obbligazionario\s+([\d,.]+\s*%)",
-        "composizione_liq":  r"Liquidit[àa]\s+([\d,.]+\s*%)",
-        "valuta":            r"Valuta NAV\s+([A-Z]{3})",
-        "patrimonio":        r"Patrimonio\s+([\d,.]+\s*Mln[^\n]*)",
+
+    # Rendimenti: "Da inizio anno 1 A 3 A\n4,47% 11,85% 26,52%"
+    rend_m = re.search(
+        r"Da inizio anno\s+1\s+A\s+3\s+A\s*\n\s*"
+        r"([+\-]?[\d,.]+\s*%)\s+([+\-]?[\d,.]+\s*%)\s+([+\-]?[\d,.]+\s*%)",
+        text,
+    )
+    if rend_m:
+        out["rendimento_ytd"] = rend_m.group(1).strip()
+        out["rendimento_1a"] = rend_m.group(2).strip()
+        out["rendimento_3a"] = rend_m.group(3).strip()
+
+    # Campi semplici (già funzionanti sul layout reale)
+    simple: dict = {
+        "ter":          r"Commissione gestione annua\s+([\d,.]+\s*%)",
+        "categoria_fam": r"Categoria\s+MS\s+(.+?)(?:\n|Categoria Advice|$)",
+        "data_lancio":  r"Data di lancio\s+([\d/]+)",
+        "valuta":       r"Valuta NAV\s+([A-Z]{3})",
+        "patrimonio":   r"Patrimonio\s+([\d,.]+\s*Mln[^\n]*)",
     }
-    for field, pat in patterns.items():
+    for field, pat in simple.items():
         val = _re_val(pat, text)
         if val:
             out[field] = val.strip()
 
-    # Morningstar stars
-    stars_m = re.search(r"Rating Morningstar\s*([★☆✩❆⭐*]{1,5})", text)
+    # Morningstar: stelle sono font-icon privati  (piena) e  (vuota)
+    stars_m = re.search(r"Rating Morningstar\s+([]+)", text)
     if stars_m:
-        raw = stars_m.group(1)
-        count = raw.count("★") or raw.count("*") or len(raw)
-        out["rating_morningstar"] = count
+        count = stars_m.group(1).count("")
+        if count:
+            out["rating_morningstar"] = count
 
     return out
 
