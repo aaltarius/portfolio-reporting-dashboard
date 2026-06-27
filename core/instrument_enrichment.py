@@ -65,6 +65,21 @@ _BTP_FIELD_MAP = {
     "data godimento":                        "data_godimento",
 }
 
+_JUSTETF_INFO_KEYS = {
+    "indice":                              "benchmark",
+    "focus di investimento":               "focus_etf",
+    "dimensione del fondo":                "aum",
+    "indicatore sintetico di spesa (ter)": "ter",
+    "replicazione":                        "replica",
+    "politica di distribuzione":           "distribuzione",
+    "valuta dell'etf":                     "valuta_etf",
+    "rischio di cambio":                   "rischio_cambio",
+    "emittente":                           "emittente",
+    "domicilio del fondo":                 "domicilio",
+}
+
+_PCT_RE = re.compile(r"^[+-]?\d+[,.]?\d*\s*%")
+
 
 # ---------------------------------------------------------------------------
 # Fetch implementations — implementati nei task successivi
@@ -103,8 +118,85 @@ def enrich_btp(strumento: dict) -> dict:
     return strumento
 
 
+def _parse_justetf(soup) -> dict:
+    label_map: dict[str, str] = {}
+    for dl in soup.select("dl"):
+        for dt, dd in zip(dl.select("dt"), dl.select("dd")):
+            lbl = dt.get_text(strip=True).lower()
+            val = dd.get_text(strip=True)
+            if lbl and val and val not in ("-", "n/d", "—", ""):
+                label_map[lbl] = val
+    for table in soup.select("table"):
+        for row in table.select("tr"):
+            cells = row.find_all(["td", "th"])
+            if len(cells) == 2:
+                lbl = cells[0].get_text(strip=True).lower()
+                val = cells[1].get_text(strip=True)
+                if lbl and val and val not in ("-", "n/d", "—", "") and not _PCT_RE.match(val):
+                    label_map[lbl] = val
+
+    info: dict[str, str] = {}
+    for lbl, field in _JUSTETF_INFO_KEYS.items():
+        if lbl in label_map:
+            info[field] = label_map[lbl]
+
+    holdings: list[dict] = []
+    paesi: list[dict] = []
+    settori: list[dict] = []
+
+    for table in soup.select("table"):
+        entries = []
+        for row in table.select("tr"):
+            cells = row.find_all(["td", "th"])
+            if len(cells) >= 2:
+                nome = cells[0].get_text(strip=True)
+                pct = cells[1].get_text(strip=True)
+                if nome and pct and _PCT_RE.match(pct):
+                    entries.append({"nome": nome, "pct": pct})
+        if not entries:
+            continue
+        names_lower = " ".join(e["nome"].lower() for e in entries)
+        if any(k in names_lower for k in ("stati uniti", "giappone", "regno unito", "usa", "canada", "ireland", "italia", "germania")):
+            paesi = entries[:10]
+        elif any(k in names_lower for k in ("informatica", "finanza", "industria", "sanita", "beni", "tecnolog", "financial", "energy")):
+            settori = entries[:10]
+        elif not holdings:
+            holdings = entries[:10]
+
+    return {"info": info, "holdings": holdings, "paesi": paesi, "settori": settori}
+
+
 def enrich_etf_etc(strumento: dict) -> dict:
-    raise NotImplementedError
+    isin = str(strumento.get("isin") or "").strip()
+    if not isin:
+        strumento["enrichment_error"] = "ISIN mancante"
+        return strumento
+    url = f"https://www.justetf.com/it/etf-profile.html?isin={isin}"
+    try:
+        r = requests.get(url, headers=_HEADERS, timeout=15)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        parsed = _parse_justetf(soup)
+        src: dict[str, str] = {}
+        for field, val in parsed["info"].items():
+            strumento[field] = val
+            src[field] = "auto"
+        if parsed["holdings"]:
+            strumento["holdings_top"] = parsed["holdings"]
+            src["holdings_top"] = "auto"
+        if parsed["paesi"]:
+            strumento["paesi_top"] = parsed["paesi"]
+            src["paesi_top"] = "auto"
+        if parsed["settori"]:
+            strumento["settori_top"] = parsed["settori"]
+            src["settori_top"] = "auto"
+        strumento["enriched_at"] = _now_iso()
+        existing_src = strumento.get("enrichment_source") or {}
+        strumento["enrichment_source"] = {**existing_src, **src}
+        strumento.pop("enrichment_error", None)
+    except Exception as exc:
+        strumento["enrichment_error"] = str(exc)
+    return strumento
 
 
 def enrich_fondo(strumento: dict) -> dict:
