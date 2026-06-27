@@ -15,6 +15,12 @@ from datetime import date
 from html import escape
 from typing import Optional
 
+try:
+    from fastapi import File, UploadFile
+except ImportError:
+    File = None  # type: ignore[assignment]
+    UploadFile = None  # type: ignore[assignment]
+
 logger = logging.getLogger("portafoglio.form_server")
 
 FORM_PORT = 8502
