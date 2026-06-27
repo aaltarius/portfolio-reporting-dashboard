@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 
 import pandas as pd
 
@@ -39,7 +40,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
 
     def _nature_icon(tipo: str, ticker: str, name: str) -> tuple[str, str, str]:
         txt = f"{str(tipo or '')} {str(ticker or '')} {str(name or '')}".lower()
-        if any(token in txt for token in ("fam", "fless", "flex", "multi asset", "multi-asset", "bilanciato", "gestito")):
+        if any(token in txt for token in ("fam-", "fless", "flex", "multi asset", "multi-asset", "bilanciato", "gestito")):
             return (
                 "Fondo gestito / multi-asset",
                 "#0F766E",
@@ -305,28 +306,77 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
             delta_val = float(delta) if delta is not None else 0.0
         except Exception:
             delta_val = 0.0
-        if delta_val > 0:
+        if delta_val > 0.03:
+            sym, sym_col, sym_sort = "▲▲", "#1E8449", "0"
+        elif delta_val > 0:
             sym, sym_col, sym_sort = "▲", "#1E8449", "1"
+        elif delta_val < -0.03:
+            sym, sym_col, sym_sort = "▼▼", "#FF4B4B", "4"
         elif delta_val < 0:
             sym, sym_col, sym_sort = "▼", "#FF4B4B", "3"
         else:
             sym, sym_col, sym_sort = "—", "#9CA3AF", "2"
-        esito_label = "🟢 OK" if esito == "OK" else "🟡 Warning" if ("WARNING" in esito or fallback == "Sì") else "🔴 Errore"
-        esito_col = "#1E8449" if "OK" in esito_label else "#F59E0B" if "Warning" in esito_label else "#FF4B4B"
+        is_fam = nature_label == "Fondo gestito / multi-asset"
+        if is_fam and "ERRORE" not in esito:
+            esito_label, esito_title = "🔵 NAV", "Fondo gestito: NAV non confrontabile giornalmente"
+        elif esito == "OK":
+            esito_label, esito_title = "🟢 OK", ""
+        elif "WARNING" in esito or fallback == "Sì":
+            esito_label, esito_title = "🟡 Warn.", esito
+        else:
+            esito_label, esito_title = "🔴 Err.", esito
+        esito_col = "#1E8449" if "OK" in esito_label else "#2563EB" if "NAV" in esito_label else "#F59E0B" if "Warn" in esito_label else "#FF4B4B"
+        latest_log_item = max(logs_by_ticker.get(ticker, []), key=lambda x: str(x.get("timestamp") or ""), default=None)
+        # Sovrascrive esito_title con il messaggio esteso dal log (warning dettagliato)
+        if "Warn" in esito_label and latest_log_item:
+            _log_warn = str(latest_log_item.get("warning") or "")
+            if _log_warn:
+                esito_title = _log_warn
+        esito_title_attr = f' title="{esito_title}"' if esito_title else ""
+        _pd_raw = str(latest_log_item.get("price_date") or "") if latest_log_item else ""
+        _ts_raw = str(latest_log_item.get("timestamp") or "") if latest_log_item else ""
+        # Data: da price_date se disponibile, altrimenti da timestamp
+        _date_src = _pd_raw[:10] if len(_pd_raw) >= 10 else (_ts_raw[:10] if len(_ts_raw) >= 10 else "")
+        try:
+            _dy, _dm, _dd = _date_src.split("-")
+            _date_part = f"{_dd}/{_dm}"
+        except Exception:
+            _date_part = ""
+        # Ora: da price_date se include orario (len>=16); se price_date ha solo data non mostrare
+        # l'orario del fetch (sarebbe fuorviante: es. "07:32" non è l'orario del prezzo BTP)
+        _time_part = _pd_raw[11:16] if len(_pd_raw) >= 16 else ""
+        price_date_fmt = f"{_date_part} - {_time_part}" if (_date_part and _time_part) else (_date_part or _time_part or "—")
+        _sort_dt = _ts_raw[:16] if _ts_raw else "0"
+        _title_dt = f"{_pd_raw} (letto {_ts_raw[:16]})" if _pd_raw else _ts_raw[:16]
+        # Variazione assoluta di prezzo: prezzo letto − prezzo precedente
+        try:
+            _delta_eur = float(prezzo) - float(prezzo_prec) if (prezzo is not None and prezzo_prec is not None) else None
+        except Exception:
+            _delta_eur = None
+        _delta_eur_sort = _sort_num(_delta_eur)
+        if _delta_eur is not None and abs(_delta_eur) >= 0.0005:
+            _sign = "+" if _delta_eur > 0 else "-" if _delta_eur < 0 else ""
+            _delta_eur_fmt = f"{_sign}{_fmt_num(abs(_delta_eur), 3)}"
+            _delta_eur_col = "#1E8449" if _delta_eur > 0 else "#FF4B4B"
+        else:
+            _delta_eur_fmt, _delta_eur_col = "—", "#9CA3AF"
+
         rows_html += (
             f'<tr style="{row_background}">'
             f'<td data-sort="{sym_sort}" style="text-align:center;padding:9px 6px;color:{sym_col};font-weight:800;">{sym}</td>'
+            f'<td class="num" data-sort="{_sort_num(delta_val)}" style="color:{sym_col};font-weight:700;">{_fmt_pct(delta, 2, signed=True)}</td>'
             f'<td data-sort="{ticker}"><a class="tk-link" style="color:{color}" href="#" onclick="showQuoteModal(\'{ticker}\');return false;">{ticker}</a></td>'
-            f'<td data-sort="{name}" style="color:{color};max-width:132px;" title="{name}">{name[:24]}</td>'
+            f'<td data-sort="{name}" style="color:{color};max-width:115px;" title="{name}">{name[:21]}</td>'
             f'<td data-sort="{nature_label}" style="text-align:center;width:36px;min-width:36px;max-width:36px;padding-left:4px;padding-right:4px;">'
             f'<span class="type-icon" title="{nature_label}" aria-label="{nature_label}" style="color:{nature_color};">{icon_svg}</span></td>'
-            f'<td data-sort="{tipo}" style="color:{color};font-weight:700;max-width:82px;" title="{tipo}">{tipo}</td>'
-            f'<td class="num" data-sort="{_sort_num(prezzo)}">{_fmt_num(prezzo, 3)}</td>'
-            f'<td class="num" data-sort="{_sort_num(prezzo_prec)}">{_fmt_num(prezzo_prec, 3)}</td>'
-            f'<td class="num" data-sort="{_sort_num(delta_val)}" style="color:{sym_col};font-weight:700;">{_fmt_pct(delta, 2, signed=True)}</td>'
-            f'<td data-sort="{fonte}" style="max-width:108px;" title="{fonte}">{fonte}</td>'
-            f'<td data-sort="{holding_sort}" style="text-align:center;color:{holding_color};font-weight:700;">{holding_label}</td>'
-            f'<td data-sort="{esito_label}" style="color:{esito_col};font-weight:700;">{esito_label}</td>'
+            f'<td data-sort="{tipo}" style="color:{color};font-weight:700;max-width:31px;overflow:hidden;text-overflow:ellipsis;" title="{tipo}">{tipo}</td>'
+            f'<td class="num" data-sort="{_sort_num(prezzo)}" style="max-width:68px;">{_fmt_num(prezzo, 3)}</td>'
+            f'<td class="num" data-sort="{_sort_num(prezzo_prec)}" style="max-width:68px;">{_fmt_num(prezzo_prec, 3)}</td>'
+            f'<td class="num" data-sort="{_delta_eur_sort}" style="color:{_delta_eur_col};font-weight:700;max-width:76px;">{_delta_eur_fmt}</td>'
+            f'<td data-sort="{fonte}" style="max-width:88px;" title="{fonte}">{fonte}</td>'
+            f'<td class="num" data-sort="{_sort_dt}" style="max-width:90px;color:#6b7280;white-space:nowrap;" title="{_title_dt}">{price_date_fmt}</td>'
+            f'<td data-sort="{holding_sort}" style="text-align:center;max-width:32px;color:{holding_color};font-weight:700;">{holding_label}</td>'
+            f'<td data-sort="{esito_label}" style="color:{esito_col};font-weight:700;max-width:60px;"{esito_title_attr}>{esito_label}</td>'
             f'</tr>'
         )
 
@@ -428,11 +478,69 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
             pl_p = float(holding.get("P/L %", 0) or 0)
         except Exception:
             pl_p = 0.0
+        _isin = info.get("isin", "")
+        _fonte_str = fonte or info.get("fonte", "n/d")
+        if "Borsa Italiana" in _fonte_str and _isin:
+            _source_url = f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/dati-completi.html?isin={_isin}&lang=it"
+        elif "Yahoo" in _fonte_str:
+            _yt = (re.search(r'\[(.+?)\]', _fonte_str) or type('', (), {'group': lambda s, n: ticker})()).group(1)
+            _source_url = f"https://finance.yahoo.com/quote/{_yt}"
+        else:
+            _source_url = None
+
+        # --- enrichment KPI ---
+        from core.instrument_enrichment import _categoria as _enr_cat
+        _cat = _enr_cat(info.get("tipo", ""))
+
+        def _ev(field):
+            v = info.get(field)
+            return str(v) if v is not None else None
+
+        if _cat == "btp":
+            _kpi_rendimento = (_ev("ytm_netto"), "YTM Netto")
+            _kpi_costo      = (None, "—")
+            _kpi_rischio    = (_ev("duration_modificata"), "Duration mod.")
+            _rating         = _ev("rating_emittente")
+            _categoria_label = "Obbligazione Stato"
+        elif _cat in ("etf", "etc"):
+            _kpi_rendimento = (_ev("rendimento_1a"), "Rend. 1A")
+            _kpi_costo      = (_ev("ter"), "TER")
+            _kpi_rischio    = (_ev("beta"), "Beta")
+            _r = info.get("rating_morningstar")
+            try:
+                _rating = ("★" * int(float(_r))) if _r else None
+            except Exception:
+                _rating = None
+            _categoria_label = _ev("categoria_etf") or info.get("tipo", "")
+        else:  # fam
+            _ytd = _ev("rendimento_ytd")
+            _1a  = _ev("rendimento_1a")
+            _kpi_rendimento = (_1a or _ytd, "Rend. 1A" if _1a else "YTD")
+            _kpi_costo      = (_ev("ter"), "Comm. gestione")
+            _lr = _ev("livello_rischio")
+            _kpi_rischio    = (f"{_lr}/7" if _lr else None, "Livello rischio")
+            _r = info.get("rating_morningstar")
+            try:
+                _rating = ("★" * int(float(_r))) if _r else None
+            except Exception:
+                _rating = None
+            _categoria_label = _ev("categoria_fam") or info.get("tipo", "")
+
+        _enr_dict = {
+            "kpi_rendimento": list(_kpi_rendimento),
+            "kpi_costo":      list(_kpi_costo),
+            "kpi_rischio":    list(_kpi_rischio),
+            "rating":         _rating,
+            "categoria":      _categoria_label,
+            "enriched_at":    _ev("enriched_at"),
+        }
+
         popup_payload[ticker] = {
             "nome": info.get("nome", name),
-            "isin": info.get("isin", "n/d"),
+            "isin": _isin or "n/d",
             "tipo": info.get("tipo", tipo),
-            "fonte": fonte or info.get("fonte", "n/d"),
+            "fonte": _fonte_str,
+            "source_url": _source_url,
             "aggiornato": info.get("aggiornato", "n/d"),
             "prezzo": prezzo,
             "prezzo_prec": prezzo_prec,
@@ -445,6 +553,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
             "daily_readings": readings,
             "available_days": len(readings),
             "log_days": sum(1 for row in readings if (row.get("count") or 0) > 0),
+            "enrichment": _enr_dict,
         }
 
     payload_json = json.dumps(popup_payload, ensure_ascii=False).replace("</", "<\\/")
@@ -469,7 +578,8 @@ table{width:100%;border-collapse:collapse;table-layout:auto;}
 thead th{background:#f0f2f6;font-size:__HEAD_FONT__;font-weight:600;letter-spacing:.01em;color:#262730;padding:__HEAD_PAD__;border-bottom:1px solid #e6e9ef;border-right:1px solid #e6e9ef;text-align:right;white-space:nowrap;position:relative;user-select:none;cursor:pointer;}
 thead th:last-child{border-right:none;}
 thead th:nth-child(1){text-align:center;width:26px;cursor:default;padding:__FIRST_HEAD_PAD__;}
-thead th:nth-child(2),thead th:nth-child(3),thead th:nth-child(5),thead th:nth-child(9),thead th:nth-child(11){text-align:left;}
+thead th:nth-child(3),thead th:nth-child(4),thead th:nth-child(6),thead th:nth-child(10),thead th:nth-child(13){text-align:left;}
+thead th:nth-child(7),thead th:nth-child(8){max-width:68px;}
 thead th:hover:not(:nth-child(1)){background:#e3e6e9;}
 thead th .sort-ind{font-size:9px;margin-left:3px;color:#9094a3;}
 thead th.asc .sort-ind::after{content:'▲';color:#262730;}
@@ -525,16 +635,18 @@ svg.spark{width:100%;height:152px;display:block;border-radius:10px;background:#f
 <div class="tw"><table id="quotes-table">
 <thead><tr>
   <th data-col="0"></th>
-  <th data-col="1">Ticker<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="2">Strumento<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="3">Tipo<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="4">Tipologia<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="5">Prezzo letto<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="6">Prezzo prec.<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="7">Var.%<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="8">Fonte<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="9">In ptf<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="10">Esito<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="1">Var.%<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="2">Ticker<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="3">Strumento<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="4">Tipo<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="5">Tipologia<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="6">Prezzo<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="7">Prec.<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="8">Δ Prezzo<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="9">Fonte<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="10">Data quot.<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="11">Ptf<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="12">Esito<span class="sort-ind"></span><span class="rh"></span></th>
 </tr></thead>
 <tbody id="quotes-body">__ROWS__</tbody>
 </table></div>
@@ -565,6 +677,7 @@ svg.spark{width:100%;height:152px;display:block;border-radius:10px;background:#f
         </table>
       </div>
       <div class="mc-footer" id="qm-footer"></div>
+      <div id="qm-enr"></div>
     </div>
   </div>
 </div>
@@ -650,11 +763,25 @@ function showQuoteModal(tk){
     kpi('P/L %',fp(d.pl_p||0,2,true),(d.pl_p||0)>=0?'pos':'neg')+
     kpi('Storico',String(d.available_days||0)+' gg')+
     kpi('Log letture',String(d.log_days||0)+' / '+String(d.available_days||0))+
-    kpiWide('Fonte / AGG.',(d.fonte||'n/d')+' · '+(d.aggiornato||'n/d'));
+    kpiWide('Fonte / AGG.',(d.fonte||'n/d')+' · '+(d.aggiornato||'n/d'))+
+    (d.source_url?kpiWide('Link fonte','<a href="'+d.source_url+'" target="_blank" rel="noopener" style="color:#2563EB;text-decoration:underline;word-break:break-all;font-size:0.82rem;">'+d.source_url+'</a>'):'');
   sparklineReadings(d.daily_readings||[], positive, pmc);
   buildReadingsTable(d.daily_readings||[]);
   var foot='Grafico e tabella: ultimi 12 giorni disponibili dallo storico prezzi · giorni con log letture: '+String(d.log_days||0)+' / '+String(d.available_days||0); if(latestReading){foot+=' · ultima data '+(latestReading.day||fmtTs(latestReading.ts)); if(latestReading.warning){foot+=' · '+latestReading.warning;}}
   document.getElementById('qm-footer').textContent=foot;
+  var enr=(d.enrichment||{}); var enrHtml='';
+  if(enr.enriched_at){
+    var kpiBox=function(val,label){var v=val||'—';return '<div style="flex:1;text-align:center;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 6px;"><div style="font-size:17px;font-weight:700;color:#0f172a;">'+v+'</div><div style="font-size:10px;color:#64748b;margin-top:2px;">'+label+'</div></div>';};
+    var r=enr.kpi_rendimento||['—','']; var c=enr.kpi_costo||['—','']; var k=enr.kpi_rischio||['—',''];
+    enrHtml+='<div style="margin-top:12px;border-top:1px solid #f1f5f9;padding-top:12px;">';
+    enrHtml+='<div style="display:flex;gap:8px;margin-bottom:8px;">'+kpiBox(r[0],r[1])+kpiBox(c[0],c[1])+kpiBox(k[0],k[1])+'</div>';
+    if(enr.rating||enr.categoria){enrHtml+='<div style="display:flex;gap:12px;font-size:12px;color:#475569;">'; if(enr.rating)enrHtml+='<span><b>Rating:</b> '+enr.rating+'</span>'; if(enr.categoria)enrHtml+='<span><b>Categoria:</b> '+enr.categoria+'</span>'; enrHtml+='</div>';}
+    enrHtml+='</div>';
+  } else {
+    enrHtml+='<div style="margin-top:12px;border-top:1px solid #f1f5f9;padding-top:10px;font-size:11px;color:#94a3b8;">Dati finanziari non ancora caricati — <a href="http://localhost:8502/strumento/'+tk+'" target="_blank" style="color:#0ea5e9;">Arricchisci</a></div>';
+  }
+  enrHtml+='<div style="margin-top:8px;text-align:right;"><a href="http://localhost:8502/strumento/'+tk+'" target="_blank" style="font-size:11px;color:#0ea5e9;text-decoration:none;font-weight:600;">Scheda completa →</a></div>';
+  document.getElementById('qm-enr').innerHTML=enrHtml;
   document.getElementById('qmo').classList.add('on');
 }
 function closeQuoteModal(){document.getElementById('qmo').classList.remove('on');}
@@ -662,7 +789,7 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape')closeQuoteMo
 var _sc=-1,_sa=true;
 function sortQ(ci){if(ci===0)return; if(_sc===ci)_sa=!_sa; else{_sc=ci;_sa=true;} document.querySelectorAll('#quotes-table thead th').forEach(function(t){t.classList.remove('asc','desc');}); var th=document.querySelector('#quotes-table thead th[data-col="'+ci+'"]'); if(th)th.classList.add(_sa?'asc':'desc'); var tb=document.getElementById('quotes-body'); var rows=Array.from(tb.querySelectorAll('tr')); rows.sort(function(a,b){var av=a.cells[ci]?a.cells[ci].getAttribute('data-sort')||'':''; var bv=b.cells[ci]?b.cells[ci].getAttribute('data-sort')||'':''; var an=parseFloat(av), bn=parseFloat(bv); if(!isNaN(an)&&!isNaN(bn)) return _sa?an-bn:bn-an; return _sa?av.localeCompare(bv,'it'):bv.localeCompare(av,'it');}); rows.forEach(function(r){tb.appendChild(r);});}
 document.querySelectorAll('#quotes-table thead th[data-col]').forEach(function(th){var ci=parseInt(th.getAttribute('data-col')); if(ci===0)return; th.addEventListener('click',function(){sortQ(ci);});});
-sortQ(9);
+sortQ(11);
 function sendH(){
   var t=document.getElementById('quotes-table');
   var wrap=document.querySelector('.tw');
@@ -672,7 +799,9 @@ function sendH(){
   var bodyH=Math.ceil(document.body.scrollHeight||0);
   var docH=Math.ceil(document.documentElement.scrollHeight||0);
   var h=Math.max(tableH, wrapH, bodyH, docH) + 10;
+  var py=0; try{py=window.parent.scrollY||window.parent.pageYOffset||0;}catch(e){}
   window.parent.postMessage({type:'streamlit:setFrameHeight',height:h},'*');
+  [10,60,200].forEach(function(d){setTimeout(function(){try{window.parent.scrollTo({top:py,behavior:'instant'});}catch(e){}},d);});
 }
 sendH(); requestAnimationFrame(sendH); setTimeout(sendH,150); setTimeout(sendH,600);
 </script>
