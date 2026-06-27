@@ -2454,9 +2454,9 @@ def _build_fastapi_app():
     @_app.post("/strumento/{ticker}", response_class=HTMLResponse)
     async def post_scheda_strumento(
         ticker: str,
+        request: Request,
         action: str = "save",
         pdf_file: Optional[UploadFile] = File(None),
-        request: Request = None,
     ):
         from persistence.storage import load_data as _ld, save_data as _sd
         d = _ld()
@@ -2465,7 +2465,9 @@ def _build_fastapi_app():
             return RedirectResponse(f"/strumento/{ticker}?err=Strumento+non+trovato", status_code=303)
 
         try:
-            if action == "pdf" and pdf_file and pdf_file.filename:
+            if action == "pdf":
+                if not pdf_file or not pdf_file.filename:
+                    return RedirectResponse(f"/strumento/{ticker}?err=Nessun+file+selezionato", status_code=303)
                 from core.instrument_enrichment import parse_fineco_pdf, _categoria
                 pdf_bytes = await pdf_file.read()
                 tipo = _categoria(strumento.get("tipo", ""))
