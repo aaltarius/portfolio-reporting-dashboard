@@ -525,6 +525,76 @@ def _section_line() -> None:
     return render_section_line_shared()
 
 
+def _render_arricchimento(data: dict, ctx) -> None:
+    from core.instrument_enrichment import enrich_strumento, enrich_all
+    from persistence.storage import save_data
+
+    strumenti = [s for s in (data.get("strumenti") or []) if str(s.get("stato", "aperto")) == "aperto"]
+
+    def _stato(s: dict) -> str:
+        if s.get("enrichment_error"):
+            return "⚠ errore"
+        if s.get("enriched_at"):
+            return "✓ arricchito"
+        return "— mai"
+
+    rows = [
+        {
+            "Ticker":     s.get("ticker", ""),
+            "Nome":       s.get("nome", ""),
+            "Tipo":       s.get("tipo", ""),
+            "Stato":      _stato(s),
+            "Aggiornato": (s.get("enriched_at") or "")[:10] or "—",
+        }
+        for s in strumenti
+    ]
+
+    if rows:
+        st.dataframe(
+            rows,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Ticker":     st.column_config.TextColumn("Ticker", width="small"),
+                "Nome":       st.column_config.TextColumn("Nome"),
+                "Tipo":       st.column_config.TextColumn("Tipo"),
+                "Stato":      st.column_config.TextColumn("Stato", width="small"),
+                "Aggiornato": st.column_config.TextColumn("Aggiornato", width="small"),
+            },
+        )
+
+    col_bulk, col_single, _ = st.columns([2, 2, 4])
+    with col_bulk:
+        if st.button("⬇ Arricchisci tutti", key="enrich_all_btn", use_container_width=True):
+            progress_bar = st.progress(0, text="Avvio...")
+
+            def _cb(done: int, tot: int, ticker: str) -> None:
+                progress_bar.progress(done / tot, text=f"{ticker} ({done}/{tot})")
+
+            ok, err, msgs = enrich_all(data, on_progress=_cb)
+            save_data(data)
+            progress_bar.empty()
+            if err:
+                st.warning(f"Completato: {ok} ok, {err} errori — {'; '.join(msgs[:3])}")
+            else:
+                st.success(f"Arricchimento completato: {ok} strumenti aggiornati.")
+            st.rerun()
+
+    with col_single:
+        ticker_options = [s.get("ticker", "") for s in strumenti]
+        sel = st.selectbox("Aggiorna singolo", [""] + ticker_options, key="enrich_single_sel", label_visibility="collapsed")
+        if sel and st.button("Aggiorna", key="enrich_single_btn"):
+            target = next((s for s in strumenti if s.get("ticker") == sel), None)
+            if target:
+                try:
+                    enrich_strumento(target)
+                    save_data(data)
+                    st.success(f"{sel} aggiornato.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Errore: {exc}")
+
+
 def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
     theme = get_theme_context()
     data = ctx.data
@@ -812,62 +882,75 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 st.info("Nessun backup disponibile.")
 
         # ─────────────────────────────────────────────
-        # 3. Esporta per Portfolio Performance
+        # 3. Arricchimento strumenti
         # ─────────────────────────────────────────────
         _section_line()
         render_section_title(
-            "Esporta per Portfolio Performance",
-            comment="Genera un CSV importabile in Portfolio Performance (app open source). Include tutte le transazioni: acquisti, vendite, cedole, dividendi, rimborsi, versamenti e prelievi.",
+            "Arricchimento strumenti",
+            comment="Recupera dati finanziari aggiuntivi per ogni strumento (YTM, TER, benchmark, composizione). Clicca 'Scheda completa' dal popup Quotazioni per import da PDF o inserimento manuale.",
             icon="data",
         )
+        _render_arricchimento(data, ctx)
+        vertical_gap("sm")
 
-        with st.expander("Esporta transazioni → Portfolio Performance", expanded=False):
-            legend_block(
-                "Il file CSV generato è compatibile con Portfolio Performance (portfolio-performance.info). "
-                "Per importarlo: apri PP → File → Importa → CSV. "
-                "Assicurati che il conto deposito e il conto liquidità siano già creati in PP prima di importare."
+        # ─────────────────────────────────────────────
+        # 4. Esporta per Portfolio Performance
+        # ─────────────────────────────────────────────
+        if str((settings or {}).get("export_pp_mode", "entrambi")) != "sidebar":
+            _section_line()
+            render_section_title(
+                "Esporta per Portfolio Performance",
+                comment="Genera un CSV importabile in Portfolio Performance (app open source). Include tutte le transazioni: acquisti, vendite, cedole, dividendi, rimborsi, versamenti e prelievi.",
+                icon="data",
             )
-            try:
-                from core.services.portfolio_performance_export import build_portfolio_performance_csv
-                n_eventi = len(data.get("registro_eventi") or [])
-                st.caption(f"Registro eventi: {n_eventi} record da esportare.")
-                pp_csv = build_portfolio_performance_csv(data)
-                st.download_button(
-                    "⬇️ Scarica portfolio_performance.csv",
-                    data=pp_csv.encode("utf-8-sig"),
-                    file_name="portfolio_performance.csv",
-                    mime="text/csv",
-                    width="stretch",
-                    key="datahub_download_pp_csv",
-                )
-            except Exception as _pp_exc:
-                st.error(f"Errore generazione CSV: {_pp_exc}")
 
-        with st.expander("Esporta prezzi storici → Portfolio Performance", expanded=False):
-            legend_block(
-                "Genera uno ZIP con un file CSV di prezzi storici per ogni strumento. "
-                "Utile per BTP e fondi FAM che PP non riesce a quotare automaticamente. "
-                "Come importare: in PP seleziona il titolo → tab 'Dati storici' → tasto Importa → scegli il file CSV corrispondente."
-            )
-            try:
-                from core.services.portfolio_performance_export import build_portfolio_performance_prices_zip
-                sp = data.get("storico_prezzi") or {}
-                n_dates = len(sp)
-                all_tickers: set = set()
-                for d in sp.values():
-                    all_tickers.update(d.keys())
-                st.caption(f"Storico prezzi: {n_dates} date, {len(all_tickers)} strumenti.")
-                pp_zip = build_portfolio_performance_prices_zip(data)
-                st.download_button(
-                    "⬇️ Scarica prezzi_storici_pp.zip",
-                    data=pp_zip,
-                    file_name="prezzi_storici_pp.zip",
-                    mime="application/zip",
-                    width="stretch",
-                    key="datahub_download_pp_prices_zip",
+            with st.expander("Esporta transazioni → Portfolio Performance", expanded=False):
+                legend_block(
+                    "Il file CSV generato è compatibile con Portfolio Performance (portfolio-performance.info). "
+                    "Per importarlo: apri PP → File → Importa → CSV. "
+                    "Assicurati che il conto deposito e il conto liquidità siano già creati in PP prima di importare."
                 )
-            except Exception as _pp_exc2:
-                st.error(f"Errore generazione ZIP prezzi: {_pp_exc2}")
+                try:
+                    from core.services.portfolio_performance_export import build_portfolio_performance_csv
+                    n_eventi = len(data.get("registro_eventi") or [])
+                    st.caption(f"Registro eventi: {n_eventi} record da esportare.")
+                    pp_csv = build_portfolio_performance_csv(data)
+                    st.download_button(
+                        "⬇️ Scarica portfolio_performance.csv",
+                        data=pp_csv.encode("utf-8-sig"),
+                        file_name="portfolio_performance.csv",
+                        mime="text/csv",
+                        width="stretch",
+                        key="datahub_download_pp_csv",
+                    )
+                except Exception as _pp_exc:
+                    st.error(f"Errore generazione CSV: {_pp_exc}")
+
+            with st.expander("Esporta prezzi storici → Portfolio Performance", expanded=False):
+                legend_block(
+                    "Genera uno ZIP con un file CSV di prezzi storici per ogni strumento. "
+                    "Utile per BTP e fondi FAM che PP non riesce a quotare automaticamente. "
+                    "Come importare: in PP seleziona il titolo → tab 'Dati storici' → tasto Importa → scegli il file CSV corrispondente."
+                )
+                try:
+                    from core.services.portfolio_performance_export import build_portfolio_performance_prices_zip
+                    sp = data.get("storico_prezzi") or {}
+                    n_dates = len(sp)
+                    all_tickers: set = set()
+                    for d in sp.values():
+                        all_tickers.update(d.keys())
+                    st.caption(f"Storico prezzi: {n_dates} date, {len(all_tickers)} strumenti.")
+                    pp_zip = build_portfolio_performance_prices_zip(data)
+                    st.download_button(
+                        "⬇️ Scarica prezzi_storici_pp.zip",
+                        data=pp_zip,
+                        file_name="prezzi_storici_pp.zip",
+                        mime="application/zip",
+                        width="stretch",
+                        key="datahub_download_pp_prices_zip",
+                    )
+                except Exception as _pp_exc2:
+                    st.error(f"Errore generazione ZIP prezzi: {_pp_exc2}")
 
         # ─────────────────────────────────────────────
         # 4. Cache grafici
