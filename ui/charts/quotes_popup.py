@@ -533,6 +533,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
             "rating":         _rating,
             "categoria":      _categoria_label,
             "enriched_at":    _ev("enriched_at"),
+            "error":          info.get("enrichment_error", ""),
         }
 
         popup_payload[ticker] = {
@@ -780,6 +781,7 @@ function showQuoteModal(tk){
   } else {
     enrHtml+='<div style="margin-top:12px;border-top:1px solid #f1f5f9;padding-top:10px;font-size:11px;color:#94a3b8;">Dati finanziari non ancora caricati — <a href="http://localhost:8502/strumento/'+tk+'" target="_blank" style="color:#0ea5e9;">Arricchisci</a></div>';
   }
+  if(enr.error){enrHtml+='<div style="color:#f59e0b;font-size:0.82em;margin:4px 0;">⚠ '+enr.error+'</div>';}
   enrHtml+='<div style="margin-top:8px;text-align:right;"><a href="http://localhost:8502/strumento/'+tk+'" target="_blank" style="font-size:11px;color:#0ea5e9;text-decoration:none;font-weight:600;">Scheda completa →</a></div>';
   document.getElementById('qm-enr').innerHTML=enrHtml;
   document.getElementById('qmo').classList.add('on');
