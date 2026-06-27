@@ -1793,7 +1793,7 @@ if(hasAnalysis){{prefillSug();}}
 
 # ─── Render: Scheda Strumento ────────────────────────────────────────────────
 
-def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "") -> str:
+def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "", mode: str = "view") -> str:
     ticker = strumento.get("ticker", "")
     nome   = strumento.get("nome", "")
     isin   = strumento.get("isin", "") or "—"
@@ -1812,116 +1812,144 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
         if not s:
             return ""
         c = colors.get(s, "#94a3b8")
-        l = labels.get(s, s)
-        return f'<span style="font-size:10px;padding:1px 6px;border-radius:9px;background:{c};color:#fff;margin-left:6px;">{l}</span>'
+        lb = labels.get(s, s)
+        return f'<span style="font-size:10px;padding:1px 6px;border-radius:9px;background:{c};color:#fff;margin-left:6px;">{lb}</span>'
 
-    def _field_row(label: str, name: str, value=None, placeholder: str = "") -> str:
-        val = strumento.get(name, "") if value is None else value
+    ok_html  = f'<div style="color:#16a34a;padding:8px;background:#f0fdf4;border-radius:6px;margin-bottom:12px;">{ok_msg}</div>' if ok_msg else ""
+    err_html = f'<div style="color:#dc2626;padding:8px;background:#fef2f2;border-radius:6px;margin-bottom:12px;">{err_msg}</div>' if err_msg else ""
+    enrich_err_html = f'<div style="color:#d97706;padding:8px;background:#fffbeb;border-radius:6px;margin-bottom:12px;">&#9888; Errore fetch: {enrichment_error}</div>' if enrichment_error else ""
+
+    base_css = """
+  body{font-family:system-ui,sans-serif;max-width:720px;margin:0 auto;padding:24px;color:#1e293b;}
+  h1{font-size:20px;font-weight:700;margin-bottom:4px;}
+  .meta{font-size:12px;color:#64748b;margin-bottom:16px;}
+  .section{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:14px;}
+  .section h2{font-size:12px;font-weight:700;color:#475569;margin:0 0 12px;text-transform:uppercase;letter-spacing:.05em;}
+  .btn{display:inline-block;padding:7px 16px;border-radius:7px;font-size:13px;font-weight:600;text-decoration:none;cursor:pointer;border:none;}
+  .btn-primary{background:#0f172a;color:#fff;}
+  .btn-primary:hover{background:#1e293b;}
+  .btn-secondary{background:#f1f5f9;color:#334155;border:1px solid #e2e8f0;}
+  .btn-secondary:hover{background:#e2e8f0;}"""
+
+    header_html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Scheda {ticker}</title>
+<style>{base_css}</style>
+</head><body>
+<h1>{nome}</h1>
+<div class="meta">ISIN: {isin} &nbsp;|&nbsp; Tipo: {tipo} &nbsp;|&nbsp; Arricchito: {enriched_at}</div>
+{ok_html}{err_html}{enrich_err_html}"""
+
+    footer_html = """<p style="text-align:center;margin-top:20px;">
+  <a href="javascript:window.close()" style="font-size:12px;color:#94a3b8;">Chiudi</a>
+</p></body></html>"""
+
+    # ── VIEW MODE ──────────────────────────────────────────────────────────────
+    if mode != "edit":
+        def _fv(label: str, name: str) -> str:
+            val = strumento.get(name)
+            if val is None:
+                return ""
+            stars = ""
+            if name == "rating_morningstar":
+                try:
+                    stars = "★" * int(float(val)) + "☆" * (5 - int(float(val)))
+                    val = stars
+                except Exception:
+                    pass
+            return (f'<div style="display:flex;align-items:baseline;gap:6px;padding:5px 0;'
+                    f'border-bottom:1px solid #f1f5f9;">'
+                    f'<span style="font-size:11px;color:#64748b;min-width:160px;flex-shrink:0;">{label}</span>'
+                    f'<span style="font-size:13px;font-weight:500;">{val}</span>'
+                    f'{_badge(name)}</div>')
+
+        def _section(title: str, rows: str) -> str:
+            return f'<div class="section"><h2>{title}</h2>{rows}</div>' if rows.strip() else ""
+
+        if cat == "btp":
+            body = (
+                _section("Rendimento", _fv("YTM Netto", "ytm_netto") + _fv("YTM Lordo", "ytm_lordo") + _fv("Duration Modificata", "duration_modificata") + _fv("Rating Emittente", "rating_emittente")) +
+                _section("Cedola e Scadenza", _fv("Scadenza", "scadenza") + _fv("Cedola Annuale", "cedola_annuale") + _fv("Frequenza Cedola", "cedola_frequenza") + _fv("Tipo Cedola", "tipo_cedola") + _fv("Prossima Cedola", "prossima_cedola")) +
+                _section("Ratei e Prezzi", _fv("Rateo Lordo", "rateo_lordo") + _fv("Rateo Netto", "rateo_netto") + _fv("Rateo Interessi", "rateo_interessi") + _fv("Rateo Disagio", "rateo_disaggio") + _fv("Ritenute Totali", "ritenute_totali") + _fv("Prezzo Emissione", "prezzo_emissione") + _fv("Prezzo Rimborso", "prezzo_rimborso") + _fv("Data Emissione", "data_emissione"))
+            )
+        elif cat in ("etf", "etc"):
+            body = (
+                _section("Rendimento e Rischio", _fv("Rendimento 1A", "rendimento_1a") + _fv("Rendimento 3A", "rendimento_3a") + _fv("Beta", "beta") + _fv("Deviazione Standard", "deviazione_std") + _fv("Indice di Sharpe", "sharpe") + _fv("VaR", "var")) +
+                _section("Costi e Dettagli", _fv("TER", "ter") + _fv("Benchmark", "benchmark") + _fv("Categoria", "categoria_etf") + _fv("Emittente", "emittente") + _fv("Distribuzione", "distribuzione") + _fv("Fiscalità", "fiscalita") + _fv("Data Lancio", "data_lancio") + _fv("Rating Morningstar", "rating_morningstar"))
+            )
+        else:  # fam
+            body = (
+                _section("Rendimento", _fv("YTD", "rendimento_ytd") + _fv("1 Anno", "rendimento_1a") + _fv("3 Anni", "rendimento_3a")) +
+                _section("Costi e Dettagli", _fv("Commissione Gestione (TER)", "ter") + _fv("Categoria Morningstar", "categoria_fam") + _fv("Rating Morningstar", "rating_morningstar") + _fv("Livello Rischio", "livello_rischio") + _fv("Data Lancio", "data_lancio") + _fv("Patrimonio", "patrimonio") + _fv("Valuta NAV", "valuta")) +
+                _section("Composizione Asset", _fv("% Azionario", "composizione_az") + _fv("% Obbligazionario", "composizione_obbl") + _fv("% Liquidità", "composizione_liq")) +
+                _section("Range 52 Settimane", _fv("Massimo", "max_52w") + _fv("Minimo", "min_52w"))
+            )
+
+        if not body.strip():
+            body = '<p style="color:#94a3b8;font-size:13px;">Nessun dato arricchito disponibile.</p>'
+
+        return (header_html +
+                f'<div style="margin-bottom:16px;"><a href="/strumento/{ticker}?mode=edit" class="btn btn-primary">✏️ Modifica</a></div>' +
+                body + footer_html)
+
+    # ── EDIT MODE ──────────────────────────────────────────────────────────────
+    def _field_row(label: str, name: str, placeholder: str = "") -> str:
+        val = strumento.get(name, "")
         return f"""
         <div style="margin-bottom:10px;">
           <label style="font-size:12px;font-weight:600;color:#64748b;">{label}{_badge(name)}</label>
           <input name="{name}" value="{val or ''}" placeholder="{placeholder}"
-                 style="width:100%;padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;margin-top:3px;">
+                 style="width:100%;padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;margin-top:3px;box-sizing:border-box;">
         </div>"""
 
     if cat == "btp":
         fields_html = (
-            _field_row("YTM Netto", "ytm_netto", placeholder="es. 2,27%") +
-            _field_row("YTM Lordo", "ytm_lordo", placeholder="es. 2,89%") +
-            _field_row("Duration Modificata", "duration_modificata", placeholder="es. 0,09") +
-            _field_row("Scadenza", "scadenza", placeholder="es. 01/08/2026") +
-            _field_row("Cedola Annuale", "cedola_annuale", placeholder="es. 0,00%") +
-            _field_row("Frequenza Cedola", "cedola_frequenza", placeholder="es. Semestrale") +
-            _field_row("Tipo Cedola", "tipo_cedola", placeholder="es. FISSO") +
-            _field_row("Prossima Cedola", "prossima_cedola", placeholder="es. 01/08/2026") +
-            _field_row("Rateo Lordo", "rateo_lordo") +
-            _field_row("Rateo Netto", "rateo_netto") +
-            _field_row("Rating Emittente", "rating_emittente", placeholder="es. BBB+") +
-            _field_row("Data Emissione", "data_emissione") +
-            _field_row("Prezzo Emissione", "prezzo_emissione") +
-            _field_row("Prezzo Rimborso", "prezzo_rimborso") +
-            _field_row("Rateo Interessi", "rateo_interessi") +
-            _field_row("Rateo Disagio", "rateo_disaggio") +
+            _field_row("YTM Netto", "ytm_netto", "es. 2,27%") + _field_row("YTM Lordo", "ytm_lordo", "es. 2,89%") +
+            _field_row("Duration Modificata", "duration_modificata", "es. 0,09") + _field_row("Scadenza", "scadenza", "es. 01/08/2026") +
+            _field_row("Cedola Annuale", "cedola_annuale", "es. 0,00%") + _field_row("Frequenza Cedola", "cedola_frequenza", "es. Semestrale") +
+            _field_row("Tipo Cedola", "tipo_cedola", "es. FISSO") + _field_row("Prossima Cedola", "prossima_cedola", "es. 01/08/2026") +
+            _field_row("Rateo Lordo", "rateo_lordo") + _field_row("Rateo Netto", "rateo_netto") +
+            _field_row("Rating Emittente", "rating_emittente", "es. BBB+") + _field_row("Data Emissione", "data_emissione") +
+            _field_row("Prezzo Emissione", "prezzo_emissione") + _field_row("Prezzo Rimborso", "prezzo_rimborso") +
+            _field_row("Rateo Interessi", "rateo_interessi") + _field_row("Rateo Disagio", "rateo_disaggio") +
             _field_row("Ritenute Totali", "ritenute_totali")
         )
     elif cat in ("etf", "etc"):
         fields_html = (
-            _field_row("TER", "ter", placeholder="es. 0,40%") +
-            _field_row("Benchmark", "benchmark", placeholder="es. FTSE MIB NR EUR") +
-            _field_row("Categoria", "categoria_etf", placeholder="es. Italy Equity") +
-            _field_row("Emittente", "emittente", placeholder="es. Amundi Asset Management") +
-            _field_row("Rating Morningstar (stelle)", "rating_morningstar", placeholder="es. 4") +
-            _field_row("Rendimento 1A", "rendimento_1a", placeholder="es. +37,30%") +
-            _field_row("Rendimento 3A", "rendimento_3a", placeholder="es. +117,68%") +
-            _field_row("Beta", "beta", placeholder="es. 1,05") +
-            _field_row("Deviazione Standard", "deviazione_std", placeholder="es. 13,00%") +
-            _field_row("Indice di Sharpe", "sharpe", placeholder="es. 2,00") +
-            _field_row("VaR", "var", placeholder="es. 35,61") +
-            _field_row("Distribuzione", "distribuzione", placeholder="es. Distribuzione") +
-            _field_row("Fiscalità", "fiscalita", placeholder="es. Armonizzato") +
-            _field_row("Data Lancio", "data_lancio", placeholder="es. 03/11/2003")
+            _field_row("TER", "ter", "es. 0,40%") + _field_row("Benchmark", "benchmark", "es. FTSE MIB NR EUR") +
+            _field_row("Categoria", "categoria_etf", "es. Italy Equity") + _field_row("Emittente", "emittente", "es. Amundi Asset Management") +
+            _field_row("Rating Morningstar (stelle)", "rating_morningstar", "es. 4") +
+            _field_row("Rendimento 1A", "rendimento_1a", "es. +37,30%") + _field_row("Rendimento 3A", "rendimento_3a", "es. +117,68%") +
+            _field_row("Beta", "beta", "es. 1,05") + _field_row("Deviazione Standard", "deviazione_std", "es. 13,00%") +
+            _field_row("Indice di Sharpe", "sharpe", "es. 2,00") + _field_row("VaR", "var", "es. 35,61") +
+            _field_row("Distribuzione", "distribuzione", "es. Distribuzione") + _field_row("Fiscalità", "fiscalita", "es. Armonizzato") +
+            _field_row("Data Lancio", "data_lancio", "es. 03/11/2003")
         )
     else:  # fam
         fields_html = (
-            _field_row("TER / Commissione Gestione", "ter", placeholder="es. 1,84%") +
-            _field_row("Categoria (Morningstar)", "categoria_fam", placeholder="es. Bilanciati Flessibili EUR") +
-            _field_row("Rating Morningstar (stelle)", "rating_morningstar", placeholder="es. 3") +
-            _field_row("Livello Rischio (1-7)", "livello_rischio", placeholder="es. 4") +
-            _field_row("Rendimento YTD", "rendimento_ytd", placeholder="es. 4,19%") +
-            _field_row("Rendimento 1A", "rendimento_1a", placeholder="es. 11,85%") +
-            _field_row("Rendimento 3A", "rendimento_3a", placeholder="es. 26,52%") +
-            _field_row("% Azionario", "composizione_az", placeholder="es. 60,50%") +
-            _field_row("% Obbligazionario", "composizione_obbl", placeholder="es. 20,40%") +
-            _field_row("% Liquidità", "composizione_liq", placeholder="es. 18,90%") +
-            _field_row("Valuta NAV", "valuta", placeholder="es. EUR") +
-            _field_row("Max 52 Settimane", "max_52w", placeholder="es. 145,26") +
-            _field_row("Min 52 Settimane", "min_52w", placeholder="es. 130,51") +
-            _field_row("Data Lancio", "data_lancio", placeholder="es. 27/11/2018")
+            _field_row("TER / Commissione Gestione", "ter", "es. 1,84%") +
+            _field_row("Categoria (Morningstar)", "categoria_fam", "es. Bilanciati Flessibili EUR") +
+            _field_row("Rating Morningstar (stelle)", "rating_morningstar", "es. 3") +
+            _field_row("Livello Rischio (1-7)", "livello_rischio", "es. 4") +
+            _field_row("Rendimento YTD", "rendimento_ytd", "es. 4,47%") + _field_row("Rendimento 1A", "rendimento_1a", "es. 11,85%") +
+            _field_row("Rendimento 3A", "rendimento_3a", "es. 26,52%") +
+            _field_row("% Azionario", "composizione_az", "es. 60,50%") + _field_row("% Obbligazionario", "composizione_obbl", "es. 20,40%") +
+            _field_row("% Liquidità", "composizione_liq", "es. 18,90%") +
+            _field_row("Valuta NAV", "valuta", "es. EUR") + _field_row("Max 52 Settimane", "max_52w", "es. 145,26") +
+            _field_row("Min 52 Settimane", "min_52w", "es. 130,51") + _field_row("Data Lancio", "data_lancio", "es. 27/11/2018") +
+            _field_row("Patrimonio", "patrimonio", "es. 422,73 Mln. EUR")
         )
 
-    ok_html  = f'<div style="color:#16a34a;padding:8px;background:#f0fdf4;border-radius:6px;margin-bottom:12px;">{ok_msg}</div>' if ok_msg else ""
-    err_html = f'<div style="color:#dc2626;padding:8px;background:#fef2f2;border-radius:6px;margin-bottom:12px;">{err_msg}</div>' if err_msg else ""
-    enrich_err_html = f'<div style="color:#d97706;padding:8px;background:#fffbeb;border-radius:6px;margin-bottom:12px;">&#9888; Ultimo errore fetch: {enrichment_error}</div>' if enrichment_error else ""
-
-    return f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8">
-<title>Scheda {ticker}</title>
-<style>
-  body{{font-family:system-ui,sans-serif;max-width:700px;margin:0 auto;padding:24px;color:#1e293b;}}
-  h1{{font-size:20px;font-weight:700;margin-bottom:4px;}}
-  .meta{{font-size:12px;color:#64748b;margin-bottom:20px;}}
-  .section{{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:16px;}}
-  .section h2{{font-size:13px;font-weight:700;color:#475569;margin-bottom:12px;text-transform:uppercase;letter-spacing:.05em;}}
-  input[type=submit]{{background:#0f172a;color:#fff;border:none;padding:9px 20px;border-radius:7px;font-size:13px;cursor:pointer;margin-top:8px;}}
-  input[type=submit]:hover{{background:#1e293b;}}
-  input[type=file]{{font-size:13px;}}
-</style>
-</head><body>
-<h1>{nome}</h1>
-<div class="meta">ISIN: {isin} &nbsp;|&nbsp; Tipo: {tipo} &nbsp;|&nbsp; Ultimo arricchimento: {enriched_at}</div>
-{ok_html}{err_html}{enrich_err_html}
-
-<div class="section">
-  <h2>Importa da PDF Fineco</h2>
-  <p style="font-size:12px;color:#64748b;margin-bottom:10px;">Carica il PDF della scheda titolo da Fineco (Stampa pagina &rarr; Salva come PDF). I campi vengono precompilati automaticamente.</p>
-  <form method="post" enctype="multipart/form-data" action="/strumento/{ticker}?action=pdf">
-    <input type="file" name="pdf_file" accept=".pdf">
-    <input type="submit" value="Importa PDF">
-  </form>
-</div>
-
-<div class="section">
-  <h2>Dati arricchiti</h2>
-  <form method="post" action="/strumento/{ticker}?action=save">
-    {fields_html}
-    <input type="submit" value="Salva modifiche">
-  </form>
-</div>
-
-<p style="text-align:center;margin-top:20px;">
-  <a href="javascript:window.close()" style="font-size:12px;color:#64748b;">Chiudi</a>
-</p>
-</body></html>"""
+    return (header_html +
+            f'<div style="margin-bottom:16px;"><a href="/strumento/{ticker}" class="btn btn-secondary">← Scheda</a></div>' +
+            f'<div class="section"><h2>Importa da PDF Fineco</h2>'
+            f'<p style="font-size:12px;color:#64748b;margin-bottom:10px;">Carica il PDF dalla pagina Fineco del titolo (Ctrl+P &rarr; Salva come PDF).</p>'
+            f'<form method="post" enctype="multipart/form-data" action="/strumento/{ticker}?action=pdf">'
+            f'<input type="file" name="pdf_file" accept=".pdf" style="font-size:13px;">'
+            f'<input type="submit" value="Importa PDF" class="btn btn-primary" style="margin-left:10px;"></form></div>' +
+            f'<div class="section"><h2>Modifica manuale</h2>'
+            f'<form method="post" action="/strumento/{ticker}?action=save">{fields_html}'
+            f'<input type="submit" value="Salva modifiche" class="btn btn-primary"></form></div>' +
+            footer_html)
 
 
 # ─── FastAPI app ──────────────────────────────────────────────────────────────
@@ -2445,13 +2473,13 @@ def _build_fastapi_app():
     # ── Scheda strumento ──────────────────────────────────────────────────────────
 
     @_app.get("/strumento/{ticker}", response_class=HTMLResponse)
-    async def get_scheda_strumento(ticker: str, ok: str = "", err: str = ""):
+    async def get_scheda_strumento(ticker: str, ok: str = "", err: str = "", mode: str = "view"):
         from persistence.storage import load_data as _ld
         d = _ld()
         strumento = next((s for s in (d.get("strumenti") or []) if s.get("ticker") == ticker), None)
         if strumento is None:
             return HTMLResponse(f"<h3>Strumento '{ticker}' non trovato.</h3>", status_code=404)
-        return HTMLResponse(_render_scheda_strumento(strumento, ok_msg=ok, err_msg=err))
+        return HTMLResponse(_render_scheda_strumento(strumento, ok_msg=ok, err_msg=err, mode=mode))
 
     @_app.post("/strumento/{ticker}", response_class=HTMLResponse)
     async def post_scheda_strumento(

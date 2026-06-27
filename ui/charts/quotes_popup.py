@@ -526,6 +526,26 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
                 _rating = None
             _categoria_label = _ev("categoria_fam") or info.get("tipo", "")
 
+        # extra fields per category shown in popup detail row
+        if _cat == "btp":
+            _extra = [
+                (_ev("scadenza"),            "Scadenza"),
+                (_ev("cedola_annuale"),       "Cedola"),
+                (_ev("rating_emittente"),     "Rating"),
+            ]
+        elif _cat in ("etf", "etc"):
+            _extra = [
+                (_ev("benchmark"),            "Benchmark"),
+                (_ev("rendimento_3a"),        "Rend. 3A"),
+                (_ev("distribuzione"),        "Distrib."),
+            ]
+        else:
+            _extra = [
+                (_ev("rendimento_3a"),        "3 Anni"),
+                (_ev("data_lancio"),          "Lancio"),
+                (_ev("patrimonio"),           "Patrimonio"),
+            ]
+
         _enr_dict = {
             "kpi_rendimento": list(_kpi_rendimento),
             "kpi_costo":      list(_kpi_costo),
@@ -534,6 +554,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
             "categoria":      _categoria_label,
             "enriched_at":    _ev("enriched_at"),
             "error":          info.get("enrichment_error", ""),
+            "extra":          [[v, l] for v, l in _extra],
         }
 
         popup_payload[ticker] = {
@@ -776,7 +797,12 @@ function showQuoteModal(tk){
     var r=enr.kpi_rendimento||['—','']; var c=enr.kpi_costo||['—','']; var k=enr.kpi_rischio||['—',''];
     enrHtml+='<div style="margin-top:12px;border-top:1px solid #f1f5f9;padding-top:12px;">';
     enrHtml+='<div style="display:flex;gap:8px;margin-bottom:8px;">'+kpiBox(r[0],r[1])+kpiBox(c[0],c[1])+kpiBox(k[0],k[1])+'</div>';
-    if(enr.rating||enr.categoria){enrHtml+='<div style="display:flex;gap:12px;font-size:12px;color:#475569;">'; if(enr.rating)enrHtml+='<span><b>Rating:</b> '+enr.rating+'</span>'; if(enr.categoria)enrHtml+='<span><b>Categoria:</b> '+enr.categoria+'</span>'; enrHtml+='</div>';}
+    var metaItems=[];
+    if(enr.rating)metaItems.push('<b>Rating:</b> '+enr.rating);
+    if(enr.categoria)metaItems.push('<b>Cat:</b> '+enr.categoria);
+    var extras=enr.extra||[];
+    for(var _i=0;_i<extras.length;_i++){if(extras[_i][0])metaItems.push('<b>'+extras[_i][1]+':</b> '+extras[_i][0]);}
+    if(metaItems.length){enrHtml+='<div style="display:flex;flex-wrap:wrap;gap:8px 14px;font-size:11px;color:#475569;margin-bottom:4px;">'+metaItems.map(function(x){return '<span>'+x+'</span>';}).join('')+'</div>';}
     enrHtml+='</div>';
   } else {
     enrHtml+='<div style="margin-top:12px;border-top:1px solid #f1f5f9;padding-top:10px;font-size:11px;color:#94a3b8;">Dati finanziari non ancora caricati — <a href="http://localhost:8502/strumento/'+tk+'" target="_blank" style="color:#0ea5e9;">Arricchisci</a></div>';
