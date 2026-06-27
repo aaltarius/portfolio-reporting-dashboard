@@ -805,7 +805,7 @@ function showQuoteModal(tk){
     if(metaItems.length){enrHtml+='<div style="display:flex;flex-wrap:wrap;gap:8px 14px;font-size:11px;color:#475569;margin-bottom:4px;">'+metaItems.map(function(x){return '<span>'+x+'</span>';}).join('')+'</div>';}
     enrHtml+='</div>';
   } else {
-    enrHtml+='<div style="margin-top:12px;border-top:1px solid #f1f5f9;padding-top:10px;font-size:11px;color:#94a3b8;">Dati finanziari non ancora caricati — <a href="http://localhost:8502/strumento/'+tk+'" target="_blank" style="color:#0ea5e9;">Arricchisci</a></div>';
+    enrHtml+='<div style="margin-top:12px;border-top:1px solid #f1f5f9;padding-top:10px;font-size:11px;color:#94a3b8;">Dati finanziari non ancora caricati — <a href="http://localhost:8502/strumento/'+tk+'/fetch" target="_blank" style="color:#0ea5e9;">Arricchisci ora</a></div>';
   }
   if(enr.error){enrHtml+='<div style="color:#f59e0b;font-size:0.82em;margin:4px 0;">⚠ '+enr.error+'</div>';}
   enrHtml+='<div style="margin-top:8px;text-align:right;"><a href="http://localhost:8502/strumento/'+tk+'" target="_blank" style="font-size:11px;color:#0ea5e9;text-decoration:none;font-weight:600;">Scheda completa →</a></div>';

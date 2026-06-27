@@ -527,9 +527,11 @@ def _section_line() -> None:
 
 def _render_arricchimento(data: dict, ctx) -> None:
     from core.instrument_enrichment import enrich_strumento, enrich_all
-    from persistence.storage import save_data
+    from persistence.storage import load_data, save_data
 
-    strumenti = [s for s in (data.get("strumenti") or []) if str(s.get("stato", "aperto")) == "aperto"]
+    # Legge sempre dal disco (ctx.data è una copia filtrata/cached non adatta al salvataggio)
+    raw_data = load_data()
+    strumenti = [s for s in (raw_data.get("strumenti") or []) if str(s.get("stato", "aperto")) == "aperto"]
 
     def _stato(s: dict) -> str:
         if s.get("enrichment_error"):
@@ -571,8 +573,8 @@ def _render_arricchimento(data: dict, ctx) -> None:
             def _cb(done: int, tot: int, ticker: str) -> None:
                 progress_bar.progress(done / tot, text=f"{ticker} ({done}/{tot})")
 
-            ok, err, msgs = enrich_all(data, on_progress=_cb)
-            save_data(data)
+            ok, err, msgs = enrich_all(raw_data, on_progress=_cb)
+            save_data(raw_data)
             progress_bar.empty()
             if err:
                 st.warning(f"Completato: {ok} ok, {err} errori — {'; '.join(msgs[:3])}")
@@ -584,11 +586,11 @@ def _render_arricchimento(data: dict, ctx) -> None:
         ticker_options = [s.get("ticker", "") for s in strumenti]
         sel = st.selectbox("Aggiorna singolo", [""] + ticker_options, key="enrich_single_sel", label_visibility="collapsed")
         if sel and st.button("Aggiorna", key="enrich_single_btn"):
-            target = next((s for s in strumenti if s.get("ticker") == sel), None)
+            target = next((s for s in (raw_data.get("strumenti") or []) if s.get("ticker") == sel), None)
             if target:
                 try:
                     enrich_strumento(target)
-                    save_data(data)
+                    save_data(raw_data)
                     st.success(f"{sel} aggiornato.")
                     st.rerun()
                 except Exception as exc:

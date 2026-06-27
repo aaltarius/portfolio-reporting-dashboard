@@ -2472,6 +2472,20 @@ def _build_fastapi_app():
 
     # ── Scheda strumento ──────────────────────────────────────────────────────────
 
+    @_app.get("/strumento/{ticker}/fetch")
+    async def get_fetch_strumento(ticker: str):
+        from persistence.storage import load_data as _ld, save_data as _sd
+        from core.instrument_enrichment import enrich_strumento
+        d = _ld()
+        strumento = next((s for s in (d.get("strumenti") or []) if s.get("ticker") == ticker), None)
+        if strumento is None:
+            return RedirectResponse(f"/strumento/{ticker}?err=Strumento+non+trovato", status_code=303)
+        enrich_strumento(strumento)
+        _sd(d)
+        if strumento.get("enrichment_error"):
+            return RedirectResponse(f"/strumento/{ticker}?err={strumento['enrichment_error']}", status_code=303)
+        return RedirectResponse(f"/strumento/{ticker}?ok=Arricchimento+completato", status_code=303)
+
     @_app.get("/strumento/{ticker}", response_class=HTMLResponse)
     async def get_scheda_strumento(ticker: str, ok: str = "", err: str = "", mode: str = "view"):
         from persistence.storage import load_data as _ld
