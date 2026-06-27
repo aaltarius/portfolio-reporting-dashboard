@@ -10,6 +10,7 @@ from typing import Callable, Optional
 
 import requests
 from bs4 import BeautifulSoup
+import yfinance as yf
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +201,43 @@ def enrich_etf_etc(strumento: dict) -> dict:
 
 
 def enrich_fondo(strumento: dict) -> dict:
-    raise NotImplementedError
+    fonte = str(strumento.get("fonte") or "")
+    yticker = _extract_yahoo_alt(fonte)
+    if not yticker:
+        strumento["enrichment_error"] = "Ticker Yahoo non trovato nel campo fonte"
+        return strumento
+    try:
+        info = yf.Ticker(yticker).info or {}
+        src: dict[str, str] = {}
+
+        def _set(field: str, value) -> None:
+            if value is not None:
+                strumento[field] = value
+                src[field] = "auto"
+
+        _set("valuta", info.get("currency"))
+        _set("max_52w", info.get("fiftyTwoWeekHigh"))
+        _set("min_52w", info.get("fiftyTwoWeekLow"))
+
+        first_trade = info.get("firstTradeDateEpochUtc") or info.get("firstTradeDate")
+        if first_trade:
+            try:
+                dl = datetime.datetime.fromtimestamp(int(first_trade)).strftime("%Y-%m-%d")
+                _set("data_lancio", dl)
+            except Exception:
+                pass
+
+        ytd = info.get("ytdReturn")
+        if ytd is not None:
+            _set("rendimento_ytd", f"{float(ytd):.2f}%")
+
+        strumento["enriched_at"] = _now_iso()
+        existing_src = strumento.get("enrichment_source") or {}
+        strumento["enrichment_source"] = {**existing_src, **src}
+        strumento.pop("enrichment_error", None)
+    except Exception as exc:
+        strumento["enrichment_error"] = str(exc)
+    return strumento
 
 
 def parse_fineco_pdf(pdf_bytes: bytes, tipo: str) -> dict:
