@@ -23,7 +23,7 @@ def _categoria(tipo: str) -> str:
         return "btp"
     if "etc" in t:
         return "etc"
-    if any(k in t for k in ("fondo", "bilanc", "fless", "flex", "multi", "obbl. m", "az. pass", "passivo")):
+    if any(k in t for k in ("fond", "fam", "bilanc", "fless", "flex", "multi", "obbl. m", "az. pass", "passivo")):
         return "fondo"
     return "etf"
 
@@ -378,7 +378,7 @@ def parse_fineco_pdf(pdf_bytes: bytes, tipo: str) -> dict:
         return _parse_pdf_btp(text)
     if tipo == "etf":
         return _parse_pdf_etf(text)
-    if tipo == "fam":
+    if tipo in ("fam", "fondo"):
         return _parse_pdf_fam(text)
     return {}
 
