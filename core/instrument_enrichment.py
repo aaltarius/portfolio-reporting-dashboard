@@ -8,6 +8,9 @@ import re
 import datetime
 from typing import Callable, Optional
 
+import requests
+from bs4 import BeautifulSoup
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -30,15 +33,74 @@ def _extract_yahoo_alt(fonte: str) -> Optional[str]:
 
 
 def _now_iso() -> str:
-    return datetime.datetime.utcnow().isoformat()
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
 # ---------------------------------------------------------------------------
-# Stub fetch — implementati nei task successivi
+# Constants
+# ---------------------------------------------------------------------------
+
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "it-IT,it;q=0.9,en;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
+
+_BTP_FIELD_MAP = {
+    "rendimento effettivo a scadenza lordo": "ytm_lordo",
+    "rendimento effettivo a scadenza netto": "ytm_netto",
+    "rateo lordo":                           "rateo_lordo",
+    "rateo netto":                           "rateo_netto",
+    "duration modificata":                   "duration_modificata",
+    "scadenza":                              "scadenza",
+    "periodicita cedola":                    "cedola_frequenza",
+    "periodicita' cedola":                   "cedola_frequenza",
+    "periodicità cedola":                    "cedola_frequenza",
+    "tasso cedola periodale":                "cedola_tasso",
+    "emittente":                             "emittente_btp",
+    "struttura bond":                        "struttura",
+    "data godimento":                        "data_godimento",
+}
+
+
+# ---------------------------------------------------------------------------
+# Fetch implementations — implementati nei task successivi
 # ---------------------------------------------------------------------------
 
 def enrich_btp(strumento: dict) -> dict:
-    raise NotImplementedError
+    isin = str(strumento.get("isin") or "").strip()
+    if not isin:
+        strumento["enrichment_error"] = "ISIN mancante"
+        return strumento
+    url = f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/{isin}-MOTX.html?lang=it"
+    try:
+        r = requests.get(url, headers=_HEADERS, timeout=12)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        src: dict[str, str] = {}
+        for row in soup.select("table tr"):
+            cells = row.find_all(["td", "th"])
+            if len(cells) < 2:
+                continue
+            label = cells[0].get_text(strip=True).lower()
+            value = cells[-1].get_text(strip=True)
+            if not value or value in ("-", "n.d.", ""):
+                continue
+            for key, field in _BTP_FIELD_MAP.items():
+                if key in label:
+                    strumento[field] = value
+                    src[field] = "auto"
+                    break
+        strumento["enriched_at"] = _now_iso()
+        existing_src = strumento.get("enrichment_source") or {}
+        strumento["enrichment_source"] = {**existing_src, **src}
+        strumento.pop("enrichment_error", None)
+    except Exception as exc:
+        strumento["enrichment_error"] = str(exc)
+    return strumento
 
 
 def enrich_etf_etc(strumento: dict) -> dict:
