@@ -552,7 +552,7 @@ def _render_arricchimento(data: dict, ctx) -> None:
     if rows:
         st.dataframe(
             rows,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "Ticker":     st.column_config.TextColumn("Ticker", width="small"),
@@ -565,7 +565,7 @@ def _render_arricchimento(data: dict, ctx) -> None:
 
     col_bulk, col_single, _ = st.columns([2, 2, 4])
     with col_bulk:
-        if st.button("⬇ Arricchisci tutti", key="enrich_all_btn", use_container_width=True):
+        if st.button("⬇ Arricchisci tutti", key="enrich_all_btn", width="stretch"):
             progress_bar = st.progress(0, text="Avvio...")
 
             def _cb(done: int, tot: int, ticker: str) -> None:

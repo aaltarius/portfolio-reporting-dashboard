@@ -75,7 +75,7 @@ def render_ai_analysis(ctx: SimpleNamespace) -> None:
 
     col_diag1, col_diag2 = st.columns(2)
     with col_diag1:
-        if st.button("Mostra modelli disponibili", key="_ai_list_models_btn", use_container_width=True):
+        if st.button("Mostra modelli disponibili", key="_ai_list_models_btn", width="stretch"):
             try:
                 available = list_gemini_models(api_key)
                 if available:
@@ -117,7 +117,7 @@ def render_ai_analysis(ctx: SimpleNamespace) -> None:
             "Analizza portafoglio",
             type="primary",
             key="_ai_analyze_btn",
-            use_container_width=True,
+            width="stretch",
         )
 
     custom_prompt = st.text_area(

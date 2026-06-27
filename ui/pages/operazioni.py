@@ -1169,6 +1169,37 @@ def _rebuild_legacy_registers_after_event_delete(data: dict[str, Any]) -> None:
     data["registro_liquidita"] = _rebuild_cash_ledger_from_events(get_registro_eventi(data))
 
 
+def _reopen_instruments_with_positive_qty(data: dict[str, Any]) -> list[str]:
+    """Riapre strumenti chiusi/osservati che hanno ancora quote positive nel registro eventi.
+
+    Chiamata dopo ogni cancellazione di evento: se si annulla un RIMBORSO A SCADENZA
+    o una VENDITA totale, lo strumento torna automaticamente aperto.
+    """
+    qty_map: dict[str, float] = {}
+    for ev in data.get("registro_eventi", []):
+        tk = str(ev.get("ticker", "") or "")
+        tipo = str(ev.get("tipo_evento", "") or "").upper()
+        q = float(ev.get("quantita", 0) or 0)
+        if not tk:
+            continue
+        if tipo == "ACQUISTO":
+            qty_map[tk] = qty_map.get(tk, 0.0) + q
+        elif tipo in {"VENDITA", "RIMBORSO A SCADENZA"}:
+            qty_map[tk] = qty_map.get(tk, 0.0) - q
+
+    reopened: list[str] = []
+    for s in data.get("strumenti", []):
+        tk = str(s.get("ticker", "") or "")
+        stato = s.get("stato")
+        if stato not in {"aperto"} and qty_map.get(tk, 0.0) > 1e-9:
+            s["stato"] = "aperto"
+            s["data_chiusura"] = None
+            s["motivo_chiusura"] = None
+            reopened.append(tk)
+            logger.info("Strumento riaperto automaticamente dopo cancellazione evento: %s", tk)
+    return reopened
+
+
 def _delete_event_by_id(data: dict[str, Any], event_id: str) -> bool:
     """Elimina un evento per ID e riallinea i registri derivati."""
     event_id = str(event_id or "")
@@ -1182,9 +1213,14 @@ def _delete_event_by_id(data: dict[str, Any], event_id: str) -> bool:
     if after == before:
         return False
 
-    # TODO: se l'evento eliminato era VENDITA totale o RIMBORSO A SCADENZA, lo strumento
-    # resta marcato "chiuso" anche se la posizione torna > 0. Known limitation.
-    _rebuild_legacy_registers_after_event_delete(data)
+    try:
+        _rebuild_legacy_registers_after_event_delete(data)
+    except Exception as exc:
+        logger.error("_rebuild_legacy_registers_after_event_delete fallita: %s", exc, exc_info=True)
+    try:
+        _reopen_instruments_with_positive_qty(data)
+    except Exception as exc:
+        logger.error("_reopen_instruments_with_positive_qty fallita: %s", exc, exc_info=True)
     save_data(data)
     invalidate_portfolio_cache("eliminazione evento da Centro Operativo")
     return True
@@ -1430,7 +1466,7 @@ def strumenti_dialog(data: dict[str, Any], ctx: SimpleNamespace) -> None:
                 "Chiuso il": s.get("data_chiusura", ""),
                 "Motivo": s.get("motivo_chiusura", ""),
             } for s in chiusi])
-            st.dataframe(df_chiusi, hide_index=True, use_container_width=True)
+            st.dataframe(df_chiusi, hide_index=True, width="stretch")
 
 
 def _render_event_edit_form(data: dict[str, Any], ev: dict[str, Any], form_prefix: str) -> None:
@@ -1556,6 +1592,9 @@ def gestisci_liquidita_dialog(data: dict[str, Any], ctx: SimpleNamespace) -> Non
 
 def _render_centro_operativo(data: dict[str, Any], ctx: SimpleNamespace, theme) -> None:
     """Area unica di gestione operativa della scheda Operazioni."""
+    _op_mode = str((ctx.settings or {}).get("operativo_mode", "entrambi"))
+    if _op_mode == "sidebar":
+        return
     render_section_title(
         "Centro Operativo",
         comment=(

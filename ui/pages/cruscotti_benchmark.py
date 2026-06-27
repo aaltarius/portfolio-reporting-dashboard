@@ -595,7 +595,7 @@ def _render_normalized_performance_section(ctx: SimpleNamespace) -> None:
             "Costruisci grafico",
             type="primary",
             key="_norm_perf_build_btn",
-            use_container_width=True,
+            width="stretch",
         )
 
     cached_entry = st.session_state.get(_NORM_PERF_SESSION_KEY)
