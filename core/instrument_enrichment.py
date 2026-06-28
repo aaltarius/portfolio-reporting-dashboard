@@ -173,13 +173,13 @@ def _scan_labels(text: str) -> dict:
             norm = _norm_line(line)
             if not (norm == label or norm.startswith(label + " ")):
                 continue
+            consumed_lines.add(i)   # claim the line regardless of extraction success
             orig_words = line.strip().split()
             remainder = " ".join(orig_words[label_wc:])
             next_line = lines[i + 1].strip() if i + 1 < n else ""
             val = _extract_typed_value(remainder, next_line, vtype)
             if val:
                 out[field] = val
-                consumed_lines.add(i)
             break
 
     return out
@@ -424,18 +424,11 @@ def _parse_pdf_etf(text: str) -> dict:
     out: dict = {}
 
     # Rendimenti: stessa struttura FAM — intestazioni su una riga, valori sulla riga dopo
-    # Layout A: "Da inizio anno  1 A  3 A\n+ %  + %  + %" (headers poi valori)
     rend_m = re.search(
         r"Da inizio anno\s+1\s+A\s+3\s+A\s*\n\s*"
         r"([+\-]?\s*[\d,.]+\s*%)\s+([+\-]?\s*[\d,.]+\s*%)\s+([+\-]?\s*[\d,.]+\s*%)",
         text,
     )
-    # Layout B: "Da inizio anno\n+ %\n1 A\n+ %\n3 A\n+ %" (etichetta/valore alternati)
-    if not rend_m:
-        rend_m = re.search(
-            r"Da inizio anno\s+([+\-]?\s*[\d,.]+\s*%)\s+1\s+A\s+([+\-]?\s*[\d,.]+\s*%)\s+3\s+A\s+([+\-]?\s*[\d,.]+\s*%)",
-            text,
-        )
     if rend_m:
         out["rendimento_ytd"] = rend_m.group(1).strip()
         out["rendimento_1a"]  = rend_m.group(2).strip()
@@ -453,13 +446,7 @@ def _parse_pdf_etf(text: str) -> dict:
         "fiscalita":      r"Fiscalit[aà]\s+(\w+)",
         "data_lancio":    r"Data di (?:partenza|lancio|costituzione)\s+([\d/]+)",
         "patrimonio":     r"Patrimonio netto\s*(?:mln\.?)?\s*[\d/]*\s*([\d,.]+)",
-        "valuta":           r"Valuta\s+([A-Z]{3})\b",
-        "rendimento_medio": r"Rendimento medio\s+([\d,.]+\s*%)",
-        "nav":              r"Nav\s+[\d/]+\s+([\d,.]+)",
-        "dividend_yield":   r"Dividend Yield\s+([\d,.]+)",
-        "price_earnings":   r"Price\s*/\s*Earnings\s+([\d,.]+)",
-        "price_to_book":    r"Price to book value\s+([\d,.]+)",
-        "dividendo_dist":   r"Dividendo distribuito\s*\([^)]+\)\s*([\d,.]+)",
+        "valuta":         r"Valuta\s+([A-Z]{3})\b",
     }
     for field, pat in patterns.items():
         val = _re_val(pat, text)
@@ -480,18 +467,14 @@ def _parse_pdf_etf(text: str) -> dict:
         if count:
             out["rating_morningstar"] = count
 
-    # Top holdings: estrae solo dalla sezione "Primi 5 titoli" per evitare falsi positivi
-    holdings_block = re.search(
-        r"Primi 5 titoli\s+Var%\s*([\s\S]+?)(?:Avvertenze|Classificazione|ESG|\Z)", text
+    # Top holdings
+    holdings = re.findall(
+        r"([\w\s]+(?:SpA|NV|Ltd|SA|AG|Plc|Inc|Group)?)\s+([\d,.]+\s*%)", text
     )
-    if holdings_block:
-        holdings = []
-        for line in holdings_block.group(1).strip().splitlines():
-            m = re.match(r"^(.+?)\s+(\d[\d,.]*\s*%)", line.strip())
-            if m:
-                holdings.append({"nome": m.group(1).strip(), "pct": m.group(2).strip()})
-        if holdings:
-            out["holdings_top"] = holdings[:5]
+    if holdings:
+        out["holdings_top"] = [
+            {"nome": h[0].strip(), "pct": h[1]} for h in holdings[:5]
+        ]
 
     return out
 
