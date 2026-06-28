@@ -526,35 +526,52 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
                 _rating = None
             _categoria_label = _ev("categoria_fam") or info.get("tipo", "")
 
-        # extra fields per category shown in popup detail row
+        # kpis: list of [value, label, is_return] for hero display
         if _cat == "btp":
-            _extra = [
-                (_ev("scadenza"),            "Scadenza"),
-                (_ev("cedola_annuale"),       "Cedola"),
-                (_ev("rating_emittente"),     "Rating"),
+            _kpis = [
+                [_ev("ytm_netto"),          "YTM Netto",    False],
+                [_ev("duration_modificata"),"Duration",     False],
+                [_ev("scadenza"),           "Scadenza",     False],
+            ]
+            _details = [
+                [_ev("ytm_lordo"),          "YTM Lordo"],
+                [_ev("cedola_annuale"),     "Cedola"],
+                [_ev("cedola_frequenza"),   "Frequenza"],
+                [_ev("rating_emittente"),   "Rating"],
+                [_ev("prossima_cedola"),    "Prossima cedola"],
             ]
         elif _cat in ("etf", "etc"):
-            _extra = [
-                (_ev("benchmark"),            "Benchmark"),
-                (_ev("rendimento_3a"),        "Rend. 3A"),
-                (_ev("distribuzione"),        "Distrib."),
+            _kpis = [
+                [_ev("rendimento_1a"),      "Rend. 1 Anno", True],
+                [_ev("rendimento_3a"),      "Rend. 3 Anni", True],
+                [_ev("ter"),               "TER",          False],
             ]
-        else:
-            _extra = [
-                (_ev("rendimento_3a"),        "3 Anni"),
-                (_ev("data_lancio"),          "Lancio"),
-                (_ev("patrimonio"),           "Patrimonio"),
+            _details = [
+                [_ev("benchmark"),          "Benchmark"],
+                [_ev("categoria_etf"),      "Categoria"],
+                [_ev("distribuzione"),      "Distribuzione"],
+                [_ev("data_lancio"),        "Lancio"],
+            ]
+        else:  # fam
+            _kpis = [
+                [_ev("rendimento_ytd"),     "YTD",          True],
+                [_ev("rendimento_1a"),      "1 Anno",       True],
+                [_ev("rendimento_3a"),      "3 Anni",       True],
+            ]
+            _details = [
+                [_ev("ter"),               "TER"],
+                [_ev("categoria_fam"),      "Categoria"],
+                [_ev("patrimonio"),         "Patrimonio"],
+                [_ev("data_lancio"),        "Lancio"],
             ]
 
         _enr_dict = {
-            "kpi_rendimento": list(_kpi_rendimento),
-            "kpi_costo":      list(_kpi_costo),
-            "kpi_rischio":    list(_kpi_rischio),
-            "rating":         _rating,
-            "categoria":      _categoria_label,
             "enriched_at":    _ev("enriched_at"),
             "error":          info.get("enrichment_error", ""),
-            "extra":          [[v, l] for v, l in _extra],
+            "rating":         _rating,
+            "cat":            _cat,
+            "kpis":           _kpis,
+            "details":        _details,
         }
 
         popup_payload[ticker] = {
@@ -652,6 +669,20 @@ svg.spark{width:100%;height:152px;display:block;border-radius:10px;background:#f
 .tag-err{color:#FF4B4B;font-weight:700;}
 .tag-miss{color:#94a3b8;font-weight:700;}
 .mc-footer{font-size:0.78rem;color:#9ca3af;}
+/* Enrichment block */
+.enr-box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-top:4px;margin-bottom:12px;}
+.enr-hero{display:grid;gap:6px;margin-bottom:8px;}
+.enr-h3{grid-template-columns:repeat(3,1fr);}
+.enr-h2{grid-template-columns:repeat(2,1fr);}
+.enr-kpi{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:8px 6px;text-align:center;}
+.enr-kpi-v{font-size:19px;font-weight:800;line-height:1;margin-bottom:3px;color:#0f172a;}
+.enr-kpi-v.pos{color:#16a34a;} .enr-kpi-v.neg{color:#dc2626;}
+.enr-kpi-l{font-size:9.5px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.04em;}
+.enr-details{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:#475569;}
+.enr-details span b{color:#1e293b;}
+.enr-rating{color:#f59e0b;font-size:14px;letter-spacing:1px;}
+.enr-miss{font-size:11px;color:#94a3b8;padding:4px 0;}
+.enr-scheda{display:block;margin-top:8px;text-align:right;font-size:11px;font-weight:700;color:#0ea5e9;text-decoration:none;}
 </style></head>
 <body>
 <div class="tw"><table id="quotes-table">
@@ -680,6 +711,7 @@ svg.spark{width:100%;height:152px;display:block;border-radius:10px;background:#f
       <div class="mc-ticker" id="qm-tk"></div>
       <div class="mc-nome" id="qm-nm"></div>
       <div class="mc-meta" id="qm-meta"></div>
+      <div id="qm-enr"></div>
       <div class="mc-grid" id="qm-grid"></div>
     </div>
     <div class="mc-right">
@@ -699,7 +731,6 @@ svg.spark{width:100%;height:152px;display:block;border-radius:10px;background:#f
         </table>
       </div>
       <div class="mc-footer" id="qm-footer"></div>
-      <div id="qm-enr"></div>
     </div>
   </div>
 </div>
@@ -791,24 +822,32 @@ function showQuoteModal(tk){
   buildReadingsTable(d.daily_readings||[]);
   var foot='Grafico e tabella: ultimi 12 giorni disponibili dallo storico prezzi · giorni con log letture: '+String(d.log_days||0)+' / '+String(d.available_days||0); if(latestReading){foot+=' · ultima data '+(latestReading.day||fmtTs(latestReading.ts)); if(latestReading.warning){foot+=' · '+latestReading.warning;}}
   document.getElementById('qm-footer').textContent=foot;
-  var enr=(d.enrichment||{}); var enrHtml='';
+  var enr=(d.enrichment||{}); var enrHtml='<div class="enr-box">';
   if(enr.enriched_at){
-    var kpiBox=function(val,label){var v=val||'—';return '<div style="flex:1;text-align:center;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 6px;"><div style="font-size:17px;font-weight:700;color:#0f172a;">'+v+'</div><div style="font-size:10px;color:#64748b;margin-top:2px;">'+label+'</div></div>';};
-    var r=enr.kpi_rendimento||['—','']; var c=enr.kpi_costo||['—','']; var k=enr.kpi_rischio||['—',''];
-    enrHtml+='<div style="margin-top:12px;border-top:1px solid #f1f5f9;padding-top:12px;">';
-    enrHtml+='<div style="display:flex;gap:8px;margin-bottom:8px;">'+kpiBox(r[0],r[1])+kpiBox(c[0],c[1])+kpiBox(k[0],k[1])+'</div>';
-    var metaItems=[];
-    if(enr.rating)metaItems.push('<b>Rating:</b> '+enr.rating);
-    if(enr.categoria)metaItems.push('<b>Cat:</b> '+enr.categoria);
-    var extras=enr.extra||[];
-    for(var _i=0;_i<extras.length;_i++){if(extras[_i][0])metaItems.push('<b>'+extras[_i][1]+':</b> '+extras[_i][0]);}
-    if(metaItems.length){enrHtml+='<div style="display:flex;flex-wrap:wrap;gap:8px 14px;font-size:11px;color:#475569;margin-bottom:4px;">'+metaItems.map(function(x){return '<span>'+x+'</span>';}).join('')+'</div>';}
-    enrHtml+='</div>';
+    function enrColor(v){if(!v)return'';var s=String(v).replace(/ /g,'');if(s.charAt(0)==='+')return' pos';if(s.charAt(0)==='-')return' neg';return'';}
+    var kpis=enr.kpis||[]; var hasKpi=kpis.some(function(k){return k[0];});
+    if(hasKpi){
+      var ncols=kpis.filter(function(k){return k[0];}).length;
+      enrHtml+='<div class="enr-hero '+(ncols>=3?'enr-h3':'enr-h2')+'">';
+      for(var ki=0;ki<kpis.length;ki++){
+        var kv=kpis[ki][0],kl=kpis[ki][1],kr=kpis[ki][2];
+        if(!kv)continue;
+        var vcls=kr?enrColor(kv):'';
+        enrHtml+='<div class="enr-kpi"><div class="enr-kpi-v'+vcls+'">'+kv+'</div><div class="enr-kpi-l">'+kl+'</div></div>';
+      }
+      enrHtml+='</div>';
+    }
+    var detItems=[]; var dets=enr.details||[];
+    for(var di=0;di<dets.length;di++){if(dets[di][0])detItems.push('<span><b>'+dets[di][1]+':</b> '+dets[di][0]+'</span>');}
+    if(enr.rating)detItems.unshift('<span><span class="enr-rating">'+enr.rating+'</span></span>');
+    if(detItems.length)enrHtml+='<div class="enr-details">'+detItems.join('')+'</div>';
+    enrHtml+='<a class="enr-scheda" href="http://localhost:8502/strumento/'+tk+'" target="_blank">Scheda completa →</a>';
   } else {
-    enrHtml+='<div style="margin-top:12px;border-top:1px solid #f1f5f9;padding-top:10px;font-size:11px;color:#94a3b8;">Dati finanziari non ancora caricati — <a href="http://localhost:8502/strumento/'+tk+'/fetch" target="_blank" style="color:#0ea5e9;">Arricchisci ora</a></div>';
+    enrHtml+='<div class="enr-miss">Dati finanziari non ancora caricati — <a href="http://localhost:8502/strumento/'+tk+'/fetch" target="_blank" style="color:#0ea5e9;">Arricchisci ora</a></div>';
+    enrHtml+='<a class="enr-scheda" href="http://localhost:8502/strumento/'+tk+'" target="_blank">Scheda completa →</a>';
   }
-  if(enr.error){enrHtml+='<div style="color:#f59e0b;font-size:0.82em;margin:4px 0;">⚠ '+enr.error+'</div>';}
-  enrHtml+='<div style="margin-top:8px;text-align:right;"><a href="http://localhost:8502/strumento/'+tk+'" target="_blank" style="font-size:11px;color:#0ea5e9;text-decoration:none;font-weight:600;">Scheda completa →</a></div>';
+  if(enr.error)enrHtml+='<div style="color:#f59e0b;font-size:11px;margin-top:4px;">⚠ '+enr.error+'</div>';
+  enrHtml+='</div>';
   document.getElementById('qm-enr').innerHTML=enrHtml;
   document.getElementById('qmo').classList.add('on');
 }
