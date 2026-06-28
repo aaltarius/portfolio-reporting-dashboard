@@ -277,6 +277,7 @@ def _parse_pdf_etf(text: str) -> dict:
         "benchmark":      r"Benchmark\s+(.+?)(?:\n|Morningstar|Area|$)",
         "categoria_etf":  r"Categoria\s+(.+?)(?:\n|Emittente|$)",
         "emittente":      r"Emittente\s+(.+?)(?:\n|Morningstar|$)",
+        "distribuzione":  r"Politica di distribuzione\s+(\w[\w\s]*?)(?:\n|Tipo|$)",
         "rendimento_1a":  r"1\s*[Aa]\s*\n?\s*([+\-]?[\d,.]+\s*%)",
         "rendimento_3a":  r"3\s*[Aa]\s*\n?\s*([+\-]?[\d,.]+\s*%)",
         "deviazione_std": r"Deviazione standard\s+([\d,.]+\s*%)",
@@ -284,20 +285,24 @@ def _parse_pdf_etf(text: str) -> dict:
         "beta":           r"Indice beta\s+([\d,.]+)",
         "var":            r"VaR\s+([\d,.]+)",
         "fiscalita":      r"Fiscalit[àa]\s+(\w+)",
-        "data_lancio":    r"Data di partenza\s+([\d/]+)",
+        "data_lancio":    r"Data di (?:partenza|lancio|costituzione)\s+([\d/]+)",
         "patrimonio":     r"Patrimonio netto\s*(?:mln)?\s*([\d,.]+)",
+        "valuta":         r"Valuta\s+([A-Z]{3})\b",
     }
     for field, pat in patterns.items():
         val = _re_val(pat, text)
         if val:
             out[field] = val.strip()
 
-    # Morningstar stars: count ★ characters
-    stars_m = re.search(r"Morningstar\s*([★☆✩❆⭐*]{1,5})", text)
+    # Morningstar stars: font-icon ( filled) oppure ★ classici
+    stars_m = re.search(r"Rating\s+Morningstar\s+([★☆*]{1,5})", text)
+    if not stars_m:
+        stars_m = re.search(r"Morningstar\s*([★☆✩*]{1,5})", text)
     if stars_m:
         raw = stars_m.group(1)
-        count = raw.count("★") or raw.count("*") or len(raw)
-        out["rating_morningstar"] = count
+        count = raw.count("") or raw.count("★") or raw.count("*") or len(raw)
+        if count:
+            out["rating_morningstar"] = count
 
     # Top holdings: "Name  xx,xx%"
     holdings = re.findall(
