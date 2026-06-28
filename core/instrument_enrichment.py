@@ -270,23 +270,34 @@ def _parse_pdf_btp(text: str) -> dict:
     return out
 
 
+
+
 def _parse_pdf_etf(text: str) -> dict:
     out: dict = {}
+
+    # Rendimenti: stessa struttura FAM — intestazioni su una riga, valori sulla riga dopo
+    rend_m = re.search(
+        r"Da inizio anno\s+1\s+A\s+3\s+A\s*\n\s*"
+        r"([+\-]?\s*[\d,.]+\s*%)\s+([+\-]?\s*[\d,.]+\s*%)\s+([+\-]?\s*[\d,.]+\s*%)",
+        text,
+    )
+    if rend_m:
+        out["rendimento_ytd"] = rend_m.group(1).strip()
+        out["rendimento_1a"]  = rend_m.group(2).strip()
+        out["rendimento_3a"]  = rend_m.group(3).strip()
+
     patterns = {
         "ter":            r"Commissioni gestione e altri costi\s+([\d,.]+\s*%)",
         "benchmark":      r"Benchmark\s+(.+?)(?:\n|Morningstar|Area|$)",
         "categoria_etf":  r"Categoria\s+(.+?)(?:\n|Emittente|$)",
         "emittente":      r"Emittente\s+(.+?)(?:\n|Morningstar|$)",
-        "distribuzione":  r"Politica di distribuzione\s+(\w[\w\s]*?)(?:\n|Tipo|$)",
-        "rendimento_1a":  r"1\s*[Aa]\s*\n?\s*([+\-]?[\d,.]+\s*%)",
-        "rendimento_3a":  r"3\s*[Aa]\s*\n?\s*([+\-]?[\d,.]+\s*%)",
         "deviazione_std": r"Deviazione standard\s+([\d,.]+\s*%)",
         "sharpe":         r"Indice di [Ss]harpe\s+([\d,.]+)",
         "beta":           r"Indice beta\s+([\d,.]+)",
         "var":            r"VaR\s+([\d,.]+)",
-        "fiscalita":      r"Fiscalit[àa]\s+(\w+)",
+        "fiscalita":      r"Fiscalit[aà]\s+(\w+)",
         "data_lancio":    r"Data di (?:partenza|lancio|costituzione)\s+([\d/]+)",
-        "patrimonio":     r"Patrimonio netto\s*(?:mln)?\s*([\d,.]+)",
+        "patrimonio":     r"Patrimonio netto\s*(?:mln\.?)?\s*[\d/]*\s*([\d,.]+)",
         "valuta":         r"Valuta\s+([A-Z]{3})\b",
     }
     for field, pat in patterns.items():
@@ -294,17 +305,21 @@ def _parse_pdf_etf(text: str) -> dict:
         if val:
             out[field] = val.strip()
 
-    # Morningstar stars: font-icon ( filled) oppure ★ classici
-    stars_m = re.search(r"Rating\s+Morningstar\s+([★☆*]{1,5})", text)
-    if not stars_m:
-        stars_m = re.search(r"Morningstar\s*([★☆✩*]{1,5})", text)
+    # Distribuzione: nessuna etichetta diretta nel PDF Fineco
+    if "Dividendo distribuito" in text or "Dividend Yield" in text:
+        out["distribuzione"] = "Distribuzione"
+    elif "Accum" in text and "distribu" not in text.lower():
+        out["distribuzione"] = "Accumulazione"
+
+    # Stelle Morningstar: font-icon  (piena)  (vuota) — stesse dei FAM
+    stars_m = re.search(r"Morningstar\s+(\S+)", text)
     if stars_m:
         raw = stars_m.group(1)
-        count = raw.count("") or raw.count("★") or raw.count("*") or len(raw)
+        count = raw.count("") or raw.count("★") or raw.count("*")
         if count:
             out["rating_morningstar"] = count
 
-    # Top holdings: "Name  xx,xx%"
+    # Top holdings
     holdings = re.findall(
         r"([\w\s]+(?:SpA|NV|Ltd|SA|AG|Plc|Inc|Group)?)\s+([\d,.]+\s*%)", text
     )
@@ -322,7 +337,7 @@ def _parse_pdf_fam(text: str) -> dict:
     # Rendimenti: "Da inizio anno 1 A 3 A\n4,47% 11,85% 26,52%"
     rend_m = re.search(
         r"Da inizio anno\s+1\s+A\s+3\s+A\s*\n\s*"
-        r"([+\-]?[\d,.]+\s*%)\s+([+\-]?[\d,.]+\s*%)\s+([+\-]?[\d,.]+\s*%)",
+        r"([+\-]?\s*[\d,.]+\s*%)\s+([+\-]?\s*[\d,.]+\s*%)\s+([+\-]?\s*[\d,.]+\s*%)",
         text,
     )
     if rend_m:
