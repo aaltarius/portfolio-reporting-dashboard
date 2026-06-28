@@ -18,7 +18,10 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
 
     quotes_log = quotes_log or {}
     storico = data.get("storico_prezzi", {}) or {}
-    info_map = {s.get("ticker", ""): s for s in data.get("strumenti", [])}
+    # Carica strumenti freschi dal disco: ctx.data è cached e non riflette enrichment recente
+    from persistence.storage import load_data as _ld_enr
+    _fresh_strumenti = _ld_enr().get("strumenti", [])
+    info_map = {s.get("ticker", ""): s for s in _fresh_strumenti}
     holdings_df = build_ptf_df(data)
     holdings_map = {}
     if isinstance(holdings_df, pd.DataFrame) and not holdings_df.empty and "Ticker" in holdings_df.columns:
