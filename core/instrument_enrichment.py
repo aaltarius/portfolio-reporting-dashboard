@@ -185,6 +185,48 @@ def _scan_labels(text: str) -> dict:
     return out
 
 
+_PERIOD_LABELS = [
+    (r"da\s+inizio\s+anno",  "rendimento_ytd"),
+    (r"\b1\s+[Aa]\b",        "rendimento_1a"),
+    (r"\b2\s+[Aa]\b",        "rendimento_2a"),
+    (r"\b3\s+[Aa]\b",        "rendimento_3a"),
+    (r"\b5\s+[Aa]\b",        "rendimento_5a"),
+    (r"\b10\s+[Aa]\b",       "rendimento_10a"),
+]
+
+
+def _scan_rendimenti(text: str) -> dict:
+    """Extract rendimenti for all available periods (YTD, 1A, 3A, 5A, 10A).
+
+    Handles two PDF layouts:
+    - Layout A: all period labels on one line, all values on the next line.
+    - Layout B: label / value pairs interleaved line by line.
+
+    ``last_val_end`` advances past each matched value so that Layout A labels
+    (whose positions all precede the value block) don't all grab the same
+    first percentage.
+    """
+    out: dict = {}
+    anchor = re.search(r"[Dd]a\s+inizio\s+anno", text)
+    if not anchor:
+        return out
+    # Work within a 400-char window from the anchor to avoid false positives
+    block = text[anchor.start(): anchor.start() + 400]
+    last_val_end = 0  # absolute position in block of end of last matched value
+    for pat, field in _PERIOD_LABELS:
+        m = re.search(pat, block, re.IGNORECASE)
+        if not m:
+            continue
+        # For Layout A the label sits before all values; advance past any
+        # already-consumed value so we don't re-use it.
+        search_from = max(m.end(), last_val_end)
+        vm = _PCT_RE_VAL.search(block[search_from: search_from + 80])
+        if vm:
+            out[field] = vm.group(0).strip()
+            last_val_end = search_from + vm.end()
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
