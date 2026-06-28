@@ -227,6 +227,45 @@ def _scan_rendimenti(text: str) -> dict:
     return out
 
 
+def _scan_morningstar(text: str) -> dict:
+    """Extract Morningstar star rating (1-5) from PDF text."""
+    m = re.search(r"[Mm]orningstar\s+(.{0,40})", text)
+    if not m:
+        return {}
+    raw = m.group(1)
+    # Count filled stars: Unicode ★ (U+2605) or private-use font icons
+    count = raw.count("★") or raw.count("") or raw.count("*")
+    if not count:
+        dm = re.search(r"(\d)(?:/5|\s|$)", raw)
+        if dm:
+            count = int(dm.group(1))
+    return {"rating_morningstar": count} if count and 1 <= count <= 5 else {}
+
+
+def _scan_holdings(text: str) -> list:
+    """Extract top-holdings from 'Primi N titoli' section."""
+    m = re.search(
+        r"[Pp]rimi\s+\d+\s+titoli.*?[Vv]ar%?\s*([\s\S]+?)"
+        r"(?:[Aa]vvertenze|[Ee]ducational|[Dd]ati in tempo|\Z)",
+        text,
+        re.IGNORECASE,
+    )
+    if not m:
+        return []
+    holdings: list = []
+    for line in m.group(1).strip().splitlines():
+        lm = re.match(r"^(.+?)\s+([\d,]+\s*%)\s*$", line.strip())
+        if lm:
+            holdings.append({"nome": lm.group(1).strip(), "pct": lm.group(2).strip()})
+    return holdings[:10]
+
+
+def _scan_distribuzione(text: str) -> dict:
+    """Return {"distribuzione": "Distribuzione"} only when an actual payout value is found."""
+    m = re.search(r"[Dd]ividendo distribuito[^-\n\d]*(\d[\d,.]*)", text)
+    return {"distribuzione": "Distribuzione"} if m else {}
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
