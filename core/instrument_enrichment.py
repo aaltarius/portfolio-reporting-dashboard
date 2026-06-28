@@ -153,29 +153,54 @@ def _extract_typed_value(remainder: str, next_line: str, vtype: str) -> Optional
 def _scan_labels(text: str) -> dict:
     """Scan extracted PDF text for known labels; return {field: value} dict.
 
-    Labels are tried longest-first; once a line is claimed by a longer label
-    it cannot be re-matched by a shorter one (e.g. "Categoria MS" must not
-    also trigger the shorter "Categoria" label on the same line).
+    Labels are tried longest-first so that longer labels (e.g. "Categoria MS")
+    win over shorter prefix labels (e.g. "Categoria") when both start at the
+    same word position.  A consumed-span set prevents a single word-position
+    from being matched by two different labels.
+
+    Labels may appear anywhere on a line, not only at line-start.  This
+    handles PDFs that pack multiple fields onto one physical line (e.g.
+    "Nav 141,58  Commissioni gestione e altri costi 0,12%") as well as ISINs
+    preceded by token prefixes ("CFD ISIN IE00BGV5VN51").
     """
     out: dict = {}
     lines = text.split("\n")
     n = len(lines)
     sorted_labels = sorted(_PDF_LABELS.items(), key=lambda x: -len(x[0]))
-    consumed_lines: set[int] = set()
+    # consumed_spans: set of (line_idx, word_idx) pairs already claimed
+    consumed_spans: set[tuple[int, int]] = set()
 
     for label, (field, vtype) in sorted_labels:
         if field in out:
             continue
-        label_wc = len(label.split())
+        label_words = label.split()
+        lw = len(label_words)
         for i, line in enumerate(lines):
-            if i in consumed_lines:
-                continue
             norm = _norm_line(line)
-            if not (norm == label or norm.startswith(label + " ")):
+            if label not in norm:
                 continue
-            consumed_lines.add(i)   # claim the line regardless of extraction success
+            # Find first occurrence, enforce word-boundary on both sides
+            pos = norm.find(label)
+            if pos > 0 and norm[pos - 1] != ' ':
+                continue
+            end = pos + len(label)
+            if end < len(norm) and norm[end] != ' ':
+                continue
+            # Resolve the word index where the label starts
+            norm_words = norm.split()
             orig_words = line.strip().split()
-            remainder = " ".join(orig_words[label_wc:])
+            label_start_idx: Optional[int] = None
+            for wi in range(len(norm_words) - lw + 1):
+                if " ".join(norm_words[wi:wi + lw]) == label:
+                    if (i, wi) not in consumed_spans:
+                        label_start_idx = wi
+                    break  # found the label position (consumed or not) — stop
+            if label_start_idx is None:
+                continue
+            # Mark label word-positions as consumed
+            for wi in range(label_start_idx, label_start_idx + lw):
+                consumed_spans.add((i, wi))
+            remainder = " ".join(orig_words[label_start_idx + lw:])
             next_line = lines[i + 1].strip() if i + 1 < n else ""
             val = _extract_typed_value(remainder, next_line, vtype)
             if val:
@@ -469,148 +494,12 @@ def enrich_fondo(strumento: dict) -> dict:
     return strumento
 
 
-def _re_val(pattern: str, text: str, flags: int = re.IGNORECASE) -> Optional[str]:
-    """Search *pattern* in *text*, return first capture group stripped, or None."""
-    m = re.search(pattern, text, flags)
-    return m.group(1).strip() if m else None
-
-
-def _parse_pdf_btp(text: str) -> dict:
-    out: dict = {}
-    patterns = {
-        "ytm_netto":         r"Rendimento netto a scadenza\s+([\d,]+\s*%)",
-        "cedola_annuale":    r"Cedola annuale\s+([\d,]+\s*%)",
-        "cedola_frequenza":  r"Frequenza cedola\s+(\w+\.?)",
-        "tipo_cedola":       r"Tipo cedola in corso\s+(\w+)",
-        "prossima_cedola":   r"Prossima cedola\s+([\d/]+)",
-        "scadenza":          r"Scadenza\s+([\d/]+)",
-        "rating_emittente":  r"Rating emittente\s+([A-Z]{1,3}[+\-]?)",
-        "data_emissione":    r"Data emissione\s+([\d/]+)",
-        "prezzo_emissione":  r"Prezzo emissione\s+([\d,.]+)",
-        "prezzo_rimborso":   r"Prezzo rimborso\s+([\d,.]+)",
-        "rateo_interessi":   r"Rateo interessi\s+([\d,.()\w/]+)",
-        "rateo_disaggio":    r"Rateo di disaggio\s*\(1\)\s+([\d,.]+)",
-        "ritenute_totali":   r"Ritenute totali\s+([\d,.]+)",
-    }
-    for field, pat in patterns.items():
-        val = _re_val(pat, text)
-        if val:
-            out[field] = val
-    return out
-
-
-
-
-def _parse_pdf_etf(text: str) -> dict:
-    out: dict = {}
-
-    # Rendimenti: stessa struttura FAM — intestazioni su una riga, valori sulla riga dopo
-    rend_m = re.search(
-        r"Da inizio anno\s+1\s+A\s+3\s+A\s*\n\s*"
-        r"([+\-]?\s*[\d,.]+\s*%)\s+([+\-]?\s*[\d,.]+\s*%)\s+([+\-]?\s*[\d,.]+\s*%)",
-        text,
-    )
-    if rend_m:
-        out["rendimento_ytd"] = rend_m.group(1).strip()
-        out["rendimento_1a"]  = rend_m.group(2).strip()
-        out["rendimento_3a"]  = rend_m.group(3).strip()
-
-    patterns = {
-        "ter":            r"Commissioni gestione e altri costi\s+([\d,.]+\s*%)",
-        "benchmark":      r"Benchmark\s+(.+?)(?:\n|Morningstar|Area|$)",
-        "categoria_etf":  r"Categoria\s+(.+?)(?:\n|Emittente|$)",
-        "emittente":      r"Emittente\s+(.+?)(?:\n|Morningstar|$)",
-        "deviazione_std": r"Deviazione standard\s+([\d,.]+\s*%)",
-        "sharpe":         r"Indice di [Ss]harpe\s+([\d,.]+)",
-        "beta":           r"Indice beta\s+([\d,.]+)",
-        "var":            r"VaR\s+([\d,.]+)",
-        "fiscalita":      r"Fiscalit[aà]\s+(\w+)",
-        "data_lancio":    r"Data di (?:partenza|lancio|costituzione)\s+([\d/]+)",
-        "patrimonio":     r"Patrimonio netto\s*(?:mln\.?)?\s*[\d/]*\s*([\d,.]+)",
-        "valuta":         r"Valuta\s+([A-Z]{3})\b",
-    }
-    for field, pat in patterns.items():
-        val = _re_val(pat, text)
-        if val:
-            out[field] = val.strip()
-
-    # Distribuzione: nessuna etichetta diretta nel PDF Fineco
-    if "Dividendo distribuito" in text or "Dividend Yield" in text:
-        out["distribuzione"] = "Distribuzione"
-    elif "Accum" in text and "distribu" not in text.lower():
-        out["distribuzione"] = "Accumulazione"
-
-    # Stelle Morningstar: font-icon  (piena)  (vuota) — stesse dei FAM
-    stars_m = re.search(r"Morningstar\s+(\S+)", text)
-    if stars_m:
-        raw = stars_m.group(1)
-        count = raw.count("") or raw.count("★") or raw.count("*")
-        if count:
-            out["rating_morningstar"] = count
-
-    # Top holdings
-    holdings = re.findall(
-        r"([\w\s]+(?:SpA|NV|Ltd|SA|AG|Plc|Inc|Group)?)\s+([\d,.]+\s*%)", text
-    )
-    if holdings:
-        out["holdings_top"] = [
-            {"nome": h[0].strip(), "pct": h[1]} for h in holdings[:5]
-        ]
-
-    return out
-
-
-def _parse_pdf_fam(text: str) -> dict:
-    out: dict = {}
-
-    # Rendimenti: "Da inizio anno 1 A 3 A\n4,47% 11,85% 26,52%"
-    rend_m = re.search(
-        r"Da inizio anno\s+1\s+A\s+3\s+A\s*\n\s*"
-        r"([+\-]?\s*[\d,.]+\s*%)\s+([+\-]?\s*[\d,.]+\s*%)\s+([+\-]?\s*[\d,.]+\s*%)",
-        text,
-    )
-    if rend_m:
-        out["rendimento_ytd"] = rend_m.group(1).strip()
-        out["rendimento_1a"] = rend_m.group(2).strip()
-        out["rendimento_3a"] = rend_m.group(3).strip()
-
-    # Campi semplici (già funzionanti sul layout reale)
-    simple: dict = {
-        "ter":          r"Commissione gestione annua\s+([\d,.]+\s*%)",
-        "categoria_fam": r"Categoria\s+MS\s+(.+?)(?:\n|Categoria Advice|$)",
-        "data_lancio":  r"Data di lancio\s+([\d/]+)",
-        "valuta":       r"Valuta NAV\s+([A-Z]{3})",
-        "patrimonio":   r"Patrimonio\s+([\d,.]+\s*Mln[^\n]*)",
-    }
-    for field, pat in simple.items():
-        val = _re_val(pat, text)
-        if val:
-            out[field] = val.strip()
-
-    # Morningstar: stelle sono font-icon privati  (piena) e  (vuota)
-    stars_m = re.search(r"Rating Morningstar\s+([]+)", text)
-    if stars_m:
-        count = stars_m.group(1).count("")
-        if count:
-            out["rating_morningstar"] = count
-
-    return out
-
-
-def parse_fineco_pdf(pdf_bytes: bytes, tipo: str) -> dict:
+def parse_fineco_pdf(pdf_bytes: bytes, tipo: str = "") -> dict:
     """Parse a Fineco 'Scheda titolo' PDF exported from the web platform.
 
-    Uses pdfplumber for text extraction.  Returns a dict of extracted fields,
-    or ``{}`` (empty dict — never raises) if the PDF is not parsable (e.g.
-    image-only PDFs generated by Microsoft Print To PDF, corrupt files, or
-    unknown *tipo*).
-
-    Parameters
-    ----------
-    pdf_bytes:
-        Raw bytes of the PDF file.
-    tipo:
-        One of ``"btp"``, ``"etf"``, ``"fam"``.
+    Accepts any ETF/ETC/FAM/BTP layout without type-switching.
+    Returns a dict of extracted fields, or {} if the PDF is not parsable.
+    The ``tipo`` parameter is accepted for API compatibility but is not used.
     """
     try:
         import pdfplumber  # heavy — local import only
@@ -622,14 +511,17 @@ def parse_fineco_pdf(pdf_bytes: bytes, tipo: str) -> dict:
     if not text.strip():
         return {}
 
-    tipo = (tipo or "").lower()
-    if tipo == "btp":
-        return _parse_pdf_btp(text)
-    if tipo == "etf":
-        return _parse_pdf_etf(text)
-    if tipo in ("fam", "fondo"):
-        return _parse_pdf_fam(text)
-    return {}
+    out: dict = {}
+    out.update(_scan_labels(text))
+    out.update(_scan_rendimenti(text))
+    out.update(_scan_morningstar(text))
+    out.update(_scan_distribuzione(text))
+
+    holdings = _scan_holdings(text)
+    if holdings:
+        out["holdings_top"] = holdings
+
+    return out
 
 
 # ---------------------------------------------------------------------------
