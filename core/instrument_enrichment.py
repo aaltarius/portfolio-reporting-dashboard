@@ -75,7 +75,7 @@ _PDF_LABELS: dict[str, tuple[str, str]] = {
     "emittente":                                 ("emittente",           "text"),
     "benchmark":                                 ("benchmark",           "text"),
     "categoria ms":                              ("categoria_fam",       "text"),
-    "categoria":                                 ("categoria_raw",       "text"),
+    "categoria":                                 ("categoria_etf",       "text"),
     "specializzazione":                          ("specializzazione",    "token"),
     "fiscalita":                                 ("fiscalita",           "token"),
     # Dates
