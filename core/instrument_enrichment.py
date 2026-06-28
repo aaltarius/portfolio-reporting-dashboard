@@ -37,6 +37,154 @@ def _now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
+import unicodedata as _unicodedata
+
+
+def _norm_line(line: str) -> str:
+    """Lowercase, strip accents, collapse inline whitespace."""
+    nfd = _unicodedata.normalize("NFD", line)
+    no_acc = "".join(c for c in nfd if _unicodedata.category(c) != "Mn")
+    return re.sub(r"[ \t]+", " ", no_acc).strip().lower()
+
+
+# ---------------------------------------------------------------------------
+# Master label→(field, value_type) dictionary for PDF parsing.
+# Keys are pre-normalized (no accents, lowercase, single spaces).
+# Sorted longest-first at scan time so longer labels win over shorter ones.
+# value_type: "percent" | "number" | "last_number" | "date" | "token" | "text"
+# ---------------------------------------------------------------------------
+_PDF_LABELS: dict[str, tuple[str, str]] = {
+    # Costs
+    "commissioni gestione e altri costi":        ("ter",                 "percent"),
+    "commissione gestione annua":                ("ter",                 "percent"),
+    # Risk
+    "deviazione standard":                       ("deviazione_std",      "percent"),
+    "indice di sharpe":                          ("sharpe",              "number"),
+    "indice beta":                               ("beta",                "number"),
+    "var":                                       ("var",                 "number"),
+    # Returns / pricing
+    "rendimento medio":                          ("rendimento_medio",    "percent"),
+    "dividend yield":                            ("dividend_yield",      "number"),
+    "price / earnings":                          ("price_earnings",      "number"),
+    "price to book value":                       ("price_to_book",       "number"),
+    "nav":                                       ("nav",                 "last_number"),
+    "patrimonio netto":                          ("patrimonio",          "last_number"),
+    "patrimonio":                                ("patrimonio",          "text"),
+    # Identity / classification
+    "isin":                                      ("isin",                "token"),
+    "emittente":                                 ("emittente",           "text"),
+    "benchmark":                                 ("benchmark",           "text"),
+    "categoria ms":                              ("categoria_fam",       "text"),
+    "categoria":                                 ("categoria_raw",       "text"),
+    "specializzazione":                          ("specializzazione",    "token"),
+    "fiscalita":                                 ("fiscalita",           "token"),
+    # Dates
+    "data di partenza":                          ("data_lancio",         "date"),
+    "data di lancio":                            ("data_lancio",         "date"),
+    "data lancio":                               ("data_lancio",         "date"),
+    "data emissione":                            ("data_emissione",      "date"),
+    "data godimento":                            ("data_godimento",      "date"),
+    "prossima cedola":                           ("prossima_cedola",     "date"),
+    # Valuta (longer alias first)
+    "valuta nav":                                ("valuta",              "token"),
+    "valuta":                                    ("valuta",              "token"),
+    # BTP-specific
+    "rendimento effettivo a scadenza netto":     ("ytm_netto",           "percent"),
+    "rendimento effettivo a scadenza lordo":     ("ytm_lordo",           "percent"),
+    "rendimento netto a scadenza":               ("ytm_netto",           "percent"),
+    "cedola annuale":                            ("cedola_annuale",      "percent"),
+    "tasso cedola periodale":                    ("cedola_tasso",        "percent"),
+    "rateo lordo":                               ("rateo_lordo",         "text"),
+    "rateo netto":                               ("rateo_netto",         "text"),
+    "rateo interessi":                           ("rateo_interessi",     "text"),
+    "rateo di disaggio":                         ("rateo_disaggio",      "number"),
+    "ritenute totali":                           ("ritenute_totali",     "number"),
+    "duration modificata":                       ("duration_modificata", "number"),
+    "tipo cedola in corso":                      ("tipo_cedola",         "token"),
+    "tipo cedola":                               ("tipo_cedola",         "token"),
+    "periodicita cedola":                        ("cedola_frequenza",    "token"),
+    "frequenza cedola":                          ("cedola_frequenza",    "token"),
+    "struttura bond":                            ("struttura",           "text"),
+    "prezzo emissione":                          ("prezzo_emissione",    "number"),
+    "prezzo rimborso":                           ("prezzo_rimborso",     "number"),
+    "scadenza":                                  ("scadenza",            "date"),
+    "rating emittente":                          ("rating_emittente",    "token"),
+}
+
+_NO_VALUE: frozenset = frozenset({"-", "--", "n.d.", "n/d", "—", "vedi composizione", ""})
+_DATE_RE_VAL  = re.compile(r"\d{2}/\d{2}/\d{4}")
+_PCT_RE_VAL   = re.compile(r"[+\-]?\s*\d+[,.]?\d*\s*%")
+_NUM_RE_VAL   = re.compile(r"\d[\d.,]*")
+
+
+def _extract_typed_value(remainder: str, next_line: str, vtype: str) -> Optional[str]:
+    """Return a typed value from *remainder* (rest of label's line) or *next_line* fallback."""
+    src = remainder.strip() if remainder.strip() else next_line.strip()
+
+    if vtype == "percent":
+        m = _PCT_RE_VAL.search(remainder) or _PCT_RE_VAL.search(next_line)
+        return m.group(0).strip() if m else None
+
+    if vtype == "number":
+        m = _NUM_RE_VAL.search(remainder) or _NUM_RE_VAL.search(next_line)
+        return m.group(0) if m else None
+
+    if vtype == "last_number":
+        nums = _NUM_RE_VAL.findall(remainder)
+        if nums:
+            return nums[-1]
+        nums = _NUM_RE_VAL.findall(next_line)
+        return nums[-1] if nums else None
+
+    if vtype == "date":
+        m = _DATE_RE_VAL.search(remainder) or _DATE_RE_VAL.search(next_line)
+        return m.group(0) if m else None
+
+    if vtype == "token":
+        parts = src.split()
+        val = parts[0] if parts else None
+        return val if val and val.lower() not in _NO_VALUE else None
+
+    # vtype == "text"
+    val = remainder.strip() or next_line.strip()
+    return val if val and val.lower() not in _NO_VALUE else None
+
+
+def _scan_labels(text: str) -> dict:
+    """Scan extracted PDF text for known labels; return {field: value} dict.
+
+    Labels are tried longest-first; once a line is claimed by a longer label
+    it cannot be re-matched by a shorter one (e.g. "Categoria MS" must not
+    also trigger the shorter "Categoria" label on the same line).
+    """
+    out: dict = {}
+    lines = text.split("\n")
+    n = len(lines)
+    sorted_labels = sorted(_PDF_LABELS.items(), key=lambda x: -len(x[0]))
+    consumed_lines: set[int] = set()
+
+    for label, (field, vtype) in sorted_labels:
+        if field in out:
+            continue
+        label_wc = len(label.split())
+        for i, line in enumerate(lines):
+            if i in consumed_lines:
+                continue
+            norm = _norm_line(line)
+            if not (norm == label or norm.startswith(label + " ")):
+                continue
+            orig_words = line.strip().split()
+            remainder = " ".join(orig_words[label_wc:])
+            next_line = lines[i + 1].strip() if i + 1 < n else ""
+            val = _extract_typed_value(remainder, next_line, vtype)
+            if val:
+                out[field] = val
+                consumed_lines.add(i)
+            break
+
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -276,11 +424,18 @@ def _parse_pdf_etf(text: str) -> dict:
     out: dict = {}
 
     # Rendimenti: stessa struttura FAM — intestazioni su una riga, valori sulla riga dopo
+    # Layout A: "Da inizio anno  1 A  3 A\n+ %  + %  + %" (headers poi valori)
     rend_m = re.search(
         r"Da inizio anno\s+1\s+A\s+3\s+A\s*\n\s*"
         r"([+\-]?\s*[\d,.]+\s*%)\s+([+\-]?\s*[\d,.]+\s*%)\s+([+\-]?\s*[\d,.]+\s*%)",
         text,
     )
+    # Layout B: "Da inizio anno\n+ %\n1 A\n+ %\n3 A\n+ %" (etichetta/valore alternati)
+    if not rend_m:
+        rend_m = re.search(
+            r"Da inizio anno\s+([+\-]?\s*[\d,.]+\s*%)\s+1\s+A\s+([+\-]?\s*[\d,.]+\s*%)\s+3\s+A\s+([+\-]?\s*[\d,.]+\s*%)",
+            text,
+        )
     if rend_m:
         out["rendimento_ytd"] = rend_m.group(1).strip()
         out["rendimento_1a"]  = rend_m.group(2).strip()
@@ -298,7 +453,13 @@ def _parse_pdf_etf(text: str) -> dict:
         "fiscalita":      r"Fiscalit[aà]\s+(\w+)",
         "data_lancio":    r"Data di (?:partenza|lancio|costituzione)\s+([\d/]+)",
         "patrimonio":     r"Patrimonio netto\s*(?:mln\.?)?\s*[\d/]*\s*([\d,.]+)",
-        "valuta":         r"Valuta\s+([A-Z]{3})\b",
+        "valuta":           r"Valuta\s+([A-Z]{3})\b",
+        "rendimento_medio": r"Rendimento medio\s+([\d,.]+\s*%)",
+        "nav":              r"Nav\s+[\d/]+\s+([\d,.]+)",
+        "dividend_yield":   r"Dividend Yield\s+([\d,.]+)",
+        "price_earnings":   r"Price\s*/\s*Earnings\s+([\d,.]+)",
+        "price_to_book":    r"Price to book value\s+([\d,.]+)",
+        "dividendo_dist":   r"Dividendo distribuito\s*\([^)]+\)\s*([\d,.]+)",
     }
     for field, pat in patterns.items():
         val = _re_val(pat, text)
@@ -319,14 +480,18 @@ def _parse_pdf_etf(text: str) -> dict:
         if count:
             out["rating_morningstar"] = count
 
-    # Top holdings
-    holdings = re.findall(
-        r"([\w\s]+(?:SpA|NV|Ltd|SA|AG|Plc|Inc|Group)?)\s+([\d,.]+\s*%)", text
+    # Top holdings: estrae solo dalla sezione "Primi 5 titoli" per evitare falsi positivi
+    holdings_block = re.search(
+        r"Primi 5 titoli\s+Var%\s*([\s\S]+?)(?:Avvertenze|Classificazione|ESG|\Z)", text
     )
-    if holdings:
-        out["holdings_top"] = [
-            {"nome": h[0].strip(), "pct": h[1]} for h in holdings[:5]
-        ]
+    if holdings_block:
+        holdings = []
+        for line in holdings_block.group(1).strip().splitlines():
+            m = re.match(r"^(.+?)\s+(\d[\d,.]*\s*%)", line.strip())
+            if m:
+                holdings.append({"nome": m.group(1).strip(), "pct": m.group(2).strip()})
+        if holdings:
+            out["holdings_top"] = holdings[:5]
 
     return out
 
