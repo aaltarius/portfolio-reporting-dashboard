@@ -1892,20 +1892,65 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
   .sb-auto{background:#dbeafe;color:#1d4ed8;}
   .sb-pdf{background:#ede9fe;color:#7c3aed;}
   .sb-manuale{background:#fef3c7;color:#b45309;}
+  /* Completeness score */
+  .score-row{display:flex;align-items:center;gap:10px;margin-top:10px;}
+  .score-lbl{font-size:11px;color:#94a3b8;font-weight:600;white-space:nowrap;}
+  .score-bar-wrap{flex:1;background:#e2e8f0;border-radius:4px;height:6px;max-width:160px;}
+  .score-bar{height:6px;border-radius:4px;}
+  .score-text{font-size:11px;font-weight:700;}
+  .sc-green{color:#15803d;} .sc-bar-green{background:#22c55e;}
+  .sc-yellow{color:#b45309;} .sc-bar-yellow{background:#f59e0b;}
+  .sc-orange{color:#c2410c;} .sc-bar-orange{background:#f97316;}
+  .sc-red{color:#dc2626;} .sc-bar-red{background:#ef4444;}
   /* Footer */
   .foot{text-align:center;margin-top:20px;padding-bottom:10px;}"""
+
+    # ── Punteggio completezza ─────────────────────────────────────────────────
+    _CORE_FIELDS: dict[str, list[str]] = {
+        "btp": ["ytm_netto", "ytm_lordo", "duration_modificata", "scadenza",
+                "cedola_annuale", "cedola_frequenza", "tipo_cedola", "rating_emittente"],
+        "etf": ["rendimento_1a", "rendimento_3a", "ter", "benchmark",
+                "categoria_etf", "distribuzione", "data_lancio", "rating_morningstar"],
+        "etc": ["rendimento_1a", "rendimento_3a", "ter", "benchmark",
+                "categoria_etf", "distribuzione", "data_lancio", "rating_morningstar"],
+        "fondo": ["rendimento_ytd", "rendimento_1a", "rendimento_3a", "ter",
+                  "categoria_fam", "rating_morningstar", "data_lancio", "patrimonio"],
+    }
+    _score_fields = _CORE_FIELDS.get(cat, [])
+    if _score_fields and enriched_at != "mai":
+        _filled = sum(1 for f in _score_fields if strumento.get(f) not in (None, "", "—"))
+        _pct = int(_filled / len(_score_fields) * 100)
+        if _pct == 100:
+            _sc, _sc_bar, _sc_label = "sc-green", "sc-bar-green", "Completo"
+        elif _pct >= 75:
+            _sc, _sc_bar, _sc_label = "sc-yellow", "sc-bar-yellow", "Quasi completo"
+        elif _pct >= 40:
+            _sc, _sc_bar, _sc_label = "sc-orange", "sc-bar-orange", "Parziale"
+        else:
+            _sc, _sc_bar, _sc_label = "sc-red", "sc-bar-red", "Incompleto"
+        _score_html = (
+            f'<div class="score-row">'
+            f'<span class="score-lbl">Completezza dati</span>'
+            f'<div class="score-bar-wrap"><div class="score-bar {_sc_bar}" style="width:{_pct}%;"></div></div>'
+            f'<span class="score-text {_sc}">{_pct}% — {_sc_label} ({_filled}/{len(_score_fields)})</span>'
+            f'</div>'
+        )
+    else:
+        _score_html = ""
 
     def _html_open() -> str:
         return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Scheda {ticker}</title>
 <style>{base_css}</style></head><body><div class="page">
 <div class="hdr">
+  <div style="font-size:12px;font-weight:700;color:#94a3b8;letter-spacing:.06em;margin-bottom:4px;">{ticker}</div>
   <div class="hdr-name">{nome}</div>
   <div class="chips">
     <span class="chip chip-tipo">{tipo}</span>
     {stato_chip}
   </div>
   <div class="hdr-meta">ISIN: {isin}{(' &nbsp;·&nbsp; Fonte: ' + src_label) if src_label else ''}</div>
+  {_score_html}
 </div>
 {ok_html}{err_html}{enrich_err_html}
 <div class="actions">
