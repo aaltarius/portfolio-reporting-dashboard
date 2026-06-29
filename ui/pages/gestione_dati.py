@@ -533,12 +533,34 @@ def _render_arricchimento(data: dict, ctx) -> None:
     raw_data = load_data()
     strumenti = [s for s in (raw_data.get("strumenti") or []) if str(s.get("stato", "aperto")) == "aperto"]
 
+    from core.instrument_enrichment import _categoria
+
+    _CORE: dict[str, list[str]] = {
+        "btp":   ["ytm_netto", "ytm_lordo", "duration_modificata", "scadenza",
+                  "cedola_annuale", "cedola_frequenza", "tipo_cedola", "rating_emittente"],
+        "etf":   ["rendimento_1a", "rendimento_3a", "ter", "benchmark",
+                  "categoria_etf", "distribuzione", "data_lancio", "rating_morningstar"],
+        "etc":   ["rendimento_1a", "rendimento_3a", "ter", "benchmark",
+                  "categoria_etf", "distribuzione", "data_lancio"],
+        "fondo": ["rendimento_ytd", "rendimento_1a", "rendimento_3a", "ter",
+                  "categoria_fam", "rating_morningstar", "data_lancio", "patrimonio"],
+    }
+
     def _stato(s: dict) -> str:
         if s.get("enrichment_error"):
             return "⚠ errore"
         if s.get("enriched_at"):
             return "✓ arricchito"
         return "— mai"
+
+    def _completezza(s: dict) -> int:
+        if not s.get("enriched_at"):
+            return 0
+        fields = _CORE.get(_categoria(s.get("tipo", "")), [])
+        if not fields:
+            return 0
+        filled = sum(1 for f in fields if s.get(f) not in (None, "", "—"))
+        return round(filled / len(fields) * 100)
 
     rows = [
         {
@@ -547,21 +569,26 @@ def _render_arricchimento(data: dict, ctx) -> None:
             "Tipo":       s.get("tipo", ""),
             "Stato":      _stato(s),
             "Aggiornato": (s.get("enriched_at") or "")[:10] or "—",
+            "%":          _completezza(s),
         }
         for s in strumenti
     ]
 
     if rows:
+        row_h = 35
+        table_h = 38 + len(rows) * row_h
         st.dataframe(
             rows,
             width="stretch",
             hide_index=True,
+            height=table_h,
             column_config={
                 "Ticker":     st.column_config.TextColumn("Ticker", width="small"),
                 "Nome":       st.column_config.TextColumn("Nome"),
                 "Tipo":       st.column_config.TextColumn("Tipo"),
                 "Stato":      st.column_config.TextColumn("Stato", width="small"),
                 "Aggiornato": st.column_config.TextColumn("Aggiornato", width="small"),
+                "%":          st.column_config.ProgressColumn("Completezza", min_value=0, max_value=100, width="small", format="%d%%"),
             },
         )
 
