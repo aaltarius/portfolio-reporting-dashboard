@@ -1,5 +1,107 @@
 # Changelog
 
+## 4.9.23 - Parser PDF universale: label-proximity scanner
+
+**Parser PDF completamente riscritto (`core/instrument_enrichment.py`):**
+- eliminati i tre parser tipo-specifici (`_parse_pdf_btp`, `_parse_pdf_etf`, `_parse_pdf_fam`) che si rompevano ad ogni variazione di layout
+- sostituiti da un unico scanner basato su dizionario di etichette italiane → campo + tipo valore (`_PDF_LABELS`, `_scan_labels`)
+- `_scan_labels` cerca ogni etichetta su qualsiasi riga del testo estratto (non solo a inizio riga), con guard word-boundary; le etichette più lunghe hanno precedenza sulle più corte
+- `_norm_line` normalizza per il match: rimuove accenti (NFD), collassa spazi, lowercase — le chiavi del dizionario non hanno mai accenti
+- `_scan_rendimenti` estrae YTD / 1A / 2A / 3A / 5A / 10A con doppio layout (label-poi-valori e label/valore alternati); il `last_val_end` tracking evita che più etichette sulla stessa riga rivendichino lo stesso valore
+- `_scan_morningstar` gestisce stelle Unicode ★ e font-icon privati
+- `_scan_holdings` estrae la sezione "Primi N titoli" con terminatori flessibili (Avvertenze / Educational / Dati in tempo reale / fine testo)
+- `_scan_distribuzione` imposta "Distribuzione" solo in presenza di un dividendo numerico (niente falsi positivi)
+
+**Bug corretti:**
+- `parse_fineco_pdf(pdf_bytes, tipo="etc")` restituiva `{}` perché il tipo "etc" non era gestito → ora il parametro `tipo` è ignorato nel parser PDF (rimane per compatibilità API); il parser estrae tutti i campi presenti indipendentemente dal tipo
+- `categoria_etf` non veniva più popolata dopo l'import PDF → mappatura corretta da etichetta "Categoria" → campo `categoria_etf`
+
+**Aggiungere un nuovo campo = una riga nel dizionario `_PDF_LABELS`.**
+
+---
+
+## 4.9.22 - Sidebar avanzata: PP Export, SATOR, modalità accesso operativo
+
+**Esporta PP dalla sidebar (`/export_pp`):**
+- nuova pagina form_server con statistiche (strumenti / transazioni / date prezzi) e due link di download diretti
+- GET `/export_pp/transazioni` → scarica `portfolio_performance.csv` (UTF-8 BOM, stesso formato del tasto in Dati)
+- GET `/export_pp/prezzi` → scarica `prezzi_storici_pp.zip`
+- pulsante **📊 Esporta PP** in sidebar
+
+**SATOR dalla sidebar (`/sator`):**
+- pagina form_server a due step: input (budget, severità concentrazione 1–4, linee massime, categorie) → analisi
+- tabella ranking con semaforo 🟢/🟡/⚪, ticker, strumento, funzione, voto, Fit/Mom/Risk/Div/Cost, prezzo, quote possedute e quota suggerita
+- pannello valutazione live aggiornato via JS: totale ordine, delta budget, headline (Entro budget / Fuori budget / Budget sottoutilizzato / Appena fuori budget)
+- pulsanti "↺ Usa suggeriti" (pre-popola Qta con i valori SATOR), "✕ Deseleziona", campo note
+- **📸 Salva fotografia** → `build_sator_decision_record` + `save_sator_decisions`; redirect con conferma
+- pulsante **🧠 SATOR** in sidebar
+
+**Impostazioni — Modalità accesso operativo:**
+- nuovo campo `operativo_mode` in `default_settings()` (default `"entrambi"`)
+- radio in Impostazioni → Aspetto: *Entrambi / Solo sidebar / Solo Centro Operativo*
+- `"Solo sidebar"` → nasconde il Centro Operativo nella pagina Operazioni
+- `"Solo Centro Operativo"` → nasconde i 6 pulsanti operativi in sidebar
+- impostazione persistente in `settings.json`
+
+**Fix eliminazione versamento (persistenza cache):**
+- dopo la cancellazione di un VERSAMENTO il dato riappariva al riavvio perché `n_liquidita` non era incluso nella firma cache
+- aggiunto `n_eventi` e `n_liquidita` alla firma in `core/cache_signatures.py`
+- helper functions in `_delete_event_by_id` wrappate in try/except per garantire `save_data` anche in caso di errore secondario
+
+**Schema invariato (3.3)**
+
+---
+
+## 4.9.21 - Quotazioni: frecce doppie, Δ Prezzo, popup link fonte, fix scroll e timeout
+
+**Quotazioni — frecce doppie (▲▲ / ▼▼):**
+- variazioni di prezzo superiori al 3% mostrano doppia freccia `▲▲` / `▼▼` in luogo della singola
+- applicato sia nella tabella Quotazioni che nelle colonne analoghe in Portafoglio
+- `build_price_direction_map` in `ui/components.py` ora restituisce `"up_big"` / `"down_big"` oltre a `"up"` / `"down"` / `"flat"`; `_trend_sym` in `portfolio_popup.py` e `_trend_symbol` in `tables.py` aggiornati di conseguenza
+
+**Quotazioni — colonna Δ Prezzo:**
+- nuova colonna dopo le colonne importo che mostra `prezzo − prezzo_prec` (variazione assoluta della quotazione, non del controvalore in portafoglio)
+- 3 decimali, verde per positivo, rosso per negativo, "—" sotto soglia 0.0005
+- ordinabile come le altre colonne numeriche
+
+**Quotazioni — popup: link fonte:**
+- nel popup di dettaglio strumento, sotto "Fonte / AGG.", compare la riga "Link fonte" con l'URL cliccabile che apre direttamente la pagina sorgente
+- Borsa Italiana → pagina dati-completi BTP con ISIN specifico; Yahoo Finance → `finance.yahoo.com/quote/{ticker}`
+
+**Fix scroll-to-bottom:**
+- il `sendH()` dell'iframe salvava `window.parent.scrollY` prima del `postMessage` e lo ripristinava a 10/60/200 ms, impedendo lo scatto a fondo pagina dopo ogni elaborazione
+- fix applicato a `quotes_popup.py`, `portfolio_popup.py`, `tables.py`
+
+**Fix Gemini timeout:**
+- `requests.exceptions.ReadTimeout` (e `RequestException`) non era catturato dall'handler UI `except RuntimeError`
+- `call_gemini_flash` e `call_gemini_chat` in `core/ai_analysis.py` ora wrappano `requests.post` in `try/except Timeout/RequestException` e rilanciano come `RuntimeError` con messaggio leggibile
+
+**Fix BTP zero-padding:**
+- Borsa Italiana restituisce "9.38.17" per orari mattutini → `hh = "9"` → timestamp "2026-06-23 9:38" (15 char) → tutti i controlli `len >= 16` fallivano → cache non salvata, UI mostrava solo la data
+- fix: `hh.zfill(2)` → "2026-06-23 09:38" (16 char)
+
+**Fix prezzo stale a mercato aperto:**
+- XDBC.MI / XDRE.MI mostravano verde anche se il prezzo era del giorno precedente con mercato già aperto
+- nuova funzione `_is_stale_open_market()` in `ui/sidebar.py`: se `price_date < oggi` e siamo in un giorno lavorativo dopo le 09:30 e lo strumento non è un fondo NAV, imposta `status="warning"` ma usa comunque il prezzo
+- il tooltip del warning mostra il messaggio esplicativo (fix al lookup `latest_log_item` in `quotes_popup.py`)
+
+**Schema invariato (3.3)**
+
+---
+
+## 4.9.20 - Esporta portafoglio per Portfolio Performance
+
+**Esportazione CSV per Portfolio Performance:**
+- nuovo pulsante "Esporta per Portfolio Performance" nella tab Dati
+- genera CSV delle transazioni con colonne in italiano (`Data`, `Tipo`, `Valore`, `Quote`, `Commissioni`, ecc.) compatibili con PP installato in lingua italiana
+- tipi transazione italianizzati: `Acquisto`, `Vendita`, `Dividendo`, `Prelievo`, `Deposito`
+- decimali europei (virgola come separatore) per compatibilità diretta con PP
+- secondo pulsante per export prezzi storici ZIP: archivio multi-file per ticker, pronti per l'importazione storico prezzi in PP
+
+**Schema invariato (3.3)**
+
+---
+
 ## 4.9.19 - Strumenti chiusi, linea acquisto in Quotazioni, SATOR in cima, fix foto
 
 **Operazioni — strumenti aperto/chiuso:**
