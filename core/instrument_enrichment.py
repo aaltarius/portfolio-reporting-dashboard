@@ -286,9 +286,11 @@ def _scan_holdings(text: str) -> list:
 
 
 def _scan_distribuzione(text: str) -> dict:
-    """Return {"distribuzione": "Distribuzione"} only when an actual payout value is found."""
-    m = re.search(r"[Dd]ividendo distribuito[^-\n\d]*(\d[\d,.]*)", text)
-    return {"distribuzione": "Distribuzione"} if m else {}
+    if re.search(r"[Dd]ividendo distribuito[^-\n\d]*(\d[\d,.]*)", text):
+        return {"distribuzione": "Distribuzione"}
+    if re.search(r"[Dd]ividendo distribuito\s*\(-\)", text):
+        return {"distribuzione": "Accumulazione"}
+    return {}
 
 
 # ---------------------------------------------------------------------------
