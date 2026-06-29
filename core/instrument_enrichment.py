@@ -258,8 +258,15 @@ def _scan_morningstar(text: str) -> dict:
     if not m:
         return {}
     raw = m.group(1)
-    # Count filled stars: Unicode ★ (U+2605) or private-use font icons
-    count = raw.count("★") or raw.count("") or raw.count("*")
+    # Count filled stars: Unicode ★ or first private-use-area char (varies by font:
+    # e90c in some PDFs, e912 in others -- count whichever appears first)
+    count = raw.count("★")
+    if not count:
+        pu = next((c for c in raw if "" <= c <= ""), None)
+        if pu:
+            count = raw.count(pu)
+    if not count:
+        count = raw.count("*")
     if not count:
         dm = re.search(r"(\d)(?:/5|\s|$)", raw)
         if dm:

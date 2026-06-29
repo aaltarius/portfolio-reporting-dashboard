@@ -1912,7 +1912,7 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
         "etf": ["rendimento_1a", "rendimento_3a", "ter", "benchmark",
                 "categoria_etf", "distribuzione", "data_lancio", "rating_morningstar"],
         "etc": ["rendimento_1a", "rendimento_3a", "ter", "benchmark",
-                "categoria_etf", "distribuzione", "data_lancio", "rating_morningstar"],
+                "categoria_etf", "distribuzione", "data_lancio"],
         "fondo": ["rendimento_ytd", "rendimento_1a", "rendimento_3a", "ter",
                   "categoria_fam", "rating_morningstar", "data_lancio", "patrimonio"],
     }
