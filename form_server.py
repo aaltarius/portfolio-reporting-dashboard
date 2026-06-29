@@ -1975,7 +1975,12 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
             if not val:
                 return ""
             s = val.replace(" ", "")
-            if s.startswith("+") or (s.replace(",", ".").replace("%", "").lstrip("-").replace(".", "").isdigit() and float(s.replace(",", ".").replace("%", "")) > 0):
+            # Normalize Italian number format: "9.284,27" (thousands sep) → "9284.27"
+            n = s.replace(",", ".").replace("%", "")
+            parts = n.split(".")
+            if len(parts) > 2:
+                n = "".join(parts[:-1]) + "." + parts[-1]
+            if s.startswith("+") or (n.lstrip("-").replace(".", "").isdigit() and float(n) > 0):
                 return " pos"
             if s.startswith("-"):
                 return " neg"
@@ -2081,10 +2086,10 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
             )
 
         elif cat in ("etf", "etc"):
-            r1 = _vs("rendimento_1a"); r3 = _vs("rendimento_3a")
+            ytd = _vs("rendimento_ytd"); r1 = _vs("rendimento_1a"); r3 = _vs("rendimento_3a")
             hero = (
                 f'<div class="hero hero-3">'
-                + _kpi(r1, "Rendimento 1 Anno")
+                + _kpi(ytd if ytd else r1, "Da inizio anno (YTD)" if ytd else "Rendimento 1 Anno")
                 + _kpi(r3, "Rendimento 3 Anni")
                 + _kpi(_vs("ter"), "TER (costo annuo)")
                 + "</div>"
@@ -2092,27 +2097,49 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
             stars_str = _stars()
             rating_item = (f'<div class="di"><div class="lbl">Rating Morningstar</div>'
                            f'<div class="val"><span class="stars">{stars_str}</span></div></div>') if stars_str else ""
+            holdings_html = ""
+            for h in (strumento.get("holdings_top") or [])[:5]:
+                n_h = h.get("nome", ""); p_h = h.get("pct", "")
+                try:
+                    p_num = min(max(float(p_h.replace(",", ".").replace("%", "").strip()), 0), 100)
+                except Exception:
+                    p_num = 0
+                holdings_html += (
+                    f'<div class="comp-row">'
+                    f'<span class="comp-lbl">{escape(n_h)}</span>'
+                    f'<div class="comp-bar-wrap"><div class="comp-bar bar-az" style="width:{p_num}%;"></div></div>'
+                    f'<span class="comp-val">{p_h}</span></div>'
+                )
+            val_sec = _sec("Valutazione",
+                _dg(_di("P/E", "price_earnings"),
+                    _di("P/BV", "price_to_book"),
+                    _di("Dividend Yield", "dividend_yield"),
+                    _di("Dividendo Distribuito", "dividendo_dist")))
             body = (
                 hero
                 + _sec("Rendimento e Rischio",
-                    _dg(_di("Rendimento 1A", "rendimento_1a"),
+                    _dg(_di("Da inizio anno (YTD)", "rendimento_ytd"),
+                        _di("Rendimento 1A", "rendimento_1a"),
                         _di("Rendimento 3A", "rendimento_3a"),
+                        _di("Rendimento Medio Annuo", "rendimento_medio"),
                         _di("Beta", "beta"),
                         _di("Deviazione Standard", "deviazione_std"),
                         _di("Indice di Sharpe", "sharpe"),
                         _di("VaR", "var")))
+                + val_sec
                 + _sec("Costi e Categoria",
                     _dg(_di("TER", "ter"),
                         _di("Benchmark", "benchmark"),
                         _di("Categoria", "categoria_etf"),
                         _di("Emittente", "emittente"),
+                        _di("Patrimonio (mln €)", "patrimonio"),
                         _di("Distribuzione", "distribuzione"),
                         _di("Fiscalità", "fiscalita"),
                         _di("Data Lancio", "data_lancio"),
                         rating_item))
+                + (_sec("Top Holdings", holdings_html) if holdings_html else "")
                 + posizione_sec
             )
-
         else:  # fam / fondo
             ytd = _vs("rendimento_ytd"); r1 = _vs("rendimento_1a"); r3 = _vs("rendimento_3a")
             hero = (
