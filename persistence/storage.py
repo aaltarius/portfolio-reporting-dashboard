@@ -1066,6 +1066,21 @@ def save_sator_decisions(payload):
     logger.info("Decisioni SATOR salvate: path=%s count=%s", SATOR_DECISIONS_FILE, len(normalized.get("items", [])) if isinstance(normalized, dict) else 0)
 
 
+def remove_sator_decision(decisions: dict, decision_id: str) -> tuple[dict, bool]:
+    """Rimuove dalla struttura decisioni SATOR l'item con il decision_id dato.
+
+    Non scrive su disco: il chiamante deve invocare save_sator_decisions() col
+    risultato. Ritorna (nuova_struttura, True) se un item e' stato rimosso,
+    (struttura con items invariati, False) se il decision_id non esisteva.
+    """
+    items = list((decisions or {}).get("items") or [])
+    remaining = [it for it in items if str((it or {}).get("decision_id")) != str(decision_id)]
+    removed = len(remaining) != len(items)
+    result = dict(decisions or {})
+    result["items"] = remaining
+    return result, removed
+
+
 def load_meta():
     m = _read_json_file(META_FILE, default_meta())
     m.setdefault("schema_version", SCHEMA_VERSION)
