@@ -1341,6 +1341,8 @@ select:focus,input:focus{border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,2
 .alert-ok{background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:10px 14px;color:#166534;font-size:.84rem;margin-bottom:12px}
 .notice{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:8px 14px;color:#1d4ed8;font-size:.8rem;margin-bottom:10px;display:none}
 .empty-state{text-align:center;color:#94a3b8;font-size:.84rem;padding:28px 0}
+.legend-box{display:flex;flex-wrap:wrap;gap:6px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:.74rem;color:#475569}
+.legend-box b{color:#1e293b}
 </style>"""
 
 
@@ -1352,6 +1354,19 @@ def _sc_badge(v: float, lo: float = 5.0, hi: float = 7.0) -> str:
 def _voto_badge(v: float) -> str:
     cls = "sc-g" if v >= 7.5 else "sc-m" if v >= 5.5 else "sc-b"
     return f'<span class="sc-badge {cls}" style="font-size:.8rem;padding:2px 7px">{v:.1f}</span>'
+
+
+_SATOR_LEGEND_HTML = (
+    "<div class='legend-box'>"
+    "<span><b>Voto</b> 1–10: punteggio unico, ordina la classifica</span>"
+    "<span><b>Fit</b> 30%: quanto la funzione serve ora al portafoglio</span>"
+    "<span><b>Mom</b> 25%: andamento ponderato 1/3/6/12 mesi</span>"
+    "<span><b>Risk</b> 20%: volatilità, drawdown, rendimento/rischio</span>"
+    "<span><b>Div</b> 15%: bassa correlazione e copertura di vuoti</span>"
+    "<span><b>Cost</b> 10%: commissioni, TER, spread, prezzo/budget</span>"
+    "<span>\U0001F7E2 suggerito · \U0001F7E1 migliore ma fuori budget · ⚪ battuto nella funzione</span>"
+    "</div>"
+)
 
 
 def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
@@ -1423,6 +1438,7 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
 
     table_html = (
         f"{alerts_html}"
+        f"{_SATOR_LEGEND_HTML}"
         f"<div class='tbl-actions'>"
         f"<button type='button' class='btn-sm btn-sm-p' onclick='prefillSug()'>↺ Usa suggeriti SATOR</button>"
         f"<button type='button' class='btn-sm' onclick='clearSel()'>✕ Azzera</button>"
@@ -1431,12 +1447,14 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
         f"<div style='overflow-x:auto'>"
         f"<table class='sr-table'><thead><tr>"
         f"<th></th><th>Ticker</th><th>Strumento</th><th>Funzione</th>"
-        f"<th style='text-align:center'>Voto</th>"
-        f"<th style='text-align:center'>Fit</th><th style='text-align:center'>Mom</th>"
-        f"<th style='text-align:center'>Risk</th><th style='text-align:center'>Div</th>"
-        f"<th style='text-align:center'>Cost</th>"
+        f"<th style='text-align:center' title='Punteggio unico 1-10: ordina la classifica'>Voto</th>"
+        f"<th style='text-align:center' title='Fit allocativo 30%: quanto la funzione serve ora al portafoglio'>Fit</th>"
+        f"<th style='text-align:center' title='Momentum 25%: andamento ponderato 1/3/6/12 mesi'>Mom</th>"
+        f"<th style='text-align:center' title='Efficienza di rischio 20%: volatilita, drawdown, rendimento/rischio'>Risk</th>"
+        f"<th style='text-align:center' title='Diversificazione 15%: bassa correlazione e copertura di vuoti'>Div</th>"
+        f"<th style='text-align:center' title='Efficienza di costo 10%: commissioni, TER, spread, prezzo/budget'>Cost</th>"
         f"<th>Prezzo</th><th style='text-align:center'>Qp</th>"
-        f"<th style='text-align:center'>Sug</th>"
+        f"<th style='text-align:center' title='Quote suggerite entro budget (residuo ammesso)'>Sug</th>"
         f"<th style='text-align:center'>Sel</th><th style='text-align:center'>Qta</th>"
         f"<th>Perché</th>"
         f"</tr></thead><tbody>{table_rows}</tbody></table></div>"
