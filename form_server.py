@@ -1647,6 +1647,12 @@ function salvaSator(){{
   document.getElementById('salva_form').submit();
 }}
 
+function deleteDecision(id){{
+  if(!window.confirm('Eliminare questa decisione? Non modifica il portafoglio.'))return;
+  document.getElementById('delete_decision_id').value=id;
+  document.getElementById('delete_form').submit();
+}}
+
 function loadDecision(idx){{
   const dec=decisions[idx];
   if(!hasAnalysis){{
@@ -1723,6 +1729,7 @@ function renderHistory(){{
       <div style="margin-left:auto;display:flex;gap:6px;flex-shrink:0">
         <button class="btn-sm" onclick="toggleHistDetail(${{origIdx}})">▼ Dettaglio</button>
         <button class="btn-sm btn-sm-p" onclick="loadDecision(${{origIdx}})" ${{!hasAnalysis?'style="opacity:.6"':''}}>↺ Riparti</button>
+        <button class="btn-sm" style="color:#b91c1c;border-color:#fecaca" onclick="deleteDecision('${{dec.decision_id}}')">🗑 Elimina</button>
       </div>
     </div>
     <div id="hist_d_${{origIdx}}" class="hist-detail">${{linesHtml||'<em>Nessuna linea</em>'}}</div>`;
@@ -1779,6 +1786,11 @@ if(hasAnalysis){{prefillSug();}}
   </div>
 
   {body_section}
+
+  <form id="delete_form" method="post" action="/sator" style="display:none">
+    <input type="hidden" name="azione" value="elimina">
+    <input type="hidden" name="decision_id" id="delete_decision_id">
+  </form>
 
   <div class="sp-card">
     <h2>Decisioni precedenti <span id="hist_count" style="font-weight:400;color:#94a3b8"></span></h2>
@@ -2882,6 +2894,7 @@ def _build_fastapi_app():
         order_lines_json: str = Form(""),
         note_foto: str = Form(""),
         categories_val: str = Form(""),
+        decision_id: str = Form(""),
     ):
         from fastapi.responses import RedirectResponse
         from urllib.parse import quote as urlquote
@@ -2977,6 +2990,19 @@ def _build_fastapi_app():
             except Exception as exc:
                 logger.error("SATOR salva fallito: %s", exc, exc_info=True)
                 return err_page(f"Errore durante il salvataggio: {exc}")
+
+        elif azione == "elimina":
+            try:
+                from persistence.storage import load_sator_decisions, save_sator_decisions, remove_sator_decision
+
+                decisions = load_sator_decisions()
+                updated, removed = remove_sator_decision(decisions, decision_id)
+                save_sator_decisions(updated)
+                msg = "Fotografia eliminata." if removed else "Fotografia non trovata (gia' rimossa?)."
+                return RedirectResponse(f"/sator?ok={urlquote(msg)}", status_code=303)
+            except Exception as exc:
+                logger.error("SATOR elimina fallito: %s", exc, exc_info=True)
+                return err_page(f"Errore durante l'eliminazione: {exc}")
 
         return err_page("Azione non riconosciuta.")
 
