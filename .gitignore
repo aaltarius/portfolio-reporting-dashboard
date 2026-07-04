@@ -61,3 +61,6 @@ portfolio_dashboard_brief_per_altra_ai_v2.md
 # OS
 .DS_Store
 Thumbs.db
+
+# Git worktrees (isolamento sessioni di lavoro)
+.worktrees/
