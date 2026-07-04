@@ -97,6 +97,7 @@ def build_portfolio_ai_payload(
             result["allocation_by_category"] = {}
         if "rebalancing" in sections:
             result["rebalancing_target"] = (data.get("settings") or {}).get("rebalancing_target", {})
+            result["portfolio_objective"] = (data.get("settings") or {}).get("portfolio_objective", {})
         return result
 
     totale_cv_full = float(da["Controvalore"].sum()) if "Controvalore" in da.columns else 0.0
@@ -141,6 +142,7 @@ def build_portfolio_ai_payload(
 
     if "rebalancing" in sections:
         result["rebalancing_target"] = (data.get("settings") or {}).get("rebalancing_target", {})
+        result["portfolio_objective"] = (data.get("settings") or {}).get("portfolio_objective", {})
 
     return result
 
