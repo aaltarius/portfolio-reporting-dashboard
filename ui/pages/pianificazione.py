@@ -12,7 +12,7 @@ from streamlit.delta_generator import DeltaGenerator
 
 from core.asset_categories import get_selected_category_codes
 from core.cache import invalidate_portfolio_cache
-from core.finance import build_rebalancing_suggestions, compute_portfolio_state, get_default_target_profile
+from core.finance import build_bucket_rebalancing_suggestions, compute_portfolio_state
 from core.services.planning import build_static_return_scenarios, simulate_trade_impact
 from core.services.sator import (
     build_sator_matrix_frame,
@@ -22,6 +22,7 @@ from core.services.sator import (
     fetch_sator_costs_from_web,
     compare_decision_to_actual,
     compute_current_bucket_mix,
+    compute_instrument_buckets,
     ensure_sator_metadata,
     ensure_sator_settings,
     run_sator_analysis,
@@ -294,13 +295,9 @@ def _render_portfolio_objective_section(ctx: SimpleNamespace, theme) -> None:
     st.bar_chart(mix_df.set_index("Bucket"))
 
 
-def _profilo_tetto_satellite(profilo: str) -> float:
-    p = str(profilo or "").strip().lower()
-    if p.startswith("prud") or p.startswith("conserv"):
-        return 0.10
-    if p.startswith("dinam") or p.startswith("aggress") or p.startswith("crescit"):
-        return 0.45
-    return 0.25  # bilanciato / moderato / default
+def _satellite_target_from_objective(settings: dict) -> float:
+    objective = (settings or {}).get("portfolio_objective", {})
+    return float(objective.get("satellite", 0.20) or 0.20)
 
 
 def _render_sator_order_evaluation(combo_df: pd.DataFrame, budget: float, settings: dict, theme) -> None:
@@ -312,12 +309,11 @@ def _render_sator_order_evaluation(combo_df: pd.DataFrame, budget: float, settin
         return
     per_bucket = combo_df.assign(Importo=importi).groupby("Bucket")["Importo"].sum()
     quota = {b: float(per_bucket.get(b, 0.0)) / totale for b in ("Core", "Difensivo", "Satellite")}
-    profilo = str(settings.get("target_profile_default", "Bilanciato") or "Bilanciato")
-    tetto_sat = _profilo_tetto_satellite(profilo)
+    tetto_sat = _satellite_target_from_objective(settings)
 
     render_section_title(
-        "Valutazione dell'ordine sul tuo profilo",
-        comment=f"Composizione della scelta e lettura rispetto al profilo \"{profilo}\".",
+        "Valutazione dell'ordine sul tuo obiettivo di portafoglio",
+        comment=f"Composizione della scelta e lettura rispetto all'obiettivo Satellite {fmt_pct_it(tetto_sat, 0)}.",
         gap_after="sm",
     )
     col_grafico, col_lettura = st.columns([1.1, 1.0], gap="medium")
@@ -339,13 +335,13 @@ def _render_sator_order_evaluation(combo_df: pd.DataFrame, budget: float, settin
         letture: list[str] = []
         if quota["Satellite"] > tetto_sat + 1e-9:
             letture.append(
-                f"La quota satellite e' {fmt_pct_it(quota['Satellite'], 1)}, sopra la soglia indicativa "
-                f"{fmt_pct_it(tetto_sat, 0)} per un profilo \"{profilo}\": valuta se ridurre i satelliti o aumentare core/difensivo."
+                f"La quota satellite e' {fmt_pct_it(quota['Satellite'], 1)}, sopra l'obiettivo "
+                f"{fmt_pct_it(tetto_sat, 0)}: valuta se ridurre i satelliti o aumentare core/difensivo."
             )
         else:
             letture.append(
-                f"La quota satellite {fmt_pct_it(quota['Satellite'], 1)} resta entro la soglia indicativa "
-                f"{fmt_pct_it(tetto_sat, 0)} del profilo \"{profilo}\"."
+                f"La quota satellite {fmt_pct_it(quota['Satellite'], 1)} resta entro l'obiettivo "
+                f"{fmt_pct_it(tetto_sat, 0)}."
             )
         if quota["Core"] >= 0.50:
             letture.append("Il nucleo core domina l'ordine: scelta coerente con un'impostazione disciplinata.")
@@ -1248,12 +1244,13 @@ def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         with st.container():
             render_section_title(
                 "Liquidita da investire",
-                comment="Lettura semplice del gap verso il profilo target impostato. E un supporto descrittivo, non un consiglio di investimento.",
+                comment="Lettura semplice del gap verso l'obiettivo di portafoglio Core/Difensivo/Satellite impostato in cima a questa pagina. E un supporto descrittivo, non un consiglio di investimento.",
                 gap_after="sm"
             )
-            target_profile = str(settings.get("target_profile_default", "Prudente") or "Prudente")
-            target_weights = get_default_target_profile(target_profile)
-            suggestions = build_rebalancing_suggestions(da, target_weights, settings=settings)
+            objective = settings.get("portfolio_objective", {"core": 0.55, "difensivo": 0.25, "satellite": 0.20})
+            target_weights = {"Core": objective["core"], "Difensivo": objective["difensivo"], "Satellite": objective["satellite"]}
+            bucket_of_ticker = compute_instrument_buckets(data)
+            suggestions = build_bucket_rebalancing_suggestions(da, bucket_of_ticker, target_weights)
             if suggestions.empty:
                 st.info("Dati insufficienti per costruire un riepilogo di riallineamento.")
             else:
@@ -1264,6 +1261,6 @@ def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     "Importo €": lambda v: fmt_eur_it(v, 2, signed=True),
                 }).map(color_pl, subset=["Delta %", "Importo €"])
                 render_styled_table(styled_sugg, height="content")
-                st.caption(f"Profilo target usato: {target_profile}. Liquidita corrente: {fmt_eur_it(liquidita, 2)}.")
+                st.caption(f"Obiettivo: Core {fmt_pct_it(objective['core'], 0)} / Difensivo {fmt_pct_it(objective['difensivo'], 0)} / Satellite {fmt_pct_it(objective['satellite'], 0)}. Liquidita corrente: {fmt_eur_it(liquidita, 2)}.")
 
         back_to_top()
