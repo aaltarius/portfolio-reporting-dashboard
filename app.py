@@ -297,7 +297,8 @@ def _runtime_settings_signature() -> str:
         "ui_preferences": get_ui_preferences(settings),
         "portfolio_benchmark": settings.get("portfolio_benchmark", {}),
         "portfolio_identity": settings.get("portfolio_identity", {}),
-        "target_profile_default": settings.get("target_profile_default"),
+        "portfolio_objective": settings.get("portfolio_objective", {}),
+        "sator_settings": settings.get("sator", {}),
         "include_proventi_in_total_return": settings.get("include_proventi_in_total_return"),
     }
     return hashlib.md5(json.dumps(settings_payload, sort_keys=True, default=str).encode()).hexdigest()[:16]

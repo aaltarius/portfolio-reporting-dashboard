@@ -1134,6 +1134,14 @@ def build_snapshot_summary_df(snapshots: list[dict[str, Any]] | None) -> pd.Data
     return pd.DataFrame(rows)
 
 
+def _format_portfolio_objective_label(portfolio_objective: dict[str, float] | None) -> str:
+    obj = portfolio_objective or {}
+    core = round(float(obj.get("core", 0.0)) * 100)
+    difensivo = round(float(obj.get("difensivo", 0.0)) * 100)
+    satellite = round(float(obj.get("satellite", 0.0)) * 100)
+    return f"Core {core}% / Difensivo {difensivo}% / Satellite {satellite}%"
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Target profile e gap analysis
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1804,7 +1812,7 @@ def build_portfolio_summary_payload(
         "valuation_timestamp": last_quotes_update,
         "base_currency": base_currency,
         "reporting_currency": reporting_currency,
-        "target_profile": settings.get("target_profile_default", "Prudente"),
+        "target_profile": _format_portfolio_objective_label(settings.get("portfolio_objective", {})),
         "portfolio_benchmark": effective_benchmark_label,
         "portfolio_benchmark_is_custom": bool(benchmark_config.get("is_custom", False)),
         "portfolio_benchmark_components": benchmark_config.get("components", []),
