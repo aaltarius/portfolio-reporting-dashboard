@@ -281,6 +281,7 @@ def _render_portfolio_objective_section(ctx: SimpleNamespace, theme) -> None:
                 "cost_efficiency": w_cost / w_total,
             }
         save_settings(settings)
+        objective = settings["portfolio_objective"]
         st.success("Obiettivo di portafoglio salvato.")
 
     state_df = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
