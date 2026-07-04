@@ -200,6 +200,14 @@ def default_data_v33():
     }
 
 
+_PROFILE_TO_PORTFOLIO_OBJECTIVE = {
+    "Prudente": {"core": 0.50, "difensivo": 0.40, "satellite": 0.10},
+    "Equilibrato": {"core": 0.55, "difensivo": 0.25, "satellite": 0.20},
+    "Dinamico": {"core": 0.50, "difensivo": 0.15, "satellite": 0.35},
+    "Neutro": {"core": 0.55, "difensivo": 0.25, "satellite": 0.20},
+}
+
+
 def default_settings():
     return {
         "schema_version": SCHEMA_VERSION,
@@ -212,6 +220,7 @@ def default_settings():
         "quote_log_retention": 20,
         "comparison_export_format_default": "csv",
         "rebalancing_target": {"GOV": 0.33, "ETF": 0.34, "FND": 0.33},
+        "portfolio_objective": {"core": 0.55, "difensivo": 0.25, "satellite": 0.20},
         "category_view": {
             "selected_categories": list(DEFAULT_VISIBLE_CATEGORY_CODES),
         },
@@ -413,6 +422,23 @@ def _normalize_settings_payload(settings):
     category_view = merged.setdefault("category_view", {})
     backup = merged.setdefault("backup", {})
     newsletter = merged.setdefault("newsletter", {})
+
+    portfolio_objective = merged.setdefault("portfolio_objective", {})
+    if "portfolio_objective" not in raw_settings:
+        _seed_label = str(raw_settings.get("target_profile_default") or "")
+        if _seed_label in _PROFILE_TO_PORTFOLIO_OBJECTIVE:
+            portfolio_objective.update(_PROFILE_TO_PORTFOLIO_OBJECTIVE[_seed_label])
+    portfolio_objective["core"] = max(0.0, _safe_float(portfolio_objective.get("core"), defaults["portfolio_objective"]["core"]))
+    portfolio_objective["difensivo"] = max(0.0, _safe_float(portfolio_objective.get("difensivo"), defaults["portfolio_objective"]["difensivo"]))
+    portfolio_objective["satellite"] = max(0.0, _safe_float(portfolio_objective.get("satellite"), defaults["portfolio_objective"]["satellite"]))
+    _obj_total = portfolio_objective["core"] + portfolio_objective["difensivo"] + portfolio_objective["satellite"]
+    if _obj_total > 0:
+        portfolio_objective["core"] /= _obj_total
+        portfolio_objective["difensivo"] /= _obj_total
+        portfolio_objective["satellite"] /= _obj_total
+    else:
+        portfolio_objective.update(defaults["portfolio_objective"])
+    merged["portfolio_objective"] = portfolio_objective
 
     # Legacy -> nested
     portfolio_profile["portfolio_id"] = str(merged.get("portfolio_id") or portfolio_profile.get("portfolio_id") or "main")
