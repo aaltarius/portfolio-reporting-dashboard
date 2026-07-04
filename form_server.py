@@ -1327,6 +1327,8 @@ select:focus,input:focus{border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,2
 .sr-table tr:last-child td{border-bottom:none}
 .sc-badge{display:inline-block;font-size:.72rem;font-weight:800;border-radius:4px;padding:2px 5px;line-height:1.2}
 .sc-g{background:#dcfce7;color:#166534}.sc-m{background:#fef9c3;color:#854d0e}.sc-b{background:#fee2e2;color:#991b1b}
+.rb-badge{display:inline-block;font-size:.7rem;font-weight:700;border-radius:5px;padding:2px 8px;line-height:1.3;white-space:nowrap}
+.rb-core{background:#dbeafe;color:#1d4ed8}.rb-dif{background:#dcfce7;color:#166534}.rb-sat{background:#ffedd5;color:#c2410c}
 .tbl-actions{display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap}
 .btn-sm{padding:5px 12px;border:1px solid #e2e8f0;background:#f8fafc;color:#475569;border-radius:7px;font-size:.78rem;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
 .btn-sm:hover{border-color:#6366f1;color:#6366f1;background:#eef2ff}
@@ -1356,8 +1358,17 @@ def _voto_badge(v: float) -> str:
     return f'<span class="sc-badge {cls}" style="font-size:.8rem;padding:2px 7px">{v:.1f}</span>'
 
 
+_RUOLO_BADGE_CLASS = {"Core": "rb-core", "Difensivo": "rb-dif", "Satellite": "rb-sat"}
+
+
+def _ruolo_badge(bucket: str) -> str:
+    bucket = bucket if bucket in _RUOLO_BADGE_CLASS else "Satellite"
+    return f'<span class="rb-badge {_RUOLO_BADGE_CLASS[bucket]}">{bucket}</span>'
+
+
 _SATOR_LEGEND_HTML = (
     "<div class='legend-box'>"
+    "<span><b>Ruolo</b>: Core = pilastro diversificato, Difensivo = stabilita/liquidita/oro/bond, Satellite = tattico/tematico</span>"
     "<span><b>Voto</b> 1–10: punteggio unico, ordina la classifica</span>"
     "<span><b>Fit</b> 30%: quanto la funzione serve ora al portafoglio</span>"
     "<span><b>Mom</b> 25%: andamento ponderato 1/3/6/12 mesi</span>"
@@ -1390,7 +1401,7 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
             "cost":     float(row.get("Cost", 0)),
             "fit_raw":  float(row.get("_fit", 0)),
             "risk_raw": float(row.get("_risk", 0)),
-            "why":      str(row.get("_why", ""))[:120],
+            "why":      str(row.get("_why", "")),
             "sem":      str(row.get("Sem", "⚪")),
         })
 
@@ -1417,7 +1428,8 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
             f"<td style='font-weight:800;white-space:nowrap;width:68px'>{tk}</td>"
             f"<td style='max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#475569' title='{name_esc}'>{name_short}</td>"
             f"<td style='font-size:.75rem;color:#64748b;white-space:nowrap'>{funz}</td>"
-            f"<td style='text-align:center;width:44px'>{_voto_badge(r['voto'])}</td>"
+            f"<td style='text-align:center;width:88px'>{_ruolo_badge(r['bucket'])}</td>"
+            f"<td style='text-align:center;width:44px' title='{why_esc}'>{_voto_badge(r['voto'])}</td>"
             f"<td style='text-align:center;width:34px'>{_sc_badge(r['fit'])}</td>"
             f"<td style='text-align:center;width:34px'>{_sc_badge(r['mom'])}</td>"
             f"<td style='text-align:center;width:34px'>{_sc_badge(r['risk'])}</td>"
@@ -1432,7 +1444,6 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
             f"<td style='text-align:center;width:70px'>"
             f"<input type='number' id='qta_{tk}' min='0' step='1' value='0' oninput='computeEval()' "
             f"style='width:62px;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-size:.85rem;text-align:center'></td>"
-            f"<td style='font-size:.7rem;color:#94a3b8;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' title='{why_esc}'>{why_esc}</td>"
             f"</tr>"
         )
 
@@ -1447,7 +1458,8 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
         f"<div style='overflow-x:auto'>"
         f"<table class='sr-table'><thead><tr>"
         f"<th></th><th>Ticker</th><th>Strumento</th><th>Funzione</th>"
-        f"<th style='text-align:center' title='Punteggio unico 1-10: ordina la classifica'>Voto</th>"
+        f"<th style='text-align:center' title='Ruolo nel portafoglio: Core (pilastro diversificato), Difensivo (stabilita, liquidita, oro, bond) o Satellite (tattico/tematico)'>Ruolo</th>"
+        f"<th style='text-align:center' title='Punteggio unico 1-10: ordina la classifica. Passa il mouse per il perche della posizione'>Voto</th>"
         f"<th style='text-align:center' title='Fit allocativo 30%: quanto la funzione serve ora al portafoglio'>Fit</th>"
         f"<th style='text-align:center' title='Momentum 25%: andamento ponderato 1/3/6/12 mesi'>Mom</th>"
         f"<th style='text-align:center' title='Efficienza di rischio 20%: volatilita, drawdown, rendimento/rischio'>Risk</th>"
@@ -1456,7 +1468,6 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
         f"<th>Prezzo</th><th style='text-align:center'>Qp</th>"
         f"<th style='text-align:center' title='Quote suggerite entro budget (residuo ammesso)'>Sug</th>"
         f"<th style='text-align:center'>Sel</th><th style='text-align:center'>Qta</th>"
-        f"<th>Perché</th>"
         f"</tr></thead><tbody>{table_rows}</tbody></table></div>"
     )
     return table_html, rows_js
@@ -2226,9 +2237,9 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
     if cat == "btp":
         fields_html = (
             _field_row("YTM Netto", "ytm_netto", "es. 2,27%") + _field_row("YTM Lordo", "ytm_lordo", "es. 2,89%") +
-            _field_row("Duration Modificata", "duration_modificata", "es. 0,09") + _field_row("Scadenza", "scadenza", "es. 01/08/2026") +
+            _field_row("Duration Modificata", "duration_modificata", "es. 0,09") + _field_row("Scadenza", "scadenza", "es. 2026-08-01") +
             _field_row("Cedola Annuale", "cedola_annuale", "es. 0,00%") + _field_row("Frequenza Cedola", "cedola_frequenza", "es. Semestrale") +
-            _field_row("Tipo Cedola", "tipo_cedola", "es. FISSO") + _field_row("Prossima Cedola", "prossima_cedola", "es. 01/08/2026") +
+            _field_row("Tipo Cedola", "tipo_cedola", "es. FISSO") + _field_row("Prossima Cedola", "prossima_cedola", "es. 2026-08-01") +
             _field_row("Rateo Lordo", "rateo_lordo") + _field_row("Rateo Netto", "rateo_netto") +
             _field_row("Rating Emittente", "rating_emittente", "es. BBB+") + _field_row("Data Emissione", "data_emissione") +
             _field_row("Prezzo Emissione", "prezzo_emissione") + _field_row("Prezzo Rimborso", "prezzo_rimborso") +
@@ -2244,7 +2255,7 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
             _field_row("Beta", "beta", "es. 1,05") + _field_row("Deviazione Standard", "deviazione_std", "es. 13,00%") +
             _field_row("Indice di Sharpe", "sharpe", "es. 2,00") + _field_row("VaR", "var", "es. 35,61") +
             _field_row("Distribuzione", "distribuzione", "es. Distribuzione") + _field_row("Fiscalità", "fiscalita", "es. Armonizzato") +
-            _field_row("Data Lancio", "data_lancio", "es. 03/11/2003")
+            _field_row("Data Lancio", "data_lancio", "es. 2003-11-03")
         )
     else:  # fam
         fields_html = (
@@ -2257,7 +2268,7 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
             _field_row("% Azionario", "composizione_az", "es. 60,50%") + _field_row("% Obbligazionario", "composizione_obbl", "es. 20,40%") +
             _field_row("% Liquidità", "composizione_liq", "es. 18,90%") +
             _field_row("Valuta NAV", "valuta", "es. EUR") + _field_row("Max 52 Settimane", "max_52w", "es. 145,26") +
-            _field_row("Min 52 Settimane", "min_52w", "es. 130,51") + _field_row("Data Lancio", "data_lancio", "es. 27/11/2018") +
+            _field_row("Min 52 Settimane", "min_52w", "es. 130,51") + _field_row("Data Lancio", "data_lancio", "es. 2018-11-27") +
             _field_row("Patrimonio", "patrimonio", "es. 422,73 Mln. EUR")
         )
 
@@ -2481,7 +2492,7 @@ def _build_fastapi_app():
         nominale: str = Form("100"),
     ):
         from fastapi.responses import RedirectResponse
-        from persistence.storage import load_data as _ld
+        from persistence.storage import load_data as _ld, save_data
 
         def err_page(msg: str, tab: str = "add") -> HTMLResponse:
             try:
