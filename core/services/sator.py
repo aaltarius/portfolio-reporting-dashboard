@@ -114,6 +114,7 @@ class SatorContext:
     returns_frame: pd.DataFrame
     current_weights: dict[str, float]
     nature_weights: dict[str, float]
+    bucket_weights: dict[str, float]
     correlations: dict[str, float]
     selected_categories: tuple[str, ...]
     liquidita: float
@@ -460,6 +461,7 @@ def run_sator_analysis(
 
     current_weights = _compute_current_weights(state_df)
     nature_weights = _compute_nature_weights(data, state_df, current_weights)
+    bucket_weights = _compute_bucket_weights(data, state_df, current_weights)
     portfolio_returns = _build_portfolio_return_series(returns_frame, state_df, current_weights)
     correlations = _compute_correlations(returns_frame, portfolio_returns)
 
@@ -468,12 +470,13 @@ def run_sator_analysis(
         state_df=state_df if isinstance(state_df, pd.DataFrame) else pd.DataFrame(),
         price_frame=price_frame, returns_frame=returns_frame,
         current_weights=current_weights, nature_weights=nature_weights,
+        bucket_weights=bucket_weights,
         correlations=correlations, selected_categories=allowed, liquidita=liquidita,
         concentration_severity=concentration_severity,
     )
 
     ranking = _score_universe(ctx, cfg)
-    alerts = _build_alerts(ranking, nature_weights)
+    alerts = _build_alerts(ranking, nature_weights, ctx.bucket_weights, settings.get("portfolio_objective", {}))
     summary = {
         "budget": budget,
         "liquidita_corrente": liquidita,
@@ -559,7 +562,8 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
     df["_sev"] = float(getattr(ctx, "concentration_severity", 1.0))
 
     caps = cfg.get("concentration_caps", CAP_MORBIDO_NATURA)
-    df["strategic_fit"] = df.apply(lambda r: _score_fit(r, caps), axis=1)
+    portfolio_objective = ctx.settings.get("portfolio_objective", {}) if isinstance(ctx.settings, dict) else {}
+    df["strategic_fit"] = df.apply(lambda r: _score_fit(r, caps, ctx.bucket_weights, portfolio_objective), axis=1)
     df["tactical_momentum"] = df.apply(_score_momentum, axis=1)
     df["risk_efficiency"] = df.apply(_score_risk, axis=1)
     df["diversification_benefit"] = df.apply(lambda r: _score_diversification(r, caps), axis=1)
@@ -589,7 +593,15 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
 # Le cinque dimensioni (scala assoluta 0-1)
 # --------------------------------------------------------------------------- #
 
-def _score_fit(row: pd.Series, caps: dict[str, float] | None = None) -> float:
+_BUCKET_TO_OBJECTIVE_KEY = {"Core": "core", "Difensivo": "difensivo", "Satellite": "satellite"}
+
+
+def _score_fit(
+    row: pd.Series,
+    caps: dict[str, float] | None = None,
+    bucket_weights: dict[str, float] | None = None,
+    bucket_targets: dict[str, float] | None = None,
+) -> float:
     caps = caps if caps is not None else CAP_MORBIDO_NATURA
     cap = caps.get(str(row.get("nature")), CAP_MORBIDO_DEFAULT)
     riempimento = min(1.5, _safe_float(row.get("nature_weight"), 0.0) / cap) if cap > 0 else 1.0
@@ -601,6 +613,13 @@ def _score_fit(row: pd.Series, caps: dict[str, float] | None = None) -> float:
     score -= float(np.clip(concentrazione_linea * 0.22, 0.0, 0.25)) * severita
     if str(row.get("role")) in {"core_globale", "core_regionale", "core_difensivo"}:
         score += 0.05
+    if bucket_weights and bucket_targets:
+        bucket = _role_bucket(str(row.get("role")))
+        target = _safe_float(bucket_targets.get(_BUCKET_TO_OBJECTIVE_KEY.get(bucket, ""), 0.0))
+        peso_bucket = _safe_float(bucket_weights.get(bucket), 0.0)
+        if target > 0:
+            eccesso_bucket = max(0.0, (peso_bucket / target) - 1.0)
+            score -= float(np.clip(eccesso_bucket * 0.15, 0.0, 0.20)) * severita
     return float(np.clip(score, 0.0, 1.0))
 
 
@@ -791,6 +810,42 @@ def _role_bucket(role: str) -> str:
     return "Satellite"
 
 
+def compute_instrument_buckets(data: dict[str, Any], held_tickers: set[str] | None = None) -> dict[str, str]:
+    """Ticker -> bucket (Core/Difensivo/Satellite). Unica fonte di verita' del
+    ruolo strategico di ogni strumento, usata sia dal motore SATOR sia dalla UI
+    di Pianificazione per il confronto col mix attuale.
+    """
+    master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
+    out: dict[str, str] = {}
+    for item in data.get("strumenti", []) or []:
+        ticker = str(item.get("ticker") or "").strip().upper()
+        if not ticker:
+            continue
+        if held_tickers is not None and ticker not in held_tickers:
+            continue
+        sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
+        inf = infer_sator_metadata(item, ticker in (held_tickers or set()))
+        role = _meta_strutturale(sator, inf, "role")
+        out[ticker] = _role_bucket(role)
+    return out
+
+
+def _compute_bucket_weights(data: dict[str, Any], state_df: pd.DataFrame, current_weights: dict[str, float]) -> dict[str, float]:
+    held = _tickers_posseduti(state_df)
+    buckets = compute_instrument_buckets(data, held)
+    out: dict[str, float] = {"Core": 0.0, "Difensivo": 0.0, "Satellite": 0.0}
+    for ticker, bucket in buckets.items():
+        out[bucket] = out.get(bucket, 0.0) + max(0.0, current_weights.get(ticker, 0.0))
+    return out
+
+
+def compute_current_bucket_mix(data: dict[str, Any], state_df: pd.DataFrame) -> dict[str, float]:
+    """Mix Core/Difensivo/Satellite del portafoglio attuale (percentuale del
+    controvalore totale). Chiamata sia da SATOR sia dalla UI di Pianificazione."""
+    current_weights = _compute_current_weights(state_df)
+    return _compute_bucket_weights(data, state_df, current_weights)
+
+
 def _suggested_quotes(ranking_df: pd.DataFrame, budget: float, *, max_lines: int = MAX_LINEE_SUGGERITE) -> list[int]:
     """Allocazione suggerita trasparente, a quote intere, entro budget.
 
@@ -846,7 +901,12 @@ def _suggested_quotes(ranking_df: pd.DataFrame, budget: float, *, max_lines: int
 # Alert onesti (legati alle spiegazioni)
 # --------------------------------------------------------------------------- #
 
-def _build_alerts(ranking: pd.DataFrame, nature_weights: dict[str, float]) -> list[dict[str, str]]:
+def _build_alerts(
+    ranking: pd.DataFrame,
+    nature_weights: dict[str, float],
+    bucket_weights: dict[str, float] | None = None,
+    portfolio_objective: dict[str, float] | None = None,
+) -> list[dict[str, str]]:
     alerts: list[dict[str, str]] = []
     if ranking is None or ranking.empty:
         return alerts
@@ -856,6 +916,14 @@ def _build_alerts(ranking: pd.DataFrame, nature_weights: dict[str, float]) -> li
             alerts.append({"level": "warning", "title": "Concentrazione elevata",
                            "message": f"La funzione \"{nature.replace('_', ' ')}\" pesa {peso:.0%} (soglia indicativa {cap:.0%}): "
                                       "il fit e la diversificazione dei titoli con questa natura sono penalizzati di conseguenza."})
+    if bucket_weights and portfolio_objective:
+        for bucket, key in _BUCKET_TO_OBJECTIVE_KEY.items():
+            peso = float(bucket_weights.get(bucket, 0.0))
+            target = _safe_float(portfolio_objective.get(key), 0.0)
+            if target > 0 and peso > target * 1.25:
+                alerts.append({"level": "warning", "title": "Bucket sovrappesato",
+                               "message": f"Il bucket \"{bucket}\" pesa {peso:.0%} contro un obiettivo di {target:.0%}: "
+                                          "gli acquisti in questo gruppo sono penalizzati di conseguenza nel punteggio Fit."})
     challenger_vince = ranking[(ranking["rango_gruppo"] == 1) & (~ranking["in_portfolio"])]
     incombenti = set(ranking[ranking["in_portfolio"]]["comparison_group"])
     sostituzioni = challenger_vince[challenger_vince["comparison_group"].isin(incombenti)]
