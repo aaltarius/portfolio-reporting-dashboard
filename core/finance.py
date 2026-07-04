@@ -2031,3 +2031,50 @@ def build_rebalancing_suggestions(
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 
+def build_bucket_rebalancing_suggestions(
+    da_frame: pd.DataFrame,
+    bucket_of_ticker: dict[str, str],
+    target_weights: dict[str, float],
+) -> pd.DataFrame:
+    """
+    Suggerimenti di ribilanciamento per bucket strategico (Core/Difensivo/Satellite),
+    stesso schema di `build_rebalancing_suggestions` ma raggruppato per ruolo invece
+    che per involucro/categoria.
+
+    Args:
+        da_frame: DataFrame posizioni aperte (colonne Ticker, Controvalore).
+        bucket_of_ticker: mappa ticker -> "Core"/"Difensivo"/"Satellite".
+        target_weights: dict {"Core": 0.6, "Difensivo": 0.25, "Satellite": 0.15}.
+
+    Returns:
+        pd.DataFrame con colonne: Bucket, Peso Attuale %, Peso Target %, Delta %, Importo €, Azione
+    """
+    cats = ["Core", "Difensivo", "Satellite"]
+    if da_frame is None or da_frame.empty:
+        return pd.DataFrame()
+    total = float(pd.to_numeric(da_frame["Controvalore"], errors="coerce").fillna(0.0).sum())
+    if total < 1e-9:
+        return pd.DataFrame()
+
+    work = da_frame.copy()
+    work["Bucket"] = work["Ticker"].astype(str).map(lambda t: bucket_of_ticker.get(t, "Satellite"))
+    by_bucket = work.groupby("Bucket")["Controvalore"].sum().reindex(cats, fill_value=0.0)
+
+    rows = []
+    for cat in cats:
+        attuale = float(by_bucket.get(cat, 0.0))
+        pct_att = attuale / total if total > 0 else 0.0
+        pct_target = float(target_weights.get(cat, 0.0))
+        delta_pct = pct_target - pct_att
+        delta_eur = round(delta_pct * total, 2)
+        azione = "Acquista" if delta_eur >= 50 else ("Vendi" if delta_eur <= -50 else "OK")
+        rows.append({
+            "Bucket": cat,
+            "Peso Attuale %": pct_att,
+            "Peso Target %": pct_target,
+            "Delta %": delta_pct,
+            "Importo €": delta_eur,
+            "Azione": azione,
+        })
+    return pd.DataFrame(rows)
+
