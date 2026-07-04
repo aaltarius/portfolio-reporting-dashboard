@@ -558,10 +558,11 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     df["_sev"] = float(getattr(ctx, "concentration_severity", 1.0))
 
-    df["strategic_fit"] = df.apply(_score_fit, axis=1)
+    caps = cfg.get("concentration_caps", CAP_MORBIDO_NATURA)
+    df["strategic_fit"] = df.apply(lambda r: _score_fit(r, caps), axis=1)
     df["tactical_momentum"] = df.apply(_score_momentum, axis=1)
     df["risk_efficiency"] = df.apply(_score_risk, axis=1)
-    df["diversification_benefit"] = df.apply(_score_diversification, axis=1)
+    df["diversification_benefit"] = df.apply(lambda r: _score_diversification(r, caps), axis=1)
     df["cost_efficiency"] = df.apply(lambda r: _score_cost(r, ctx.budget), axis=1)
 
     # Voto = somma pesata ESCLUSIVAMENTE dei cinque fattori mostrati in tabella.
@@ -588,8 +589,9 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
 # Le cinque dimensioni (scala assoluta 0-1)
 # --------------------------------------------------------------------------- #
 
-def _score_fit(row: pd.Series) -> float:
-    cap = CAP_MORBIDO_NATURA.get(str(row.get("nature")), CAP_MORBIDO_DEFAULT)
+def _score_fit(row: pd.Series, caps: dict[str, float] | None = None) -> float:
+    caps = caps if caps is not None else CAP_MORBIDO_NATURA
+    cap = caps.get(str(row.get("nature")), CAP_MORBIDO_DEFAULT)
     riempimento = min(1.5, _safe_float(row.get("nature_weight"), 0.0) / cap) if cap > 0 else 1.0
     concentrazione_linea = min(1.5, _safe_float(row.get("current_weight"), 0.0) / cap) if cap > 0 else 0.0
     score = 0.55 + float(np.clip((1.0 - riempimento) * 0.45, -0.35, 0.30))
@@ -619,8 +621,9 @@ def _score_risk(row: pd.Series) -> float:
     return float(np.clip(s_vol * 0.40 + s_dd * 0.30 + s_rv * 0.30, 0.0, 1.0))
 
 
-def _score_diversification(row: pd.Series) -> float:
-    cap = CAP_MORBIDO_NATURA.get(str(row.get("nature")), CAP_MORBIDO_DEFAULT)
+def _score_diversification(row: pd.Series, caps: dict[str, float] | None = None) -> float:
+    caps = caps if caps is not None else CAP_MORBIDO_NATURA
+    cap = caps.get(str(row.get("nature")), CAP_MORBIDO_DEFAULT)
     corr = row.get("portfolio_correlation")
     s_corr = 0.55 if pd.isna(corr) else float(np.clip(0.5 + (0.5 - _safe_float(corr)) * 0.85, 0.0, 1.0))
     s_vuoto = float(np.clip(1.0 - (_safe_float(row.get("nature_weight"), 0.0) / cap), 0.0, 1.0)) if cap > 0 else 0.5
