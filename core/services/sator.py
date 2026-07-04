@@ -100,6 +100,7 @@ DEFAULT_SATOR_SETTINGS: dict[str, Any] = {
     "investible_categories": list(SATOR_INVESTIBLE_CATEGORIES),
     "max_share_per_line": 0.35,   # nessuna linea oltre il 35% del budget suggerito
     "score_weights": dict(PESI_DIMENSIONI),
+    "concentration_caps": dict(CAP_MORBIDO_NATURA),
 }
 
 
@@ -133,6 +134,20 @@ def ensure_sator_settings(settings: dict[str, Any] | None) -> dict[str, Any]:
         raw = SATOR_INVESTIBLE_CATEGORIES
     norm = [str(c or "").strip().upper() for c in raw if str(c or "").strip().upper() in SATOR_INVESTIBLE_CATEGORIES]
     merged["investible_categories"] = tuple(norm or SATOR_INVESTIBLE_CATEGORIES)
+
+    caps_raw = merged.get("concentration_caps", {}) or {}
+    caps = {
+        nature: float(min(1.0, max(0.01, _safe_float(caps_raw.get(nature), CAP_MORBIDO_NATURA[nature]))))
+        for nature in CAP_MORBIDO_NATURA
+    }
+    merged["concentration_caps"] = caps
+
+    weights_raw = merged.get("score_weights", {}) or {}
+    weights = {k: max(0.0, _safe_float(weights_raw.get(k), PESI_DIMENSIONI[k])) for k in PESI_DIMENSIONI}
+    weights_total = sum(weights.values())
+    merged["score_weights"] = (
+        {k: v / weights_total for k, v in weights.items()} if weights_total > 0 else dict(PESI_DIMENSIONI)
+    )
     return merged
 
 
