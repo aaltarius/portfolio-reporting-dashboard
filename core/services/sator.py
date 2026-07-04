@@ -1074,6 +1074,68 @@ def _compute_metrics(ticker: str, price_frame: pd.DataFrame) -> dict[str, float]
     return metrics
 
 
+def _compute_all_metrics_batch(tickers: list[str], frame: pd.DataFrame) -> dict[str, dict[str, float]]:
+    """Computes metrics (returns, volatility, drawdown, risk/return) for multiple tickers at once.
+
+    Args:
+        tickers: list of ticker symbols to compute metrics for
+        frame: DataFrame with ticker columns and price data
+
+    Returns:
+        dict mapping ticker -> dict of metrics (ret_1m, ret_3m, ret_6m, ret_12m, vol, drawdown, rend_vol)
+    """
+    if frame is None or frame.empty:
+        return {t: {k: np.nan for k in ("ret_1m", "ret_3m", "ret_6m", "ret_12m", "vol", "drawdown", "rend_vol")} for t in tickers}
+
+    # Compute rolling returns for each window
+    ret_series = {}
+    for k, w in FINESTRE.items():
+        # For each ticker, compute the return over the specified window
+        ret_dict = {}
+        for ticker in tickers:
+            if ticker not in frame.columns:
+                ret_dict[ticker] = np.nan
+                continue
+            serie = pd.to_numeric(frame[ticker], errors="coerce").dropna().astype(float)
+            serie = serie[serie > 0]
+            if len(serie) > w:
+                inizio = float(serie.iloc[-1 - w])
+                fine = float(serie.iloc[-1])
+                ret_dict[ticker] = (fine / inizio) - 1.0 if inizio > 0 else np.nan
+            else:
+                ret_dict[ticker] = np.nan
+        ret_series[k] = pd.Series(ret_dict)
+
+    # Compute volatility from the last 252 days
+    pct = frame.pct_change().replace([np.inf, -np.inf], np.nan)
+    tail = pct.tail(252)
+    vol = tail.std(ddof=1) * math.sqrt(252)
+    vol = vol.where(tail.notna().sum() >= 20)
+
+    # Compute drawdown (max underwater)
+    dd = (frame / frame.cummax() - 1.0).min()
+
+    # Compute risk/return ratio using 12-month return
+    ret_12m = ret_series.get("ret_12m", pd.Series(np.nan, index=frame.columns))
+    rend_vol_series = (ret_12m / vol).where(vol > 1e-9)
+
+    # Build output dictionary
+    out = {}
+    for ticker in tickers:
+        metrics = {
+            "ret_1m": float(ret_series.get("ret_1m", pd.Series(np.nan))[ticker]) if ticker in ret_series.get("ret_1m", pd.Series(np.nan)).index else np.nan,
+            "ret_3m": float(ret_series.get("ret_3m", pd.Series(np.nan))[ticker]) if ticker in ret_series.get("ret_3m", pd.Series(np.nan)).index else np.nan,
+            "ret_6m": float(ret_series.get("ret_6m", pd.Series(np.nan))[ticker]) if ticker in ret_series.get("ret_6m", pd.Series(np.nan)).index else np.nan,
+            "ret_12m": float(ret_series.get("ret_12m", pd.Series(np.nan))[ticker]) if ticker in ret_series.get("ret_12m", pd.Series(np.nan)).index else np.nan,
+            "vol": float(vol[ticker]) if ticker in vol.index and pd.notna(vol[ticker]) else np.nan,
+            "drawdown": float(dd[ticker]) if ticker in dd.index else np.nan,
+            "rend_vol": float(rend_vol_series[ticker]) if ticker in rend_vol_series.index and pd.notna(rend_vol_series[ticker]) else np.nan,
+        }
+        out[ticker] = metrics
+
+    return out
+
+
 def _rolling_return(serie: pd.Series, finestra: int) -> float:
     if len(serie) <= finestra or finestra <= 0:
         return np.nan
