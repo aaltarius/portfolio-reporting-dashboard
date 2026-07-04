@@ -722,12 +722,13 @@ def _render_analitica(bundle: Any) -> None:
     render_section_title("Scostamento da Allocazione Target", icon="portfolio")
     st.plotly_chart(bundle.target_gap_figure, width="stretch")
 
-    # Aggiungi profilo selezionato nel commento
-    target_profile = summary_payload.get("target_profile", "Prudente") if summary_payload else "Prudente"
-    profile_text = f"Profilo obiettivo selezionato: <strong>{target_profile}</strong>. " if target_profile else ""
     runtime_settings = st.session_state.get("_settings_runtime", {})
-    target_categories_text = ", ".join(get_selected_category_codes(runtime_settings))
-    target_comment = profile_text + f"Confronto operativo tra composizione attuale e profilo obiettivo sulle macro-categorie visibili ({target_categories_text})."
+    objective = runtime_settings.get("portfolio_objective", {"core": 0.55, "difensivo": 0.25, "satellite": 0.20})
+    target_comment = (
+        f"Confronto tra composizione attuale e obiettivo di portafoglio: "
+        f"Core {fmt_pct_it(objective.get('core', 0.0), 0)} / Difensivo {fmt_pct_it(objective.get('difensivo', 0.0), 0)} / "
+        f"Satellite {fmt_pct_it(objective.get('satellite', 0.0), 0)}."
+    )
     legend_block(target_comment, variant="bottom")
 
     render_section_title("Contributo al Rischio", icon="risk")

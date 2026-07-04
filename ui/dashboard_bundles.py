@@ -40,7 +40,8 @@ from ui.charts.cruscotti import (
 )
 from ui.charts.summary import build_summary_figures
 from ui.charts.runtime import empty_chart
-from core.finance import build_target_gap_by_instrument, get_default_target_profile
+from core.finance import build_target_gap_by_instrument
+from core.services.sator import compute_instrument_buckets
 from core.services import build_percentage_return_series
 from core.models import get_proventi_normalizzati
 from ui.theme import macro_color
@@ -661,6 +662,28 @@ def get_advanced_analysis_dataset_bundle(
     return bundle
 
 
+def _build_bucket_gap_macro_df(da_frame: pd.DataFrame, bucket_of_ticker: dict[str, str], objective: dict[str, float]) -> pd.DataFrame:
+    cats = ["Core", "Difensivo", "Satellite"]
+    if da_frame is None or da_frame.empty:
+        return pd.DataFrame()
+    work = da_frame.copy()
+    work = work[pd.to_numeric(work["Controvalore"], errors="coerce").fillna(0) > 0].copy()
+    if work.empty:
+        return pd.DataFrame()
+    total_value = float(pd.to_numeric(work["Controvalore"], errors="coerce").fillna(0).sum())
+    if total_value <= 0:
+        return pd.DataFrame()
+    work["Categoria"] = work["Ticker"].astype(str).map(lambda t: bucket_of_ticker.get(t, "Satellite"))
+    macro = work.groupby("Categoria", as_index=False).agg(Controvalore=("Controvalore", "sum"))
+    macro = macro.set_index("Categoria").reindex(cats, fill_value=0.0).reset_index()
+    macro["Peso attuale"] = macro["Controvalore"] / total_value
+    target_map = {"Core": objective.get("core", 0.0), "Difensivo": objective.get("difensivo", 0.0), "Satellite": objective.get("satellite", 0.0)}
+    macro["Peso target"] = macro["Categoria"].map(target_map)
+    macro["Scostamento %"] = macro["Peso attuale"] - macro["Peso target"]
+    macro["Da riallocare €"] = (macro["Peso target"] - macro["Peso attuale"]) * total_value
+    return macro
+
+
 def get_analitica_bundle(
     *,
     dfh_top: pd.DataFrame,
@@ -742,9 +765,9 @@ def get_analitica_bundle(
         if da is None or da.empty:
             target_gap_fig = empty_chart("analisi_target_gap")
         else:
-            target_profile = settings.get("target_profile_default", "Prudente") if isinstance(settings, dict) else "Prudente"
-            target_weights = get_default_target_profile(target_profile)
-            macro_target_df, _ = build_target_gap_by_instrument(da, target_weights)
+            objective = settings.get("portfolio_objective", {"core": 0.55, "difensivo": 0.25, "satellite": 0.20}) if isinstance(settings, dict) else {}
+            bucket_of_ticker = compute_instrument_buckets(data)
+            macro_target_df = _build_bucket_gap_macro_df(da, bucket_of_ticker, objective)
             target_gap_fig = fcache.get_or_build(
                 chart_id="analisi_target_gap",
                 data_sig=data_sig,
