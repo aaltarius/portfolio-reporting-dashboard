@@ -71,8 +71,12 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
 
     def _trend_sym(tk):
         state = direction_map.get(str(tk or ""), "flat")
+        if state == "up_big":
+            return ("▲▲", "#1E8449")
         if state == "up":
             return ("▲", "#1E8449")
+        if state == "down_big":
+            return ("▼▼", "#FF4B4B")
         if state == "down":
             return ("▼", "#FF4B4B")
         return ("—", "#9CA3AF")
@@ -380,7 +384,9 @@ function sendH(){{
   var t=document.getElementById('ptf-table');
   if(!t)return;
   var h=Math.ceil(t.getBoundingClientRect().height)+2;
+  var py=0; try{{py=window.parent.scrollY||window.parent.pageYOffset||0;}}catch(e){{}}
   window.parent.postMessage({{type:'streamlit:setFrameHeight',height:h}},'*');
+  [10,60,200].forEach(function(d){{setTimeout(function(){{try{{window.parent.scrollTo({{top:py,behavior:'instant'}});}}catch(e){{}}}} ,d);}});
 }}
 sendH();
 requestAnimationFrame(sendH);
@@ -479,8 +485,12 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
             delta_val = float(delta) if delta is not None else 0.0
         except Exception:
             delta_val = 0.0
-        if delta_val > 0:
+        if delta_val > 0.03:
+            sym, sym_col, sym_sort = "▲▲", "#1E8449", "0"
+        elif delta_val > 0:
             sym, sym_col, sym_sort = "▲", "#1E8449", "1"
+        elif delta_val < -0.03:
+            sym, sym_col, sym_sort = "▼▼", "#FF4B4B", "4"
         elif delta_val < 0:
             sym, sym_col, sym_sort = "▼", "#FF4B4B", "3"
         else:
@@ -840,7 +850,9 @@ function sendH(){
   var t=document.getElementById('quotes-table');
   if(!t)return;
   var h=Math.ceil(t.getBoundingClientRect().height)+2;
+  var py=0; try{py=window.parent.scrollY||window.parent.pageYOffset||0;}catch(e){}
   window.parent.postMessage({type:'streamlit:setFrameHeight',height:h},'*');
+  [10,60,200].forEach(function(d){setTimeout(function(){try{window.parent.scrollTo({top:py,behavior:'instant'});}catch(e){}},d);});
 }
 sendH();requestAnimationFrame(sendH);setTimeout(sendH,150);setTimeout(sendH,600);
 </script>

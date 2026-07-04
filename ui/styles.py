@@ -100,6 +100,7 @@ header[data-testid="stHeader"]{background:var(--ptf-bg)!important;backdrop-filte
   box-shadow:var(--ptf-shadow)
 }
 .stButton > button:hover{border-color:color-mix(in srgb, var(--ptf-primary) 56%, transparent);transform:translateY(-1px)}
+.stButton > button:focus,.stButton > button:active,.stButton > button:focus-visible{outline:none!important;box-shadow:0 0 0 3px color-mix(in srgb, var(--ptf-primary) 30%, transparent)!important}
 .stTabs [data-baseweb="tab-list"]{gap:6px;border-bottom:1px solid color-mix(in srgb, var(--ptf-text) 12%, transparent);padding-bottom:4px;flex-wrap:nowrap}
 .stTabs [data-baseweb="tab"]{border-radius:14px 14px 0 0;padding:8px 10px;background:color-mix(in srgb, var(--ptf-surface-2) 75%, var(--ptf-surface));color:var(--ptf-text);border:1px solid color-mix(in srgb, var(--ptf-text) 12%, transparent);border-bottom:none;box-shadow:0 4px 14px rgba(0,0,0,0.05);min-width:auto;font-size:0.86rem}
 .stTabs [data-baseweb="tab"] *{font-size:0.86rem!important}

@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from ui.charts.runtime import finalize_chart
-from ui.charts.settings import apply_settings
+from ui.charts.settings import apply_settings, get_chart_setting
 from ui.components import render_styled_table
 from ui.formatting import fmt_eur_it
 from ui.theme import ThemeConfig
@@ -306,11 +306,13 @@ def render_btp_calendar(
         automargin=True,
         range=[min_data - pd.Timedelta(days=70), max_data + pd.Timedelta(days=20)],
     )
+    y_bottom_pad = get_chart_setting("btp_timeline", "y_bottom_padding", -0.5)
     fig.update_yaxes(
         title=None,
         categoryorder="array",
         categoryarray=tickers[::-1],
         showticklabels=False,
+        range=[y_bottom_pad, len(tickers) - 0.5],
     )
     st.plotly_chart(fig, width="stretch")
 
@@ -340,6 +342,10 @@ def render_btp_calendar(
     table_rows = events.copy()
     if table_rows.empty:
         return
+
+    # Data come chiave di ordinamento primaria: la tabella si apre già
+    # ordinata cronologicamente, non raggruppata per ticker.
+    table_rows = table_rows.sort_values(["data", "ticker"], kind="stable").reset_index(drop=True)
 
     table_rows["Data"] = table_rows["data"].dt.strftime("%d/%m/%Y")
     table_rows["Evento"] = table_rows["tipo_evento"].map({"cedola": "Cedola", "scadenza": "Scadenza"})
@@ -402,25 +408,12 @@ def render_btp_calendar(
     # Converti None → NaN nella colonna Imposte per mantenere dtype float
     display_df["Imposte"] = pd.to_numeric(display_df["Imposte"], errors="coerce")
 
-    totale_row = pd.DataFrame([{
-        "Ticker": "Totale", "Data": "", "Evento": "",
-        "Lordo": tot_lordo, "Imposte": tot_imposte_v, "Netto": tot_netto,
-    }])
-    display_df = pd.concat([display_df, totale_row], ignore_index=True)
-
     def _row_style(row: pd.Series) -> list[str]:
         idx = row.name
-        is_totale = idx == len(row_states)
-        is_incassata = (
-            not is_totale
-            and idx < len(row_states)
-            and row_states.iloc[idx] == "incassata"
-        )
+        is_incassata = idx < len(row_states) and row_states.iloc[idx] == "incassata"
         styles: list[str] = []
         for _ in row.index:
-            if is_totale:
-                styles.append("font-weight:700;")
-            elif is_incassata:
+            if is_incassata:
                 styles.append("color:#DC2626;text-decoration:line-through;")
             else:
                 styles.append("")
@@ -452,4 +445,36 @@ def render_btp_calendar(
             _fmt_money_strike,
             subset=pd.IndexSlice[incassata_indices, ["Lordo", "Imposte", "Netto"]],
         )
-    render_styled_table(styler, height="content")
+    # Larghezze esplicite e condivise con la riga Totale qui sotto: st.dataframe
+    # e st.table calcolano la larghezza delle colonne con motori di rendering
+    # diversi (canvas vs HTML) e non combaciano mai se lasciati "auto".
+    column_widths = {
+        "Ticker": 90, "Data": 110, "Evento": 100,
+        "Lordo": 130, "Imposte": 130, "Netto": 130,
+    }
+    column_config = {
+        col: st.column_config.Column(width=width) for col, width in column_widths.items()
+    }
+    render_styled_table(styler, height="content", column_config=column_config)
+
+    # ── Totale come riga fissa e non ordinabile, separata dalla tabella
+    #    eventi: st.dataframe riordina l'intero corpo dati al click
+    #    sull'intestazione, quindi una riga di totale inclusa nella stessa
+    #    tabella si sposterebbe insieme alle altre. Resa anch'essa con
+    #    st.dataframe (stesso motore, stesse larghezze) così le colonne
+    #    restano allineate; con una sola riga non c'è nulla da riordinare.
+    totale_df = pd.DataFrame([{
+        "Ticker": "Totale", "Data": "", "Evento": "",
+        "Lordo": tot_lordo, "Imposte": tot_imposte_v, "Netto": tot_netto,
+    }])
+    totale_styler = (
+        totale_df.style
+        .hide(axis="index")
+        .set_properties(**{"font-weight": "700"})
+        .format({"Lordo": _fmt_money, "Imposte": _fmt_money, "Netto": _fmt_money})
+    )
+    totale_column_config = {
+        col: st.column_config.Column(label=" ", width=width)
+        for col, width in column_widths.items()
+    }
+    render_styled_table(totale_styler, height="content", column_config=totale_column_config)

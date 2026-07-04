@@ -645,6 +645,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'dynamic_y_padding': 0.08,
      'margin_delta': {'t': 0, 'b': 0, 'l': 0, 'r': 10},
      'skip_weekends': True,
+     'time_bar_edge_padding_days': 0.6,
      'y_nticks': 10,
      'x_nticks': 15,
      'x_tickformat': '%d/%m',
@@ -663,6 +664,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'dynamic_y_padding': 0.0,
      'margin_delta': {'t': 0, 'b': -30, 'l': 0, 'r': 10},
      'skip_weekends': True,
+     'time_bar_edge_padding_days': 0.6,
      'y_nticks': 10,
      'x_nticks': 15,
      'x_tickformat': '%d/%m',
@@ -1111,7 +1113,7 @@ CHARTS: dict[str, dict[str, Any]] = {
     # ------------------------------------------------------------------
 
     'btp_timeline': {'type': 'time',
-     'height': 360,
+     'height': 400,
      'legend': 'bottom',
      'show_legends': False,
      'show_buttons': False,
@@ -1125,6 +1127,8 @@ CHARTS: dict[str, dict[str, Any]] = {
      'x_tickformat': '%d/%m/%y',
      'x_dtick': 7776000000,
      'x_tickangle': 0,
+     'quarter_mode': 'year',
+     'y_bottom_padding': -0.7,
      'title': '<b>Scadenze e Cedole BTP</b>'},
 
     # ------------------------------------------------------------------

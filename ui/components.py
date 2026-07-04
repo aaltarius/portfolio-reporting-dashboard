@@ -384,14 +384,20 @@ def build_price_direction_map(data: dict[str, Any]) -> dict[str, str]:
             prev_px = float(prev_day.get(tk)) if prev_day.get(tk) not in (None, "") else np.nan
         except Exception:
             prev_px = np.nan
-        if pd.isna(last_px) or pd.isna(prev_px):
+        if pd.isna(last_px) or pd.isna(prev_px) or prev_px == 0:
             out[tk] = "flat"
-        elif last_px > prev_px:
-            out[tk] = "up"
-        elif last_px < prev_px:
-            out[tk] = "down"
         else:
-            out[tk] = "flat"
+            pct = (last_px - prev_px) / prev_px
+            if pct > 0.03:
+                out[tk] = "up_big"
+            elif pct > 0:
+                out[tk] = "up"
+            elif pct < -0.03:
+                out[tk] = "down_big"
+            elif pct < 0:
+                out[tk] = "down"
+            else:
+                out[tk] = "flat"
     return out
 def wrap_radar_label(label: Any) -> str:
     txt = str(label or "").strip()

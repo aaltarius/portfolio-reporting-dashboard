@@ -178,6 +178,7 @@ def build_portfolio_radar_payload(
     df_aperte: pd.DataFrame,
     liquidita: float,
     profile_name: str = "Equilibrato",
+    strumenti: list | None = None,
 ) -> dict[str, Any]:
     """Costruisce il payload reale per i due radar della home.
 
@@ -193,6 +194,23 @@ def build_portfolio_radar_payload(
             str(row.get("Tipo") or row.get("tipo") or ""),
         ]
         return " | ".join(parts).lower()
+
+    # Enrichment lookup: ticker → strumento dict
+    _enr: dict[str, dict] = {}
+    for _s in (strumenti or []):
+        _tk = str(_s.get("ticker") or "").strip()
+        if _tk:
+            _enr[_tk] = _s
+
+    def _parse_it_float(s) -> float | None:
+        """Parse Italian-format number string ('1,23%', '+ 47,38%') → float or None."""
+        if s is None:
+            return None
+        try:
+            cleaned = str(s).replace("%", "").replace("+", "").replace(" ", "").replace(",", ".")
+            return float(cleaned)
+        except (ValueError, TypeError):
+            return None
 
     def _classify_radar_asset_class(row: pd.Series) -> str:
         txt = _portfolio_text_blob(row)
@@ -248,6 +266,7 @@ def build_portfolio_radar_payload(
     def _score_quality_profile(
         quantitative_weights: dict[str, float],
         df_aperte: pd.DataFrame,
+        enrichment_map: dict[str, dict],
     ) -> tuple[dict[str, float], dict[str, str]]:
         weights_ratio = {k: float(v or 0.0) / 100.0 for k, v in quantitative_weights.items()}
         expected_return_assumptions = {
@@ -293,21 +312,41 @@ def build_portfolio_radar_payload(
             work["Costo"] = pd.to_numeric(work.get("Costo"), errors="coerce").fillna(0.0)
             work["Controvalore"] = pd.to_numeric(work.get("Controvalore"), errors="coerce").fillna(0.0)
             total_value = float(work["Controvalore"].sum()) or 1.0
-            macro_scores = {"GOV": 9.0, "ETF": 8.2, "FND": 5.8}
+            _macro_scores = {"GOV": 9.0, "ETF": 8.2, "FND": 5.8}
             cost_scores = []
             fx_penalties = []
             esg_scores = []
+            duration_contributions: list[tuple[float, float]] = []
+            ter_real_count = 0
             for _, row in work.iterrows():
                 weight = float(row.get("Controvalore", 0.0) or 0.0) / total_value
                 tipo = str(row.get("Tipo") or row.get("tipo") or "")
                 txt = _portfolio_text_blob(row)
-                macro = str(tipo)
-                macro_score = macro_scores.get(macro if macro in macro_scores else ("GOV" if "btp" in txt or "gov" in txt else "ETF" if "etf" in txt else "FND"), 6.5)
+                ticker = str(row.get("Ticker") or row.get("ticker") or "").strip()
+                enriched = enrichment_map.get(ticker, {})
+                # TER: use real value if available, else heuristic by category
+                ter_pct = _parse_it_float(enriched.get("ter"))
+                if ter_pct is not None:
+                    macro_score = max(0.0, min(10.0, 10.0 - ter_pct * 2.5))
+                    ter_real_count += 1
+                else:
+                    macro = str(tipo)
+                    macro_score = _macro_scores.get(
+                        macro if macro in _macro_scores else (
+                            "GOV" if "btp" in txt or "gov" in txt else
+                            "ETF" if "etf" in txt else "FND"
+                        ),
+                        6.5,
+                    )
                 cost_scores.append(weight * macro_score)
                 foreign_flag = any(token in txt for token in ("world", "global", "msci", "nasdaq", "s&p", "sp500", "usa", "us ", "emerging", "japan", "pacific"))
                 fx_penalties.append(weight * (1.0 if foreign_flag else 0.2))
                 esg_bonus = 8.5 if any(token in txt for token in ("esg", "sri", "sustain", "climate", "clean")) else 5.8
                 esg_scores.append(weight * esg_bonus)
+                # Duration: collect real data points
+                dur_val = _parse_it_float(enriched.get("duration_modificata"))
+                if dur_val is not None and weight > 0:
+                    duration_contributions.append((weight, dur_val))
             costs_contained = max(0.0, min(10.0, sum(cost_scores)))
             fx_score = max(0.0, min(10.0, 10.0 - (sum(fx_penalties) * 6.0)))
             esg_score = max(0.0, min(10.0, sum(esg_scores)))
@@ -315,9 +354,19 @@ def build_portfolio_radar_payload(
             costs_contained = 6.0
             fx_score = 6.0
             esg_score = 5.5
+            duration_contributions = []
+            ter_real_count = 0
 
         bond_share = weights_ratio["Obbligazionario governativo"] + weights_ratio["Obbligazionario corporate"]
-        duration_score = max(0.0, min(10.0, 10.0 - (abs(bond_share - 0.45) / 0.45) * 6.0))
+        if duration_contributions:
+            total_dur_weight = sum(w for w, _ in duration_contributions)
+            avg_duration = sum(w * d for w, d in duration_contributions) / total_dur_weight if total_dur_weight > 0 else 0.0
+            duration_score = max(0.0, min(10.0, 10.0 - avg_duration * 0.6))
+            _duration_real = True
+        else:
+            avg_duration = None
+            duration_score = max(0.0, min(10.0, 10.0 - (abs(bond_share - 0.45) / 0.45) * 6.0))
+            _duration_real = False
         scores = {
             "Rendimento atteso": max(0.0, min(10.0, weighted_return)),
             "Volatilità": max(0.0, min(10.0, 10.0 - weighted_risk)),
@@ -363,9 +412,14 @@ def build_portfolio_radar_payload(
                 f"Se poche classi dominano il portafoglio, questo indicatore scende rapidamente."
             ),
             "Costi contenuti": (
-                f"Qui non leggo il costo reale di ogni strumento, ma uso una stima per famiglia: GOV = 9.0, ETF = 8.2, FND = 5.8. "
-                f"Poi faccio la media pesata per controvalore dei tuoi strumenti. "
-                f"Il risultato è {scores['Costi contenuti']:.2f}."
+                (
+                    f"Leggo il TER reale da {ter_real_count} strumenti su {len(work)} (fonte: arricchimento PDF). "
+                    f"Per i restanti uso una stima per famiglia: GOV = 9.0, ETF = 8.2, FND = 5.8. "
+                    f"Score TER reale: 10 − TER% × 2.5 (es. 0,5% → 8.75; 2% → 5). "
+                    if ter_real_count > 0 else
+                    f"Nessun dato TER reale disponibile (carica i PDF nella pagina Arricchimento). "
+                    f"Uso una stima per famiglia: GOV = 9.0, ETF = 8.2, FND = 5.8. "
+                ) + f"Poi faccio la media pesata per controvalore. Il risultato è {scores['Costi contenuti']:.2f}."
             ),
             "Esposizione valutaria": (
                 f"Qui faccio una stima qualitativa, non una lettura precisa della valuta di ogni sottostante. "
@@ -375,9 +429,14 @@ def build_portfolio_radar_payload(
                 f"Maggiore è la presenza di strumenti esteri non coperti, più il punteggio si abbassa."
             ),
             "Duration": (
-                f"Questa non è la duration obbligazionaria tecnica del portafoglio. "
-                f"È un indicatore sintetico: guardo quanto il peso complessivo obbligazionario si avvicina a una quota moderata di riferimento del 45%. "
-                f"Nel tuo caso la quota bond totale è {(bond_share * 100.0):.2f}%, quindi lo score finale è {scores['Duration']:.2f}."
+                (
+                    f"Leggo la Duration Modificata reale da {len(duration_contributions)} strumenti obbligazionari (fonte: arricchimento PDF). "
+                    f"Duration media ponderata per controvalore: {avg_duration:.2f} anni. "
+                    f"Score = 10 − duration × 0.6 → duration bassa = meno rischio tasso = score più alto. "
+                    if _duration_real else
+                    f"Nessun dato di duration reale disponibile (carica i PDF dei BTP/obbligazioni nella pagina Arricchimento). "
+                    f"Uso un indicatore sintetico: quanto il peso obbligazionario totale ({bond_share * 100.0:.1f}%) si avvicina al 45% di riferimento. "
+                ) + f"Score finale: {scores['Duration']:.2f}."
             ),
             "Profilo ESG": (
                 f"Qui non uso rating ESG ufficiali esterni. "
@@ -467,7 +526,7 @@ def build_portfolio_radar_payload(
     selected_profile = str(profile_name or "Equilibrato")
     profile_preset = RADAR_PROFILE_PRESETS.get(selected_profile, RADAR_PROFILE_PRESETS["Equilibrato"])
     quantitative_weights = _build_quantitative_radar_weights(df_aperte, liquidita)
-    quality_scores, quality_diagnostics = _score_quality_profile(quantitative_weights, df_aperte)
+    quality_scores, quality_diagnostics = _score_quality_profile(quantitative_weights, df_aperte, _enr)
 
     quantitative_labels = [
         "Azionario",

@@ -182,7 +182,7 @@ def _overview_label_positions(plot: pd.DataFrame) -> list[str]:
     if plot is None or plot.empty:
         return []
     x = pd.to_numeric(plot.get("margine_pmc"), errors="coerce").fillna(0.0)
-    y = pd.to_numeric(plot.get("elasticita_prossima_rata"), errors="coerce").fillna(0.0)
+    y = pd.to_numeric(plot.get("elasticita_prossimo_acquisto"), errors="coerce").fillna(0.0)
     x_span = max(float(x.max() - x.min()), 1e-9)
     y_span = max(float(y.max() - y.min()), 1e-9)
     occupied: list[tuple[float, float]] = []
@@ -218,10 +218,10 @@ def build_accumuli_overview_chart(summary: pd.DataFrame) -> go.Figure:
         return _empty_figure(chart_id)
     plot = summary.copy()
     plot["margine_pmc"] = pd.to_numeric(plot.get("margine_pmc"), errors="coerce")
-    plot["elasticita_prossima_rata"] = pd.to_numeric(plot.get("elasticita_prossima_rata"), errors="coerce")
+    plot["elasticita_prossimo_acquisto"] = pd.to_numeric(plot.get("elasticita_prossimo_acquisto"), errors="coerce")
     plot["capitale"] = pd.to_numeric(plot.get("capitale"), errors="coerce").fillna(0.0)
     plot["pl_pct"] = pd.to_numeric(plot.get("pl_pct"), errors="coerce").fillna(0.0)
-    plot = plot.dropna(subset=["margine_pmc", "elasticita_prossima_rata"])
+    plot = plot.dropna(subset=["margine_pmc", "elasticita_prossimo_acquisto"])
     if plot.empty:
         return _empty_figure(chart_id)
 
@@ -249,7 +249,7 @@ def build_accumuli_overview_chart(summary: pd.DataFrame) -> go.Figure:
         fig.add_trace(
             go.Scatter(
                 x=group["margine_pmc"],
-                y=group["elasticita_prossima_rata"],
+                y=group["elasticita_prossimo_acquisto"],
                 mode="markers+text",
                 text=group["ticker"].astype(str),
                 textposition=group["_label_position"].astype(str).tolist(),
@@ -295,6 +295,6 @@ def build_accumuli_overview_chart(summary: pd.DataFrame) -> go.Figure:
         tickformat=".1%",
         automargin=True,
         zeroline=False,
-        range=_padded_axis_range(plot["elasticita_prossima_rata"]),
+        range=_padded_axis_range(plot["elasticita_prossimo_acquisto"]),
     )
     return apply_settings(fig, chart_id)

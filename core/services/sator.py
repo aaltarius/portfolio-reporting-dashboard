@@ -478,6 +478,13 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
         positions_map = ctx.state_df.set_index("Ticker").to_dict(orient="index")
     latest = _latest_prices(ctx.price_frame)
 
+    all_tickers = [
+        str(item.get("ticker") or "").strip().upper()
+        for item in ctx.data.get("strumenti", []) or []
+        if item.get("ticker")
+    ]
+    metrics_batch = _compute_all_metrics_batch(all_tickers, ctx.price_frame)
+
     rows = []
     for item in ctx.data.get("strumenti", []) or []:
         ticker = str(item.get("ticker") or "").strip().upper()
@@ -505,7 +512,7 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
         if unit_price <= 0:
             continue
         nature = _meta_strutturale(sator, inf, "nature")
-        metrics = _compute_metrics(ticker, ctx.price_frame)
+        metrics = metrics_batch.get(ticker, {k: np.nan for k in ("ret_1m", "ret_3m", "ret_6m", "ret_12m", "vol", "drawdown", "rend_vol", "n_punti")})
         peso_natura = ctx.nature_weights.get(nature, 0.0)
         rows.append({
             "ticker": ticker,
@@ -849,6 +856,16 @@ def _build_alerts(ranking: pd.DataFrame, nature_weights: dict[str, float]) -> li
 # Storico decisionale
 # --------------------------------------------------------------------------- #
 
+def _giudizio_label(voto_medio: float) -> str:
+    if voto_medio >= 8.0:
+        return "Ottima"
+    if voto_medio >= 6.5:
+        return "Buona"
+    if voto_medio >= 5.0:
+        return "Sufficiente"
+    return "Debole"
+
+
 def build_sator_decision_record(
     analysis_payload: dict[str, Any],
     *,
@@ -857,12 +874,56 @@ def build_sator_decision_record(
     note: str = "",
 ) -> dict[str, Any]:
     timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    ranking = analysis_payload.get("ranking") if isinstance(analysis_payload, dict) else None
+    if ranking is None or not isinstance(ranking, pd.DataFrame):
+        ranking = pd.DataFrame()
+
+    # Arricchisce ogni linea con role, bucket e voto dal ranking
+    enriched_lines = []
+    for line in (order_lines or []):
+        entry = dict(line)
+        if not ranking.empty:
+            row = ranking[ranking["ticker"].astype(str) == str(entry.get("ticker", ""))]
+            if not row.empty:
+                r = row.iloc[0]
+                entry["role"] = str(r.get("role", ""))
+                entry["bucket"] = _role_bucket(str(r.get("role", "")))
+                entry["voto"] = round(float(_safe_float(r.get("voto"), 0.0)), 1)
+                entry["score_finale"] = round(float(_safe_float(r.get("score_finale"), 0.0)), 4)
+        enriched_lines.append(entry)
+
+    # Ripartizione core/difensivo/satellite (importi e percentuali)
+    totale = sum(_safe_float(l.get("amount"), 0.0) for l in enriched_lines)
+    rip: dict[str, float] = {"Core": 0.0, "Difensivo": 0.0, "Satellite": 0.0}
+    for line in enriched_lines:
+        bucket = str(line.get("bucket") or "Satellite")
+        rip[bucket] = rip.get(bucket, 0.0) + _safe_float(line.get("amount"), 0.0)
+    ripartizione = {
+        k: {"amount": round(v, 2), "pct": round(v / totale * 100.0, 1) if totale > 0 else 0.0}
+        for k, v in rip.items()
+    }
+
+    # Giudizio: voto medio ponderato per importo
+    voti = [(l.get("voto", 0.0), _safe_float(l.get("amount"), 0.0)) for l in enriched_lines if l.get("voto")]
+    if voti:
+        tot_peso = sum(p for _, p in voti) or 1.0
+        voto_medio = round(sum(v * p for v, p in voti) / tot_peso, 1)
+    else:
+        voto_medio = 0.0
+    giudizio = {"voto_medio": voto_medio, "label": _giudizio_label(voto_medio)}
+
+    importo_ordine = round(totale, 2)
+
+    timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     return {
         "decision_id": f"sator_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
         "created_at": timestamp,
         "month_id": datetime.now().strftime("%Y-%m"),
         "budget": round(_safe_float(budget), 2),
-        "order_lines": list(order_lines or []),
+        "importo_ordine": importo_ordine,
+        "giudizio": giudizio,
+        "ripartizione": ripartizione,
+        "order_lines": enriched_lines,
         "alerts": list(analysis_payload.get("alerts", [])) if isinstance(analysis_payload, dict) else [],
         "note": str(note or "").strip(),
         "actual_order": [],
@@ -935,16 +996,70 @@ def _rolling_return(serie: pd.Series, finestra: int) -> float:
     return (fine / inizio) - 1.0 if inizio > 0 else np.nan
 
 
+def _compute_all_metrics_batch(tickers: list[str], price_frame: pd.DataFrame) -> dict[str, dict[str, float]]:
+    """Versione vettorizzata di _compute_metrics: calcola tutte le metriche per tutti
+    i ticker in una sola passata sul DataFrame invece di N passate separate."""
+    _empty: dict[str, float] = {k: np.nan for k in ("ret_1m", "ret_3m", "ret_6m", "ret_12m", "vol", "drawdown", "rend_vol")}
+    _empty["n_punti"] = 0.0
+    if not tickers or price_frame is None or price_frame.empty:
+        return {t: dict(_empty) for t in tickers}
+    cols = [t for t in tickers if t in price_frame.columns]
+    if not cols:
+        return {t: dict(_empty) for t in tickers}
+
+    frame = price_frame[cols].apply(pd.to_numeric, errors="coerce")
+    frame = frame.where(frame > 0)
+    n_rows = len(frame)
+    last = frame.iloc[-1]
+
+    ret_series: dict[str, pd.Series] = {}
+    for k, w in FINESTRE.items():
+        if n_rows > w:
+            start = frame.iloc[-(w + 1)]
+            ret_series[k] = (last / start - 1.0).where(start > 0)
+        else:
+            ret_series[k] = pd.Series(np.nan, index=frame.columns)
+
+    pct = frame.pct_change().replace([np.inf, -np.inf], np.nan)
+    tail = pct.tail(126)
+    vol = tail.std(ddof=1) * math.sqrt(252)
+    vol = vol.where(tail.notna().sum() >= 10)
+
+    dd = (frame / frame.cummax() - 1.0).min()
+
+    ret_6m = ret_series.get("ret_6m", pd.Series(np.nan, index=frame.columns))
+    rend_annuo = (1.0 + ret_6m) ** 2 - 1.0
+    rend_vol = (rend_annuo / vol).where(vol > 1e-9)
+
+    n_dict = frame.notna().sum().to_dict()
+    vol_dict = vol.to_dict()
+    dd_dict = dd.to_dict()
+    rv_dict = rend_vol.to_dict()
+    ret_dicts = {k: s.to_dict() for k, s in ret_series.items()}
+
+    result: dict[str, dict[str, float]] = {}
+    for t in tickers:
+        if t not in cols:
+            result[t] = dict(_empty)
+            continue
+        m: dict[str, float] = {"n_punti": float(n_dict.get(t, 0.0) or 0.0)}
+        for k, rd in ret_dicts.items():
+            v = rd.get(t, np.nan)
+            m[k] = float(v) if pd.notna(v) else np.nan
+        for attr, d in (("vol", vol_dict), ("drawdown", dd_dict), ("rend_vol", rv_dict)):
+            v = d.get(t, np.nan)
+            m[attr] = float(v) if pd.notna(v) else np.nan
+        result[t] = m
+    return result
+
+
 def _build_returns_frame(price_frame: pd.DataFrame) -> pd.DataFrame:
     if price_frame is None or price_frame.empty:
         return pd.DataFrame()
-    out = {}
-    for ticker in price_frame.columns:
-        serie = pd.to_numeric(price_frame[ticker], errors="coerce").dropna().astype(float)
-        serie = serie[serie > 0]
-        if len(serie) >= 3:
-            out[str(ticker)] = serie.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
-    return pd.DataFrame(out).sort_index() if out else pd.DataFrame()
+    frame = price_frame.apply(pd.to_numeric, errors="coerce")
+    frame = frame.where(frame > 0)
+    returns = frame.pct_change().replace([np.inf, -np.inf], np.nan)
+    return returns.dropna(how="all").sort_index()
 
 
 def _build_portfolio_return_series(returns_frame: pd.DataFrame, state_df: pd.DataFrame, weights: dict[str, float]) -> pd.Series:
@@ -961,12 +1076,18 @@ def _build_portfolio_return_series(returns_frame: pd.DataFrame, state_df: pd.Dat
 def _compute_correlations(returns_frame: pd.DataFrame, portfolio_returns: pd.Series) -> dict[str, float]:
     if returns_frame is None or returns_frame.empty or portfolio_returns is None or portfolio_returns.empty:
         return {}
-    out: dict[str, float] = {}
-    for ticker in returns_frame.columns:
-        coppia = pd.concat([returns_frame[ticker], portfolio_returns], axis=1, join="inner").dropna()
-        if len(coppia) >= 15:
-            out[str(ticker)] = float(coppia.iloc[:, 0].corr(coppia.iloc[:, 1]))
-    return out
+    common = returns_frame.index.intersection(portfolio_returns.index)
+    if len(common) < 15:
+        return {}
+    rf = returns_frame.loc[common]
+    pt = portfolio_returns.loc[common]
+    valid_pairs = rf.notna().mul(pt.notna(), axis=0).sum()
+    corr_all = rf.corrwith(pt)
+    return {
+        str(col): float(corr_all[col])
+        for col in corr_all.index
+        if valid_pairs.get(col, 0) >= 15 and pd.notna(corr_all[col])
+    }
 
 
 def _compute_current_weights(state_df: pd.DataFrame) -> dict[str, float]:

@@ -114,11 +114,14 @@ def _normalized_instrument_signature_payload(strumenti: list[dict[str, Any]]) ->
             prezzo = None if prezzo in (None, "") else round(float(prezzo), 4)
         except Exception:
             prezzo = str(prezzo or "")
+        stato_raw = item.get("stato")
+        stato_norm = "chiuso" if stato_raw in {"chiuso", "osservato"} else "aperto"
         normalized.append({
             "isin": str(item.get("isin", "")).strip(),
             "ticker": str(item.get("ticker", "")).strip(),
             "tipo": str(item.get("tipo", "")).strip(),
             "prezzo": prezzo,
+            "stato": stato_norm,
         })
     return sorted(normalized, key=lambda row: (row["ticker"], row["isin"], row["tipo"]))
 
@@ -166,10 +169,15 @@ def _base_market_signature_payload(
         or ""
     )
 
+    registro_eventi = payload.get("registro_eventi", []) if isinstance(payload.get("registro_eventi", []), list) else []
+    registro_liquidita = payload.get("registro_liquidita", []) if isinstance(payload.get("registro_liquidita", []), list) else []
+
     signature_payload: dict[str, Any] = {
         "instruments": _normalized_instrument_signature_payload(strumenti),
         "n_history_dates": len(storico),
         "latest_history_date": latest_history_date,
+        "n_eventi": len(registro_eventi),
+        "n_liquidita": len(registro_liquidita),
     }
     if include_benchmark_data:
         benchmark_data = payload.get("benchmark_data", {}) if isinstance(payload.get("benchmark_data", {}), dict) else {}

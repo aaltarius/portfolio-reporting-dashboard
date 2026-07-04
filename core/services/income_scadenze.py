@@ -8,6 +8,8 @@ from typing import Any
 
 import pandas as pd
 
+from core.domain.bonds import calc_ytm_and_duration
+
 
 def _numeric_series(frame: pd.DataFrame, *column_names: str) -> pd.Series:
     if frame is None or frame.empty:
@@ -81,6 +83,13 @@ def build_income_scadenze_summary(data: dict[str, Any], da: pd.DataFrame, calend
     yield_on_value_12m = (expected_net_income_12m / gov_market_value) if abs(gov_market_value) > 1e-9 else 0.0
 
     gov_details_df = pd.DataFrame(columns=["Ticker", "Strumento", "Valore di Mercato", "Cedole 12 mesi", "Yield su valore"])
+    # Mappa ticker → strumento per calcolo YTM/Duration
+    strumenti_map = {
+        str(s.get("ticker") or ""): s
+        for s in (data.get("strumenti") or [])
+        if str(s.get("ticker") or "")
+    }
+
     if not gov_df.empty and "Ticker" in gov_df.columns:
         coupon_by_ticker = (
             coupon_12m.groupby(coupon_12m["ticker"].astype(str))["importo"].sum().to_dict()
@@ -96,16 +105,32 @@ def build_income_scadenze_summary(data: dict[str, Any], da: pd.DataFrame, calend
                 ) or 0.0
             )
             coupon_value = float(coupon_by_ticker.get(ticker, 0.0) or 0.0)
+            strumento = strumenti_map.get(ticker, {})
+            ytm, dur_mod = calc_ytm_and_duration(strumento)
             details.append({
                 "Ticker": ticker,
                 "Strumento": row.get("Strumento", row.get("nome", ticker)),
                 "Valore di Mercato": market_value,
                 "Cedole 12 mesi": coupon_value,
                 "Yield su valore": (coupon_value / market_value) if abs(market_value) > 1e-9 else 0.0,
+                "YTM": ytm,
+                "Duration mod.": dur_mod,
             })
         gov_details_df = pd.DataFrame(details)
         if not gov_details_df.empty:
             gov_details_df = gov_details_df.sort_values("Cedole 12 mesi", ascending=False).reset_index(drop=True)
+
+    # Duration media ponderata per valore di mercato
+    duration_media_ponderata: float | None = None
+    if not gov_details_df.empty and "Duration mod." in gov_details_df.columns and "Valore di Mercato" in gov_details_df.columns:
+        valid = gov_details_df.dropna(subset=["Duration mod.", "Valore di Mercato"])
+        valid = valid[valid["Valore di Mercato"] > 0]
+        if not valid.empty:
+            total_weight = float(valid["Valore di Mercato"].sum())
+            if total_weight > 0:
+                duration_media_ponderata = float(
+                    (valid["Duration mod."] * valid["Valore di Mercato"]).sum() / total_weight
+                )
 
     return {
         "future_income_df": future_income_df,
@@ -115,4 +140,5 @@ def build_income_scadenze_summary(data: dict[str, Any], da: pd.DataFrame, calend
         "expected_redemptions_12m": expected_redemptions_12m,
         "gov_market_value": gov_market_value,
         "yield_on_value_12m": yield_on_value_12m,
+        "duration_media_ponderata": duration_media_ponderata,
     }

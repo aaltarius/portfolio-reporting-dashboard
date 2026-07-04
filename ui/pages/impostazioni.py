@@ -455,6 +455,41 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     key="appearance_visibility_mode",
                 )
 
+                st.markdown("**Modalità accesso operativo**")
+                _op_opts = ["Entrambi", "Solo sidebar", "Solo Centro Operativo"]
+                _op_vals = ["entrambi", "sidebar", "tradizionale"]
+                _cur_op = str(settings.get("operativo_mode", "entrambi"))
+                ui_operativo_mode = st.radio(
+                    "Centro Operativo vs Sidebar",
+                    _op_opts,
+                    index=_op_vals.index(_cur_op) if _cur_op in _op_vals else 0,
+                    horizontal=True,
+                    key="operativo_mode_radio",
+                    help="'Entrambi': Centro Operativo e pulsanti sidebar attivi. 'Solo sidebar': nasconde il Centro Operativo nelle pagine. 'Solo Centro Operativo': nasconde i pulsanti operativi in sidebar.",
+                )
+                _sator_opts = ["Entrambi", "Solo sidebar", "Solo pianificazione"]
+                _sator_vals = ["entrambi", "sidebar", "tradizionale"]
+                _cur_sator = str(settings.get("sator_mode", "entrambi"))
+                ui_sator_mode = st.radio(
+                    "SATOR",
+                    _sator_opts,
+                    index=_sator_vals.index(_cur_sator) if _cur_sator in _sator_vals else 0,
+                    horizontal=True,
+                    key="sator_mode_radio",
+                    help="'Entrambi': pulsante sidebar e sezione in Pianificazione. 'Solo sidebar': nasconde la sezione SATOR in Pianificazione. 'Solo pianificazione': nasconde il pulsante sidebar.",
+                )
+                _export_opts = ["Entrambi", "Solo sidebar", "Solo Gestione Dati"]
+                _export_vals = ["entrambi", "sidebar", "tradizionale"]
+                _cur_export = str(settings.get("export_pp_mode", "entrambi"))
+                ui_export_pp_mode = st.radio(
+                    "Esporta PP",
+                    _export_opts,
+                    index=_export_vals.index(_cur_export) if _cur_export in _export_vals else 0,
+                    horizontal=True,
+                    key="export_pp_mode_radio",
+                    help="'Entrambi': pulsante sidebar e sezione in Gestione Dati. 'Solo sidebar': nasconde la sezione export in Gestione Dati. 'Solo Gestione Dati': nasconde il pulsante sidebar.",
+                )
+
                 st.markdown("**Categorie visibili**")
                 category_options = [code for code in ASSET_CATEGORY_REGISTRY.keys() if code != "ALTRO"]
                 current_categories = normalize_category_selection(
@@ -672,6 +707,9 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 ui_typo_body_size = typo_sizes_map[ui_typo_body][2]
                 ui_typo_caption_size = typo_sizes_map[ui_typo_caption][3]
 
+                settings["operativo_mode"] = _op_vals[_op_opts.index(ui_operativo_mode)]
+                settings["sator_mode"] = _sator_vals[_sator_opts.index(ui_sator_mode)]
+                settings["export_pp_mode"] = _export_vals[_export_opts.index(ui_export_pp_mode)]
                 settings["appearance"] = {
                     **settings.get("appearance", {}),
                     "color_palette": ui_color_palette,

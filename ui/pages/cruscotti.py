@@ -978,7 +978,12 @@ def _render_flussi_acquisti(ctx: SimpleNamespace, theme) -> None:
             purchase_df["category"] = purchase_df["ticker"].map(lambda tk: macro_cat(info_map.get(tk, {}).get("tipo", "")))
             purchase_summary = (
                 purchase_df.groupby(["ticker"], dropna=False)
-                .agg(rate_count=("ticker", "size"), min_price=("prezzo_unitario", "min"), max_price=("prezzo_unitario", "max"))
+                .agg(
+                    rate_count=("ticker", "size"),
+                    min_price=("prezzo_unitario", "min"),
+                    max_price=("prezzo_unitario", "max"),
+                    qty_totale=("quantita", "sum"),
+                )
                 .reset_index()
                 .rename(columns={"ticker": "Ticker"})
             )

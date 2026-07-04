@@ -658,8 +658,10 @@ def _render_sator_universe_editor(ctx: SimpleNamespace) -> None:
 
 
 def _render_sator_module(ctx: SimpleNamespace, theme) -> None:
-    data = ctx.data
     settings = ctx.settings
+    if str((settings or {}).get("sator_mode", "entrambi")) == "sidebar":
+        return
+    data = ctx.data
     ensure_sator_metadata(data)
     sator_cfg = ensure_sator_settings(settings)
     render_section_title(
@@ -672,6 +674,22 @@ def _render_sator_module(ctx: SimpleNamespace, theme) -> None:
         ),
         gap_after="sm",
     )
+
+    # Applica richiesta di import da foto prima che i widget vengano istanziati
+    if "_sator_import_request" in st.session_state:
+        _req = st.session_state.pop("_sator_import_request")
+        st.session_state["sator_budget"] = _req["budget"]
+        st.session_state["sator_manual_alloc"] = _req["alloc"]
+        st.session_state.pop("sator_master_table_editor", None)
+        try:
+            st.session_state["sator_result"] = run_sator_analysis(
+                data, settings,
+                budget=_req["budget"],
+                selected_categories=["ETF", "ETC"],
+                concentration_severity=float(st.session_state.get("sator_severita", 1.0)),
+            )
+        except Exception:
+            st.session_state.pop("sator_result", None)
 
     col_budget, col_sev, col_lines = st.columns([1.3, 1.0, 1.0], gap="small")
     with col_budget:
@@ -737,6 +755,47 @@ def _render_sator_module(ctx: SimpleNamespace, theme) -> None:
             decision = items[int(selected_idx)]
             if decision.get("note"):
                 st.caption(decision["note"])
+
+            # ── Metriche della decisione salvata ──────────────────────────────
+            _budget_sal = float(decision.get("budget") or 0.0)
+            _imp_ord = float(decision.get("importo_ordine") or sum(
+                float(l.get("amount") or 0.0) for l in decision.get("order_lines", [])
+            ))
+            _giudizio = decision.get("giudizio") or {}
+            _voto_medio = float(_giudizio.get("voto_medio") or 0.0)
+            _giudizio_label = _giudizio.get("label") or ""
+            _rip = decision.get("ripartizione") or {}
+
+            _mc1, _mc2, _mc3 = st.columns(3)
+            with _mc1:
+                st.metric("Budget impostato", fmt_eur_it(_budget_sal, 0))
+                st.metric("Importo ordine", fmt_eur_it(_imp_ord, 0))
+            with _mc2:
+                if _voto_medio > 0:
+                    st.metric("Voto medio soluzione", f"{_voto_medio:.1f} / 10")
+                    st.metric("Giudizio", _giudizio_label)
+            with _mc3:
+                for _bucket_name in ("Core", "Difensivo", "Satellite"):
+                    _b = _rip.get(_bucket_name) or {}
+                    _b_amt = float(_b.get("amount") or 0.0)
+                    _b_pct = float(_b.get("pct") or 0.0)
+                    if _b_amt > 0:
+                        st.metric(_bucket_name, fmt_eur_it(_b_amt, 0), f"{_b_pct:.1f}%")
+            # ─────────────────────────────────────────────────────────────────
+
+            if st.button("Carica in SATOR (rivaluta con dati odierni)", key="sator_load_from_foto", width="stretch"):
+                _foto_alloc = {
+                    str(l["ticker"]): int(l.get("shares") or 0)
+                    for l in decision.get("order_lines", [])
+                    if l.get("ticker") and int(l.get("shares") or 0) > 0
+                }
+                st.session_state["_sator_import_request"] = {
+                    "budget": float(decision.get("budget") or 0.0),
+                    "alloc": _foto_alloc,
+                }
+                queue_success("Foto caricata in SATOR — analisi ricalcolata con dati odierni.")
+                st.rerun()
+
             render_danger_hint("L'eliminazione riguarda solo lo storico decisionale SATOR salvato; non modifica il portafoglio e non registra operazioni.")
             confirm_delete = confirm_danger(
                 "Confermo l'eliminazione della fotografia decisionale selezionata",

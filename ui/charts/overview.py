@@ -62,7 +62,7 @@ def _uirevision_key(view: str, dates: pd.Series, values: pd.Series) -> str:
     return f"pl-home-v34-{view}-{len(values)}-{last_date}-{round(last_value, 2)}"
 
 
-def build_overview_time_chart(dfh_top, da_frame, view, pl_color, pl_total, chart_bg, dfmt, theme, settings=None):
+def build_overview_time_chart(dfh_top, da_frame, view, pl_color, pl_total, chart_bg, dfmt, theme, settings=None, total_return=None):
     """Build the selected overview chart shown above the main tabs.
 
     chart_id runtime: overview_pl_portafoglio / overview_pl_categoria
@@ -120,16 +120,34 @@ def build_overview_time_chart(dfh_top, da_frame, view, pl_color, pl_total, chart
             current_open_pl = float(pd.to_numeric(da_frame["P/L €"], errors="coerce").fillna(0.0).sum())
         chart_dates_total, chart_pl_storico = _with_current_point(dfh_top["Data"], pl_storico, float(pl_total))
         chart_dates_open, chart_pl_attuale = _with_current_point(dfh_top["Data"], pl_attuale, current_open_pl)
+
+        # Total Return series: P/L column includes realized + unrealized + proventi (cash)
+        pl_full = pd.to_numeric(dfh_top.get("P/L", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
+        tr_current = float(total_return) if total_return is not None else float(pl_total)
+        chart_dates_tr, chart_pl_tr = _with_current_point(dfh_top["Data"], pl_full, tr_current)
+
         fig.add_trace(
             go.Scatter(
                 x=chart_dates_total,
                 y=chart_pl_storico,
                 mode="lines",
                 name="P/L storico",
-                line=dict(color=pl_color, width=3.0),
+                line=dict(color=pl_color, width=2.2),
                 fill="tozeroy",
-                fillcolor=hex_to_rgba(theme.colors["success"], 0.08) if pl_total >= 0 else hex_to_rgba(theme.colors["danger"], 0.08),
-                hovertemplate="Data: %{x|%d/%m/%Y}<br>P/L complessivo: € %{y:,.2f}<extra></extra>",
+                fillcolor=hex_to_rgba(theme.colors["success"], 0.06) if pl_total >= 0 else hex_to_rgba(theme.colors["danger"], 0.06),
+                hovertemplate="Data: %{x|%d/%m/%Y}<br>P/L storico: € %{y:,.2f}<extra></extra>",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=chart_dates_tr,
+                y=chart_pl_tr,
+                mode="lines",
+                name="Total return",
+                line=dict(color=P["orange"], width=2.8),
+                fill="tonexty",
+                fillcolor=hex_to_rgba(P["orange"], 0.12),
+                hovertemplate="Data: %{x|%d/%m/%Y}<br>Total return: € %{y:,.2f}<extra></extra>",
             )
         )
         fig.add_trace(
@@ -138,15 +156,15 @@ def build_overview_time_chart(dfh_top, da_frame, view, pl_color, pl_total, chart
                 y=chart_pl_attuale,
                 mode="lines",
                 name="P/L pos. aperte",
-                line=dict(color=P["blue"], width=2.2, dash="dash"),
+                line=dict(color=P["blue"], width=2.0, dash="dash"),
                 hovertemplate="Data: %{x|%d/%m/%Y}<br>P/L posizioni aperte: € %{y:,.2f}<extra></extra>",
             )
         )
         add_extrema_markers(
             fig,
             "overview_pl_portafoglio",
-            chart_dates_total,
-            chart_pl_storico,
+            chart_dates_tr,
+            chart_pl_tr,
             theme=theme,
             value_formatter=lambda v: fmt_eur_it(v, 2),
         )

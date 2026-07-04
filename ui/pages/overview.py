@@ -65,7 +65,7 @@ def render_overview(container: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     f'<div style="padding-top:6px"><span title="P/L del portafoglio: guadagno/perdita complessivo nel tempo. P/L per Categoria: andamento P/L delle categorie visibili ({categories_text}) separatamente." style="cursor:help;font-size:0.9rem;color:#9CA3AF;border:1px solid #9CA3AF;border-radius:50%;padding:0 3px;display:inline-block;line-height:1.3;">?</span></div>',
                     unsafe_allow_html=True,
                 )
-            fig = build_overview_time_chart(dfh_top, da, _home_vista, pl_color, pl_totale, CHART_BG, dfmt, get_theme_context(), settings=settings)
+            fig = build_overview_time_chart(dfh_top, da, _home_vista, pl_color, pl_totale, CHART_BG, dfmt, get_theme_context(), settings=settings, total_return=total_return)
             latest_chart_date = ""
             latest_chart_value = 0.0
             if getattr(fig, "data", None):
@@ -131,27 +131,27 @@ def render_overview(container: DeltaGenerator, ctx: SimpleNamespace) -> None:
         c1, c2, c3, c4 = st.columns([1.0, 1.08, 1.1, 2.25])
         with c1:
             kpi_card(
-                "Capitale Versato<br>Storico",
-                fmt_eur_it(cap, 2),
-                capitale_sub,
-                accent=P_dict["gray"],
-                value_color=P_dict["gray"]
-            )
-        with c2:
-            kpi_card(
-                "Valore Investito<br>Attuale",
-                fmt_eur_it(tv, 2),
-                valore_attuale_sub,
+                "P/L Pos. Aperte <span title=\"Risultato delle sole posizioni aperte ai prezzi correnti.\" style=\"cursor:help; font-size:0.82em; opacity:0.8;\">ⓘ</span>",
+                f"{fmt_eur_it(pl_attuale_posizioni, 2, signed=True)}<br><span style='font-size:1rem;font-weight:800'>{fmt_pct_it((pl_attuale_posizioni/abs(tc)) if abs(tc)>1e-9 else 0, 2, signed=True)}</span>",
+                pl_attuale_sub,
                 accent=P_dict["blue"],
                 value_color=P_dict["blue"]
             )
+        with c2:
+            kpi_card(
+                "P/L Storico <span title=\"Somma del P/L aperto e del realizzato netto gia' maturato.\" style=\"cursor:help; font-size:0.82em; opacity:0.8;\">ⓘ</span>",
+                f"{fmt_eur_it(pl_totale, 2, signed=True)}<br><span style='font-size:1rem;font-weight:800'>{fmt_pct_it(pp, 2, signed=True)}</span>",
+                pl_storico_sub,
+                accent=pl_color,
+                value_color=pl_color
+            )
         with c3:
             kpi_card(
-                "P/L Attuale <span title=\"Risultato delle sole posizioni aperte ai prezzi correnti.\" style=\"cursor:help; font-size:0.82em; opacity:0.8;\">ⓘ</span>",
-                f"{fmt_eur_it(pl_attuale_posizioni, 2, signed=True)}<br><span style='font-weight:800'>{fmt_pct_it((pl_attuale_posizioni/abs(tc)) if abs(tc)>1e-9 else 0, 2, signed=True)}</span>",
-                pl_attuale_sub,
-                accent=pl_attuale_color,
-                value_color=pl_attuale_color
+                "Total Return <span title=\"Risultato complessivo: P/L storico piu' proventi netti incassati.\" style=\"cursor:help; font-size:0.82em; opacity:0.8;\">ⓘ</span>",
+                f"{fmt_eur_it(total_return, 2, signed=True)}<br><span style='font-size:1rem;font-weight:800'>{fmt_pct_it(total_return_pct, 2, signed=True)}</span>",
+                total_return_sub,
+                accent=P_dict["orange"],
+                value_color=P_dict["orange"]
             )
         with c4:
             if triplet_items:
@@ -163,33 +163,33 @@ def render_overview(container: DeltaGenerator, ctx: SimpleNamespace) -> None:
         pk1, pk2, pk3, pk4 = st.columns(4)
         with pk1:
             kpi_card(
-                "Proventi Netti",
-                fmt_eur_it(proventi_netti_totali, 2),
-                proventi_sub,
-                accent=P_dict["green"],
-                value_color=P_dict["green"]
+                "Capitale Versato<br>Storico",
+                fmt_eur_it(cap, 2),
+                capitale_sub,
+                accent=P_dict["gray"],
+                value_color=P_dict["gray"]
             )
         with pk2:
             kpi_card(
-                "Liquidità Disponibile",
-                fmt_eur_it(liquidita_attuale, 2),
-                liquidita_sub,
+                "Controvalore<br>Attuale",
+                fmt_eur_it(tv, 2),
+                valore_attuale_sub,
                 accent=P_dict["blue"],
                 value_color=P_dict["blue"]
             )
         with pk3:
             kpi_card(
-                "P/L Storico <span title=\"Somma del P/L aperto e del realizzato netto gia' maturato.\" style=\"cursor:help; font-size:0.82em; opacity:0.8;\">ⓘ</span>",
-                f"{fmt_eur_it(pl_totale, 2, signed=True)}<br><span style='font-weight:800'>{fmt_pct_it(pp, 2, signed=True)}</span>",
-                pl_storico_sub,
-                accent=pl_color,
-                value_color=pl_color
+                "Proventi<br>Netti",
+                fmt_eur_it(proventi_netti_totali, 2),
+                proventi_sub,
+                accent=P_dict["green"],
+                value_color=P_dict["green"]
             )
         with pk4:
             kpi_card(
-                "Total Return <span title=\"Risultato complessivo: P/L storico piu' proventi netti incassati.\" style=\"cursor:help; font-size:0.82em; opacity:0.8;\">ⓘ</span>",
-                f"{fmt_eur_it(total_return, 2, signed=True)}<br><span style='font-size:1rem;font-weight:800'>{fmt_pct_it(total_return_pct, 2, signed=True)}</span>",
-                total_return_sub,
-                accent=total_return_color,
-                value_color=total_return_color
+                "Liquidità<br>Disponibile",
+                fmt_eur_it(liquidita_attuale, 2),
+                liquidita_sub,
+                accent=P_dict["blue"],
+                value_color=P_dict["blue"]
             )
