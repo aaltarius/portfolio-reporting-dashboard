@@ -40,7 +40,6 @@ from ui.charts.cruscotti import (
 )
 from ui.charts.summary import build_summary_figures
 from ui.charts.runtime import empty_chart
-from core.finance import build_target_gap_by_instrument
 from core.services.sator import compute_instrument_buckets
 from core.services import build_percentage_return_series
 from core.models import get_proventi_normalizzati
