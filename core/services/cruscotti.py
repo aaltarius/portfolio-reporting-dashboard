@@ -174,10 +174,87 @@ def category_value_pl_items(
     return items
 
 
+_NATURE_TO_RADAR_AXIS = {
+    "azionario_globale_core": "Azionario", "azionario_emergenti": "Azionario",
+    "tecnologia_ai": "Azionario", "healthcare": "Azionario", "energia": "Azionario",
+    "italia": "Azionario", "quality_factor": "Azionario",
+    "monetario": "Liquidità",
+    "bond_governativo": "Obbligazionario governativo",
+    "bond_globale": "Obbligazionario corporate",
+    "oro": "Materie prime", "metalli_miniere": "Materie prime", "commodities": "Materie prime",
+    "real_estate": "Immobiliare",
+}
+# Stessa classificazione nature->bucket gia' usata da infer_sator_metadata/_role_bucket
+# in core/services/sator.py: riprodotta qui per evitare un import circolare (cruscotti -> sator
+# esiste gia' altrove nel modulo, ma solo a runtime dentro le funzioni).
+_NATURE_TO_BUCKET = {
+    "azionario_globale_core": "core", "azionario_emergenti": "core", "quality_factor": "core",
+    "monetario": "difensivo", "oro": "difensivo", "healthcare": "difensivo",
+    "bond_governativo": "difensivo", "bond_globale": "difensivo",
+    "tecnologia_ai": "satellite", "energia": "satellite", "metalli_miniere": "satellite",
+    "commodities": "satellite", "italia": "satellite", "real_estate": "satellite",
+}
+_RADAR_QUANTITATIVE_AXES = [
+    "Azionario", "Obbligazionario governativo", "Obbligazionario corporate",
+    "Liquidità", "Materie prime", "Immobiliare", "Alternativi", "Criptovalute",
+]
+
+
+def _derive_quantitative_radar_target(portfolio_objective: dict[str, float] | None, concentration_caps: dict[str, float] | None) -> dict[str, float]:
+    """8 assi quantitativi del radar, derivati dall'obiettivo Core/Difensivo/Satellite
+    e dai cap di concentrazione per natura (entrambi editabili dall'utente in
+    Pianificazione) — nessun preset separato, nessun valore nascosto."""
+    objective = portfolio_objective or {}
+    caps = concentration_caps or {}
+    out = {axis: 0.0 for axis in _RADAR_QUANTITATIVE_AXES}
+    for bucket_key in ("core", "difensivo", "satellite"):
+        bucket_target_pct = float(objective.get(bucket_key, 0.0)) * 100.0
+        natures_in_bucket = [n for n, b in _NATURE_TO_BUCKET.items() if b == bucket_key]
+        cap_total = sum(float(caps.get(n, 0.0)) for n in natures_in_bucket)
+        if cap_total <= 0:
+            continue
+        for nature in natures_in_bucket:
+            axis = _NATURE_TO_RADAR_AXIS[nature]
+            share = float(caps.get(nature, 0.0)) / cap_total
+            out[axis] += bucket_target_pct * share
+    return out
+
+
+# Ancore di interpolazione: valori gia' presenti nel vecchio RADAR_PROFILE_PRESETS
+# per i profili "Prudente" e "Dinamico", riusati come estremi di una scala continua
+# invece che come 4 nomi discreti.
+_RADAR_QUALITATIVE_ANCHORS = {
+    "Rendimento atteso": (5.8, 8.0),
+    "Volatilità": (8.6, 5.8),
+    "Liquidità": (8.4, 7.0),
+    "Esposizione valutaria": (8.0, 5.8),
+    "Duration": (8.2, 5.8),
+}
+# Assi senza una tendenza chiara nei vecchi preset: restano fissi al valore
+# "Equilibrato" storico, invece di inventare una formula arbitraria.
+_RADAR_QUALITATIVE_FIXED = {
+    "Diversificazione": 8.0,
+    "Costi contenuti": 7.5,
+    "Profilo ESG": 6.5,
+}
+_SATELLITE_SHARE_LOW = 0.10   # quota satellite del vecchio profilo "Prudente"
+_SATELLITE_SHARE_HIGH = 0.35  # quota satellite del vecchio profilo "Dinamico"
+
+
+def _derive_qualitative_radar_target(portfolio_objective: dict[str, float] | None) -> dict[str, float]:
+    satellite = float((portfolio_objective or {}).get("satellite", 0.20))
+    span = _SATELLITE_SHARE_HIGH - _SATELLITE_SHARE_LOW
+    t = max(0.0, min(1.0, (satellite - _SATELLITE_SHARE_LOW) / span)) if span > 0 else 0.5
+    out = {axis: lo + t * (hi - lo) for axis, (lo, hi) in _RADAR_QUALITATIVE_ANCHORS.items()}
+    out.update(_RADAR_QUALITATIVE_FIXED)
+    return out
+
+
 def build_portfolio_radar_payload(
     df_aperte: pd.DataFrame,
     liquidita: float,
-    profile_name: str = "Equilibrato",
+    portfolio_objective: dict[str, float] | None = None,
+    concentration_caps: dict[str, float] | None = None,
     strumenti: list | None = None,
 ) -> dict[str, Any]:
     """Costruisce il payload reale per i due radar della home.
@@ -450,81 +527,8 @@ def build_portfolio_radar_payload(
 
         return scores, diagnostics
 
-    RADAR_PROFILE_PRESETS: dict[str, dict[str, Any]] = {
-        "Prudente": {
-            "quantitative": {
-                "Azionario": 15.0,
-                "Obbligazionario governativo": 45.0,
-                "Obbligazionario corporate": 20.0,
-                "Liquidità": 12.0,
-                "Materie prime": 3.0,
-                "Immobiliare": 2.0,
-                "Alternativi": 2.0,
-                "Criptovalute": 1.0,
-            },
-            "qualitative": {
-                "Rendimento atteso": 5.8,
-                "Volatilità": 8.6,
-                "Liquidità": 8.4,
-                "Diversificazione": 7.2,
-                "Costi contenuti": 7.2,
-                "Esposizione valutaria": 8.0,
-                "Duration": 8.2,
-                "Profilo ESG": 6.2,
-            },
-        },
-        "Equilibrato": {
-            "quantitative": {
-                "Azionario": 35.0,
-                "Obbligazionario governativo": 25.0,
-                "Obbligazionario corporate": 15.0,
-                "Liquidità": 10.0,
-                "Materie prime": 5.0,
-                "Immobiliare": 4.0,
-                "Alternativi": 4.0,
-                "Criptovalute": 2.0,
-            },
-            "qualitative": {
-                "Rendimento atteso": 6.8,
-                "Volatilità": 7.5,
-                "Liquidità": 8.0,
-                "Diversificazione": 8.0,
-                "Costi contenuti": 7.5,
-                "Esposizione valutaria": 6.8,
-                "Duration": 7.0,
-                "Profilo ESG": 6.5,
-            },
-        },
-        "Dinamico": {
-            "quantitative": {
-                "Azionario": 55.0,
-                "Obbligazionario governativo": 12.0,
-                "Obbligazionario corporate": 10.0,
-                "Liquidità": 6.0,
-                "Materie prime": 6.0,
-                "Immobiliare": 4.0,
-                "Alternativi": 4.0,
-                "Criptovalute": 3.0,
-            },
-            "qualitative": {
-                "Rendimento atteso": 8.0,
-                "Volatilità": 5.8,
-                "Liquidità": 7.0,
-                "Diversificazione": 8.2,
-                "Costi contenuti": 7.4,
-                "Esposizione valutaria": 5.8,
-                "Duration": 5.8,
-                "Profilo ESG": 6.5,
-            },
-        },
-    }
-    RADAR_PROFILE_PRESETS["Neutro"] = {
-        "quantitative": dict(RADAR_PROFILE_PRESETS["Equilibrato"]["quantitative"]),
-        "qualitative": dict(RADAR_PROFILE_PRESETS["Equilibrato"]["qualitative"]),
-    }
-
-    selected_profile = str(profile_name or "Equilibrato")
-    profile_preset = RADAR_PROFILE_PRESETS.get(selected_profile, RADAR_PROFILE_PRESETS["Equilibrato"])
+    quantitative_comparison_target = _derive_quantitative_radar_target(portfolio_objective, concentration_caps)
+    qualitative_comparison_target = _derive_qualitative_radar_target(portfolio_objective)
     quantitative_weights = _build_quantitative_radar_weights(df_aperte, liquidita)
     quality_scores, quality_diagnostics = _score_quality_profile(quantitative_weights, df_aperte, _enr)
 
@@ -563,8 +567,8 @@ def build_portfolio_radar_payload(
     if float(liquidita or 0.0) > 0:
         quantitative_amounts["Liquidità"] += float(liquidita or 0.0)
 
-    quantitative_comparison = profile_preset["quantitative"]
-    qualitative_comparison = profile_preset["qualitative"]
+    quantitative_comparison = quantitative_comparison_target
+    qualitative_comparison = qualitative_comparison_target
 
     quantitative_detail = [
         {
@@ -645,19 +649,19 @@ def build_portfolio_radar_payload(
     ]
 
     return {
-        "source_note": f"Dati quantitativi reali del portafoglio; confronto costruito sul profilo target '{selected_profile}'. Il qualitativo resta uno scoring euristico sulla composizione.",
+        "source_note": "Dati quantitativi reali del portafoglio; confronto costruito sull'obiettivo di portafoglio Core/Difensivo/Satellite. Il qualitativo resta uno scoring euristico sulla composizione.",
         "quantitative": {
             "labels": quantitative_labels,
             "portfolio": [round(float(quantitative_weights[label]), 2) for label in quantitative_labels],
             "comparison": [float(quantitative_comparison[label]) for label in quantitative_labels],
-            "comparison_name": f"Benchmark profilo {selected_profile}",
+            "comparison_name": "Obiettivo di portafoglio",
             "detail": quantitative_detail,
         },
         "qualitative": {
             "labels": qualitative_labels,
             "portfolio": [round(float(quality_scores[label]), 2) for label in qualitative_labels],
             "comparison": [float(qualitative_comparison[label]) for label in qualitative_labels],
-            "comparison_name": f"Target profilo {selected_profile}",
+            "comparison_name": "Obiettivo di portafoglio",
             "detail": qualitative_detail,
         },
     }
