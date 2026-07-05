@@ -53,7 +53,7 @@ def build_ante_post_bucket_chart(bucket_df: pd.DataFrame, theme) -> go.Figure:
                 x=["Prima", "Dopo"],
                 y=[before, after],
                 marker_color=colors.get(bucket),
-                text=[f"{before:.1f}%" if before >= 4 else "", f"{after:.1f}%" if after >= 4 else ""],
+                text=[fmt_pct_it(before / 100.0, 1) if before >= 4 else "", fmt_pct_it(after / 100.0, 1) if after >= 4 else ""],
                 textposition="inside",
                 hovertemplate=f"{bucket}: %{{y:.1f}}%<extra></extra>",
             ))
@@ -83,7 +83,7 @@ def build_objective_mix_chart(objective: dict, current_mix: dict, theme) -> go.F
             x=["Obiettivo", "Attuale"],
             y=[ob, att],
             marker_color=colors.get(bucket),
-            text=[f"{ob:.0f}%" if ob >= 4 else "", f"{att:.0f}%" if att >= 4 else ""],
+            text=[fmt_pct_it(ob / 100.0, 1) if ob >= 4 else "", fmt_pct_it(att / 100.0, 1) if att >= 4 else ""],
             textposition="inside",
             hovertemplate=f"{bucket}: %{{y:.1f}}%<extra></extra>",
         ))

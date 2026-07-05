@@ -1483,7 +1483,8 @@ CHARTS: dict[str, dict[str, Any]] = {
      'margin_delta': {'t': -20, 'b': 1, 'l': -46, 'r': 0},
      'y_range': [0, 100],
      'y_tickformat': '.0f',
-     'y_ticksuffix': '%'},
+     'y_ticksuffix': '%',
+     'bar_textfont_size': 14},
 
     'pianificazione_obiettivo_mix': {'type': 'bar',
      'height': 220,
@@ -1492,7 +1493,8 @@ CHARTS: dict[str, dict[str, Any]] = {
      'margin_delta': {'t': -20, 'b': 1, 'l': -46, 'r': 0},
      'y_range': [0, 100],
      'y_tickformat': '.0f',
-     'y_ticksuffix': '%'},
+     'y_ticksuffix': '%',
+     'bar_textfont_size': 14},
 
     # ------------------------------------------------------------------
     # DA VERIFICARE / LEGACY
