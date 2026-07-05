@@ -2714,9 +2714,9 @@ def _build_fastapi_app():
 
     @_app.post("/strumenti", response_class=HTMLResponse)
     async def post_strumenti(
+        request: Request,
         azione: str = Form(""),
         isin: str = Form(""),
-        ticker_hint: str = Form(""),
         ticker: str = Form(""),
         ticker_new: str = Form(""),
         nome: str = Form(""),
@@ -2741,7 +2741,7 @@ def _build_fastapi_app():
                 d = {}
             return HTMLResponse(_render_strumenti_page(d, err_msg=msg, active_tab=tab))
 
-        if azione == "aggiungi":
+        if azione == "cerca":
             isin = isin.upper().strip()
             if len(isin) != 12:
                 return err_page("L'ISIN deve avere 12 caratteri.", "add")
@@ -2752,16 +2752,51 @@ def _build_fastapi_app():
             if any(s.get("isin") == isin for s in d.get("strumenti", [])):
                 return err_page("Strumento già presente.", "add")
             try:
-                from core.market_data import deduce_type, find_name, find_ticker, get_price
-                tk = ticker_hint.strip() or find_ticker(isin)
-                nm = find_name(isin)
-                tp = deduce_type(isin, tk, nm)
-                pr, src = get_price(isin, tk)
+                from core.market_data import find_ticker_candidates
+                candidati = find_ticker_candidates(isin)
             except Exception as exc:
                 return err_page(f"Errore ricerca dati: {exc}", "add")
+            return HTMLResponse(_render_strumenti_page(
+                d, active_tab="add", cerca_isin=isin, candidati=candidati,
+            ))
+
+        elif azione == "conferma_aggiungi":
+            isin = isin.upper().strip()
+            if len(isin) != 12:
+                return err_page("L'ISIN deve avere 12 caratteri.", "add")
+            try:
+                d = _ld()
+            except Exception as exc:
+                return err_page(str(exc), "add")
+            if any(s.get("isin") == isin for s in d.get("strumenti", [])):
+                return err_page("Strumento già presente.", "add")
+
+            form_data = dict(await request.form())
+            n_candidati = 0
+            while f"cand_{n_candidati}_ticker" in form_data:
+                n_candidati += 1
+            scelto = _fs_resolve_strumento_scelto(form_data, n_candidati)
+
+            tk = scelto["ticker"].strip()
+            if not tk:
+                return err_page("Ticker non specificato.", "add")
+            nm = scelto["nome"] or tk
+            tp = scelto["tipo"] or ""
+            pr = scelto["prezzo"]
+            src = scelto["fonte"] or "Manuale"
+            if pr is None:
+                from core.market_data import get_price
+                try:
+                    pr, src = get_price(isin, tk)
+                except Exception:
+                    pr, src = None, "Non trovato"
+
+            from core.market_data import set_isin_ticker
+            set_isin_ticker(isin, tk)
+
             d.setdefault("strumenti", []).append({
                 "isin": isin, "ticker": tk, "stato": "aperto",
-                "nome": nm or "—", "tipo": tp, "prezzo": pr, "fonte": src,
+                "nome": nm, "tipo": tp, "prezzo": pr, "fonte": src,
                 "aggiornato": str(date.today()), "scadenza": "", "data_acquisto": "",
                 "prima_cedola": "", "cedola_perc": 0.0, "cedola_frequenza": "annuale",
                 "aliquota_cedola": 12.5, "nominale": 100.0,
