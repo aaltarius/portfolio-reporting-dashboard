@@ -320,6 +320,32 @@ def _fs_apply_enrichment_if_eligible(isin: str, tk: str, nm: str, tp: str, fonte
     return {"tipo": new_tipo, **extra}
 
 
+def _fs_resolve_price_and_enrichment(scelto: dict, isin: str, tk: str, nm: str, tp: str) -> tuple:
+    """Risolve prezzo e fonte per il nuovo strumento (con fallback su
+    ``get_price`` quando la scelta non ha gia' un prezzo, es. inserimento
+    manuale) e applica l'arricchimento automatico eleggibile.
+
+    Importante: la fonte usata come guardia per l'arricchimento (parametro
+    ``fonte`` di `_fs_apply_enrichment_if_eligible`) e' la fonte ORIGINALE
+    della scelta (``scelto["fonte"]``, es. ``"Manuale"``), non quella
+    eventualmente sovrascritta dal fallback ``get_price`` qui sotto — altrimenti
+    una scelta manuale (che ha sempre ``prezzo`` assente) finirebbe sempre per
+    attivare il fallback e perdere il segnale "Manuale" prima di arrivare al
+    guard, facendo scattare comunque la chiamata di rete a justETF."""
+    pr = scelto["prezzo"]
+    src = scelto["fonte"] or "Manuale"
+    scelta_fonte = scelto["fonte"]
+    if pr is None:
+        from core.market_data import get_price
+        try:
+            pr, src = get_price(isin, tk)
+        except Exception:
+            pr, src = None, "Non trovato"
+
+    enrichment_result = _fs_apply_enrichment_if_eligible(isin, tk, nm, tp, scelta_fonte)
+    return pr, src, enrichment_result
+
+
 def _fs_delete_storico_range(data: dict, ticker: str, date_from: str = "", date_to: str = "") -> tuple:
     """Elimina i prezzi storici salvati per un ticker, opzionalmente limitati a un
     intervallo di date (gia' in formato ISO YYYY-MM-DD). Nessun limite indicato =
@@ -2809,19 +2835,11 @@ def _build_fastapi_app():
                 return err_page("Ticker non specificato.", "add")
             nm = scelto["nome"] or tk
             tp = scelto["tipo"] or ""
-            pr = scelto["prezzo"]
-            src = scelto["fonte"] or "Manuale"
-            if pr is None:
-                from core.market_data import get_price
-                try:
-                    pr, src = get_price(isin, tk)
-                except Exception:
-                    pr, src = None, "Non trovato"
 
             from core.market_data import set_isin_ticker
             set_isin_ticker(isin, tk)
 
-            enrichment_result = _fs_apply_enrichment_if_eligible(isin, tk, nm, tp, src)
+            pr, src, enrichment_result = _fs_resolve_price_and_enrichment(scelto, isin, tk, nm, tp)
             tp = enrichment_result.pop("tipo")
 
             strumento_record = {
