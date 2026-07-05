@@ -1,5 +1,26 @@
 # Changelog
 
+## 4.9.25 - Conferma candidati e classificazione automatica alla creazione di uno strumento
+
+**Flusso cerca/conferma per l'aggiunta di uno strumento (`/strumenti`):**
+- l'aggiunta di uno strumento nuovo era un'operazione automatica a un solo passaggio: `find_ticker` sceglieva un solo candidato tra quelli restituiti dalla ricerca ISIN di Yahoo Finance (fino a 5) e lo salvava subito, senza mostrare le alternative. Se l'euristica sbagliava borsa/quotazione, il portafoglio finiva con uno storico prezzi sbagliato senza alcun segnale a monte
+- ora l'azione `aggiungi` è divisa in due: `cerca` (nessun salvataggio, mostra tutti i candidati trovati con prezzo già risolto, quello proposto pre-selezionato) e `conferma_aggiungi` (salva il candidato scelto, o i valori inseriti manualmente); un fallimento in un singolo candidato durante il recupero prezzo non blocca gli altri
+- **euristica `.MI` automatica**: la ricerca ISIN di Yahoo spesso non restituisce la quotazione di Borsa Italiana anche quando esiste ed è quotabile direttamente (verificato su 8 dei 9 strumenti reali del portafoglio): se nessun candidato trovato finisce per `.MI`, si tenta `{simbolo_base}.MI` per ogni simbolo base distinto tra i candidati, proponendolo se risponde con un prezzo reale
+- **ticker suggerito dall'utente**: campo opzionale nel form di ricerca — se compilato, viene verificato (prezzo reale) e proposto al posto dell'euristica automatica, o promosso se coincide con un candidato già trovato; utile per i casi (es. `IWQU.MI`) dove il simbolo su altre borse non assomiglia a quello di Milano e nessuna euristica può indovinarlo
+
+**Classificazione tipo e benchmark da arricchimento justETF (ETF/ETC):**
+- il tipo di uno strumento nuovo veniva dedotto da `deduce_type` cercando parole chiave nel solo nome commerciale: se il nome non conteneva nulla di riconoscibile, il tipo restava vuoto — mappando sulla categoria "ALTRO", esclusa dalle categorie visibili di default (`GOV, ETF, FND, AZI, OBB`) — lo strumento risultava invisibile in Quotazioni e nei KPI pur essendo salvato correttamente
+- lo stesso problema esisteva per il benchmark di confronto (`resolve_instrument_benchmark`): senza una regola esplicita per ticker/ISIN, il fallback finiva quasi sempre su "MSCI World", indipendentemente da cosa lo strumento seguisse davvero
+- l'app ha già una funzione di arricchimento (`enrich_etf_etc`) che recupera da justETF il focus di investimento dichiarato e il benchmark reale del fondo, ma nessuna parte dell'applicativo la consumava per queste due decisioni — restavano solo etichette statiche nella scheda strumento
+- ora, aggiungendo un ETF/ETC nuovo (non BTP, non scelta manuale), l'arricchimento justETF viene chiamato automaticamente prima del salvataggio: il focus di investimento rifinisce il tipo (`deduce_type` accetta un parametro opzionale `focus_etf`), e il benchmark reale sceglie un ticker proxy specifico tramite una nuova tabella di pattern per famiglie di indici note (MSCI, FTSE, S&P, Nasdaq, Bloomberg Commodity, oro/minerari, India, Bitcoin), con priorità subito dopo le regole esplicite per ticker/ISIN e prima del fallback generico per tipo
+- se l'arricchimento fallisce, lo strumento non è ammissibile (BTP, scelta manuale) o il benchmark non corrisponde a nessun pattern noto, il comportamento resta identico a prima — nessuna regressione
+- l'azione manuale "Arricchisci" da Gestione Dati non cambia: continua ad aggiornare solo i dettagli che aggiornava già (TER, benchmark, focus, ecc.), mai nome/tipo
+
+**Fix:**
+- i candidati aggiunti dall'euristica `.MI` o dal ticker suggerito avevano nome vuoto: senza nome, `deduce_type` non classificava il tipo, che restava vuoto — stessa causa del bug "ALTRO" sopra, ma introdotta dalla stessa euristica pensata per risolverlo. Ora entrambi i percorsi recuperano il nome via `find_name(isin)` prima di costruire il candidato
+- il guard che doveva evitare l'arricchimento automatico per le scelte manuali non scattava mai nel flusso reale: la variabile passata al controllo veniva silenziosamente sovrascritta dal recupero prezzo di fallback prima di arrivare al controllo stesso (ogni inserimento manuale ha sempre prezzo assente, quindi il fallback scattava sempre). Isolata in `_fs_resolve_price_and_enrichment`, che cattura la scelta originale prima che venga sovrascritta
+- due pattern della nuova tabella benchmark erano troppo ampi rispetto a quanto previsto: `"bloomberg"` avrebbe assegnato il proxy materie prime anche a indici obbligazionari targati Bloomberg (ristretto a `"bloomberg commodity"`); `"gold"` avrebbe assegnato oro fisico anche a ETF su società minerarie aurifere, bypassando la distinzione già esistente altrove nello stesso file (aggiunta una regola più specifica per i minerari, controllata prima di quella generica sull'oro)
+
 ## 4.9.24 - Recupero storico prezzi spostato in Strumenti (sidebar)
 
 **Nuovo tab "Storico" nella pagina standalone `/strumenti`:**
