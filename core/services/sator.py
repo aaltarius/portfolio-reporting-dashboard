@@ -476,7 +476,7 @@ def run_sator_analysis(
     )
 
     ranking = _score_universe(ctx, cfg)
-    alerts = _build_alerts(ranking, nature_weights, ctx.bucket_weights, settings.get("portfolio_objective", {}))
+    alerts = _build_alerts(ranking, nature_weights, ctx.bucket_weights, settings.get("portfolio_objective", {}), cfg.get("concentration_caps", CAP_MORBIDO_NATURA))
     summary = {
         "budget": budget,
         "liquidita_corrente": liquidita,
@@ -906,12 +906,14 @@ def _build_alerts(
     nature_weights: dict[str, float],
     bucket_weights: dict[str, float] | None = None,
     portfolio_objective: dict[str, float] | None = None,
+    caps: dict[str, float] | None = None,
 ) -> list[dict[str, str]]:
     alerts: list[dict[str, str]] = []
     if ranking is None or ranking.empty:
         return alerts
+    caps = caps if caps is not None else CAP_MORBIDO_NATURA
     for nature, peso in nature_weights.items():
-        cap = CAP_MORBIDO_NATURA.get(nature, CAP_MORBIDO_DEFAULT)
+        cap = caps.get(nature, CAP_MORBIDO_DEFAULT)
         if peso > cap * 1.25:
             alerts.append({"level": "warning", "title": "Concentrazione elevata",
                            "message": f"La funzione \"{nature.replace('_', ' ')}\" pesa {peso:.0%} (soglia indicativa {cap:.0%}): "
