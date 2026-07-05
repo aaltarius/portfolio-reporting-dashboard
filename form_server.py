@@ -265,6 +265,37 @@ def _fs_parse_flex_date(value: str) -> str:
     return validate_date(value).isoformat()
 
 
+def _fs_resolve_strumento_scelto(form_values: dict, n_candidati: int) -> dict:
+    """Dai campi del form di conferma aggiunta strumento (candidato scelto per
+    indice, o inserimento manuale), restituisce i valori da salvare."""
+    scelta = str(form_values.get("scelta", "")).strip()
+    if scelta != "manuale" and n_candidati > 0:
+        try:
+            idx = int(scelta)
+        except ValueError:
+            idx = 0
+        idx = max(0, min(idx, n_candidati - 1))
+        prezzo_raw = str(form_values.get(f"cand_{idx}_prezzo", "")).strip()
+        try:
+            prezzo = float(prezzo_raw) if prezzo_raw else None
+        except ValueError:
+            prezzo = None
+        return {
+            "ticker": str(form_values.get(f"cand_{idx}_ticker", "")).strip(),
+            "nome": str(form_values.get(f"cand_{idx}_nome", "")).strip(),
+            "tipo": str(form_values.get(f"cand_{idx}_tipo", "")).strip(),
+            "prezzo": prezzo,
+            "fonte": str(form_values.get(f"cand_{idx}_fonte", "")).strip(),
+        }
+    return {
+        "ticker": str(form_values.get("manuale_ticker", "")).strip(),
+        "nome": str(form_values.get("manuale_nome", "")).strip(),
+        "tipo": str(form_values.get("manuale_tipo", "")).strip(),
+        "prezzo": None,
+        "fonte": "Manuale",
+    }
+
+
 def _fs_delete_storico_range(data: dict, ticker: str, date_from: str = "", date_to: str = "") -> tuple:
     """Elimina i prezzi storici salvati per un ticker, opzionalmente limitati a un
     intervallo di date (gia' in formato ISO YYYY-MM-DD). Nessun limite indicato =
