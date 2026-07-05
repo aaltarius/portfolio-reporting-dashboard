@@ -104,6 +104,24 @@ BENCHMARK_BY_MACRO: dict[str, BenchmarkAssignment] = {
     "AZIONI": BenchmarkAssignment("IWDA.AS", "MSCI World", "macro-categoria", "Bassa"),
 }
 
+# Pattern per famiglie di indici reali (dal campo "benchmark" arricchito via
+# justETF): lista ordinata dal piu' specifico al piu' generico, perche' il
+# match e' per sottostringa e un indice come "MSCI World Information
+# Technology" deve scegliere il proxy tecnologia, non il generico MSCI World.
+BENCHMARK_BY_INDEX_PATTERN: list[tuple[str, BenchmarkAssignment]] = [
+    ("bitcoin", BenchmarkAssignment("BTC-USD", "Bitcoin", "benchmark arricchito", "Alta")),
+    ("information technology", BenchmarkAssignment("QQQ", "Nasdaq 100 (proxy tecnologia)", "benchmark arricchito", "Media")),
+    ("india", BenchmarkAssignment("INDA", "MSCI India", "benchmark arricchito", "Media")),
+    ("gold", BenchmarkAssignment("GLD", "Gold proxy", "benchmark arricchito", "Alta")),
+    ("msci emerging", BenchmarkAssignment("EEM", "MSCI EM", "benchmark arricchito", "Alta")),
+    ("msci world", BenchmarkAssignment("IWDA.AS", "MSCI World", "benchmark arricchito", "Alta")),
+    ("ftse all-world", BenchmarkAssignment("VWRL.AS", "FTSE All-World", "benchmark arricchito", "Alta")),
+    ("ftse mib", BenchmarkAssignment("FTSEMIB.MI", "FTSE MIB", "benchmark arricchito", "Alta")),
+    ("s&p 500", BenchmarkAssignment("SPY", "S&P 500", "benchmark arricchito", "Alta")),
+    ("nasdaq", BenchmarkAssignment("QQQ", "Nasdaq 100", "benchmark arricchito", "Alta")),
+    ("bloomberg", BenchmarkAssignment("DJP", "Bloomberg Commodity", "benchmark arricchito", "Media")),
+]
+
 # Compatibilita' con il vecchio dizionario BENCH tipo -> (ticker, label).
 LEGACY_BENCH: dict[str, tuple[str, str]] = {
     key: (assignment.ticker, assignment.label)
@@ -139,9 +157,10 @@ def resolve_instrument_benchmark(
     1. eventuale anagrafica master gia' valorizzata;
     2. regola specifica per ticker;
     3. regola specifica per ISIN;
-    4. regola per tipo strumento;
-    5. fallback per macro-categoria;
-    6. assente.
+    4. benchmark reale arricchito (campo "benchmark", da justETF);
+    5. regola per tipo strumento;
+    6. fallback per macro-categoria;
+    7. assente.
     """
     inst = instrument if isinstance(instrument, dict) else {}
     master = master_entry if isinstance(master_entry, dict) else {}
@@ -161,6 +180,12 @@ def resolve_instrument_benchmark(
         return BENCHMARK_BY_TICKER[tk]
     if isincode in BENCHMARK_BY_ISIN:
         return BENCHMARK_BY_ISIN[isincode]
+
+    enriched_benchmark = _norm_key(inst.get("benchmark"))
+    if enriched_benchmark:
+        for pattern, assignment in BENCHMARK_BY_INDEX_PATTERN:
+            if pattern in enriched_benchmark:
+                return assignment
 
     key = _norm_key(typ)
     if key in BENCHMARK_BY_TYPE:
