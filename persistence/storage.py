@@ -200,10 +200,17 @@ def default_data_v33():
     }
 
 
+_PROFILE_TO_PORTFOLIO_OBJECTIVE = {
+    "Prudente": {"core": 0.50, "difensivo": 0.40, "satellite": 0.10},
+    "Equilibrato": {"core": 0.55, "difensivo": 0.25, "satellite": 0.20},
+    "Dinamico": {"core": 0.50, "difensivo": 0.15, "satellite": 0.35},
+    "Neutro": {"core": 0.55, "difensivo": 0.25, "satellite": 0.20},
+}
+
+
 def default_settings():
     return {
         "schema_version": SCHEMA_VERSION,
-        "target_profile_default": "Prudente",
         "portfolio_benchmark_default": "Blend automatico",
         "risk_traffic_light_thresholds": {"green_max": 1.0, "yellow_max": 1.2},
         "analysis_lookback_days": 365,
@@ -211,7 +218,7 @@ def default_settings():
         "classification_mode": "hybrid",
         "quote_log_retention": 20,
         "comparison_export_format_default": "csv",
-        "rebalancing_target": {"GOV": 0.33, "ETF": 0.34, "FND": 0.33},
+        "portfolio_objective": {"core": 0.55, "difensivo": 0.25, "satellite": 0.20},
         "category_view": {
             "selected_categories": list(DEFAULT_VISIBLE_CATEGORY_CODES),
         },
@@ -254,7 +261,6 @@ def default_settings():
             "include_proventi_in_total_return": True,
             "classification_mode": "hybrid",
             "risk_traffic_light_thresholds": {"green_max": 1.0, "yellow_max": 1.2},
-            "rebalancing_target": {"GOV": 0.33, "ETF": 0.34, "FND": 0.33},
             "rolling_window_days": 90,
             "inflation_rate": 0.0,
             "performance_fee_rate": 0.0,
@@ -414,6 +420,23 @@ def _normalize_settings_payload(settings):
     backup = merged.setdefault("backup", {})
     newsletter = merged.setdefault("newsletter", {})
 
+    portfolio_objective = merged.setdefault("portfolio_objective", {})
+    if "portfolio_objective" not in raw_settings:
+        _seed_label = str(raw_settings.get("target_profile_default") or "")
+        if _seed_label in _PROFILE_TO_PORTFOLIO_OBJECTIVE:
+            portfolio_objective.update(_PROFILE_TO_PORTFOLIO_OBJECTIVE[_seed_label])
+    portfolio_objective["core"] = max(0.0, _safe_float(portfolio_objective.get("core"), defaults["portfolio_objective"]["core"]))
+    portfolio_objective["difensivo"] = max(0.0, _safe_float(portfolio_objective.get("difensivo"), defaults["portfolio_objective"]["difensivo"]))
+    portfolio_objective["satellite"] = max(0.0, _safe_float(portfolio_objective.get("satellite"), defaults["portfolio_objective"]["satellite"]))
+    _obj_total = portfolio_objective["core"] + portfolio_objective["difensivo"] + portfolio_objective["satellite"]
+    if _obj_total > 0:
+        portfolio_objective["core"] /= _obj_total
+        portfolio_objective["difensivo"] /= _obj_total
+        portfolio_objective["satellite"] /= _obj_total
+    else:
+        portfolio_objective.update(defaults["portfolio_objective"])
+    merged["portfolio_objective"] = portfolio_objective
+
     # Legacy -> nested
     portfolio_profile["portfolio_id"] = str(merged.get("portfolio_id") or portfolio_profile.get("portfolio_id") or "main")
     calculations["analysis_lookback_days"] = int(
@@ -448,23 +471,6 @@ def _normalize_settings_payload(settings):
             "risk_traffic_light_thresholds",
             calculations.get("risk_traffic_light_thresholds", {}),
         ),
-    )
-    raw_rebalancing_target = _prefer_nested_value(
-        "calculations_metrics",
-        "rebalancing_target",
-        "rebalancing_target",
-        calculations.get("rebalancing_target", {}),
-    )
-    if isinstance(raw_rebalancing_target, dict):
-        normalized_target = {}
-        for raw_key, raw_value in dict(raw_rebalancing_target).items():
-            norm_key = normalize_category_code(raw_key, default=str(raw_key or "").strip().upper())
-            if norm_key in ACTIVE_CATEGORY_CODES:
-                normalized_target[norm_key] = raw_value
-        raw_rebalancing_target = normalized_target
-    calculations["rebalancing_target"] = _deep_merge_defaults(
-        defaults["calculations_metrics"]["rebalancing_target"],
-        raw_rebalancing_target,
     )
     benchmarking["default_portfolio_benchmark"] = str(
         _prefer_nested_value(
@@ -590,14 +596,12 @@ def _normalize_settings_payload(settings):
 
     # Nested -> legacy flat mirrors
     merged["portfolio_id"] = portfolio_profile["portfolio_id"]
-    merged["target_profile_default"] = str(merged.get("target_profile_default", defaults["target_profile_default"]))
     merged["portfolio_benchmark_default"] = benchmarking["default_portfolio_benchmark"]
     merged["risk_traffic_light_thresholds"] = _deep_clone(calculations["risk_traffic_light_thresholds"])
     merged["analysis_lookback_days"] = calculations["analysis_lookback_days"]
     merged["include_proventi_in_total_return"] = calculations["include_proventi_in_total_return"]
     merged["classification_mode"] = calculations["classification_mode"]
     merged["comparison_export_format_default"] = reporting["default_format"]
-    merged["rebalancing_target"] = _deep_clone(calculations["rebalancing_target"])
     merged["ui_table_density"] = ui_preferences["table_density"]
     merged["ui_show_explanations"] = ui_preferences["show_explanations"]
     merged["ui_summary_detail_level"] = ui_preferences["summary_detail_level"]

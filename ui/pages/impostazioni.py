@@ -303,11 +303,9 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 base_currency = pf3.selectbox("Valuta base", ["EUR", "USD", "GBP", "CHF"], index=["EUR", "USD", "GBP", "CHF"].index(str(portfolio_profile.get("base_currency", "EUR"))) if str(portfolio_profile.get("base_currency", "EUR")) in ["EUR", "USD", "GBP", "CHF"] else 0)
                 reporting_currency = pf4.selectbox("Valuta reporting", ["EUR", "USD", "GBP", "CHF"], index=["EUR", "USD", "GBP", "CHF"].index(str(portfolio_profile.get("reporting_currency", "EUR"))) if str(portfolio_profile.get("reporting_currency", "EUR")) in ["EUR", "USD", "GBP", "CHF"] else 0)
                 portfolio_description = st.text_area("Descrizione portafoglio", value=str(portfolio_profile.get("description", "")), height=80)
-                c71, c72 = st.columns(2)
-                target_profile = c71.selectbox("Profilo target predefinito", ["Prudente", "Equilibrato", "Dinamico", "Neutro"], index=["Prudente", "Equilibrato", "Dinamico", "Neutro"].index(settings.get("target_profile_default", "Prudente")))
-                bench_default = c72.selectbox("Benchmark di portafoglio", PORTFOLIO_BENCH_OPTIONS, index=max(PORTFOLIO_BENCH_OPTIONS.index(benchmarking_settings.get("default_portfolio_benchmark", "Blend automatico")) if benchmarking_settings.get("default_portfolio_benchmark", "Blend automatico") in PORTFOLIO_BENCH_OPTIONS else 0, 0))
+                bench_default = st.selectbox("Benchmark di portafoglio", PORTFOLIO_BENCH_OPTIONS, index=max(PORTFOLIO_BENCH_OPTIONS.index(benchmarking_settings.get("default_portfolio_benchmark", "Blend automatico")) if benchmarking_settings.get("default_portfolio_benchmark", "Blend automatico") in PORTFOLIO_BENCH_OPTIONS else 0, 0))
                 st.caption("Agisce sui confronti del portafoglio nel tempo, sulla Portfolio Summary e sui report esportati: è il riferimento usato per calcolare il confronto relativo del portafoglio.")
-                st.caption("Il profilo target predefinito viene usato anche come riferimento dei radar nella scheda Portafoglio: benchmark quantitativo e target qualitativo si adattano al profilo scelto.")
+                st.caption("L'obiettivo di portafoglio (Core/Difensivo/Satellite) e i radar della scheda Portafoglio si impostano ora in Pianificazione.")
                 custom_benchmark_enabled = st.checkbox("Usa benchmark personalizzato", value=bool(benchmarking_settings.get("custom_enabled", False)))
                 custom_benchmark_name = st.text_input("Nome benchmark personalizzato", value=str(benchmarking_settings.get("custom_name", "")), disabled=not custom_benchmark_enabled)
                 custom_component_choices = list(CUSTOM_BENCHMARK_COMPONENT_OPTIONS.keys())
@@ -642,7 +640,6 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     "base_currency": base_currency,
                     "reporting_currency": reporting_currency,
                 }
-                settings["target_profile_default"] = target_profile
                 settings["benchmarking"] = {
                     **settings.get("benchmarking", {}),
                     "default_portfolio_benchmark": bench_default,
@@ -724,8 +721,7 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 }
                 save_settings(settings)
                 logger.info(
-                    "Impostazioni salvate: target=%s benchmark=%s",
-                    target_profile,
+                    "Impostazioni salvate: benchmark=%s",
                     bench_default,
                 )
                 queue_success("Impostazioni salvate")

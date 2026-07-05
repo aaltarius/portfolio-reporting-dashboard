@@ -12,7 +12,7 @@ from streamlit.delta_generator import DeltaGenerator
 
 from core.asset_categories import get_selected_category_codes
 from core.cache import invalidate_portfolio_cache
-from core.finance import build_rebalancing_suggestions, get_default_target_profile
+from core.finance import build_bucket_rebalancing_suggestions, compute_portfolio_state
 from core.services.planning import build_static_return_scenarios, simulate_trade_impact
 from core.services.sator import (
     build_sator_matrix_frame,
@@ -21,6 +21,8 @@ from core.services.sator import (
     apply_sator_universe_editor_frame,
     fetch_sator_costs_from_web,
     compare_decision_to_actual,
+    compute_current_bucket_mix,
+    compute_instrument_buckets,
     ensure_sator_metadata,
     ensure_sator_settings,
     run_sator_analysis,
@@ -28,7 +30,7 @@ from core.services.sator import (
     SATOR_ROLE_VALUES,
     SATOR_NATURE_VALUES,
 )
-from persistence.storage import load_data, load_sator_decisions, save_data, save_sator_decisions
+from persistence.storage import load_data, load_sator_decisions, save_data, save_sator_decisions, save_settings
 from ui.formatting import fmt_eur_it, fmt_pct_it, fmt_qty_it
 from ui.page_chrome import render_page_intro as render_page_intro_shared, render_section_line as render_section_line_shared
 from ui.components import render_section_title, kpi_card, back_to_top, legend_block, render_styled_table
@@ -197,13 +199,105 @@ def _build_sator_master_table(ranking_df: pd.DataFrame, budget: float, manual_al
     return build_sator_matrix_frame(ranking_df, budget=budget, manual_alloc=manual_alloc, max_lines=int(max_lines))
 
 
-def _profilo_tetto_satellite(profilo: str) -> float:
-    p = str(profilo or "").strip().lower()
-    if p.startswith("prud") or p.startswith("conserv"):
-        return 0.10
-    if p.startswith("dinam") or p.startswith("aggress") or p.startswith("crescit"):
-        return 0.45
-    return 0.25  # bilanciato / moderato / default
+def _normalize_objective_inputs(core: float, difensivo: float, satellite: float) -> dict[str, float]:
+    total = max(0.0, core) + max(0.0, difensivo) + max(0.0, satellite)
+    if total <= 0:
+        return {"core": 1 / 3, "difensivo": 1 / 3, "satellite": 1 / 3}
+    return {"core": max(0.0, core) / total, "difensivo": max(0.0, difensivo) / total, "satellite": max(0.0, satellite) / total}
+
+
+_OBJECTIVE_PRESETS = {
+    "Prudente (Core 50 / Difensivo 40 / Satellite 10)": {"core": 0.50, "difensivo": 0.40, "satellite": 0.10},
+    "Equilibrato (Core 55 / Difensivo 25 / Satellite 20)": {"core": 0.55, "difensivo": 0.25, "satellite": 0.20},
+    "Dinamico (Core 50 / Difensivo 15 / Satellite 35)": {"core": 0.50, "difensivo": 0.15, "satellite": 0.35},
+}
+
+
+def _render_portfolio_objective_section(ctx: SimpleNamespace, theme) -> None:
+    settings = ctx.settings
+    data = ctx.data
+    sator_cfg = ensure_sator_settings(settings)
+    objective = settings.get("portfolio_objective", {"core": 0.55, "difensivo": 0.25, "satellite": 0.20})
+
+    render_section_title(
+        "Obiettivo di portafoglio",
+        comment="Le percentuali Core/Difensivo/Satellite che guidano SATOR e la Liquidita' da investire. Nessun valore preimpostato nascosto: tutto qui e' quello che leggi.",
+        gap_after="sm",
+    )
+
+    preset_label = st.selectbox("Preset rapido (facoltativo)", ["-"] + list(_OBJECTIVE_PRESETS.keys()), key="obj_preset")
+    if preset_label != "-" and st.button("Applica preset", key="obj_apply_preset"):
+        preset = _OBJECTIVE_PRESETS[preset_label]
+        st.session_state["obj_core"] = preset["core"] * 100
+        st.session_state["obj_difensivo"] = preset["difensivo"] * 100
+        st.session_state["obj_satellite"] = preset["satellite"] * 100
+
+    with st.form("portfolio_objective_form", clear_on_submit=False):
+        c1, c2, c3 = st.columns(3, gap="small")
+        core_pct = c1.number_input("Core %", min_value=0.0, max_value=100.0, step=1.0,
+                                    value=float(st.session_state.get("obj_core", objective["core"] * 100)), key="obj_core")
+        dif_pct = c2.number_input("Difensivo %", min_value=0.0, max_value=100.0, step=1.0,
+                                   value=float(st.session_state.get("obj_difensivo", objective["difensivo"] * 100)), key="obj_difensivo")
+        sat_pct = c3.number_input("Satellite %", min_value=0.0, max_value=100.0, step=1.0,
+                                   value=float(st.session_state.get("obj_satellite", objective["satellite"] * 100)), key="obj_satellite")
+
+        with st.expander("Limiti di concentrazione per asset class", expanded=False):
+            caps = dict(sator_cfg["concentration_caps"])
+            cap_edits: dict[str, float] = {}
+            for nature in sorted(caps.keys()):
+                cap_edits[nature] = st.number_input(
+                    nature.replace("_", " "), min_value=1.0, max_value=100.0, step=1.0,
+                    value=float(caps[nature] * 100), key=f"cap_{nature}",
+                )
+
+        with st.expander("Pesi del punteggio SATOR", expanded=False):
+            weights = dict(sator_cfg["score_weights"])
+            w_fit = st.number_input("Fit allocativo %", min_value=0.0, max_value=100.0, step=1.0, value=float(weights["strategic_fit"] * 100), key="w_fit")
+            w_mom = st.number_input("Momentum %", min_value=0.0, max_value=100.0, step=1.0, value=float(weights["tactical_momentum"] * 100), key="w_mom")
+            w_risk = st.number_input("Rischio %", min_value=0.0, max_value=100.0, step=1.0, value=float(weights["risk_efficiency"] * 100), key="w_risk")
+            w_div = st.number_input("Diversificazione %", min_value=0.0, max_value=100.0, step=1.0, value=float(weights["diversification_benefit"] * 100), key="w_div")
+            w_cost = st.number_input("Costo %", min_value=0.0, max_value=100.0, step=1.0, value=float(weights["cost_efficiency"] * 100), key="w_cost")
+
+        with st.expander("Come funziona il calcolo interno (non modificabile)", expanded=False):
+            legend_block(
+                "<br>".join([
+                    "<b>Momentum</b>: media pesata dei rendimenti a 1/3/6/12 mesi (10/35/35/20%) — funzione <code>_score_momentum</code> in core/services/sator.py.",
+                    "<b>Rischio</b>: volatilita' (40%) + drawdown massimo (30%) + rendimento/rischio a 12 mesi (30%) — funzione <code>_score_risk</code> in core/services/sator.py.",
+                    "<b>Costo</b>: bonus zero commissioni/PAC, malus TER/spread, penalita' se il prezzo satura il budget — funzione <code>_score_cost</code> in core/services/sator.py.",
+                    "Per modificare questi dettagli serve intervenire direttamente nel codice: qui sopra trovi obiettivo, cap e pesi, che sono invece tuoi.",
+                ]),
+                variant="bottom",
+            )
+
+        submitted = st.form_submit_button("Salva obiettivo di portafoglio", width="stretch")
+
+    if submitted:
+        settings["portfolio_objective"] = _normalize_objective_inputs(core_pct, dif_pct, sat_pct)
+        settings.setdefault("sator", {})["concentration_caps"] = {k: v / 100.0 for k, v in cap_edits.items()}
+        w_total = w_fit + w_mom + w_risk + w_div + w_cost
+        if w_total > 0:
+            settings["sator"]["score_weights"] = {
+                "strategic_fit": w_fit / w_total, "tactical_momentum": w_mom / w_total,
+                "risk_efficiency": w_risk / w_total, "diversification_benefit": w_div / w_total,
+                "cost_efficiency": w_cost / w_total,
+            }
+        save_settings(settings)
+        objective = settings["portfolio_objective"]
+        st.success("Obiettivo di portafoglio salvato.")
+
+    state_df = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
+    current_mix = compute_current_bucket_mix(data, state_df)
+    mix_df = pd.DataFrame({
+        "Bucket": ["Core", "Difensivo", "Satellite"],
+        "Obiettivo": [objective["core"], objective["difensivo"], objective["satellite"]],
+        "Attuale": [current_mix.get("Core", 0.0), current_mix.get("Difensivo", 0.0), current_mix.get("Satellite", 0.0)],
+    })
+    st.bar_chart(mix_df.set_index("Bucket"))
+
+
+def _satellite_target_from_objective(settings: dict) -> float:
+    objective = (settings or {}).get("portfolio_objective", {})
+    return float(objective.get("satellite", 0.20) or 0.20)
 
 
 def _render_sator_order_evaluation(combo_df: pd.DataFrame, budget: float, settings: dict, theme) -> None:
@@ -215,12 +309,11 @@ def _render_sator_order_evaluation(combo_df: pd.DataFrame, budget: float, settin
         return
     per_bucket = combo_df.assign(Importo=importi).groupby("Bucket")["Importo"].sum()
     quota = {b: float(per_bucket.get(b, 0.0)) / totale for b in ("Core", "Difensivo", "Satellite")}
-    profilo = str(settings.get("target_profile_default", "Bilanciato") or "Bilanciato")
-    tetto_sat = _profilo_tetto_satellite(profilo)
+    tetto_sat = _satellite_target_from_objective(settings)
 
     render_section_title(
-        "Valutazione dell'ordine sul tuo profilo",
-        comment=f"Composizione della scelta e lettura rispetto al profilo \"{profilo}\".",
+        "Valutazione dell'ordine sul tuo obiettivo di portafoglio",
+        comment=f"Composizione della scelta e lettura rispetto all'obiettivo Satellite {fmt_pct_it(tetto_sat, 0)}.",
         gap_after="sm",
     )
     col_grafico, col_lettura = st.columns([1.1, 1.0], gap="medium")
@@ -242,13 +335,13 @@ def _render_sator_order_evaluation(combo_df: pd.DataFrame, budget: float, settin
         letture: list[str] = []
         if quota["Satellite"] > tetto_sat + 1e-9:
             letture.append(
-                f"La quota satellite e' {fmt_pct_it(quota['Satellite'], 1)}, sopra la soglia indicativa "
-                f"{fmt_pct_it(tetto_sat, 0)} per un profilo \"{profilo}\": valuta se ridurre i satelliti o aumentare core/difensivo."
+                f"La quota satellite e' {fmt_pct_it(quota['Satellite'], 1)}, sopra l'obiettivo "
+                f"{fmt_pct_it(tetto_sat, 0)}: valuta se ridurre i satelliti o aumentare core/difensivo."
             )
         else:
             letture.append(
-                f"La quota satellite {fmt_pct_it(quota['Satellite'], 1)} resta entro la soglia indicativa "
-                f"{fmt_pct_it(tetto_sat, 0)} del profilo \"{profilo}\"."
+                f"La quota satellite {fmt_pct_it(quota['Satellite'], 1)} resta entro l'obiettivo "
+                f"{fmt_pct_it(tetto_sat, 0)}."
             )
         if quota["Core"] >= 0.50:
             letture.append("Il nucleo core domina l'ordine: scelta coerente con un'impostazione disciplinata.")
@@ -674,6 +767,8 @@ def _render_sator_module(ctx: SimpleNamespace, theme) -> None:
         ),
         gap_after="sm",
     )
+
+    _render_portfolio_objective_section(ctx, theme)
 
     # Applica richiesta di import da foto prima che i widget vengano istanziati
     if "_sator_import_request" in st.session_state:
@@ -1149,12 +1244,13 @@ def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         with st.container():
             render_section_title(
                 "Liquidita da investire",
-                comment="Lettura semplice del gap verso il profilo target impostato. E un supporto descrittivo, non un consiglio di investimento.",
+                comment="Lettura semplice del gap verso l'obiettivo di portafoglio Core/Difensivo/Satellite impostato in cima a questa pagina. E un supporto descrittivo, non un consiglio di investimento.",
                 gap_after="sm"
             )
-            target_profile = str(settings.get("target_profile_default", "Prudente") or "Prudente")
-            target_weights = get_default_target_profile(target_profile)
-            suggestions = build_rebalancing_suggestions(da, target_weights, settings=settings)
+            objective = settings.get("portfolio_objective", {"core": 0.55, "difensivo": 0.25, "satellite": 0.20})
+            target_weights = {"Core": objective["core"], "Difensivo": objective["difensivo"], "Satellite": objective["satellite"]}
+            bucket_of_ticker = compute_instrument_buckets(data)
+            suggestions = build_bucket_rebalancing_suggestions(da, bucket_of_ticker, target_weights)
             if suggestions.empty:
                 st.info("Dati insufficienti per costruire un riepilogo di riallineamento.")
             else:
@@ -1165,6 +1261,6 @@ def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     "Importo €": lambda v: fmt_eur_it(v, 2, signed=True),
                 }).map(color_pl, subset=["Delta %", "Importo €"])
                 render_styled_table(styled_sugg, height="content")
-                st.caption(f"Profilo target usato: {target_profile}. Liquidita corrente: {fmt_eur_it(liquidita, 2)}.")
+                st.caption(f"Obiettivo: Core {fmt_pct_it(objective['core'], 0)} / Difensivo {fmt_pct_it(objective['difensivo'], 0)} / Satellite {fmt_pct_it(objective['satellite'], 0)}. Liquidita corrente: {fmt_eur_it(liquidita, 2)}.")
 
         back_to_top()

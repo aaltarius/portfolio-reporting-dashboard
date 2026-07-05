@@ -1134,49 +1134,12 @@ def build_snapshot_summary_df(snapshots: list[dict[str, Any]] | None) -> pd.Data
     return pd.DataFrame(rows)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Target profile e gap analysis
-# ══════════════════════════════════════════════════════════════════════════════
-
-def get_default_target_profile(label: str) -> dict[str, float]:
-    profiles = {
-        "Prudente": {"GOV": 0.55, "ETF": 0.20, "FND": 0.25},
-        "Equilibrato": {"GOV": 0.35, "ETF": 0.35, "FND": 0.30},
-        "Dinamico": {"GOV": 0.20, "ETF": 0.50, "FND": 0.30},
-        "Neutro": {"GOV": 1/3, "ETF": 1/3, "FND": 1/3},
-    }
-    return profiles.get(label, profiles["Equilibrato"]).copy()
-
-
-def build_target_gap_by_instrument(
-    da_frame: pd.DataFrame,
-    target_weights: dict[str, float],
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    if da_frame is None or da_frame.empty:
-        return pd.DataFrame(), pd.DataFrame()
-    work = da_frame.copy()
-    work = work[pd.to_numeric(work["Controvalore"], errors="coerce").fillna(0) > 0].copy()
-    if work.empty:
-        return pd.DataFrame(), pd.DataFrame()
-    work["Categoria"] = work["Tipo"].apply(macro_cat)
-    total_value = float(pd.to_numeric(work["Controvalore"], errors="coerce").fillna(0).sum())
-    if total_value <= 0:
-        return pd.DataFrame(), pd.DataFrame()
-    cat_counts = work.groupby("Categoria")["Ticker"].count().to_dict()
-    work["Peso attuale"] = pd.to_numeric(work["Controvalore"], errors="coerce").fillna(0) / total_value
-    work["Peso target"] = work["Categoria"].map(lambda c: float(target_weights.get(c, 0.0)) / max(int(cat_counts.get(c, 1)), 1))
-    work["Scostamento %"] = work["Peso attuale"] - work["Peso target"]
-    work["Scostamento €"] = (work["Peso attuale"] - work["Peso target"]) * total_value
-    work["Da aggiungere €"] = -work["Scostamento €"]
-    detail = work[["Ticker", "Strumento", "Categoria", "Controvalore", "Peso attuale", "Peso target", "Scostamento %", "Scostamento €", "Da aggiungere €"]].sort_values("Scostamento €", ascending=False)
-
-    macro = work.groupby("Categoria", as_index=False).agg(Controvalore=("Controvalore", "sum"))
-    macro["Peso attuale"] = macro["Controvalore"] / total_value
-    macro["Peso target"] = macro["Categoria"].map(lambda c: float(target_weights.get(c, 0.0)))
-    macro["Scostamento %"] = macro["Peso attuale"] - macro["Peso target"]
-    macro["Da riallocare €"] = (macro["Peso target"] - macro["Peso attuale"]) * total_value
-    macro = macro.sort_values("Categoria")
-    return macro, detail
+def _format_portfolio_objective_label(portfolio_objective: dict[str, float] | None) -> str:
+    obj = portfolio_objective or {}
+    core = round(float(obj.get("core", 0.0)) * 100)
+    difensivo = round(float(obj.get("difensivo", 0.0)) * 100)
+    satellite = round(float(obj.get("satellite", 0.0)) * 100)
+    return f"Core {core}% / Difensivo {difensivo}% / Satellite {satellite}%"
 
 
 def build_instrument_target_gap_table(da_frame: pd.DataFrame) -> pd.DataFrame:
@@ -1804,7 +1767,7 @@ def build_portfolio_summary_payload(
         "valuation_timestamp": last_quotes_update,
         "base_currency": base_currency,
         "reporting_currency": reporting_currency,
-        "target_profile": settings.get("target_profile_default", "Prudente"),
+        "target_profile": _format_portfolio_objective_label(settings.get("portfolio_objective", {})),
         "portfolio_benchmark": effective_benchmark_label,
         "portfolio_benchmark_is_custom": bool(benchmark_config.get("is_custom", False)),
         "portfolio_benchmark_components": benchmark_config.get("components", []),
@@ -1979,55 +1942,49 @@ def compute_portfolio_alerts(
     return alerts
 
 
-def build_rebalancing_suggestions(
+def build_bucket_rebalancing_suggestions(
     da_frame: pd.DataFrame,
-    target_weights: dict[str, float] | None = None,
-    settings: dict[str, Any] | None = None,
+    bucket_of_ticker: dict[str, str],
+    target_weights: dict[str, float],
 ) -> pd.DataFrame:
     """
-    Suggerimenti di ribilanciamento per categoria.
+    Suggerimenti di ribilanciamento per bucket strategico (Core/Difensivo/Satellite),
+    raggruppato per ruolo invece che per involucro/categoria.
 
     Args:
-        da_frame: DataFrame con posizioni aperte (colonne: Ticker, Controvalore, Tipo, etc.)
-        target_weights: dict {"GOV": 0.33, "ETF": 0.34, "FND": 0.33}. Se None, usa equal weight.
+        da_frame: DataFrame posizioni aperte (colonne Ticker, Controvalore).
+        bucket_of_ticker: mappa ticker -> "Core"/"Difensivo"/"Satellite".
+        target_weights: dict {"Core": 0.6, "Difensivo": 0.25, "Satellite": 0.15}.
 
     Returns:
-        pd.DataFrame con colonne: Categoria, Peso Attuale %, Peso Target %, Delta %, Importo €, Azione
+        pd.DataFrame con colonne: Bucket, Peso Attuale %, Peso Target %, Delta %, Importo €, Azione
     """
+    cats = ["Core", "Difensivo", "Satellite"]
     if da_frame is None or da_frame.empty:
         return pd.DataFrame()
-    total = float(da_frame["Controvalore"].sum())
+    total = float(pd.to_numeric(da_frame["Controvalore"], errors="coerce").fillna(0.0).sum())
     if total < 1e-9:
         return pd.DataFrame()
 
-    cat_col = "Categoria" if "Categoria" in da_frame.columns else None
-    if cat_col:
-        by_cat = da_frame.groupby("Categoria")["Controvalore"].sum()
-    else:
-        by_cat = da_frame.groupby(da_frame["Tipo"].apply(macro_cat))["Controvalore"].sum()
-
-    cats = _resolve_finance_category_codes(settings)
-    by_cat = by_cat.reindex(cats, fill_value=0.0)
-
-    if target_weights is None:
-        target_weights = {c: 1 / len(cats) for c in cats} if cats else {}
+    work = da_frame.copy()
+    work["Bucket"] = work["Ticker"].astype(str).map(lambda t: bucket_of_ticker.get(t, "Satellite"))
+    by_bucket = work.groupby("Bucket")["Controvalore"].sum().reindex(cats, fill_value=0.0)
 
     rows = []
     for cat in cats:
-        attuale = float(by_cat.get(cat, 0.0))
+        attuale = float(by_bucket.get(cat, 0.0))
         pct_att = attuale / total if total > 0 else 0.0
-        pct_target = target_weights.get(cat, (1 / len(cats)) if cats else 0.0)
+        pct_target = float(target_weights.get(cat, 0.0))
         delta_pct = pct_target - pct_att
-        delta_eur = delta_pct * total
-        azione = "Acquista" if delta_eur > 50 else ("Vendi" if delta_eur < -50 else "OK")
+        delta_eur = round(delta_pct * total, 2)
+        azione = "Acquista" if delta_eur >= 50 else ("Vendi" if delta_eur <= -50 else "OK")
         rows.append({
-            "Categoria": cat,
+            "Bucket": cat,
             "Peso Attuale %": pct_att,
             "Peso Target %": pct_target,
             "Delta %": delta_pct,
             "Importo €": delta_eur,
             "Azione": azione,
         })
-    return pd.DataFrame(rows) if rows else pd.DataFrame()
-
+    return pd.DataFrame(rows)
 

@@ -28,6 +28,7 @@ from core.services import (
     get_category_allocation_breakdown,
     get_quotazioni_stats,
 )
+from core.services.sator import ensure_sator_settings
 from persistence.storage import macro_cat
 from ui.formatting import fmt_dt_it, fmtd, fmtds
 
@@ -136,7 +137,8 @@ def build_runtime_context_data(
     portfolio_radar_payload = build_portfolio_radar_payload(
         da,
         liquidita,
-        str(settings.get("target_profile_default", "Equilibrato") or "Equilibrato"),
+        portfolio_objective=settings.get("portfolio_objective", {"core": 0.55, "difensivo": 0.25, "satellite": 0.20}),
+        concentration_caps=ensure_sator_settings(settings).get("concentration_caps", {}),
         strumenti=data.get("strumenti", []),
     )
     portfolio_alerts = build_portfolio_alerts(da, settings)

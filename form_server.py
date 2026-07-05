@@ -1376,6 +1376,7 @@ _SATOR_LEGEND_HTML = (
     "<span><b>Div</b> 15%: bassa correlazione e copertura di vuoti</span>"
     "<span><b>Cost</b> 10%: commissioni, TER, spread, prezzo/budget</span>"
     "<span>\U0001F7E2 suggerito · \U0001F7E1 migliore ma fuori budget · ⚪ battuto nella funzione</span>"
+    "<span>&#9888; storico troppo corto (&lt;30gg): Momentum e Rischio sono indicativi</span>"
     "</div>"
 )
 
@@ -1403,6 +1404,7 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
             "risk_raw": float(row.get("_risk", 0)),
             "why":      str(row.get("_why", "")),
             "sem":      str(row.get("Sem", "⚪")),
+            "dati_ok":  bool(row.get("_storico_ok", True)),
         })
 
     rows_js = json.dumps(rows_data, ensure_ascii=False).replace("</", "<\\/")
@@ -1422,10 +1424,14 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
         qp_it = f"{r['qp']:.2f}".replace(".", ",")
         why_esc = escape(r["why"])
         sem = escape(r["sem"])
+        dati_warning = "" if r["dati_ok"] else (
+            "<span title='Storico troppo corto (<30 giorni di quotazioni): Momentum e Rischio sono indicativi' "
+            "style='color:#c2410c;font-size:.7rem;margin-left:4px'>&#9888;</span>"
+        )
         table_rows += (
             f"<tr>"
             f"<td style='font-size:1.05rem;padding-left:6px;width:28px'>{sem}</td>"
-            f"<td style='font-weight:800;white-space:nowrap;width:68px'>{tk}</td>"
+            f"<td style='font-weight:800;white-space:nowrap;width:68px'>{tk}{dati_warning}</td>"
             f"<td style='max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#475569' title='{name_esc}'>{name_short}</td>"
             f"<td style='font-size:.75rem;color:#64748b;white-space:nowrap'>{funz}</td>"
             f"<td style='text-align:center;width:88px'>{_ruolo_badge(r['bucket'])}</td>"
