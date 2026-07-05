@@ -507,11 +507,39 @@ def find_name(isin: str) -> str:
     return n if n else (get_yahoo_name(isin) or "")
 
 
-def deduce_type(isin: str, tk: str, name: str) -> str:
+def _classify_focus_etf(focus: str) -> str:
+    """Sotto-categoria ETF dal campo 'focus_etf' di justETF (testo gia' in
+    minuscolo). L'ordine conta: 'monetario' va controllato prima di 'globale'
+    perche' un fondo monetario globale (es. 'Mercato monetario, EUR, Globale')
+    contiene entrambe le parole; allo stesso modo 'informatica' va controllato
+    prima di 'globale' (es. 'Azioni, Globale, Informatica' e' un ETF tecnologico,
+    non generico globale)."""
+    if "monetario" in focus:
+        return "ETF Monetario"
+    if "materie prime" in focus or "metalli preziosi" in focus:
+        return "ETF Materie prime"
+    if "emergenti" in focus:
+        return "ETF Az. Emergenti"
+    if "italia" in focus:
+        return "ETF Az. Italia"
+    if "informatica" in focus or "tecnolog" in focus:
+        return "ETF IA"
+    if "energia" in focus:
+        return "ETF Energia"
+    if "immobiliare" in focus:
+        return "ETF Real Estate"
+    if "globale" in focus or "global" in focus:
+        return "ETF Az. Globale"
+    return "ETF"
+
+
+def deduce_type(isin: str, tk: str, name: str, focus_etf: str = "") -> str:
     n = name.lower()
     t = tk.upper()
     if isin.startswith("IT") and ("btp" in n or t.startswith("BTP")):
         return "Titolo di Stato"
+    if focus_etf:
+        return _classify_focus_etf(focus_etf.lower())
     if "etf" in n or "ucits" in n:
         if "emerging" in n:
             return "ETF Az. Emergenti"
