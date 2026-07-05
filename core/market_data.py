@@ -184,21 +184,69 @@ def get_yahoo_price_history_full(tk: str, period: str = "max") -> dict[str, floa
     return history
 
 
-def backfill_storico_prezzi(storico: dict[str, dict[str, float]], ticker: str, history: dict[str, float]) -> int:
+def backfill_storico_prezzi(
+    storico: dict[str, dict[str, float]],
+    ticker: str,
+    history: dict[str, float],
+    since: str | None = None,
+) -> int:
     """Aggiunge allo storico solo le date mancanti per il ticker indicato.
 
     Non sovrascrive mai un prezzo gia' presente: lo storico costruito giorno per
     giorno dall'app resta la fonte di verita', il backfill riempie solo i vuoti
-    (tipicamente le date piu' vecchie della prima gia' salvata). Ritorna il
-    numero di date aggiunte.
+    (tipicamente le date piu' vecchie della prima gia' salvata). Se since e'
+    indicato (YYYY-MM-DD), ignora le date precedenti: l'utente decide da quando
+    vuole storico, invece di importare automaticamente tutto cio' che Yahoo
+    restituisce. Ritorna il numero di date aggiunte.
     """
     added = 0
     for date_str, price in history.items():
+        if since and date_str < since:
+            continue
         day = storico.setdefault(date_str, {})
         if ticker not in day:
             day[ticker] = price
             added += 1
     return added
+
+
+def earliest_storico_date(storico: dict[str, dict[str, float]]) -> str | None:
+    """Prima data (YYYY-MM-DD) gia' presente nello storico, per qualunque strumento.
+
+    Usata come proposta di default per il campo "data di partenza" del recupero
+    manuale: il sistema suggerisce di allineare il nuovo strumento alla stessa
+    profondita' storica degli altri, invece di scaricare tutto cio' che Yahoo ha.
+    """
+    dates = [d for d in storico.keys() if d]
+    return min(dates) if dates else None
+
+
+def delete_storico_prezzi_range(
+    storico: dict[str, dict[str, float]],
+    ticker: str,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> int:
+    """Rimuove i prezzi salvati per un ticker in un intervallo di date (incluso).
+
+    date_from/date_to assenti = nessun limite su quel lato (es. solo date_to
+    per cancellare "tutto fino a"). Tocca solo il ticker indicato: le date
+    restano con i prezzi degli altri strumenti intatti. Ritorna il numero di
+    date rimosse.
+    """
+    removed = 0
+    for date_str in list(storico.keys()):
+        if date_from and date_str < date_from:
+            continue
+        if date_to and date_str > date_to:
+            continue
+        day = storico.get(date_str)
+        if isinstance(day, dict) and ticker in day:
+            del day[ticker]
+            removed += 1
+            if not day:
+                del storico[date_str]
+    return removed
 
     # --- CODICE PRECEDENTE (commentato il 2026-06-23, da eliminare dopo verifica) ---
     # def get_yahoo_price_details(tk: str) -> tuple[float | None, str | None]:

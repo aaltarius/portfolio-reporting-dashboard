@@ -233,20 +233,39 @@ def _fs_delete_instrument(data: dict, ticker: str) -> tuple:
     return True, "Strumento eliminato."
 
 
-def _fs_backfill_storico(data: dict, ticker: str) -> tuple:
+def _fs_backfill_storico(data: dict, ticker: str, since: str | None = None) -> tuple:
     """Scarica lo storico prezzi completo da Yahoo e lo integra senza sovrascrivere
-    le date gia' presenti (vedi core.market_data.backfill_storico_prezzi)."""
+    le date gia' presenti (vedi core.market_data.backfill_storico_prezzi). Se since
+    e' indicato, importa solo dalla data indicata in poi: l'utente decide il
+    perimetro invece di ricevere automaticamente tutto cio' che Yahoo restituisce."""
     from persistence.storage import save_data
     from core.market_data import get_yahoo_price_history_full, backfill_storico_prezzi
 
     history = get_yahoo_price_history_full(ticker)
     if not history:
         return False, f"Nessuno storico disponibile su Yahoo per {ticker}."
-    added = backfill_storico_prezzi(data.setdefault("storico_prezzi", {}), ticker, history)
+    added = backfill_storico_prezzi(data.setdefault("storico_prezzi", {}), ticker, history, since=since)
     save_data(data)
+    perimetro = f" dal {since} in poi" if since else ""
     if added:
-        return True, f"{ticker}: aggiunte {added} date mancanti (su {len(history)} disponibili)."
-    return True, f"{ticker}: nessuna data mancante, lo storico locale copre gia' tutto quello che Yahoo restituisce."
+        return True, f"{ticker}: aggiunte {added} date{perimetro} (su {len(history)} disponibili su Yahoo)."
+    return True, f"{ticker}: nessuna data mancante{perimetro}."
+
+
+def _fs_delete_storico_range(data: dict, ticker: str, date_from: str = "", date_to: str = "") -> tuple:
+    """Elimina i prezzi storici salvati per un ticker, opzionalmente limitati a un
+    intervallo di date. Nessun limite indicato = elimina tutto lo storico del ticker."""
+    from persistence.storage import save_data
+    from core.market_data import delete_storico_prezzi_range
+
+    date_from = date_from.strip()
+    date_to = date_to.strip()
+    removed = delete_storico_prezzi_range(data.get("storico_prezzi", {}) or {}, ticker, date_from or None, date_to or None)
+    if removed == 0:
+        return True, f"{ticker}: nessuna data trovata nell'intervallo indicato."
+    save_data(data)
+    perimetro = f" tra {date_from or '…'} e {date_to or '…'}" if (date_from or date_to) else ""
+    return True, f"{ticker}: rimosse {removed} date{perimetro}."
 
 
 def _fs_is_btp_like(s: dict) -> bool:
@@ -800,6 +819,9 @@ def _render_strumenti_page(data: dict, ok_msg: str = "", err_msg: str = "", acti
         for s in strumenti
     )
 
+    from core.market_data import earliest_storico_date
+    _suggested_since = earliest_storico_date(data.get("storico_prezzi") or {}) or ""
+
     if chiusi:
         rows = "".join(
             f'<tr><td>{escape(s.get("ticker",""))}</td><td>{escape(str(s.get("nome",""))[:45])}</td>'
@@ -893,14 +915,36 @@ def _render_strumenti_page(data: dict, ok_msg: str = "", err_msg: str = "", acti
     </div>"""
 
     tab_storico = no_str if not strumenti else f"""
-    <div class="hint" style="margin-bottom:14px">Per strumenti con storico prezzi troppo corto (es. aggiunti di recente): scarica lo storico completo da Yahoo Finance e lo integra senza sovrascrivere le date gia' salvate. Puo' richiedere qualche secondo.</div>
+    <h2>Recupera storico</h2>
+    <div class="hint" style="margin-bottom:14px">Per strumenti con storico prezzi troppo corto (es. aggiunti di recente): scarica da Yahoo Finance e integra senza sovrascrivere le date gia' salvate. La data di partenza e' proposta in base a cio' che il sistema ha gia' per gli altri strumenti — modificala se vuoi un perimetro diverso, o svuotala per importare tutto cio' che Yahoo ha disponibile.</div>
     <form method="POST" action="/strumenti" autocomplete="off">
       <input type="hidden" name="azione" value="recupera_storico">
       <label class="lbl">Strumento</label>
       <select name="ticker">
         {storico_opts}
       </select>
-      <button type="submit" class="btn-confirm" style="margin-top:18px">⬇ Recupera storico completo</button>
+      <label class="lbl">Data di partenza (YYYY-MM-DD, opzionale)</label>
+      <input type="text" name="storico_data_da" value="{escape(_suggested_since)}" placeholder="es. 2020-01-01">
+      <button type="submit" class="btn-confirm" style="margin-top:18px">⬇ Recupera storico</button>
+    </form>
+
+    <h2 style="margin-top:26px">Elimina storico salvato</h2>
+    <div class="hint" style="margin-bottom:14px">Rimuove i prezzi salvati per uno strumento, per intero o solo in un intervallo di date. Lascia entrambe le date vuote per eliminare tutto lo storico dello strumento.</div>
+    <form method="POST" action="/strumenti" autocomplete="off">
+      <input type="hidden" name="azione" value="elimina_storico">
+      <label class="lbl">Strumento</label>
+      <select name="ticker">
+        {storico_opts}
+      </select>
+      <div class="row2">
+        <div><label class="lbl">Da (YYYY-MM-DD, opzionale)</label><input type="text" name="storico_data_da" placeholder="lascia vuoto = dall'inizio"></div>
+        <div><label class="lbl">A (YYYY-MM-DD, opzionale)</label><input type="text" name="storico_data_a" placeholder="lascia vuoto = fino alla fine"></div>
+      </div>
+      <label class="check-wrap" style="margin-top:14px">
+        <input type="checkbox" required>
+        <span>Confermo l'eliminazione dello storico prezzi selezionato</span>
+      </label>
+      <button type="submit" class="btn-danger" style="margin-top:14px">🗑️ Elimina storico</button>
     </form>"""
 
     return f"""<!DOCTYPE html>
@@ -2546,6 +2590,8 @@ def _build_fastapi_app():
         cedola_frequenza: str = Form("annuale"),
         aliquota_cedola: str = Form("12.5"),
         nominale: str = Form("100"),
+        storico_data_da: str = Form(""),
+        storico_data_a: str = Form(""),
     ):
         from fastapi.responses import RedirectResponse
         from persistence.storage import load_data as _ld, save_data
@@ -2648,7 +2694,21 @@ def _build_fastapi_app():
                 d = _ld()
             except Exception as exc:
                 return err_page(str(exc), "storico")
-            ok, msg = _fs_backfill_storico(d, ticker)
+            ok, msg = _fs_backfill_storico(d, ticker, since=storico_data_da.strip() or None)
+            from urllib.parse import quote as urlquote
+            if ok:
+                return RedirectResponse(f"/strumenti?tab=storico&ok={urlquote(msg)}", status_code=303)
+            return err_page(msg, "storico")
+
+        elif azione == "elimina_storico":
+            ticker = ticker.strip()
+            if not ticker:
+                return err_page("Ticker non specificato.", "storico")
+            try:
+                d = _ld()
+            except Exception as exc:
+                return err_page(str(exc), "storico")
+            ok, msg = _fs_delete_storico_range(d, ticker, storico_data_da, storico_data_a)
             from urllib.parse import quote as urlquote
             if ok:
                 return RedirectResponse(f"/strumenti?tab=storico&ok={urlquote(msg)}", status_code=303)
