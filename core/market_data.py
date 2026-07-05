@@ -6,7 +6,7 @@ import json
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -594,12 +594,23 @@ class TickerCandidate:
     proposto: bool
 
 
-def find_ticker_candidates(isin: str) -> list[TickerCandidate]:
+def find_ticker_candidates(isin: str, ticker_hint: str = "") -> list[TickerCandidate]:
     """Tutti i candidati Yahoo per l'ISIN (non solo il primo), ciascuno con
     prezzo gia' risolto. Per ISIN italiani (BTP) restituisce un solo
     candidato deterministico. Un fallimento nel recupero prezzo di un
-    singolo candidato non blocca gli altri."""
+    singolo candidato non blocca gli altri.
+
+    Se il chiamante conosce gia' un ticker (ticker_hint), viene verificato
+    (prezzo reale) e proposto al posto dell'euristica automatica: un utente
+    che digita un ticker che conosce e' piu' affidabile di un'euristica.
+
+    La ricerca ISIN di Yahoo spesso non include la quotazione di Borsa
+    Italiana (.MI) anche quando esiste ed e' quotabile direttamente: se
+    nessun candidato trovato finisce per .MI, si tenta {base}.MI per ogni
+    simbolo base distinto tra i candidati, aggiungendolo se risponde con un
+    prezzo reale."""
     isin = isin.strip().upper()
+    ticker_hint = ticker_hint.strip().upper()
 
     if isin.startswith("IT"):
         ticker = f"BTP-{isin[-4:]}"
@@ -661,6 +672,47 @@ def find_ticker_candidates(isin: str) -> list[TickerCandidate]:
             fonte=f"Yahoo [{symbol}]" if price is not None else "n/d",
             proposto=(symbol == proposed_symbol),
         ))
+
+    if ticker_hint:
+        existing = next((c for c in candidates if c.ticker.upper() == ticker_hint), None)
+        if existing is not None:
+            candidates = [replace(c, proposto=(c.ticker.upper() == ticker_hint)) for c in candidates]
+        else:
+            try:
+                hint_price, _hint_date, _hint_recent = get_yahoo_price_details(ticker_hint)
+            except Exception as exc:
+                _log_fallback_debug("yahoo_ticker_hint_probe", ticker_hint, exc)
+                hint_price = None
+            if hint_price is not None:
+                candidates = [replace(c, proposto=False) for c in candidates]
+                candidates.append(TickerCandidate(
+                    ticker=ticker_hint,
+                    borsa=ticker_hint.split(".")[-1] if "." in ticker_hint else "",
+                    nome="", quote_type="",
+                    prezzo=hint_price, fonte=f"Yahoo [{ticker_hint}]", proposto=True,
+                ))
+
+    if candidates and not any(c.ticker.upper().endswith(".MI") for c in candidates):
+        seen_bases: list[str] = []
+        for c in candidates:
+            base = c.ticker.split(".")[0]
+            if base not in seen_bases:
+                seen_bases.append(base)
+        for base in seen_bases:
+            mi_ticker = f"{base}.MI"
+            try:
+                mi_price, _mi_date, _mi_recent = get_yahoo_price_details(mi_ticker)
+            except Exception as exc:
+                _log_fallback_debug("yahoo_mi_probe", mi_ticker, exc)
+                mi_price = None
+            if mi_price is not None:
+                candidates = [replace(c, proposto=False) for c in candidates]
+                candidates.append(TickerCandidate(
+                    ticker=mi_ticker, borsa="MIL", nome="", quote_type="",
+                    prezzo=mi_price, fonte=f"Yahoo [{mi_ticker}]", proposto=True,
+                ))
+                break
+
     return candidates
 
 

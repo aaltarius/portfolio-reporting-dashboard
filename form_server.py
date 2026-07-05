@@ -818,7 +818,9 @@ def _fs_render_add_form() -> str:
       <input type="hidden" name="azione" value="cerca">
       <label class="lbl">ISIN</label>
       <input type="text" name="isin" maxlength="12" placeholder="IT0001234567" style="text-transform:uppercase" required>
-      <div class="hint">Il sistema cerca i possibili strumenti corrispondenti all'ISIN: sceglierai tu quello giusto prima di salvare.</div>
+      <label class="lbl">Ticker (se già lo conosci, opzionale)</label>
+      <input type="text" name="ticker_hint" placeholder="es. GOLD.MI" style="text-transform:uppercase">
+      <div class="hint">Il sistema cerca i possibili strumenti corrispondenti all'ISIN: sceglierai tu quello giusto prima di salvare. Se conosci già il ticker giusto, scrivilo qui: verrà verificato e proposto per primo.</div>
       <button type="submit" class="btn-confirm" style="margin-top:20px">🔍 Cerca</button>
     </form>"""
 
@@ -2717,6 +2719,7 @@ def _build_fastapi_app():
         request: Request,
         azione: str = Form(""),
         isin: str = Form(""),
+        ticker_hint: str = Form(""),
         ticker: str = Form(""),
         ticker_new: str = Form(""),
         nome: str = Form(""),
@@ -2753,7 +2756,7 @@ def _build_fastapi_app():
                 return err_page("Strumento già presente.", "add")
             try:
                 from core.market_data import find_ticker_candidates
-                candidati = find_ticker_candidates(isin)
+                candidati = find_ticker_candidates(isin, ticker_hint=ticker_hint)
             except Exception as exc:
                 return err_page(f"Errore ricerca dati: {exc}", "add")
             return HTMLResponse(_render_strumenti_page(
