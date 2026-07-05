@@ -812,7 +812,86 @@ function switchTab(g,n){
 </script>"""
 
 
-def _render_strumenti_page(data: dict, ok_msg: str = "", err_msg: str = "", active_tab: str = "add") -> str:
+def _fs_render_add_form() -> str:
+    return """
+    <form method="POST" action="/strumenti" autocomplete="off">
+      <input type="hidden" name="azione" value="cerca">
+      <label class="lbl">ISIN</label>
+      <input type="text" name="isin" maxlength="12" placeholder="IT0001234567" style="text-transform:uppercase" required>
+      <div class="hint">Il sistema cerca i possibili strumenti corrispondenti all'ISIN: sceglierai tu quello giusto prima di salvare.</div>
+      <button type="submit" class="btn-confirm" style="margin-top:20px">🔍 Cerca</button>
+    </form>"""
+
+
+def _fs_render_confirm_form(isin: str, candidati: list) -> str:
+    from core.market_data import deduce_type
+
+    def _prezzo_txt(prezzo: float | None) -> str:
+        if prezzo is None:
+            return "n/d"
+        return f"{prezzo:.4f}".rstrip("0").rstrip(".")
+
+    rows = []
+    for i, c in enumerate(candidati):
+        checked = " checked" if c.proposto else ""
+        tipo = deduce_type(isin, c.ticker, c.nome or "")
+        label = (
+            f"{escape(c.ticker)} — {escape(c.borsa or '—')} — "
+            f"{escape(c.nome or '(nome non disponibile)')} "
+            f"({_prezzo_txt(c.prezzo)} · {escape(c.fonte)})"
+        )
+        rows.append(
+            f'<label class="cand-row"><input type="radio" name="scelta" value="{i}"{checked} '
+            f'onchange="toggleManualeStrumento()"> {label}</label><br>'
+            f'<input type="hidden" name="cand_{i}_ticker" value="{escape(c.ticker)}">'
+            f'<input type="hidden" name="cand_{i}_borsa" value="{escape(c.borsa or "")}">'
+            f'<input type="hidden" name="cand_{i}_nome" value="{escape(c.nome or "")}">'
+            f'<input type="hidden" name="cand_{i}_tipo" value="{escape(tipo)}">'
+            f'<input type="hidden" name="cand_{i}_prezzo" value="{c.prezzo if c.prezzo is not None else ""}">'
+            f'<input type="hidden" name="cand_{i}_fonte" value="{escape(c.fonte)}">'
+        )
+    candidati_html = "".join(rows) if rows else (
+        "<div class='hint'>Nessun candidato trovato su Yahoo Finance per questo ISIN.</div>"
+    )
+    manuale_checked = " checked" if not candidati else ""
+    manuale_display = "" if not candidati else "none"
+
+    return f"""
+    <form method="POST" action="/strumenti" autocomplete="off">
+      <input type="hidden" name="azione" value="conferma_aggiungi">
+      <input type="hidden" name="isin" value="{escape(isin)}">
+      <label class="lbl">ISIN</label>
+      <div class="hint">{escape(isin)}</div>
+      <label class="lbl">Candidati trovati</label>
+      {candidati_html}
+      <label class="cand-row"><input type="radio" name="scelta" value="manuale"{manuale_checked} onchange="toggleManualeStrumento()"> Inserisci manualmente</label>
+      <div id="manuale_strumento_wrap" style="display:{manuale_display}">
+        <label class="lbl">Ticker</label>
+        <input type="text" name="manuale_ticker" id="manuale_ticker">
+        <label class="lbl">Nome</label>
+        <input type="text" name="manuale_nome" id="manuale_nome">
+        <label class="lbl">Tipo</label>
+        <input type="text" name="manuale_tipo" id="manuale_tipo">
+      </div>
+      <button type="submit" class="btn-confirm" style="margin-top:20px">✅ Conferma e salva</button>
+    </form>
+    <form method="GET" action="/strumenti" style="margin-top:8px">
+      <input type="hidden" name="tab" value="add">
+      <button type="submit" class="btn-sm">✕ Annulla</button>
+    </form>
+    <script>
+    function toggleManualeStrumento(){{
+      var sel = document.querySelector('input[name=scelta]:checked');
+      document.getElementById('manuale_strumento_wrap').style.display = (sel && sel.value==='manuale') ? '' : 'none';
+    }}
+    document.addEventListener('DOMContentLoaded', toggleManualeStrumento);
+    </script>"""
+
+
+def _render_strumenti_page(
+    data: dict, ok_msg: str = "", err_msg: str = "", active_tab: str = "add",
+    cerca_isin: str = "", candidati: "list | None" = None,
+) -> str:
     strumenti = data.get("strumenti", [])
     chiusi = [s for s in strumenti if s.get("stato", "aperto") == "chiuso"]
 
@@ -902,16 +981,10 @@ def _render_strumenti_page(data: dict, ok_msg: str = "", err_msg: str = "", acti
 
     no_str = '<div class="cart-empty">Nessuno strumento presente.</div>'
 
-    tab_add = """
-    <form method="POST" action="/strumenti" autocomplete="off">
-      <input type="hidden" name="azione" value="aggiungi">
-      <label class="lbl">ISIN</label>
-      <input type="text" name="isin" maxlength="12" placeholder="IT0001234567" style="text-transform:uppercase">
-      <label class="lbl">Ticker manuale/opzionale</label>
-      <input type="text" name="ticker_hint" placeholder="opzionale">
-      <div class="hint">Per i BTP puoi completare o correggere scadenza, cedola e date nella scheda Modifica subito dopo l'inserimento.</div>
-      <button type="submit" class="btn-confirm" style="margin-top:20px">🔍 Cerca e aggiungi</button>
-    </form>"""
+    tab_add = (
+        _fs_render_confirm_form(cerca_isin, candidati) if candidati is not None
+        else _fs_render_add_form()
+    )
 
     tab_edit = no_str if not strumenti else f"""
     <label class="lbl">Strumento</label>
