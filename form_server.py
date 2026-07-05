@@ -1320,9 +1320,9 @@ select:focus,input:focus{border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,2
 .btn-save{display:block;width:100%;padding:11px;background:#059669;color:#fff;border:none;border-radius:9px;font-size:.9rem;font-weight:700;cursor:pointer;transition:background .15s}
 .btn-save:hover{background:#047857}
 .btn-save:disabled{background:#94a3b8;cursor:not-allowed}
-.sr-table{width:100%;border-collapse:collapse}
-.sr-table th{text-align:left;font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;color:#94a3b8;font-weight:700;padding:4px 10px 10px;border-bottom:2px solid #e2e8f0;white-space:nowrap}
-.sr-table td{padding:7px 10px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+.sr-table{width:100%;border-collapse:collapse;table-layout:fixed}
+.sr-table th{text-align:left;font-size:.66rem;text-transform:uppercase;letter-spacing:.03em;color:#94a3b8;font-weight:700;padding:4px 5px 8px;border-bottom:2px solid #e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sr-table td{padding:6px 5px;border-bottom:1px solid #f1f5f9;vertical-align:middle;overflow:hidden}
 .sr-table tr:hover td{background:#fafbfc}
 .sr-table tr:last-child td{border-bottom:none}
 .sc-badge{display:inline-block;font-size:.72rem;font-weight:800;border-radius:4px;padding:2px 5px;line-height:1.2}
@@ -1418,38 +1418,39 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
     for r in rows_data:
         tk = escape(r["ticker"])
         name_esc = escape(r["name"])
-        name_short = escape(r["name"][:32] + ("…" if len(r["name"]) > 32 else ""))
-        funz = escape(r["funzione"])
+        name_short = escape(r["name"][:20] + ("…" if len(r["name"]) > 20 else ""))
+        funz_full = r["funzione"]
+        funz = escape(funz_full[:14] + ("…" if len(funz_full) > 14 else ""))
         px_it = f"{r['prezzo']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
         qp_it = f"{r['qp']:.2f}".replace(".", ",")
         why_esc = escape(r["why"])
         sem = escape(r["sem"])
         dati_warning = "" if r["dati_ok"] else (
             "<span title='Storico troppo corto (<30 giorni di quotazioni): Momentum e Rischio sono indicativi' "
-            "style='color:#c2410c;font-size:.7rem;margin-left:4px'>&#9888;</span>"
+            "style='color:#c2410c;font-size:.7rem;margin-left:2px'>&#9888;</span>"
         )
         table_rows += (
             f"<tr>"
-            f"<td style='font-size:1.05rem;padding-left:6px;width:28px'>{sem}</td>"
-            f"<td style='font-weight:800;white-space:nowrap;width:68px'>{tk}{dati_warning}</td>"
-            f"<td style='max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#475569' title='{name_esc}'>{name_short}</td>"
-            f"<td style='font-size:.75rem;color:#64748b;white-space:nowrap'>{funz}</td>"
-            f"<td style='text-align:center;width:88px'>{_ruolo_badge(r['bucket'])}</td>"
-            f"<td style='text-align:center;width:44px' title='{why_esc}'>{_voto_badge(r['voto'])}</td>"
-            f"<td style='text-align:center;width:34px'>{_sc_badge(r['fit'])}</td>"
-            f"<td style='text-align:center;width:34px'>{_sc_badge(r['mom'])}</td>"
-            f"<td style='text-align:center;width:34px'>{_sc_badge(r['risk'])}</td>"
-            f"<td style='text-align:center;width:34px'>{_sc_badge(r['div_s'])}</td>"
-            f"<td style='text-align:center;width:34px'>{_sc_badge(r['cost'])}</td>"
-            f"<td style='white-space:nowrap;color:#475569;width:80px'>€ {px_it}</td>"
-            f"<td style='text-align:center;color:#64748b;width:44px'>{qp_it}</td>"
-            f"<td style='text-align:center;font-weight:700;color:#6366f1;width:36px'>{r['sug']}</td>"
-            f"<td style='text-align:center;width:34px'>"
+            f"<td style='font-size:1.05rem;padding-left:4px;width:24px'>{sem}</td>"
+            f"<td style='font-weight:800;white-space:nowrap;width:56px;overflow:hidden;text-overflow:ellipsis'>{tk}{dati_warning}</td>"
+            f"<td style='width:126px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#475569' title='{name_esc}'>{name_short}</td>"
+            f"<td style='width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.72rem;color:#64748b' title='{escape(funz_full)}'>{funz}</td>"
+            f"<td style='text-align:center;width:72px'>{_ruolo_badge(r['bucket'])}</td>"
+            f"<td style='text-align:center;width:38px' title='{why_esc}'>{_voto_badge(r['voto'])}</td>"
+            f"<td style='text-align:center;width:30px'>{_sc_badge(r['fit'])}</td>"
+            f"<td style='text-align:center;width:30px'>{_sc_badge(r['mom'])}</td>"
+            f"<td style='text-align:center;width:30px'>{_sc_badge(r['risk'])}</td>"
+            f"<td style='text-align:center;width:30px'>{_sc_badge(r['div_s'])}</td>"
+            f"<td style='text-align:center;width:30px'>{_sc_badge(r['cost'])}</td>"
+            f"<td style='white-space:nowrap;overflow:hidden;color:#475569;width:66px'>€ {px_it}</td>"
+            f"<td style='text-align:center;color:#64748b;width:38px'>{qp_it}</td>"
+            f"<td style='text-align:center;font-weight:700;color:#6366f1;width:30px'>{r['sug']}</td>"
+            f"<td style='text-align:center;width:28px'>"
             f"<input type='checkbox' id='sel_{tk}' onchange='computeEval()' "
-            f"style='accent-color:#6366f1;width:16px;height:16px;cursor:pointer'></td>"
-            f"<td style='text-align:center;width:70px'>"
+            f"style='accent-color:#6366f1;width:15px;height:15px;cursor:pointer'></td>"
+            f"<td style='text-align:center;width:52px'>"
             f"<input type='number' id='qta_{tk}' min='0' step='1' value='0' oninput='computeEval()' "
-            f"style='width:62px;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-size:.85rem;text-align:center'></td>"
+            f"style='width:44px;padding:3px 4px;border:1px solid #cbd5e1;border-radius:6px;font-size:.82rem;text-align:center'></td>"
             f"</tr>"
         )
 
@@ -1461,19 +1462,24 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
         f"<button type='button' class='btn-sm' onclick='clearSel()'>✕ Azzera</button>"
         f"<span style='font-size:.74rem;color:#94a3b8;margin-left:4px'>Modifica Qta → valutazione live a destra</span>"
         f"</div>"
-        f"<div style='overflow-x:auto'>"
+        f"<div>"
         f"<table class='sr-table'><thead><tr>"
-        f"<th></th><th>Ticker</th><th>Strumento</th><th>Funzione</th>"
-        f"<th style='text-align:center' title='Ruolo nel portafoglio: Core (pilastro diversificato), Difensivo (stabilita, liquidita, oro, bond) o Satellite (tattico/tematico)'>Ruolo</th>"
-        f"<th style='text-align:center' title='Punteggio unico 1-10: ordina la classifica. Passa il mouse per il perche della posizione'>Voto</th>"
-        f"<th style='text-align:center' title='Fit allocativo 30%: quanto la funzione serve ora al portafoglio'>Fit</th>"
-        f"<th style='text-align:center' title='Momentum 25%: andamento ponderato 1/3/6/12 mesi'>Mom</th>"
-        f"<th style='text-align:center' title='Efficienza di rischio 20%: volatilita, drawdown, rendimento/rischio'>Risk</th>"
-        f"<th style='text-align:center' title='Diversificazione 15%: bassa correlazione e copertura di vuoti'>Div</th>"
-        f"<th style='text-align:center' title='Efficienza di costo 10%: commissioni, TER, spread, prezzo/budget'>Cost</th>"
-        f"<th>Prezzo</th><th style='text-align:center'>Qp</th>"
-        f"<th style='text-align:center' title='Quote suggerite entro budget (residuo ammesso)'>Sug</th>"
-        f"<th style='text-align:center'>Sel</th><th style='text-align:center'>Qta</th>"
+        f"<th style='width:24px'></th>"
+        f"<th style='width:56px'>Ticker</th>"
+        f"<th style='width:126px'>Strumento</th>"
+        f"<th style='width:96px'>Funzione</th>"
+        f"<th style='width:72px;text-align:center' title='Ruolo nel portafoglio: Core (pilastro diversificato), Difensivo (stabilita, liquidita, oro, bond) o Satellite (tattico/tematico)'>Ruolo</th>"
+        f"<th style='width:38px;text-align:center' title='Punteggio unico 1-10: ordina la classifica. Passa il mouse per il perche della posizione'>Voto</th>"
+        f"<th style='width:30px;text-align:center' title='Fit allocativo 30%: quanto la funzione serve ora al portafoglio'>Fit</th>"
+        f"<th style='width:30px;text-align:center' title='Momentum 25%: andamento ponderato 1/3/6/12 mesi'>Mom</th>"
+        f"<th style='width:30px;text-align:center' title='Efficienza di rischio 20%: volatilita, drawdown, rendimento/rischio'>Risk</th>"
+        f"<th style='width:30px;text-align:center' title='Diversificazione 15%: bassa correlazione e copertura di vuoti'>Div</th>"
+        f"<th style='width:30px;text-align:center' title='Efficienza di costo 10%: commissioni, TER, spread, prezzo/budget'>Cost</th>"
+        f"<th style='width:66px'>Prezzo</th>"
+        f"<th style='width:38px;text-align:center'>Qp</th>"
+        f"<th style='width:30px;text-align:center' title='Quote suggerite entro budget (residuo ammesso)'>Sug</th>"
+        f"<th style='width:28px;text-align:center'>Sel</th>"
+        f"<th style='width:52px;text-align:center'>Qta</th>"
         f"</tr></thead><tbody>{table_rows}</tbody></table></div>"
     )
     return table_html, rows_js
