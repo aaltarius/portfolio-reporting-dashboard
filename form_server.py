@@ -240,23 +240,38 @@ def _fs_backfill_storico(data: dict, ticker: str, since: str | None = None) -> t
     perimetro invece di ricevere automaticamente tutto cio' che Yahoo restituisce."""
     from persistence.storage import save_data
     from core.market_data import get_yahoo_price_history_full, backfill_storico_prezzi
+    from core.formatting import fmt_date_only_it
 
     history = get_yahoo_price_history_full(ticker)
     if not history:
         return False, f"Nessuno storico disponibile su Yahoo per {ticker}."
     added = backfill_storico_prezzi(data.setdefault("storico_prezzi", {}), ticker, history, since=since)
     save_data(data)
-    perimetro = f" dal {since} in poi" if since else ""
+    perimetro = f" dal {fmt_date_only_it(since)} in poi" if since else ""
     if added:
         return True, f"{ticker}: aggiunte {added} date{perimetro} (su {len(history)} disponibili su Yahoo)."
     return True, f"{ticker}: nessuna data mancante{perimetro}."
 
 
+def _fs_parse_flex_date(value: str) -> str:
+    """Converte una data GG/MM/AAAA o YYYY-MM-DD in ISO YYYY-MM-DD. Stringa vuota -> vuota.
+
+    Solleva ValueError (messaggio gia' in italiano) se il formato non e' riconosciuto.
+    """
+    value = (value or "").strip()
+    if not value:
+        return ""
+    from core.validators import validate_date
+    return validate_date(value).isoformat()
+
+
 def _fs_delete_storico_range(data: dict, ticker: str, date_from: str = "", date_to: str = "") -> tuple:
     """Elimina i prezzi storici salvati per un ticker, opzionalmente limitati a un
-    intervallo di date. Nessun limite indicato = elimina tutto lo storico del ticker."""
+    intervallo di date (gia' in formato ISO YYYY-MM-DD). Nessun limite indicato =
+    elimina tutto lo storico del ticker."""
     from persistence.storage import save_data
     from core.market_data import delete_storico_prezzi_range
+    from core.formatting import fmt_date_only_it
 
     date_from = date_from.strip()
     date_to = date_to.strip()
@@ -264,7 +279,7 @@ def _fs_delete_storico_range(data: dict, ticker: str, date_from: str = "", date_
     if removed == 0:
         return True, f"{ticker}: nessuna data trovata nell'intervallo indicato."
     save_data(data)
-    perimetro = f" tra {date_from or '…'} e {date_to or '…'}" if (date_from or date_to) else ""
+    perimetro = f" tra {fmt_date_only_it(date_from) if date_from else '…'} e {fmt_date_only_it(date_to) if date_to else '…'}" if (date_from or date_to) else ""
     return True, f"{ticker}: rimosse {removed} date{perimetro}."
 
 
@@ -805,22 +820,39 @@ def _render_strumenti_page(data: dict, ok_msg: str = "", err_msg: str = "", acti
         for s in strumenti
     )
 
+    from core.formatting import fmt_date_only_it
+    from core.market_data import earliest_storico_date
+
     _tickers_for_count = {s.get("ticker", "") for s in strumenti}
     date_count_by_ticker: dict = dict.fromkeys(_tickers_for_count, 0)
-    for _day_prices in (data.get("storico_prezzi") or {}).values():
+    first_date_by_ticker: dict = {}
+    for _day_date, _day_prices in (data.get("storico_prezzi") or {}).items():
         if isinstance(_day_prices, dict):
             for _tk in _day_prices:
                 if _tk in date_count_by_ticker:
                     date_count_by_ticker[_tk] += 1
+                    if _tk not in first_date_by_ticker or _day_date < first_date_by_ticker[_tk]:
+                        first_date_by_ticker[_tk] = _day_date
 
     storico_opts = "\n".join(
         f'<option value="{escape(s.get("ticker",""))}">{escape(s.get("ticker",""))} — {escape(str(s.get("nome",""))[:35])} '
-        f'({date_count_by_ticker.get(s.get("ticker",""), 0)} date salvate)</option>'
+        f'({date_count_by_ticker.get(s.get("ticker",""), 0)} date, dal {fmt_date_only_it(first_date_by_ticker.get(s.get("ticker",""))) if s.get("ticker","") in first_date_by_ticker else "n/d"})</option>'
         for s in strumenti
     )
 
-    from core.market_data import earliest_storico_date
-    _suggested_since = earliest_storico_date(data.get("storico_prezzi") or {}) or ""
+    _suggested_since_iso = earliest_storico_date(data.get("storico_prezzi") or {}) or ""
+    _suggested_since = fmt_date_only_it(_suggested_since_iso) if _suggested_since_iso else ""
+
+    _storico_overview_rows = sorted(
+        strumenti,
+        key=lambda s: first_date_by_ticker.get(s.get("ticker", ""), "9999-99-99"),
+    )
+    storico_overview_html = "".join(
+        f'<tr><td>{escape(s.get("ticker",""))}</td><td>{escape(str(s.get("nome",""))[:40])}</td>'
+        f'<td>{escape(fmt_date_only_it(first_date_by_ticker.get(s.get("ticker",""))) if s.get("ticker","") in first_date_by_ticker else "—")}</td>'
+        f'<td style="text-align:right">{date_count_by_ticker.get(s.get("ticker",""), 0)}</td></tr>'
+        for s in _storico_overview_rows
+    )
 
     if chiusi:
         rows = "".join(
@@ -915,16 +947,22 @@ def _render_strumenti_page(data: dict, ok_msg: str = "", err_msg: str = "", acti
     </div>"""
 
     tab_storico = no_str if not strumenti else f"""
+    <h2>Storico salvato per strumento</h2>
+    <table class="table-simple" style="margin-bottom:22px">
+      <thead><tr><th>Ticker</th><th>Nome</th><th>Prima data</th><th style="text-align:right">N. date</th></tr></thead>
+      <tbody>{storico_overview_html}</tbody>
+    </table>
+
     <h2>Recupera storico</h2>
-    <div class="hint" style="margin-bottom:14px">Per strumenti con storico prezzi troppo corto (es. aggiunti di recente): scarica da Yahoo Finance e integra senza sovrascrivere le date gia' salvate. La data di partenza e' proposta in base a cio' che il sistema ha gia' per gli altri strumenti — modificala se vuoi un perimetro diverso, o svuotala per importare tutto cio' che Yahoo ha disponibile.</div>
+    <div class="hint" style="margin-bottom:14px">Per strumenti con storico prezzi troppo corto (es. aggiunti di recente): scarica da Yahoo Finance e integra senza sovrascrivere le date gia' salvate. La data di partenza e' proposta in base a cio' che il sistema ha gia' per gli altri strumenti (vedi tabella sopra) — modificala se vuoi un perimetro diverso, o svuotala per importare tutto cio' che Yahoo ha disponibile.</div>
     <form method="POST" action="/strumenti" autocomplete="off">
       <input type="hidden" name="azione" value="recupera_storico">
       <label class="lbl">Strumento</label>
       <select name="ticker">
         {storico_opts}
       </select>
-      <label class="lbl">Data di partenza (YYYY-MM-DD, opzionale)</label>
-      <input type="text" name="storico_data_da" value="{escape(_suggested_since)}" placeholder="es. 2020-01-01">
+      <label class="lbl">Data di partenza (GG/MM/AAAA, opzionale)</label>
+      <input type="text" name="storico_data_da" value="{escape(_suggested_since)}" placeholder="es. 30/05/2023">
       <button type="submit" class="btn-confirm" style="margin-top:18px">⬇ Recupera storico</button>
     </form>
 
@@ -937,8 +975,8 @@ def _render_strumenti_page(data: dict, ok_msg: str = "", err_msg: str = "", acti
         {storico_opts}
       </select>
       <div class="row2">
-        <div><label class="lbl">Da (YYYY-MM-DD, opzionale)</label><input type="text" name="storico_data_da" placeholder="lascia vuoto = dall'inizio"></div>
-        <div><label class="lbl">A (YYYY-MM-DD, opzionale)</label><input type="text" name="storico_data_a" placeholder="lascia vuoto = fino alla fine"></div>
+        <div><label class="lbl">Da (GG/MM/AAAA, opzionale)</label><input type="text" name="storico_data_da" placeholder="lascia vuoto = dall'inizio"></div>
+        <div><label class="lbl">A (GG/MM/AAAA, opzionale)</label><input type="text" name="storico_data_a" placeholder="lascia vuoto = fino alla fine"></div>
       </div>
       <label class="check-wrap" style="margin-top:14px">
         <input type="checkbox" required>
@@ -2691,10 +2729,14 @@ def _build_fastapi_app():
             if not ticker:
                 return err_page("Ticker non specificato.", "storico")
             try:
+                since_iso = _fs_parse_flex_date(storico_data_da)
+            except ValueError as exc:
+                return err_page(f"Data di partenza non valida: {exc}", "storico")
+            try:
                 d = _ld()
             except Exception as exc:
                 return err_page(str(exc), "storico")
-            ok, msg = _fs_backfill_storico(d, ticker, since=storico_data_da.strip() or None)
+            ok, msg = _fs_backfill_storico(d, ticker, since=since_iso or None)
             from urllib.parse import quote as urlquote
             if ok:
                 return RedirectResponse(f"/strumenti?tab=storico&ok={urlquote(msg)}", status_code=303)
@@ -2705,10 +2747,15 @@ def _build_fastapi_app():
             if not ticker:
                 return err_page("Ticker non specificato.", "storico")
             try:
+                da_iso = _fs_parse_flex_date(storico_data_da)
+                a_iso = _fs_parse_flex_date(storico_data_a)
+            except ValueError as exc:
+                return err_page(f"Data non valida: {exc}", "storico")
+            try:
                 d = _ld()
             except Exception as exc:
                 return err_page(str(exc), "storico")
-            ok, msg = _fs_delete_storico_range(d, ticker, storico_data_da, storico_data_a)
+            ok, msg = _fs_delete_storico_range(d, ticker, da_iso, a_iso)
             from urllib.parse import quote as urlquote
             if ok:
                 return RedirectResponse(f"/strumenti?tab=storico&ok={urlquote(msg)}", status_code=303)
