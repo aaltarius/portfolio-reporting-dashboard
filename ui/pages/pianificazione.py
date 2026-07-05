@@ -290,8 +290,7 @@ def _render_portfolio_objective_section(ctx: SimpleNamespace, theme) -> None:
         "Obiettivo": [objective["core"] * 100, objective["difensivo"] * 100, objective["satellite"] * 100],
         "Attuale": [current_mix.get("Core", 0.0) * 100, current_mix.get("Difensivo", 0.0) * 100, current_mix.get("Satellite", 0.0) * 100],
     })
-    st.bar_chart(mix_df.set_index("Bucket"))
-    st.caption("Valori in % del portafoglio.")
+    st.bar_chart(mix_df.set_index("Bucket"), stack=False, y_label="%")
 
 
 def _satellite_target_from_objective(settings: dict) -> float:
