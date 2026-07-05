@@ -153,7 +153,7 @@ def _fs_reopen_instruments(data: dict) -> None:
 
 
 def _fs_delete_event(data: dict, event_id: str) -> bool:
-    from persistence.storage import _normalize_event_record
+    from persistence.storage import _normalize_event_record, save_data
     event_id = str(event_id or "")
     before = len(data.get("registro_eventi", []) or [])
     data["registro_eventi"] = [
@@ -175,7 +175,7 @@ def _fs_delete_event(data: dict, event_id: str) -> bool:
 
 
 def _fs_update_event(data: dict, event_id: str, updates: dict) -> bool:
-    from persistence.storage import _normalize_event_record, _safe_float
+    from persistence.storage import _normalize_event_record, _safe_float, save_data
     event_id = str(event_id or "")
     for ev in data.get("registro_eventi", []):
         if str(_normalize_event_record(ev).get("event_id", "")) == event_id:
@@ -218,6 +218,7 @@ def _fs_has_prices(data: dict, ticker: str) -> bool:
 
 
 def _fs_delete_instrument(data: dict, ticker: str) -> tuple:
+    from persistence.storage import save_data
     linked = _fs_linked_events(data, ticker)
     if linked:
         return False, f"Lo strumento ha {len(linked)} eventi collegati. Elimina prima gli eventi oppure mantieni lo strumento."
