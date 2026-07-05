@@ -233,6 +233,22 @@ def _fs_delete_instrument(data: dict, ticker: str) -> tuple:
     return True, "Strumento eliminato."
 
 
+def _fs_backfill_storico(data: dict, ticker: str) -> tuple:
+    """Scarica lo storico prezzi completo da Yahoo e lo integra senza sovrascrivere
+    le date gia' presenti (vedi core.market_data.backfill_storico_prezzi)."""
+    from persistence.storage import save_data
+    from core.market_data import get_yahoo_price_history_full, backfill_storico_prezzi
+
+    history = get_yahoo_price_history_full(ticker)
+    if not history:
+        return False, f"Nessuno storico disponibile su Yahoo per {ticker}."
+    added = backfill_storico_prezzi(data.setdefault("storico_prezzi", {}), ticker, history)
+    save_data(data)
+    if added:
+        return True, f"{ticker}: aggiunte {added} date mancanti (su {len(history)} disponibili)."
+    return True, f"{ticker}: nessuna data mancante, lo storico locale copre gia' tutto quello che Yahoo restituisce."
+
+
 def _fs_is_btp_like(s: dict) -> bool:
     tipo = str(s.get("tipo", "")).strip().lower()
     ticker = str(s.get("ticker", "")).upper()
@@ -770,6 +786,20 @@ def _render_strumenti_page(data: dict, ok_msg: str = "", err_msg: str = "", acti
         for s in strumenti
     )
 
+    _tickers_for_count = {s.get("ticker", "") for s in strumenti}
+    date_count_by_ticker: dict = dict.fromkeys(_tickers_for_count, 0)
+    for _day_prices in (data.get("storico_prezzi") or {}).values():
+        if isinstance(_day_prices, dict):
+            for _tk in _day_prices:
+                if _tk in date_count_by_ticker:
+                    date_count_by_ticker[_tk] += 1
+
+    storico_opts = "\n".join(
+        f'<option value="{escape(s.get("ticker",""))}">{escape(s.get("ticker",""))} — {escape(str(s.get("nome",""))[:35])} '
+        f'({date_count_by_ticker.get(s.get("ticker",""), 0)} date salvate)</option>'
+        for s in strumenti
+    )
+
     if chiusi:
         rows = "".join(
             f'<tr><td>{escape(s.get("ticker",""))}</td><td>{escape(str(s.get("nome",""))[:45])}</td>'
@@ -862,6 +892,17 @@ def _render_strumenti_page(data: dict, ok_msg: str = "", err_msg: str = "", acti
       </form>
     </div>"""
 
+    tab_storico = no_str if not strumenti else f"""
+    <div class="hint" style="margin-bottom:14px">Per strumenti con storico prezzi troppo corto (es. aggiunti di recente): scarica lo storico completo da Yahoo Finance e lo integra senza sovrascrivere le date gia' salvate. Puo' richiedere qualche secondo.</div>
+    <form method="POST" action="/strumenti" autocomplete="off">
+      <input type="hidden" name="azione" value="recupera_storico">
+      <label class="lbl">Strumento</label>
+      <select name="ticker">
+        {storico_opts}
+      </select>
+      <button type="submit" class="btn-confirm" style="margin-top:18px">⬇ Recupera storico completo</button>
+    </form>"""
+
     return f"""<!DOCTYPE html>
 <html lang="it">
 <head>
@@ -879,11 +920,13 @@ def _render_strumenti_page(data: dict, ok_msg: str = "", err_msg: str = "", acti
     {_tb("➕ Aggiungi","add")}
     {_tb("✏️ Modifica","edit")}
     {_tb("🗑️ Elimina","del")}
+    {_tb("📈 Storico","storico")}
     {_tb("📁 Chiusi","closed")}
   </div>
   {_tp("add", tab_add)}
   {_tp("edit", tab_edit)}
   {_tp("del", tab_del)}
+  {_tp("storico", tab_storico)}
   {_tp("closed", chiusi_html)}
   <div class="back-links"><a href="{STREAMLIT_URL}" target="_blank">← Torna a Streamlit</a></div>
 </div>
@@ -2596,6 +2639,20 @@ def _build_fastapi_app():
                 from urllib.parse import quote as urlquote
                 return RedirectResponse(f"/strumenti?tab=del&ok={urlquote(msg)}", status_code=303)
             return err_page(msg, "del")
+
+        elif azione == "recupera_storico":
+            ticker = ticker.strip()
+            if not ticker:
+                return err_page("Ticker non specificato.", "storico")
+            try:
+                d = _ld()
+            except Exception as exc:
+                return err_page(str(exc), "storico")
+            ok, msg = _fs_backfill_storico(d, ticker)
+            from urllib.parse import quote as urlquote
+            if ok:
+                return RedirectResponse(f"/strumenti?tab=storico&ok={urlquote(msg)}", status_code=303)
+            return err_page(msg, "storico")
 
         return err_page("Azione non riconosciuta.", "add")
 
