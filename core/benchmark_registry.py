@@ -112,6 +112,7 @@ BENCHMARK_BY_INDEX_PATTERN: list[tuple[str, BenchmarkAssignment]] = [
     ("bitcoin", BenchmarkAssignment("BTC-USD", "Bitcoin", "benchmark arricchito", "Alta")),
     ("information technology", BenchmarkAssignment("QQQ", "Nasdaq 100 (proxy tecnologia)", "benchmark arricchito", "Media")),
     ("india", BenchmarkAssignment("INDA", "MSCI India", "benchmark arricchito", "Media")),
+    ("miner", BenchmarkAssignment("GDX", "Gold Miners", "benchmark arricchito", "Media")),
     ("gold", BenchmarkAssignment("GLD", "Gold proxy", "benchmark arricchito", "Alta")),
     ("msci emerging", BenchmarkAssignment("EEM", "MSCI EM", "benchmark arricchito", "Alta")),
     ("msci world", BenchmarkAssignment("IWDA.AS", "MSCI World", "benchmark arricchito", "Alta")),
@@ -119,7 +120,7 @@ BENCHMARK_BY_INDEX_PATTERN: list[tuple[str, BenchmarkAssignment]] = [
     ("ftse mib", BenchmarkAssignment("FTSEMIB.MI", "FTSE MIB", "benchmark arricchito", "Alta")),
     ("s&p 500", BenchmarkAssignment("SPY", "S&P 500", "benchmark arricchito", "Alta")),
     ("nasdaq", BenchmarkAssignment("QQQ", "Nasdaq 100", "benchmark arricchito", "Alta")),
-    ("bloomberg", BenchmarkAssignment("DJP", "Bloomberg Commodity", "benchmark arricchito", "Media")),
+    ("bloomberg commodity", BenchmarkAssignment("DJP", "Bloomberg Commodity", "benchmark arricchito", "Media")),
 ]
 
 # Compatibilita' con il vecchio dizionario BENCH tipo -> (ticker, label).
