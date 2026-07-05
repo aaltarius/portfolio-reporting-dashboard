@@ -296,6 +296,30 @@ def _fs_resolve_strumento_scelto(form_values: dict, n_candidati: int) -> dict:
     }
 
 
+def _fs_apply_enrichment_if_eligible(isin: str, tk: str, nm: str, tp: str, fonte: str) -> dict:
+    """Se lo strumento non e' un BTP e la scelta non e' manuale, arricchisce da
+    justETF e ricalcola il tipo dal focus_etf se disponibile. Restituisce sempre
+    almeno {'tipo': ...}, piu' gli eventuali campi di arricchimento riusciti da
+    unire al record dello strumento salvato. Nessuna chiamata di rete se non
+    ammissibile; nessun campo aggiuntivo se l'arricchimento fallisce."""
+    if isin.upper().startswith("IT") or fonte == "Manuale":
+        return {"tipo": tp}
+
+    from core.instrument_enrichment import enrich_etf_etc
+    result = enrich_etf_etc({"isin": isin, "ticker": tk})
+    if result.get("enrichment_error"):
+        return {"tipo": tp}
+
+    focus = result.get("focus_etf", "")
+    new_tipo = tp
+    if focus:
+        from core.market_data import deduce_type
+        new_tipo = deduce_type(isin, tk, nm, focus_etf=focus) or tp
+
+    extra = {k: v for k, v in result.items() if k not in ("isin", "ticker", "enrichment_error")}
+    return {"tipo": new_tipo, **extra}
+
+
 def _fs_delete_storico_range(data: dict, ticker: str, date_from: str = "", date_to: str = "") -> tuple:
     """Elimina i prezzi storici salvati per un ticker, opzionalmente limitati a un
     intervallo di date (gia' in formato ISO YYYY-MM-DD). Nessun limite indicato =
@@ -2797,13 +2821,18 @@ def _build_fastapi_app():
             from core.market_data import set_isin_ticker
             set_isin_ticker(isin, tk)
 
-            d.setdefault("strumenti", []).append({
+            enrichment_result = _fs_apply_enrichment_if_eligible(isin, tk, nm, tp, src)
+            tp = enrichment_result.pop("tipo")
+
+            strumento_record = {
                 "isin": isin, "ticker": tk, "stato": "aperto",
                 "nome": nm, "tipo": tp, "prezzo": pr, "fonte": src,
                 "aggiornato": str(date.today()), "scadenza": "", "data_acquisto": "",
                 "prima_cedola": "", "cedola_perc": 0.0, "cedola_frequenza": "annuale",
                 "aliquota_cedola": 12.5, "nominale": 100.0,
-            })
+            }
+            strumento_record.update(enrichment_result)
+            d.setdefault("strumenti", []).append(strumento_record)
             save_data(d)
             from urllib.parse import quote as urlquote
             return RedirectResponse(f"/strumenti?tab=edit&ok={urlquote('Aggiunto '+str(nm or tk))}", status_code=303)
