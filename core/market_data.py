@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -580,6 +581,95 @@ def prime_isin_ticker_cache(cache_dict: dict) -> None:
 def get_isin_ticker_cache() -> dict[str, str]:
     """Restituisce il mapping ISIN→ticker Yahoo corrente per la persistenza su disco."""
     return dict(_ISIN_YAHOO_TICKER_CACHE)
+
+
+@dataclass(frozen=True)
+class TickerCandidate:
+    ticker: str
+    borsa: str
+    nome: str
+    quote_type: str
+    prezzo: float | None
+    fonte: str
+    proposto: bool
+
+
+def find_ticker_candidates(isin: str) -> list[TickerCandidate]:
+    """Tutti i candidati Yahoo per l'ISIN (non solo il primo), ciascuno con
+    prezzo gia' risolto. Per ISIN italiani (BTP) restituisce un solo
+    candidato deterministico. Un fallimento nel recupero prezzo di un
+    singolo candidato non blocca gli altri."""
+    isin = isin.strip().upper()
+
+    if isin.startswith("IT"):
+        ticker = f"BTP-{isin[-4:]}"
+        try:
+            btp = get_btp_price_details(isin)
+        except Exception as exc:
+            _log_fallback_debug("btp_candidate_price", isin, exc)
+            btp = {"price": None}
+        price = btp.get("price")
+        return [TickerCandidate(
+            ticker=ticker, borsa="MOT", nome="", quote_type="BOND",
+            prezzo=price, fonte="Borsa Italiana" if price is not None else "n/d",
+            proposto=True,
+        )]
+
+    try:
+        r = requests.get(
+            f"https://query2.finance.yahoo.com/v1/finance/search?q={isin}&quotesCount=5&newsCount=0",
+            headers={"User-Agent": "Mozilla/5.0"}, timeout=10
+        ).json()
+    except Exception as exc:
+        _log_fallback_debug("yahoo_search_candidates", isin, exc)
+        return []
+
+    quotes = [q for q in (r.get("quotes") or []) if not str(q.get("symbol", "")).startswith("0P")]
+    if not quotes:
+        return []
+
+    proposed_symbol = None
+    for q in quotes:
+        if str(q.get("symbol", "")).endswith(".MI"):
+            proposed_symbol = q["symbol"]
+            break
+    if proposed_symbol is None:
+        for q in quotes:
+            s = str(q.get("symbol", ""))
+            if "." in s:
+                proposed_symbol = s
+                break
+    if proposed_symbol is None:
+        proposed_symbol = quotes[0].get("symbol", "")
+
+    candidates: list[TickerCandidate] = []
+    for q in quotes:
+        symbol = str(q.get("symbol", ""))
+        if not symbol:
+            continue
+        try:
+            price, _price_date, _recent = get_yahoo_price_details(symbol)
+        except Exception as exc:
+            _log_fallback_debug("yahoo_candidate_price", symbol, exc)
+            price = None
+        candidates.append(TickerCandidate(
+            ticker=symbol,
+            borsa=str(q.get("exchange", "")) or (symbol.split(".")[-1] if "." in symbol else ""),
+            nome=q.get("longname") or q.get("shortname") or "",
+            quote_type=str(q.get("quoteType", "")),
+            prezzo=price,
+            fonte=f"Yahoo [{symbol}]" if price is not None else "n/d",
+            proposto=(symbol == proposed_symbol),
+        ))
+    return candidates
+
+
+def set_isin_ticker(isin: str, ticker: str) -> None:
+    """Registra il ticker scelto/confermato per un ISIN (es. dopo conferma
+    utente in fase di aggiunta strumento), cosi' un futuro refresh prezzi
+    dello stesso ISIN usa direttamente questo ticker."""
+    if isin and ticker:
+        _ISIN_YAHOO_TICKER_CACHE[isin] = ticker
 
 
 def get_price_details(isin: str, tk: str, timeout_seconds: int = 300) -> dict[str, Any]:
