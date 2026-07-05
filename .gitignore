@@ -53,8 +53,9 @@ test_enrichment_report.html
 # Configurazione (tutta, incluse impostazioni personali)
 data/config/
 
-# Piani e specifiche interne di sviluppo
-docs/superpowers/
+# Piani e specifiche interne di sviluppo, e suite di test (mai nel repo pubblico)
+docs/
+tests/
 
 # Documenti interni di sviluppo
 HANDOFF_LUNEDI.md
