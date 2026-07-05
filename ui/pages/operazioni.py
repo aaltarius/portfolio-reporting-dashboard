@@ -1483,7 +1483,7 @@ def _render_event_edit_form(data: dict[str, Any], ev: dict[str, Any], form_prefi
 
     eid_slug = str(event_id or "").replace("-", "")[:16]
     with st.form(f"{form_prefix}_{eid_slug}"):
-        new_date = st.date_input("Data", value=default_date)
+        new_date = st.date_input("Data", value=default_date, format="DD/MM/YYYY")
         new_note = st.text_input("Note", value=str(ev.get("note", "") or ""), max_chars=120)
 
         if tipo in {"ACQUISTO", "VENDITA", "RIMBORSO A SCADENZA"}:

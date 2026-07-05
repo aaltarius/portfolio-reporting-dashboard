@@ -290,7 +290,8 @@ def _fs_is_btp_like(s: dict) -> bool:
 
 
 def _fs_event_label(ev: dict) -> str:
-    data_str = str(ev.get("data", "") or "")[:10]
+    from core.formatting import fmt_date_only_it
+    data_str = fmt_date_only_it(str(ev.get("data", "") or "")[:10])
     tipo = ev.get("tipo_evento", "—")
     ticker = ev.get("ticker") or "—"
     netto = _safe_f(ev.get("importo_netto", 0))
@@ -383,6 +384,7 @@ _JS = """
 const $ = id => document.getElementById(id);
 const qv = id => parseFloat($(id)?.value)||0;
 const fmtN = (v,d=2)=>v.toLocaleString('it-IT',{minimumFractionDigits:d,maximumFractionDigits:d});
+const fmtDateIt = iso => { if(!iso) return ''; const p=String(iso).slice(0,10).split('-'); return p.length===3 ? `${p[2]}/${p[1]}/${p[0]}` : iso; };
 
 const TRADE=['ACQUISTO','VENDITA','RIMBORSO A SCADENZA'];
 const PROVENTO=['CEDOLA','DIVIDENDO'];
@@ -495,7 +497,7 @@ function addToCart(){
   }
 
   item._desc=desc;
-  item._date=item.data;
+  item._date=fmtDateIt(item.data);
   cart.push(item);
   renderCart();
   resetInputs();
@@ -784,6 +786,7 @@ def _render_strumenti_page(data: dict, ok_msg: str = "", err_msg: str = "", acti
     chiusi = [s for s in strumenti if s.get("stato", "aperto") == "chiuso"]
 
     from persistence.storage import get_registro_eventi
+    from core.formatting import fmt_date_only_it
     ev_all = get_registro_eventi(data)
     linked_counts: dict = {}
     for ev in ev_all:
@@ -791,14 +794,17 @@ def _render_strumenti_page(data: dict, ok_msg: str = "", err_msg: str = "", acti
         if tk:
             linked_counts[tk] = linked_counts.get(tk, 0) + 1
 
+    def _it_date_or_empty(value) -> str:
+        return fmt_date_only_it(value) if value else ""
+
     strumenti_js = json.dumps([{
         "ticker": s.get("ticker", ""),
         "nome": s.get("nome", ""),
         "tipo": s.get("tipo", ""),
         "is_btp": _fs_is_btp_like(s),
-        "scadenza": str(s.get("scadenza", "") or ""),
-        "data_acquisto": str(s.get("data_acquisto", "") or ""),
-        "prima_cedola": str(s.get("prima_cedola", s.get("data_origine", "")) or ""),
+        "scadenza": _it_date_or_empty(s.get("scadenza")),
+        "data_acquisto": _it_date_or_empty(s.get("data_acquisto")),
+        "prima_cedola": _it_date_or_empty(s.get("prima_cedola") or s.get("data_origine")),
         "cedola_perc": float(s.get("cedola_perc", 0.0) or 0.0),
         "cedola_frequenza": str(s.get("cedola_frequenza", "annuale") or "annuale"),
         "aliquota_cedola": float(s.get("aliquota_cedola", 12.5) or 12.5),
@@ -820,7 +826,6 @@ def _render_strumenti_page(data: dict, ok_msg: str = "", err_msg: str = "", acti
         for s in strumenti
     )
 
-    from core.formatting import fmt_date_only_it
     from core.market_data import earliest_storico_date
 
     _tickers_for_count = {s.get("ticker", "") for s in strumenti}
@@ -843,21 +848,10 @@ def _render_strumenti_page(data: dict, ok_msg: str = "", err_msg: str = "", acti
     _suggested_since_iso = earliest_storico_date(data.get("storico_prezzi") or {}) or ""
     _suggested_since = fmt_date_only_it(_suggested_since_iso) if _suggested_since_iso else ""
 
-    _storico_overview_rows = sorted(
-        strumenti,
-        key=lambda s: first_date_by_ticker.get(s.get("ticker", ""), "9999-99-99"),
-    )
-    storico_overview_html = "".join(
-        f'<tr><td>{escape(s.get("ticker",""))}</td><td>{escape(str(s.get("nome",""))[:40])}</td>'
-        f'<td>{escape(fmt_date_only_it(first_date_by_ticker.get(s.get("ticker",""))) if s.get("ticker","") in first_date_by_ticker else "—")}</td>'
-        f'<td style="text-align:right">{date_count_by_ticker.get(s.get("ticker",""), 0)}</td></tr>'
-        for s in _storico_overview_rows
-    )
-
     if chiusi:
         rows = "".join(
             f'<tr><td>{escape(s.get("ticker",""))}</td><td>{escape(str(s.get("nome",""))[:45])}</td>'
-            f'<td>{escape(str(s.get("tipo","")))}</td><td>{escape(str(s.get("data_chiusura","") or ""))}</td>'
+            f'<td>{escape(str(s.get("tipo","")))}</td><td>{escape(fmt_date_only_it(s.get("data_chiusura")) if s.get("data_chiusura") else "—")}</td>'
             f'<td>{escape(str(s.get("motivo_chiusura","") or ""))}</td></tr>'
             for s in chiusi
         )
@@ -905,11 +899,11 @@ def _render_strumenti_page(data: dict, ok_msg: str = "", err_msg: str = "", acti
       <div id="btp_fields" class="btp-fields">
         <div class="hint" style="margin-bottom:10px">Dati BTP usati per timeline, cedole e scadenza.</div>
         <div class="row2">
-          <div><label class="lbl">Scadenza (YYYY-MM-DD)</label><input type="text" id="edit_scadenza" name="scadenza" placeholder="2026-08-01"></div>
-          <div><label class="lbl">Data acquisto (YYYY-MM-DD)</label><input type="text" id="edit_data_acquisto" name="data_acquisto" placeholder="2025-01-01"></div>
+          <div><label class="lbl">Scadenza (GG/MM/AAAA)</label><input type="text" id="edit_scadenza" name="scadenza" placeholder="01/08/2026"></div>
+          <div><label class="lbl">Data acquisto (GG/MM/AAAA)</label><input type="text" id="edit_data_acquisto" name="data_acquisto" placeholder="01/01/2025"></div>
         </div>
         <div class="row2">
-          <div><label class="lbl">Prima cedola (YYYY-MM-DD)</label><input type="text" id="edit_prima_cedola" name="prima_cedola" placeholder="2025-08-01"></div>
+          <div><label class="lbl">Prima cedola (GG/MM/AAAA)</label><input type="text" id="edit_prima_cedola" name="prima_cedola" placeholder="01/08/2025"></div>
           <div><label class="lbl">Cedola % annua</label><input type="number" id="edit_cedola_perc" name="cedola_perc" step="0.05" min="0" placeholder="0.00"></div>
         </div>
         <div class="row3">
@@ -947,14 +941,8 @@ def _render_strumenti_page(data: dict, ok_msg: str = "", err_msg: str = "", acti
     </div>"""
 
     tab_storico = no_str if not strumenti else f"""
-    <h2>Storico salvato per strumento</h2>
-    <table class="table-simple" style="margin-bottom:22px">
-      <thead><tr><th>Ticker</th><th>Nome</th><th>Prima data</th><th style="text-align:right">N. date</th></tr></thead>
-      <tbody>{storico_overview_html}</tbody>
-    </table>
-
     <h2>Recupera storico</h2>
-    <div class="hint" style="margin-bottom:14px">Per strumenti con storico prezzi troppo corto (es. aggiunti di recente): scarica da Yahoo Finance e integra senza sovrascrivere le date gia' salvate. La data di partenza e' proposta in base a cio' che il sistema ha gia' per gli altri strumenti (vedi tabella sopra) — modificala se vuoi un perimetro diverso, o svuotala per importare tutto cio' che Yahoo ha disponibile.</div>
+    <div class="hint" style="margin-bottom:14px">Per strumenti con storico prezzi troppo corto (es. aggiunti di recente): scarica da Yahoo Finance e integra senza sovrascrivere le date gia' salvate. La data di partenza e' proposta in base a cio' che il sistema ha gia' per gli altri strumenti — modificala se vuoi un perimetro diverso, o svuotala per importare tutto cio' che Yahoo ha disponibile.</div>
     <form method="POST" action="/strumenti" autocomplete="off">
       <input type="hidden" name="azione" value="recupera_storico">
       <label class="lbl">Strumento</label>
@@ -1201,6 +1189,7 @@ def _render_eventi_page(
 <script>
 const eventi={eventi_js};
 const fv=(v,d=2)=>v.toLocaleString('it-IT',{{minimumFractionDigits:d,maximumFractionDigits:d}});
+const fmtDateIt=iso=>{{if(!iso)return ''; const p=String(iso).slice(0,10).split('-'); return p.length===3?`${{p[2]}}/${{p[1]}}/${{p[0]}}`:iso;}};
 const TRADE=new Set(['ACQUISTO','VENDITA','RIMBORSO A SCADENZA']);
 const PROVENTO=new Set(['CEDOLA','DIVIDENDO']);
 
@@ -1213,7 +1202,7 @@ function loadEv(){{
   const sign=ev.importo_netto>=0?'+':'';
   document.getElementById('ev_preview').innerHTML=`
     <div class="prow">
-      <div><div class="plbl">Data</div><div class="pval">${{ev.data}}</div></div>
+      <div><div class="plbl">Data</div><div class="pval">${{fmtDateIt(ev.data)}}</div></div>
       <div><div class="plbl">Evento</div><div class="pval">${{ev.tipo}}</div></div>
       <div><div class="plbl">Ticker</div><div class="pval">${{ev.ticker||'—'}}</div></div>
       <div><div class="plbl">Netto</div><div class="pval">${{sign}}${{fv(ev.importo_netto,2)}} €</div></div>
@@ -1977,7 +1966,9 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
     nome   = strumento.get("nome", "")
     isin   = strumento.get("isin", "") or "—"
     tipo   = strumento.get("tipo", "")
-    enriched_at = (strumento.get("enriched_at") or "")[:10] or "mai"
+    from core.formatting import fmt_date_only_it
+    enriched_at_raw = (strumento.get("enriched_at") or "")[:10]
+    enriched_at = fmt_date_only_it(enriched_at_raw) if enriched_at_raw else "mai"
     enrichment_error = strumento.get("enrichment_error") or ""
     src    = strumento.get("enrichment_source") or {}
 
@@ -2150,6 +2141,11 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
             v = strumento.get(name)
             return str(v) if v is not None else ""
 
+        def _vd(name: str) -> str:
+            """Come _vs, ma formatta il valore come data italiana (GG/MM/AAAA)."""
+            v = _vs(name)
+            return fmt_date_only_it(v) if v else ""
+
         def _rend_cls(val: str) -> str:
             if not val:
                 return ""
@@ -2213,7 +2209,7 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
 
         # ── Posizione base (comune a tutti) ──────────────────────────────────
         prezzo_str = _vs("prezzo")
-        agg_str    = (_vs("aggiornato") or "")[:10]
+        agg_str    = _vd("aggiornato")
         pos_items  = []
         if prezzo_str:
             pos_items.append(f'<div class="di"><div class="lbl">Prezzo corrente</div><div class="val">{prezzo_str}</div></div>')
@@ -2224,7 +2220,7 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
         if _vs("nominale"):
             pos_items.append(f'<div class="di"><div class="lbl">Nominale</div><div class="val">{_vs("nominale")}</div></div>')
         if _vs("data_origine"):
-            pos_items.append(f'<div class="di"><div class="lbl">Data acquisto</div><div class="val">{_vs("data_origine")}</div></div>')
+            pos_items.append(f'<div class="di"><div class="lbl">Data acquisto</div><div class="val">{_vd("data_origine")}</div></div>')
         posizione_sec = _sec("Posizione in portafoglio", _dg(*pos_items)) if pos_items else ""
 
         if cat == "btp":
@@ -2232,7 +2228,7 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
                 f'<div class="hero hero-3">'
                 + _kpi(_vs("ytm_netto"), "YTM Netto")
                 + _kpi(_vs("duration_modificata"), "Duration")
-                + _kpi(_vs("scadenza"), "Scadenza")
+                + _kpi(_vd("scadenza"), "Scadenza")
                 + "</div>"
             )
             body = (
@@ -2243,12 +2239,12 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
                         _di("Duration Modificata", "duration_modificata"),
                         _di("Rating Emittente", "rating_emittente")))
                 + _sec("Cedola",
-                    _dg(_di("Scadenza", "scadenza"),
+                    _dg(_di("Scadenza", "scadenza", val_override=_vd("scadenza")),
                         _di("Cedola Annuale", "cedola_annuale"),
                         _di("Frequenza", "cedola_frequenza"),
                         _di("Tipo", "tipo_cedola"),
-                        _di("Prossima Cedola", "prossima_cedola"),
-                        _di("Data Godimento", "data_godimento")))
+                        _di("Prossima Cedola", "prossima_cedola", val_override=_vd("prossima_cedola")),
+                        _di("Data Godimento", "data_godimento", val_override=_vd("data_godimento"))))
                 + _sec("Ratei e Fiscalità",
                     _dg(_di("Rateo Lordo", "rateo_lordo"),
                         _di("Rateo Netto", "rateo_netto"),
@@ -2314,7 +2310,7 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
                         _di("Patrimonio (mln €)", "patrimonio"),
                         _di("Distribuzione", "distribuzione"),
                         _di("Fiscalità", "fiscalita"),
-                        _di("Data Lancio", "data_lancio"),
+                        _di("Data Lancio", "data_lancio", val_override=_vd("data_lancio")),
                         rating_item))
                 + (_sec("Top Holdings", holdings_html) if holdings_html else "")
                 + posizione_sec
@@ -2375,9 +2371,9 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
     if cat == "btp":
         fields_html = (
             _field_row("YTM Netto", "ytm_netto", "es. 2,27%") + _field_row("YTM Lordo", "ytm_lordo", "es. 2,89%") +
-            _field_row("Duration Modificata", "duration_modificata", "es. 0,09") + _field_row("Scadenza", "scadenza", "es. 2026-08-01") +
+            _field_row("Duration Modificata", "duration_modificata", "es. 0,09") + _field_row("Scadenza", "scadenza", "es. 01/08/2026") +
             _field_row("Cedola Annuale", "cedola_annuale", "es. 0,00%") + _field_row("Frequenza Cedola", "cedola_frequenza", "es. Semestrale") +
-            _field_row("Tipo Cedola", "tipo_cedola", "es. FISSO") + _field_row("Prossima Cedola", "prossima_cedola", "es. 2026-08-01") +
+            _field_row("Tipo Cedola", "tipo_cedola", "es. FISSO") + _field_row("Prossima Cedola", "prossima_cedola", "es. 01/08/2026") +
             _field_row("Rateo Lordo", "rateo_lordo") + _field_row("Rateo Netto", "rateo_netto") +
             _field_row("Rating Emittente", "rating_emittente", "es. BBB+") + _field_row("Data Emissione", "data_emissione") +
             _field_row("Prezzo Emissione", "prezzo_emissione") + _field_row("Prezzo Rimborso", "prezzo_rimborso") +
@@ -2393,7 +2389,7 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
             _field_row("Beta", "beta", "es. 1,05") + _field_row("Deviazione Standard", "deviazione_std", "es. 13,00%") +
             _field_row("Indice di Sharpe", "sharpe", "es. 2,00") + _field_row("VaR", "var", "es. 35,61") +
             _field_row("Distribuzione", "distribuzione", "es. Distribuzione") + _field_row("Fiscalità", "fiscalita", "es. Armonizzato") +
-            _field_row("Data Lancio", "data_lancio", "es. 2003-11-03")
+            _field_row("Data Lancio", "data_lancio", "es. 03/11/2003")
         )
     else:  # fam
         fields_html = (
@@ -2406,7 +2402,7 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
             _field_row("% Azionario", "composizione_az", "es. 60,50%") + _field_row("% Obbligazionario", "composizione_obbl", "es. 20,40%") +
             _field_row("% Liquidità", "composizione_liq", "es. 18,90%") +
             _field_row("Valuta NAV", "valuta", "es. EUR") + _field_row("Max 52 Settimane", "max_52w", "es. 145,26") +
-            _field_row("Min 52 Settimane", "min_52w", "es. 130,51") + _field_row("Data Lancio", "data_lancio", "es. 2018-11-27") +
+            _field_row("Min 52 Settimane", "min_52w", "es. 130,51") + _field_row("Data Lancio", "data_lancio", "es. 27/11/2018") +
             _field_row("Patrimonio", "patrimonio", "es. 422,73 Mln. EUR")
         )
 
@@ -2686,9 +2682,12 @@ def _build_fastapi_app():
             se["tipo"] = tipo
             se["ticker"] = ticker_new or ticker
             if _fs_is_btp_like(se):
-                se["scadenza"] = scadenza.strip()
-                se["data_acquisto"] = data_acquisto.strip()
-                se["prima_cedola"] = prima_cedola.strip()
+                try:
+                    se["scadenza"] = _fs_parse_flex_date(scadenza)
+                    se["data_acquisto"] = _fs_parse_flex_date(data_acquisto)
+                    se["prima_cedola"] = _fs_parse_flex_date(prima_cedola)
+                except ValueError as exc:
+                    return err_page(f"Data non valida: {exc}", "edit")
                 try:
                     se["cedola_perc"] = float(cedola_perc or 0)
                     se["cedola_frequenza"] = str(cedola_frequenza or "annuale")

@@ -742,7 +742,8 @@ svg.spark{width:100%;height:152px;display:block;border-radius:10px;background:#f
 var QD=__QUOTES_JSON__;
 function fi(v,d,sgn){if(v==null||isNaN(v))return'n/d';var n=parseFloat(v).toLocaleString('it-IT',{minimumFractionDigits:d,maximumFractionDigits:d});return (sgn&&v>0?'+':'')+n;}
 function fp(v,d,sgn){if(v==null||isNaN(v))return'n/d';var pct=parseFloat(v)*100;var n=Math.abs(pct).toLocaleString('it-IT',{minimumFractionDigits:d||2,maximumFractionDigits:d||2});return (sgn&&pct>0?'+':pct<0?'-':'')+n+'%';}
-function fmtTs(v){if(!v)return 'n/d';return String(v).replace('T',' ');}
+function fmtDateIt(v){if(!v)return 'n/d';var p=String(v).slice(0,10).split('-');return p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):String(v);}
+function fmtTs(v){if(!v)return 'n/d';var s=String(v).replace('T',' ');var d=s.slice(0,10),rest=s.slice(10);var p=d.split('-');return (p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):d)+rest;}
 function kpi(label,val,cls){return '<div class="mc-kpi"><div class="mc-kpi-l">'+label+'</div><div class="mc-kpi-v'+(cls?' '+cls:'')+'">'+val+'</div></div>';}
 function kpiWide(label,val,cls){return '<div class="mc-kpi span2"><div class="mc-kpi-l">'+label+'</div><div class="mc-kpi-v'+(cls?' '+cls:'')+'">'+val+'</div></div>';}
 function buildReadingsTable(readings){
@@ -753,7 +754,7 @@ function buildReadingsTable(readings){
     var label=r.status==='ok'?'OK':(r.status==='warning'?'Warning':(r.status==='missing'?'Solo storico':'Errore'));
     var range=(r.low!=null&&r.high!=null)?(fi(r.low,3,false)+' / '+fi(r.high,3,false)):'n/d';
     var tr=document.createElement('tr');
-    tr.innerHTML='<td>'+(r.day||'n/d')+'</td><td class="num">'+(r.open==null?'n/d':fi(r.open,3,false))+'</td><td class="num">'+(r.close==null?'n/d':fi(r.close,3,false))+'</td><td class="num">'+range+'</td><td class="num">'+String(r.count||0)+'</td><td class="'+cls+'">'+label+(r.fallback?' · fb':'')+'</td>';
+    tr.innerHTML='<td>'+fmtDateIt(r.day)+'</td><td class="num">'+(r.open==null?'n/d':fi(r.open,3,false))+'</td><td class="num">'+(r.close==null?'n/d':fi(r.close,3,false))+'</td><td class="num">'+range+'</td><td class="num">'+String(r.count||0)+'</td><td class="'+cls+'">'+label+(r.fallback?' · fb':'')+'</td>';
     body.appendChild(tr);
   });
 }
@@ -819,11 +820,11 @@ function showQuoteModal(tk){
     kpi('P/L %',fp(d.pl_p||0,2,true),(d.pl_p||0)>=0?'pos':'neg')+
     kpi('Storico',String(d.available_days||0)+' gg')+
     kpi('Log letture',String(d.log_days||0)+' / '+String(d.available_days||0))+
-    kpiWide('Fonte / AGG.',(d.fonte||'n/d')+' · '+(d.aggiornato||'n/d'))+
+    kpiWide('Fonte / AGG.',(d.fonte||'n/d')+' · '+fmtDateIt(d.aggiornato))+
     (d.source_url?kpiWide('Link fonte','<a href="'+d.source_url+'" target="_blank" rel="noopener" style="color:#2563EB;text-decoration:underline;word-break:break-all;font-size:0.82rem;">'+d.source_url+'</a>'):'');
   sparklineReadings(d.daily_readings||[], positive, pmc);
   buildReadingsTable(d.daily_readings||[]);
-  var foot='Grafico e tabella: ultimi 12 giorni disponibili dallo storico prezzi · giorni con log letture: '+String(d.log_days||0)+' / '+String(d.available_days||0); if(latestReading){foot+=' · ultima data '+(latestReading.day||fmtTs(latestReading.ts)); if(latestReading.warning){foot+=' · '+latestReading.warning;}}
+  var foot='Grafico e tabella: ultimi 12 giorni disponibili dallo storico prezzi · giorni con log letture: '+String(d.log_days||0)+' / '+String(d.available_days||0); if(latestReading){foot+=' · ultima data '+(latestReading.day?fmtDateIt(latestReading.day):fmtTs(latestReading.ts)); if(latestReading.warning){foot+=' · '+latestReading.warning;}}
   document.getElementById('qm-footer').textContent=foot;
   var enr=(d.enrichment||{}); var enrHtml='<div class="enr-box">';
   if(enr.enriched_at){

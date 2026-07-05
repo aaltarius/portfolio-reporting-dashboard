@@ -275,6 +275,7 @@ function fi(v,d,sgn){{
   return (sgn&&v>0?'+':'')+n;
 }}
 function fe(v,d,sgn){{return fi(v,d!=null?d:2,sgn)+' €';}}
+function fmtDateIt(v){{if(!v)return 'n/d';var p=String(v).slice(0,10).split('-');return p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):String(v);}}
 function fp(v,d,sgn){{
   if(v==null||isNaN(v))return'n/d';
   var pct=parseFloat(v)*100;
@@ -336,9 +337,9 @@ function showModal(tk){{
     kpi('P/L €',fe(d.pl_e,2,true),plCls)+
     kpi('P/L %',fp(d.pl_p,2,true),plCls)+
     kpi('Commissioni',fe(d.comm,2,false))+
-    kpi('Fonte / Agg.',d.fonte+' · '+d.aggiornato);
+    kpi('Fonte / Agg.',d.fonte+' · '+fmtDateIt(d.aggiornato));
   sparkline(d.spark,d.pl_e>=0,d.pmc);
-  document.getElementById('m-footer').textContent='Quotazione aggiornata al '+d.aggiornato+' · Fonte: '+d.fonte;
+  document.getElementById('m-footer').textContent='Quotazione aggiornata al '+fmtDateIt(d.aggiornato)+' · Fonte: '+d.fonte;
   document.getElementById('mo').classList.add('on');
 }}
 function closeM(){{document.getElementById('mo').classList.remove('on');}}
@@ -692,7 +693,8 @@ var QD=__QUOTES_JSON__;
 function fi(v,d,sgn){if(v==null||isNaN(v))return'n/d';var n=parseFloat(v).toLocaleString('it-IT',{minimumFractionDigits:d,maximumFractionDigits:d});return (sgn&&v>0?'+':'')+n;}
 function fe(v,d,sgn){return fi(v,d!=null?d:2,sgn)+' €';}
 function fp(v,d,sgn){if(v==null||isNaN(v))return'n/d';var pct=parseFloat(v)*100;var n=Math.abs(pct).toLocaleString('it-IT',{minimumFractionDigits:d!=null?d:2,maximumFractionDigits:d!=null?d:2});return (sgn&&pct>0?'+':pct<0?'-':'')+n+'%';}
-function fmtTs(v){if(!v)return 'n/d';return String(v).replace('T',' ');}
+function fmtDateIt(v){if(!v)return 'n/d';var p=String(v).slice(0,10).split('-');return p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):String(v);}
+function fmtTs(v){if(!v)return 'n/d';var s=String(v).replace('T',' ');var d=s.slice(0,10),rest=s.slice(10);var p=d.split('-');return (p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):d)+rest;}
 function kpi(label,val,cls){return '<div class="mc-kpi"><div class="mc-kpi-l">'+label+'</div><div class="mc-kpi-v'+(cls?' '+cls:'')+'">'+val+'</div></div>';}
 function buildReadingsTable(readings){
   var body=document.getElementById('qm-readings');
@@ -803,7 +805,7 @@ function showQuoteModal(tk){
     kpi('P/L €',fe(d.pl_e||0,2,true),(d.pl_e||0)>=0?'pos':'neg')+
     kpi('P/L %',fp(d.pl_p||0,2,true),(d.pl_p||0)>=0?'pos':'neg')+
     kpi('Letture log',String((d.readings||[]).length))+
-    kpi('Fonte / Agg.',(d.fonte||'n/d')+' · '+(d.aggiornato||'n/d'));
+    kpi('Fonte / Agg.',(d.fonte||'n/d')+' · '+fmtDateIt(d.aggiornato));
   sparklineReadings(d.readings||[], positive, pmc);
   buildReadingsTable(d.readings||[]);
   var foot='Ultime letture mostrate: '+String((d.readings||[]).length)+' · ';

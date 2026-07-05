@@ -216,9 +216,9 @@ def render_summary(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             if report_period == "Personalizzato":
                 colp1, colp2 = st.columns(2, gap="medium")
                 with colp1:
-                    custom_start = st.date_input("Dal", value=date(date.today().year, 1, 1), key="report_custom_start")
+                    custom_start = st.date_input("Dal", value=date(date.today().year, 1, 1), format="DD/MM/YYYY", key="report_custom_start")
                 with colp2:
-                    custom_end = st.date_input("Al", value=date.today(), key="report_custom_end")
+                    custom_end = st.date_input("Al", value=date.today(), format="DD/MM/YYYY", key="report_custom_end")
             else:
                 custom_start = None
                 custom_end = None

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import streamlit as st
 
 from core.ai_analysis import AI_CALL_COUNT_KEY, call_gemini_diff, delete_ai_report, load_ai_reports
+from core.formatting import fmt_dt_it
 from ui.components import legend_block, render_section_title, vertical_gap
 
 
@@ -31,7 +32,7 @@ def render_ai_reports(ctx: SimpleNamespace, *, api_key: str, model: str) -> None
         n = len(report.get("payload", {}).get("instruments", []))
         cv = report.get("payload", {}).get("totale_controvalore_eur", 0)
 
-        with st.expander(f"📄 {saved_at} · {mdl} · {n} strumenti · € {cv:,.0f}", expanded=False):
+        with st.expander(f"📄 {fmt_dt_it(saved_at)} · {mdl} · {n} strumenti · € {cv:,.0f}", expanded=False):
             st.markdown(report.get("analysis_text", "_Testo non disponibile._"))
 
             sd = report.get("structured_data", {})
@@ -66,9 +67,9 @@ def render_ai_reports(ctx: SimpleNamespace, *, api_key: str, model: str) -> None
 
     col_a, col_b = st.columns(2)
     with col_a:
-        sel_a = st.selectbox("Report A (più vecchio)", options=option_keys, index=len(option_keys) - 1, key="_ai_diff_a")
+        sel_a = st.selectbox("Report A (più vecchio)", options=option_keys, index=len(option_keys) - 1, format_func=fmt_dt_it, key="_ai_diff_a")
     with col_b:
-        sel_b = st.selectbox("Report B (più recente)", options=option_keys, index=0, key="_ai_diff_b")
+        sel_b = st.selectbox("Report B (più recente)", options=option_keys, index=0, format_func=fmt_dt_it, key="_ai_diff_b")
 
     if st.button("Confronta con AI", type="primary", key="_ai_diff_btn", width="stretch"):
         if sel_a == sel_b:

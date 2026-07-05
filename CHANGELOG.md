@@ -1,5 +1,22 @@
 # Changelog
 
+## 4.9.24 - Recupero storico prezzi spostato in Strumenti (sidebar)
+
+**Nuovo tab "Storico" nella pagina standalone `/strumenti`:**
+- il recupero manuale dello storico prezzi (Yahoo Finance, merge non distruttivo) si faceva prima in Gestione Dati (Streamlit), dove il rerun completo dopo ogni azione lo rendeva percepito come bloccante per l'intera app; ora vive in `/strumenti`, un form POST classico che aggiorna solo se stesso
+- tendina di selezione strumento con conteggio date già salvate e prima data disponibile in coda al nome (es. `TICKER — Nome (12 date, dal 03/01/2024)`) — nessuna tabella riepilogativa separata, la data compare semplicemente scegliendo lo strumento
+- "Data di partenza" precompilata con la prima data che il sistema ha già per altri strumenti (`earliest_storico_date`), modificabile o azzerabile per importare tutto ciò che Yahoo ha disponibile
+- nuova sezione "Elimina storico salvato": rimozione per strumento, per intero o solo in un intervallo di date, senza toccare gli altri strumenti sulle stesse date
+- date in formato italiano GG/MM/AAAA ovunque nel tab (proposta, campi di eliminazione, messaggi di conferma), con parsing flessibile in ingresso (accetta anche YYYY-MM-DD)
+
+**Fix:**
+- `_fs_delete_instrument`, `_fs_delete_event`, `_fs_update_event` andavano in `NameError` su `save_data` da `/strumenti` e `/operazioni_gestione` standalone (import mancante nello scope della funzione): i dati venivano modificati in memoria ma mai salvati su disco
+- i grafici di Quotazioni restavano quelli vecchi dopo un recupero storico, anche dopo aver riavviato l'applicativo. Due bug distinti, stessa causa di fondo:
+  1. `core/cache_signatures.py` decideva se una firma dati era cambiata guardando solo `len(storico_prezzi)` e `max(storico_prezzi.keys())` (conteggio/data più recente su tutte le date, non per strumento). Un backfill che riempie date più vecchie **già presenti come chiave** (perché altri strumenti hanno già un prezzo su quel giorno) non tocca né l'uno né l'altro, quindi la firma restava identica e `core/figure_cache.py` continuava a servire la figura vecchia da disco.
+  2. anche correggendo la firma, il grafico veniva "ricostruito" ma a partire dagli STESSI dati vecchi: `core/state.py` (`StateManager._derived_data_token` e `_build_hist_df_token_for`, usati da `get_hist_df_for`/`get_expanded_price_frame_for`/`get_portfolio_state_for`) ha una cache separata dei DataFrame storici, **persistita su disco** in `data/cache/derived_runtime/*.pkl` — sopravvive al riavvio dell'app — con lo stesso identico bug (solo `len(storico)`/`max(storico.keys())`). Era questa la cache che spiegava perché il problema persisteva anche dopo un riavvio completo.
+
+  Entrambe ora includono `history_span_by_ticker`/`history_span` (quante date storiche include ciascun ticker e la più vecchia — funzione condivisa `core.cache_signatures.history_span_by_ticker`, riusata da `core/state.py`): catturano il backfill restando comunque stabili durante un refresh quotazioni intraday, che aggiorna solo il valore del prezzo odierno, non le chiavi. Il cambio di formato del token invalida automaticamente, una tantum, tutte le cache (figure e pickle) scritte dal codice precedente: non serve alcuna pulizia manuale, basta un riavvio con il fix applicato. Copertura di regressione in `tests/test_backfill_signature_invalidation.py` (firme + token StateManager) e `tests/test_state_hist_df_token.py`
+
 ## 4.9.23 - Parser PDF universale: label-proximity scanner
 
 **Parser PDF completamente riscritto (`core/instrument_enrichment.py`):**

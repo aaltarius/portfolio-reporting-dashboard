@@ -20,6 +20,7 @@ from core.finance import (
 )
 from core.market_data import get_price, prime_isin_ticker_cache
 from core.price_frames import build_expanded_price_frame
+from core.cache_signatures import history_span_by_ticker
 
 logger = logging.getLogger("portafoglio.core.state")
 _DERIVED_CACHE_DIR = os.path.join(DATA_DIR, "cache", "derived_runtime")
@@ -124,7 +125,27 @@ class StateManager:
         else:
             logger.info("Pre-warming completato in %.3f secondi", elapsed)
 
-    def _derived_data_token(self, data: dict[str, Any]) -> tuple[str, str, int, str, int, int]:
+    @staticmethod
+    def _history_span_token(storico: dict[str, Any], strumenti: list[Any]) -> tuple:
+        """
+        Parte di token che cattura il perimetro storico per-ticker.
+
+        len(storico)/latest_history_date da soli non rilevano un backfill che
+        riempie date piu' vecchie GIA' presenti come chiave (es. altri strumenti
+        hanno gia' un prezzo su quel giorno): la chiave non e' nuova, quindi quei
+        due numeri restano identici anche se un ticker ha ora piu' storico. Vedi
+        core.cache_signatures.history_span_by_ticker per lo stesso fix lato
+        firme dei grafici.
+        """
+        tickers = sorted({
+            str(s.get("ticker", "")).strip()
+            for s in strumenti
+            if isinstance(s, dict) and str(s.get("ticker", "")).strip()
+        })
+        span = history_span_by_ticker(storico, tickers)
+        return tuple(sorted((tk, v["n_dates"], v["earliest"]) for tk, v in span.items()))
+
+    def _derived_data_token(self, data: dict[str, Any]) -> tuple:
         payload = data if isinstance(data, dict) else {}
         storico = payload.get("storico_prezzi", {}) if isinstance(payload.get("storico_prezzi", {}), dict) else {}
         strumenti = payload.get("strumenti", []) if isinstance(payload.get("strumenti", []), list) else []
@@ -139,6 +160,7 @@ class StateManager:
             latest_history_date,
             len(strumenti),
             len(operazioni),
+            self._history_span_token(storico, strumenti),
         )
 
     def _derived_cache_path(self, cache_name: str) -> str:
@@ -208,7 +230,14 @@ class StateManager:
             strumenti = []
         last_quotes_update = str(payload.get("last_quotes_update") or "")
         latest_history_date = max(storico.keys()) if storico else ""
-        return ("hist_df_v3", last_quotes_update, len(storico), latest_history_date, len(strumenti))
+        return (
+            "hist_df_v3",
+            last_quotes_update,
+            len(storico),
+            latest_history_date,
+            len(strumenti),
+            self._history_span_token(storico, strumenti),
+        )
 
     def invalidate(self, keys: list[str]) -> None:
         """

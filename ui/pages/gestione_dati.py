@@ -54,7 +54,7 @@ from persistence.storage import (
     save_snapshots,
 )
 from ui.components import back_to_top, kpi_card, legend_block, render_styled_table, vertical_gap, render_section_title
-from ui.formatting import fmt_dt_it, fmt_num_it
+from ui.formatting import fmt_dt_it, fmt_date_only_it, fmt_num_it
 from ui.page_chrome import render_page_intro as render_page_intro_shared, render_section_line as render_section_line_shared
 from ui.theme import get_theme_context
 from ui.notifications import queue_info, queue_success, update_status
@@ -568,7 +568,7 @@ def _render_arricchimento(data: dict, ctx) -> None:
             "Nome":       s.get("nome", ""),
             "Tipo":       s.get("tipo", ""),
             "Stato":      _stato(s),
-            "Aggiornato": (s.get("enriched_at") or "")[:10] or "—",
+            "Aggiornato": fmt_date_only_it((s.get("enriched_at") or "")[:10]) if s.get("enriched_at") else "—",
             "%":          _completezza(s),
         }
         for s in strumenti
@@ -1020,9 +1020,9 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             vertical_gap("sm")
 
             a1, a2, a3 = st.columns(3, gap="small")
-            a1.caption(f"Ultima ottimizzazione: {cache_actions.get('optimized', 'mai')}")
-            a2.caption(f"Ultimo svuotamento: {cache_actions.get('cleared', 'mai')}")
-            a3.caption(f"Ultimo pre-warming: {cache_actions.get('prewarm_started', 'mai')}")
+            a1.caption(f"Ultima ottimizzazione: {fmt_dt_it(cache_actions.get('optimized')) if cache_actions.get('optimized') else 'mai'}")
+            a2.caption(f"Ultimo svuotamento: {fmt_dt_it(cache_actions.get('cleared')) if cache_actions.get('cleared') else 'mai'}")
+            a3.caption(f"Ultimo pre-warming: {fmt_dt_it(cache_actions.get('prewarm_started')) if cache_actions.get('prewarm_started') else 'mai'}")
 
             col_maint, col_clear, col_prewarm = st.columns(3, gap="small")
             with col_maint:

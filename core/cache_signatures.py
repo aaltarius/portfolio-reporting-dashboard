@@ -153,6 +153,33 @@ def _normalized_operation_signature_payload(operazioni: list[dict[str, Any]]) ->
     )
 
 
+def history_span_by_ticker(storico: dict[str, Any], tickers: list[str]) -> dict[str, dict[str, Any]]:
+    """
+    Per ogni ticker: quante date storiche lo includono e la piu' vecchia.
+
+    n_history_dates/latest_history_date globali non bastano a rilevare un
+    backfill (core.market_data.backfill_storico_prezzi) che riempie date piu'
+    vecchie GIA' presenti come chiave nello storico (es. altri strumenti hanno
+    gia' un prezzo su quel giorno): la chiave non e' nuova, quindi il conteggio
+    e la data piu' recente restano identici anche se il ticker backfillato ha
+    ora un perimetro storico piu' ampio. Guardare la presenza per-ticker cattura
+    questo caso restando comunque stabile durante un refresh quotazioni
+    intraday, che aggiorna solo il *valore* del prezzo odierno, non le chiavi.
+    """
+    ticker_set = {t for t in tickers if t}
+    dates_by_ticker: dict[str, list[str]] = {t: [] for t in ticker_set}
+    for day, prices in storico.items():
+        if not isinstance(prices, dict):
+            continue
+        for tk in prices:
+            if tk in ticker_set:
+                dates_by_ticker[tk].append(day)
+    return {
+        tk: {"n_dates": len(dates), "earliest": min(dates) if dates else ""}
+        for tk, dates in dates_by_ticker.items()
+    }
+
+
 def _base_market_signature_payload(
     data: dict[str, Any] | None,
     *,
@@ -172,12 +199,18 @@ def _base_market_signature_payload(
     registro_eventi = payload.get("registro_eventi", []) if isinstance(payload.get("registro_eventi", []), list) else []
     registro_liquidita = payload.get("registro_liquidita", []) if isinstance(payload.get("registro_liquidita", []), list) else []
 
+    all_tickers = sorted({
+        str(s.get("ticker", "")).strip()
+        for s in strumenti
+        if isinstance(s, dict) and str(s.get("ticker", "")).strip()
+    })
     signature_payload: dict[str, Any] = {
         "instruments": _normalized_instrument_signature_payload(strumenti),
         "n_history_dates": len(storico),
         "latest_history_date": latest_history_date,
         "n_eventi": len(registro_eventi),
         "n_liquidita": len(registro_liquidita),
+        "history_span_by_ticker": history_span_by_ticker(storico, all_tickers),
     }
     if include_benchmark_data:
         benchmark_data = payload.get("benchmark_data", {}) if isinstance(payload.get("benchmark_data", {}), dict) else {}
@@ -272,11 +305,17 @@ def build_category_data_signature(
         or ""
     )
 
+    cat_tickers = sorted({
+        str(s.get("ticker", "")).strip()
+        for s in cat_strumenti
+        if isinstance(s, dict) and str(s.get("ticker", "")).strip()
+    })
     signature_payload: dict[str, Any] = {
         "category": category,
         "instruments": _normalized_instrument_signature_payload(cat_strumenti),
         "n_history_dates": len(storico),
         "latest_history_date": latest_history_date,
+        "history_span_by_ticker": history_span_by_ticker(storico, cat_tickers),
     }
     cat_hash = _safe_hash(signature_payload)
     return data_signature(
@@ -330,6 +369,7 @@ def build_ticker_data_signature(
         "instrument": _normalized_instrument_signature_payload(ticker_strumenti),
         "n_history_dates": len(storico),
         "latest_history_date": latest_history_date,
+        "history_span": history_span_by_ticker(storico, [ticker_str]).get(ticker_str, {"n_dates": 0, "earliest": ""}),
     }
     ticker_hash = _safe_hash(signature_payload)
     return data_signature(
@@ -389,10 +429,12 @@ def build_historical_data_signature(
         or ""
     )
 
+    hist_tickers = sorted({row["ticker"] for row in instruments_structural if row["ticker"]})
     signature_payload: dict[str, Any] = {
         "instruments_structural": instruments_structural,
         "n_history_dates": len(storico),
         "latest_history_date": latest_history_date,
+        "history_span_by_ticker": history_span_by_ticker(storico, hist_tickers),
     }
     if include_operations:
         operazioni = payload.get("operazioni", [])
