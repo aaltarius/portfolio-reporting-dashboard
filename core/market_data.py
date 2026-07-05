@@ -688,7 +688,7 @@ def find_ticker_candidates(isin: str, ticker_hint: str = "") -> list[TickerCandi
                 candidates.append(TickerCandidate(
                     ticker=ticker_hint,
                     borsa=ticker_hint.split(".")[-1] if "." in ticker_hint else "",
-                    nome="", quote_type="",
+                    nome=find_name(isin) or "", quote_type="",
                     prezzo=hint_price, fonte=f"Yahoo [{ticker_hint}]", proposto=True,
                 ))
 
@@ -708,7 +708,7 @@ def find_ticker_candidates(isin: str, ticker_hint: str = "") -> list[TickerCandi
             if mi_price is not None:
                 candidates = [replace(c, proposto=False) for c in candidates]
                 candidates.append(TickerCandidate(
-                    ticker=mi_ticker, borsa="MIL", nome="", quote_type="",
+                    ticker=mi_ticker, borsa="MIL", nome=find_name(isin) or "", quote_type="",
                     prezzo=mi_price, fonte=f"Yahoo [{mi_ticker}]", proposto=True,
                 ))
                 break
