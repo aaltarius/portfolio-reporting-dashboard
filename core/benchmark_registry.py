@@ -52,7 +52,7 @@ BENCHMARK_BY_TICKER: dict[str, BenchmarkAssignment] = {
     "GOLD.MI": BenchmarkAssignment("GLD", "Gold proxy", "ticker diretto", "Alta", "ETC oro fisico: proxy oro spot/liquido."),
     "XGDU.MI": BenchmarkAssignment("GDX", "Gold Miners", "ticker diretto", "Media", "ETF/ETC minerari auriferi: proxy azionario minerario, non oro fisico."),
     "XEON.MI": BenchmarkAssignment("SHV", "Short Duration Treasury", "ticker diretto", "Media"),
-    "FAMAMW.MI": BenchmarkAssignment("IWDA.AS", "MSCI World", "ticker diretto", "Media"),
+    "FAMAMW.MI": BenchmarkAssignment("PICK", "Metals & Mining", "ticker diretto", "Media", "Segue MSCI World Metals and Mining (dato arricchito), non l'azionario globale generico."),
 }
 
 BENCHMARK_BY_ISIN: dict[str, BenchmarkAssignment] = {

@@ -555,7 +555,15 @@ def enrich_strumento(strumento: dict) -> dict:
     if cat == "btp":
         return enrich_btp(strumento)
     if cat in ("etf", "etc"):
-        return enrich_etf_etc(strumento)
+        strumento = enrich_etf_etc(strumento)
+        focus = strumento.get("focus_etf", "")
+        if focus and not strumento.get("enrichment_error"):
+            from core.market_data import deduce_type
+            strumento["tipo"] = deduce_type(
+                str(strumento.get("isin", "")), str(strumento.get("ticker", "")),
+                str(strumento.get("nome", "")), focus_etf=focus,
+            ) or strumento.get("tipo", "")
+        return strumento
     if cat == "fondo":
         return enrich_fondo(strumento)
     return strumento
