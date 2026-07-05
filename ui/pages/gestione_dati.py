@@ -624,6 +624,58 @@ def _render_arricchimento(data: dict, ctx) -> None:
                     st.error(f"Errore: {exc}")
 
 
+def _render_storico_backfill(data: dict, ctx) -> None:
+    """Recupero manuale dello storico prezzi completo per un singolo strumento.
+
+    L'aggiornamento quotidiano scrive solo il presente in avanti: uno strumento
+    aggiunto di recente puo' avere pochi giorni di storico anche se Yahoo ne ha
+    di piu'. Qui si scarica lo storico completo disponibile e si integra in
+    storico_prezzi SENZA sovrascrivere le date gia' presenti (vedi
+    core.market_data.backfill_storico_prezzi): i dati costruiti giorno per
+    giorno restano la fonte di verita', il recupero riempie solo i vuoti.
+    """
+    from persistence.storage import load_data, save_data
+    from core.market_data import get_yahoo_price_history_full, backfill_storico_prezzi
+
+    raw_data = load_data()
+    strumenti = [s for s in (raw_data.get("strumenti") or []) if str(s.get("stato", "aperto")) == "aperto"]
+    ticker_options = [s.get("ticker", "") for s in strumenti if s.get("ticker")]
+
+    storico = raw_data.get("storico_prezzi", {}) or {}
+    date_count_by_ticker: dict[str, int] = dict.fromkeys(ticker_options, 0)
+    for day in storico.values():
+        for tk in day:
+            if tk in date_count_by_ticker:
+                date_count_by_ticker[tk] += 1
+
+    col_sel, col_btn, _ = st.columns([3, 1, 4])
+    with col_sel:
+        sel = st.selectbox(
+            "Strumento",
+            [""] + ticker_options,
+            key="backfill_storico_sel",
+            label_visibility="collapsed",
+            format_func=lambda tk: f"{tk} ({date_count_by_ticker.get(tk, 0)} date salvate)" if tk else "Scegli uno strumento…",
+        )
+    with col_btn:
+        do_backfill = st.button("Recupera storico", key="backfill_storico_btn", disabled=not sel, width="stretch")
+
+    if sel and do_backfill:
+        with st.spinner(f"Recupero storico completo per {sel} da Yahoo Finance…"):
+            history = get_yahoo_price_history_full(sel)
+        if not history:
+            st.warning(f"Nessuno storico disponibile su Yahoo per {sel}.")
+        else:
+            storico_live = raw_data.setdefault("storico_prezzi", {})
+            added = backfill_storico_prezzi(storico_live, sel, history)
+            save_data(raw_data)
+            if added:
+                st.success(f"{sel}: aggiunte {added} date mancanti (su {len(history)} disponibili). Le date già presenti non sono state toccate.")
+            else:
+                st.info(f"{sel}: nessuna data mancante, lo storico locale copre già tutto quello che Yahoo restituisce.")
+            st.rerun()
+
+
 def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
     theme = get_theme_context()
     data = ctx.data
@@ -920,6 +972,18 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             icon="data",
         )
         _render_arricchimento(data, ctx)
+        vertical_gap("sm")
+
+        # ─────────────────────────────────────────────
+        # 3bis. Recupero storico prezzi
+        # ─────────────────────────────────────────────
+        _section_line()
+        render_section_title(
+            "Recupero storico prezzi",
+            comment="Per strumenti con storico troppo corto (es. aggiunti di recente): scarica lo storico completo da Yahoo Finance e lo integra senza sovrascrivere le date già salvate.",
+            icon="data",
+        )
+        _render_storico_backfill(data, ctx)
         vertical_gap("sm")
 
         # ─────────────────────────────────────────────

@@ -161,6 +161,45 @@ def get_yahoo_price_details(tk: str) -> tuple[float | None, str | None, dict[str
 
     return None, None, recent_history
 
+
+def get_yahoo_price_history_full(tk: str, period: str = "max") -> dict[str, float]:
+    """Scarica lo storico prezzi completo (o per il periodo indicato) per un ticker.
+
+    A differenza di get_yahoo_price_details (limitato a 7 giorni, pensato per il
+    refresh quotidiano), questa funzione recupera fino a tutto lo storico
+    disponibile su Yahoo. Serve al recupero manuale one-shot per uno strumento
+    con storico troppo corto per un giudizio SATOR affidabile.
+    """
+    history: dict[str, float] = {}
+    try:
+        h = yf.Ticker(tk).history(period=period, auto_adjust=True, actions=False)
+        if not h.empty and "Close" in h.columns:
+            for idx in h.index:
+                c = h.loc[idx, "Close"]
+                d = _to_price_date(idx)
+                if d and c == c:  # c == c esclude NaN
+                    history[d] = float(c)
+    except Exception as exc:
+        _log_fallback_debug("yahoo_history_full", tk, exc)
+    return history
+
+
+def backfill_storico_prezzi(storico: dict[str, dict[str, float]], ticker: str, history: dict[str, float]) -> int:
+    """Aggiunge allo storico solo le date mancanti per il ticker indicato.
+
+    Non sovrascrive mai un prezzo gia' presente: lo storico costruito giorno per
+    giorno dall'app resta la fonte di verita', il backfill riempie solo i vuoti
+    (tipicamente le date piu' vecchie della prima gia' salvata). Ritorna il
+    numero di date aggiunte.
+    """
+    added = 0
+    for date_str, price in history.items():
+        day = storico.setdefault(date_str, {})
+        if ticker not in day:
+            day[ticker] = price
+            added += 1
+    return added
+
     # --- CODICE PRECEDENTE (commentato il 2026-06-23, da eliminare dopo verifica) ---
     # def get_yahoo_price_details(tk: str) -> tuple[float | None, str | None]:
     #     """Restituisce prezzo Yahoo e data effettiva del dato, quando disponibile."""
