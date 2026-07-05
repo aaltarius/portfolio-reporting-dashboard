@@ -18,6 +18,27 @@
 
 **Aggiungere un nuovo campo = una riga nel dizionario `_PDF_LABELS`.**
 
+**Fix minori parser/enrichment:**
+- `_scan_distribuzione` riconosce `(-)` come Accumulazione
+- `morningstar` rileva qualsiasi codepoint PUA per le stelle rating; rimosso il rating dal core ETC
+- `_rend_cls` non va più in crash su numeri italiani con separatore delle migliaia (es. `9.284,27`)
+
+**Tabella arricchimento:**
+- nuova colonna completezza % per strumento, altezza dinamica della tabella
+
+**SATOR — gestione decisioni salvate:**
+- helper `remove_sator_decision` e pulsante elimina per le fotografie decisionali salvate in `/sator`
+- legenda colonne (riquadro + tooltip) nella tabella SATOR standalone
+
+**Obiettivo di portafoglio unificato (Core/Difensivo/Satellite):**
+- nuova sezione "Obiettivo di portafoglio" in Pianificazione: tre percentuali Core/Difensivo/Satellite (con preset rapidi che mostrano i numeri reali, non solo un nome), cap di concentrazione per asset class e pesi delle 5 dimensioni SATOR tutti editabili e trasparenti, con box informativo sulla matematica interna che resta fissa
+- sostituisce ovunque il vecchio profilo GOV/ETF/FND (`target_profile_default`, con bug di naming come il fallback "Bilanciato" inesistente): "Liquidità da investire", il tetto satellite in Pianificazione, il grafico "Allineamento rispetto ad obiettivo" in Cruscotti e il radar Home/Cruscotti ora leggono tutti lo stesso obiettivo
+- radar Home/Cruscotti derivato dall'obiettivo invece che da 4 preset nascosti (`RADAR_PROFILE_PRESETS`): assi quantitativi dai cap di concentrazione per natura, assi qualitativi per interpolazione sulla quota Satellite
+- tabella SATOR standalone: colonna "Perché" sostituita da un badge Ruolo (Core/Difensivo/Satellite) per riga, e badge di avviso quando lo storico prezzi è troppo corto (<30gg) per un giudizio affidabile
+- finestra rischio/rendimento SATOR estesa da 6 a 12 mesi per ridurre il rumore statistico
+- migrazione automatica e non distruttiva: chi aveva un vecchio profilo salvato lo ritrova tradotto in Core/Difensivo/Satellite alla prima apertura
+- rimossi (verificata l'assenza di chiamanti residui): `get_default_target_profile`, `build_target_gap_by_instrument`, `build_rebalancing_suggestions`, i campi settings `target_profile_default`/`rebalancing_target`, `RADAR_PROFILE_PRESETS`
+
 ---
 
 ## 4.9.22 - Sidebar avanzata: PP Export, SATOR, modalità accesso operativo
