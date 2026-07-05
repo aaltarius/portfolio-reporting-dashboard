@@ -61,6 +61,8 @@ robocopy "%SRC%" "%DEST%" /E /NFL /NDL /NJH /NJS /nc /ns /np ^
       "%SRC%\data\config\benchmark_last_refresh.json" ^
       "%SRC%\HANDOFF_LUNEDI.md" ^
       "%SRC%\portfolio_dashboard_brief_per_altra_ai_v2.md" ^
+      "%SRC%\test_enrichment_results.json" ^
+      "%SRC%\test_enrichment_report.html" ^
       "*.pyc" "*.pyo" "*.pyd" >nul
 
 :: robocopy restituisce codici 0-7 per successo
@@ -85,6 +87,7 @@ set WARN=0
 if exist "%DEST%\data\config\ai_config.json"             set WARN=1 & echo  [!] ATTENZIONE: ai_config.json presente (API key!)
 if exist "%DEST%\data\portfolio\portafoglio_data.json"   set WARN=1 & echo  [!] ATTENZIONE: portafoglio_data.json presente
 if exist "%DEST%\data\prices\portafoglio_storico_prezzi.json" set WARN=1 & echo  [!] ATTENZIONE: storico prezzi presente
+if exist "%DEST%\test_enrichment_results.json"           set WARN=1 & echo  [!] ATTENZIONE: test_enrichment_results.json presente (ISIN reali)
 
 echo.
 if "!WARN!" == "1" (
