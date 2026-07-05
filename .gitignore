@@ -47,6 +47,8 @@ data/logs/
 data/ai_reports/
 data/cache/
 backups/
+test_enrichment_results.json
+test_enrichment_report.html
 
 # Configurazione (tutta, incluse impostazioni personali)
 data/config/
