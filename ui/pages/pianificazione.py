@@ -285,12 +285,53 @@ def _render_portfolio_objective_section(ctx: SimpleNamespace, theme) -> None:
 
     state_df = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
     current_mix = compute_current_bucket_mix(data, state_df)
-    mix_df = pd.DataFrame({
-        "Bucket": ["Core", "Difensivo", "Satellite"],
-        "Obiettivo": [objective["core"] * 100, objective["difensivo"] * 100, objective["satellite"] * 100],
-        "Attuale": [current_mix.get("Core", 0.0) * 100, current_mix.get("Difensivo", 0.0) * 100, current_mix.get("Satellite", 0.0) * 100],
-    })
-    st.bar_chart(mix_df.set_index("Bucket"), stack=False, y_label="%")
+    _render_objective_mix_chart(objective, current_mix, theme)
+
+
+def _render_objective_mix_chart(objective: dict, current_mix: dict, theme) -> None:
+    """Obiettivo vs mix attuale, stesso stile (colori, tema, etichette) degli altri
+    grafici Core/Difensivo/Satellite della pagina (vedi _render_ante_post_bucket_chart)."""
+    buckets = ("Core", "Difensivo", "Satellite")
+    obiettivo_pct = {
+        "Core": objective.get("core", 0.0) * 100.0,
+        "Difensivo": objective.get("difensivo", 0.0) * 100.0,
+        "Satellite": objective.get("satellite", 0.0) * 100.0,
+    }
+    attuale_pct = {b: float(current_mix.get(b, 0.0)) * 100.0 for b in buckets}
+    try:
+        import plotly.graph_objects as go
+        colors = {
+            "Core": getattr(theme, "color_blue", "#5B8DEF"),
+            "Difensivo": getattr(theme, "color_green", "#22c55e"),
+            "Satellite": getattr(theme, "color_orange", "#E8B960"),
+        }
+        fig = go.Figure()
+        for bucket in buckets:
+            ob = obiettivo_pct[bucket]
+            att = attuale_pct[bucket]
+            fig.add_trace(go.Bar(
+                name=bucket,
+                x=["Obiettivo", "Attuale"],
+                y=[ob, att],
+                marker_color=colors.get(bucket),
+                text=[f"{ob:.0f}%" if ob >= 4 else "", f"{att:.0f}%" if att >= 4 else ""],
+                textposition="inside",
+                hovertemplate=f"{bucket}: %{{y:.1f}}%<extra></extra>",
+            ))
+        fig.update_layout(
+            barmode="stack",
+            height=220,
+            margin=dict(t=8, b=25, l=10, r=150),
+            yaxis=dict(range=[0, 100], ticksuffix="%", title=None),
+            xaxis=dict(title=None),
+            legend=dict(orientation="v", yanchor="middle", y=0.5, x=1.02, xanchor="left"),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+    except Exception:
+        mix_df = pd.DataFrame({"Bucket": list(buckets), "Obiettivo": [obiettivo_pct[b] for b in buckets], "Attuale": [attuale_pct[b] for b in buckets]})
+        st.bar_chart(mix_df.set_index("Bucket"), stack=False, y_label="%")
 
 
 def _satellite_target_from_objective(settings: dict) -> float:
