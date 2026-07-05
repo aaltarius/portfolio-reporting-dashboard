@@ -768,8 +768,6 @@ def _render_sator_module(ctx: SimpleNamespace, theme) -> None:
         gap_after="sm",
     )
 
-    _render_portfolio_objective_section(ctx, theme)
-
     # Applica richiesta di import da foto prima che i widget vengano istanziati
     if "_sator_import_request" in st.session_state:
         _req = st.session_state.pop("_sator_import_request")
@@ -1080,6 +1078,10 @@ def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             "pianificazione",
             theme,
         )
+        with st.container():
+            _render_portfolio_objective_section(ctx, theme)
+
+        _section_line()
         with st.container():
             _render_sator_module(ctx, theme)
 
