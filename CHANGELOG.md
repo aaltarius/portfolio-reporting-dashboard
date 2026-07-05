@@ -39,6 +39,16 @@
 - migrazione automatica e non distruttiva: chi aveva un vecchio profilo salvato lo ritrova tradotto in Core/Difensivo/Satellite alla prima apertura
 - rimossi (verificata l'assenza di chiamanti residui): `get_default_target_profile`, `build_target_gap_by_instrument`, `build_rebalancing_suggestions`, i campi settings `target_profile_default`/`rebalancing_target`, `RADAR_PROFILE_PRESETS`
 
+**Rifiniture post-merge dell'obiettivo di portafoglio:**
+- corretto un bug per cui la sezione "Obiettivo di portafoglio" spariva del tutto in Pianificazione se l'utente aveva impostato "Solo sidebar" per SATOR: ora si vede sempre, indipendentemente da quella modalità
+- tabella SATOR standalone: colonne compattate (niente più scroll orizzontale), badge Ruolo ridotto a un quadratino colorato (blu/verde/arancio, senza etichetta testuale) per recuperare spazio su Ticker/Strumento/Funzione
+- grafico "Obiettivo vs Attuale" corretto due volte: prima sommava le due serie invece di affiancarle (arrivava a leggere oltre il 100% su un bucket), poi è stato riportato allo stesso stile Plotly/tema già usato dagli altri grafici della pagina (st.bar_chart aveva uno zoom su hover non richiesto e non seguiva il tema)
+- i tre grafici Core/Difensivo/Satellite di Pianificazione migrati dal layout scritto a mano al sistema centralizzato `ui/charts/settings.py` + `finalize_chart`, stesso meccanismo usato dagli altri grafici dell'app
+- rimosso un intero modulo di codice morto (`ui/charts/pianificazione.py`, 8 funzioni residue di una versione precedente della pagina mai più chiamate) e la voce di configurazione orfana `overview_patrimonio`
+- corretto un bug indipendente trovato nel frattempo: il grafico "Allineamento rispetto ad obiettivo" di Cruscotti applicava per errore le impostazioni di un altro grafico
+- numeri sulle barre dei grafici di Pianificazione ingranditi (14px) e in formato italiano con un decimale (es. "55,2%")
+- rimossa la sezione "Simulatore pre-operazione" (mai utilizzata)
+
 ---
 
 ## 4.9.22 - Sidebar avanzata: PP Export, SATOR, modalità accesso operativo
