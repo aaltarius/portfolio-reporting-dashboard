@@ -162,15 +162,15 @@ def build_portfolio_pl_chart(dfh, delta_colors, delta_text, dfmt, theme):
             last_pl = 0.0
         label_color = theme.color_green if last_pl >= 0 else theme.color_red
         fig.add_annotation(
-            x=last_date,
+            x=1.0,
             y=last_pl,
-            xref="x",
+            xref="paper",
             yref="y",
             text=fmt_eur_it(last_pl, 2, signed=True),
             showarrow=False,
             xanchor="left",
             align="left",
-            xshift=26,
+            xshift=6,
             yshift=0,
             font=dict(size=11, color=label_color, family="Courier New, monospace"),
             bgcolor="rgba(255,255,255,0.88)",
@@ -254,15 +254,15 @@ def build_portfolio_pl_category_chart(dfh, data, theme, settings: dict[str, Any]
             )
             pct_text = f"{pct_value:>5.1f}%".replace(" ", "&nbsp;")
             fig.add_annotation(
-                x=last_date,
+                x=1.0,
                 y=y_mid,
-                xref="x",
+                xref="paper",
                 yref="y",
                 text=f"<b>{cat}</b>&nbsp;&nbsp;{pct_text}",
                 showarrow=False,
                 xanchor="left",
                 align="left",
-                xshift=26,
+                xshift=6,
                 font=dict(size=11, color=color, family="Courier New, monospace"),
                 bgcolor="rgba(255,255,255,0.88)",
                 bordercolor=hex_to_rgba(color, 0.30),

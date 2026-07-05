@@ -225,7 +225,9 @@ function sendH(){{
   var t=document.getElementById('diag-table');
   if(!t)return;
   var h=Math.ceil(t.getBoundingClientRect().height)+2;
+  var py=0; try{{py=window.parent.scrollY||window.parent.pageYOffset||0;}}catch(e){{}}
   window.parent.postMessage({{type:'streamlit:setFrameHeight',height:h}},'*');
+  [10,60,200].forEach(function(d){{setTimeout(function(){{try{{window.parent.scrollTo({{top:py,behavior:'instant'}});}}catch(e){{}}}} ,d);}});
 }}
 sendH();requestAnimationFrame(sendH);setTimeout(sendH,150);setTimeout(sendH,600);
 </script>
@@ -241,8 +243,12 @@ def render_portfolio_table_html(df, direction_map=None):
 
     def _trend_symbol(ticker):
         state = direction_map.get(str(ticker or ""), "flat")
+        if state == "up_big":
+            return "▲▲"
         if state == "up":
             return "▲"
+        if state == "down_big":
+            return "▼▼"
         if state == "down":
             return "▼"
         return "—"

@@ -525,8 +525,11 @@ def build_portfolio_history_df(data: dict[str, Any]) -> pd.DataFrame:
     event_sig = hashlib.md5(json.dumps(get_registro_eventi(data), sort_keys=True, default=str).encode()).hexdigest()
     cur_prices_sig = {s.get("ticker", ""): s.get("prezzo") for s in data.get("strumenti", [])}
     last_upd_date = str(data.get("last_quotes_update") or "")[:10]
-    price_sig = hashlib.md5(json.dumps({"sto": sto, "cur": cur_prices_sig, "lqu": last_upd_date}, sort_keys=True, default=str).encode()).hexdigest()
-    cache_sig = f"portfolio_history_v4|{event_sig}|{price_sig}"
+    # today_str in firma: la cache è persistita su disco e deve invalidarsi ogni nuovo giorno
+    today_date = date.today()
+    today_str = today_date.strftime("%Y-%m-%d")
+    price_sig = hashlib.md5(json.dumps({"sto": sto, "cur": cur_prices_sig, "lqu": last_upd_date, "td": today_str}, sort_keys=True, default=str).encode()).hexdigest()
+    cache_sig = f"portfolio_history_v5|{event_sig}|{price_sig}"
     if cache.get("signature") == cache_sig and cache.get("rows"):
         try:
             df_cached = pd.DataFrame(cache.get("rows", []))
@@ -594,9 +597,7 @@ def build_portfolio_history_df(data: dict[str, Any]) -> pd.DataFrame:
     # Punto sintetico "oggi" con i prezzi correnti (s["prezzo"]).
     # Su weekday: sempre aggiunto se storico non è aggiornato a oggi.
     # Su weekend: aggiunto solo se last_quotes_update > ultimo storico (prezzi freschi disponibili).
-    today_date = date.today()
     is_weekday = today_date.weekday() < 5  # 0-4 = lunedì-venerdì, 5-6 = sabato-domenica
-    today_str = today_date.strftime("%Y-%m-%d")
     has_fresh_weekend_prices = (
         not is_weekday
         and bool(last_upd_date)

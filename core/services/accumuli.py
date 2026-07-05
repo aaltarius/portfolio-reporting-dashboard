@@ -177,20 +177,20 @@ def _regularity_score(dates: pd.Series) -> float:
 def _state_and_priority(row: dict[str, Any]) -> tuple[str, str, str]:
     buys = int(row.get("n_acquisti", 0) or 0)
     margin = _safe_float(row.get("margine_pmc", 0.0))
-    elasticity = _safe_float(row.get("elasticita_prossima_rata", 0.0))
+    elasticity = _safe_float(row.get("elasticita_prossimo_acquisto", 0.0))
     efficiency = row.get("efficienza_accumulo")
     if buys < 3:
         return "Non significativo", "Bassa", "Meno di tre acquisti: il grafico PMC resta utile, ma non è ancora una vera analisi di accumulo."
     if margin < -0.03 and elasticity >= 0.08:
-        return "Reattivo", "Alta", "Prezzo sotto PMC e posizione ancora molto manovrabile: nuove rate possono incidere sul prezzo medio."
+        return "Reattivo", "Alta", "Prezzo sotto PMC e posizione ancora molto manovrabile: nuovi acquisti possono incidere sul prezzo medio."
     if margin < -0.03:
-        return "Sotto pressione", "Media", "Prezzo sotto PMC, ma l'effetto di una nuova rata dipende dal capitale già investito."
+        return "Sotto pressione", "Media", "Prezzo sotto PMC, ma l'effetto di un nuovo acquisto dipende dal capitale già investito."
     if elasticity < 0.05 and buys >= 12:
-        return "Maturo", "Bassa", "Il PMC è ormai poco sensibile: nuove rate aumentano soprattutto l'esposizione."
+        return "Maturo", "Bassa", "Il PMC è ormai poco sensibile: nuovi acquisti aumentano soprattutto l'esposizione."
     if efficiency is not None and pd.notna(efficiency) and float(efficiency) >= 1.0 and margin >= 0:
         return "Efficiente", "Media", "PMC migliore o allineato alla media storica dei prezzi e margine positivo."
     if elasticity >= 0.08:
-        return "Rafforzabile", "Alta", "Accumulo ancora elastico: una nuova rata può modificare in modo percepibile il PMC."
+        return "Rafforzabile", "Alta", "Accumulo ancora elastico: un nuovo acquisto può modificare in modo percepibile il PMC."
     return "Da monitorare", "Media", "Accumulo leggibile, ma senza un segnale operativo netto."
 
 
@@ -334,7 +334,7 @@ def build_accumuli_analysis(
         avg_installment = float((buy_ops["importo_lordo"] + buy_ops["commissioni"] + buy_ops["imposte"]).replace(0, np.nan).dropna().median()) if buy_count else 0.0
         if not np.isfinite(avg_installment) or avg_installment <= 0:
             avg_installment = float(simulated_installment)
-        # Elasticità residua del PMC: peso della prossima rata simulata sul
+        # Elasticità residua del PMC: peso del prossimo acquisto simulato sul
         # capitale già investito. Non è un rendimento né una probabilità: misura
         # quanto il prezzo medio di carico è ancora manovrabile dai nuovi acquisti.
         # Può superare il 100% su posizioni embrionali o dati anomali.
@@ -361,8 +361,8 @@ def build_accumuli_analysis(
             "percentile_pmc": pmc_percentile,
             "drawdown_da_massimo": current_drawdown,
             "volatilita_acquisti": cv_ops,
-            "rata_tipica": avg_installment,
-            "elasticita_prossima_rata": elasticita,
+            "importo_tipico_acquisto": avg_installment,
+            "elasticita_prossimo_acquisto": elasticita,
             "prima_data": buy_ops["data"].min(),
             "ultima_data": buy_ops["data"].max(),
         }
@@ -387,7 +387,7 @@ def build_accumuli_analysis(
 
 
 def simulate_next_installment(summary_row: dict[str, Any] | pd.Series, amount: float) -> dict[str, Any]:
-    """Simula una nuova rata al prezzo attuale senza modificare i dati reali."""
+    """Simula un nuovo acquisto al prezzo attuale senza modificare i dati reali."""
     if isinstance(summary_row, pd.Series):
         source = summary_row.to_dict()
     else:

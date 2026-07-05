@@ -138,7 +138,13 @@ def _extract_typed_value(remainder: str, next_line: str, vtype: str) -> Optional
 
     if vtype == "date":
         m = _DATE_RE_VAL.search(remainder) or _DATE_RE_VAL.search(next_line)
-        return m.group(0) if m else None
+        if not m:
+            return None
+        raw = m.group(0)  # "DD/MM/YYYY" dal PDF
+        try:
+            return datetime.datetime.strptime(raw, "%d/%m/%Y").strftime("%Y-%m-%d")
+        except ValueError:
+            return raw
 
     if vtype == "token":
         parts = src.split()
@@ -370,6 +376,13 @@ def enrich_btp(strumento: dict) -> dict:
                 continue
             for key, field in _BTP_FIELD_MAP.items():
                 if key in label:
+                    if field in {"scadenza", "data_godimento"}:
+                        for _dfmt in ("%d/%m/%y", "%d/%m/%Y"):
+                            try:
+                                value = datetime.datetime.strptime(value, _dfmt).strftime("%Y-%m-%d")
+                                break
+                            except ValueError:
+                                continue
                     strumento[field] = value
                     src[field] = "auto"
                     break

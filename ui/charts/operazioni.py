@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 
 from ui.charts.runtime import empty_chart, finalize_chart
 from ui.charts.settings import apply_settings
-from ui.formatting import fmt_eur_it, hex_to_rgba
+from ui.formatting import fmt_eur_it, fmt_qty_it, hex_to_rgba
 from ui.theme import instrument_color, macro_color
 
 # Ownership reale:
@@ -93,7 +93,9 @@ def build_purchase_installments_chart(purchase_df: pd.DataFrame, theme) -> go.Fi
     if purchase_df is None or purchase_df.empty:
         return empty_chart("operations_purchase_installments")
 
-    plot_df = purchase_df.copy().sort_values(["rate_count", "Ticker"], ascending=[True, True]).reset_index(drop=True)
+    # Compatibilità: accetta sia il nuovo nome (n_acquisti) che il vecchio (rate_count)
+    count_col = "n_acquisti" if "n_acquisti" in purchase_df.columns else "rate_count"
+    plot_df = purchase_df.copy().sort_values([count_col, "Ticker"], ascending=[True, True]).reset_index(drop=True)
     x_base = list(range(len(plot_df)))
     x_range = [x + 0.22 for x in x_base]
     price_values = pd.concat(
@@ -109,8 +111,10 @@ def build_purchase_installments_chart(purchase_df: pd.DataFrame, theme) -> go.Fi
         pmc_txt = fmt_eur_it(row["pmc"], 2) if pd.notna(row["pmc"]) else "n/d"
         cat_txt = str(row.get("category", "") or "").upper()
         cat_color = macro_color(cat_txt or "ALT")
+        qty_txt = fmt_qty_it(row["qty_totale"], 4) if "qty_totale" in plot_df.columns and pd.notna(row.get("qty_totale")) else "n/d"
         tick_text.append(
-            f"{row['Ticker']}<br><span style='color:{cat_color};font-weight:800'>{cat_txt}</span><br>{int(row['rate_count'])} rate<br>PMC {pmc_txt}"
+            f"{row['Ticker']}<br><span style='color:{cat_color};font-weight:800'>{cat_txt}</span>"
+            f"<br>{qty_txt} quote<br>PMC {pmc_txt}"
         )
     customdata = [
         [
@@ -118,28 +122,30 @@ def build_purchase_installments_chart(purchase_df: pd.DataFrame, theme) -> go.Fi
             fmt_eur_it(row["pmc"], 2) if pd.notna(row["pmc"]) else "n/d",
             fmt_eur_it(row["max_price"], 2) if pd.notna(row["max_price"]) else "n/d",
             row.get("category", ""),
+            fmt_qty_it(row["qty_totale"], 4) if "qty_totale" in plot_df.columns and pd.notna(row.get("qty_totale")) else "n/d",
         ]
         for _, row in plot_df.iterrows()
     ]
     fig.add_trace(
         go.Bar(
             x=x_base,
-            y=plot_df["rate_count"],
+            y=plot_df[count_col],
             width=0.34,
             marker_color=[instrument_color(tk) for tk in plot_df["Ticker"]],
             customdata=customdata,
-            text=[str(int(v)) for v in plot_df["rate_count"]],
+            text=[str(int(v)) for v in plot_df[count_col]],
             textposition="outside",
             textfont=dict(size=10),
             cliponaxis=False,
             hovertemplate=(
                 "<b>%{customdata[3]}</b><br>"
-                "Rate acquistate: %{y}<br>"
+                "N. acquisti: %{y}<br>"
+                "Quote totali: %{customdata[4]}<br>"
                 "Min acquisto: %{customdata[0]}<br>"
                 "PMC attuale: %{customdata[1]}<br>"
                 "Max acquisto: %{customdata[2]}<extra></extra>"
             ),
-            name="Numero rate",
+            name="N. acquisti",
         )
     )
     range_x = []

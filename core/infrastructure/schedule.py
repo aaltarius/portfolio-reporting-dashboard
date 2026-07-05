@@ -110,11 +110,17 @@ def start_benchmark_scheduler(data: dict[str, Any]) -> bool:
     """
     Avvia lo scheduler benchmark in background se non già in esecuzione.
     Ritorna True se il thread è stato avviato, False se già attivo.
+    Usa il nome del thread come guard process-wide: funziona anche dopo
+    hot-reload di Streamlit (reimport azzera la variabile globale ma i
+    thread preesistenti restano vivi con lo stesso nome).
     """
     global _benchmark_scheduler_thread
     with _scheduler_lock:
-        if _benchmark_scheduler_thread is not None and _benchmark_scheduler_thread.is_alive():
-            return False
+        # Cerca tra tutti i thread vivi, non solo nella variabile locale al modulo
+        for t in threading.enumerate():
+            if t.name == "BenchmarkScheduler" and t.is_alive():
+                _benchmark_scheduler_thread = t  # re-aggancia il riferimento
+                return False
 
         _benchmark_scheduler_thread = threading.Thread(
             target=_scheduler_loop,

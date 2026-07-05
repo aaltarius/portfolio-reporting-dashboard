@@ -108,13 +108,19 @@ def build_runtime_context_data(
         if col.startswith("PL_") and dfh[col].dtype != "float64":
             dfh[col] = dfh[col].astype("float64")
 
-    # chiusi = strumenti con stato=="chiuso" (settato da _set_stato_strumento in operazioni.py).
-    # GOV → stato="chiuso" quando venduto/rimborsato (scompaiono da tutto).
-    # ETF/ETC/FND → stato="osservato" quando venduto (rimangono in quotazioni).
+    # chiusi = GOV definitivamente chiusi (scompaiono da tutto).
+    # Fonte primaria: stato=="chiuso" nel JSON (settato da _set_stato_strumento).
+    # Fallback: evento RIMBORSO A SCADENZA nel registro (RIMBORSO è sempre chiusura GOV).
+    _rimborso_tickers = frozenset(
+        str(ev.get("ticker") or "")
+        for ev in eventi
+        if ev.get("tipo_evento") == "RIMBORSO A SCADENZA" and str(ev.get("ticker") or "")
+    )
     chiusi_tickers: frozenset[str] = frozenset(
         str(s.get("ticker") or "")
         for s in (data.get("strumenti") or [])
-        if s.get("stato") == "chiuso" and str(s.get("ticker") or "")
+        if str(s.get("ticker") or "")
+        and (s.get("stato") == "chiuso" or str(s.get("ticker") or "") in _rimborso_tickers)
     )
 
     # active_tickers = tutti gli strumenti TRANNE quelli confermati chiusi
@@ -131,6 +137,7 @@ def build_runtime_context_data(
         da,
         liquidita,
         str(settings.get("target_profile_default", "Equilibrato") or "Equilibrato"),
+        strumenti=data.get("strumenti", []),
     )
     portfolio_alerts = build_portfolio_alerts(da, settings)
 

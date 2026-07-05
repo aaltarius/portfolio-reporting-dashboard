@@ -190,7 +190,12 @@ def call_gemini_flash(prompt: str, api_key: str, model: str = _GEMINI_MODEL) -> 
     """Chiama Gemini Flash e restituisce il testo della risposta."""
     url = _GEMINI_URL.format(model=model, api_key=api_key)
     body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
-    response = requests.post(url, json=body, timeout=60)
+    try:
+        response = requests.post(url, json=body, timeout=90)
+    except requests.exceptions.Timeout:
+        raise RuntimeError("Timeout: Gemini non ha risposto entro 90s. Riprova tra qualche momento.")
+    except requests.exceptions.RequestException as exc:
+        raise RuntimeError(f"Errore di rete Gemini: {exc}") from exc
     if response.status_code != 200:
         raise RuntimeError(f"Gemini API error {response.status_code}: {_parse_gemini_error(response)}")
     data = response.json()
@@ -294,7 +299,12 @@ def call_gemini_chat(messages: list[dict], api_key: str, model: str = _GEMINI_MO
     """Chiama Gemini con una storia di messaggi (multi-turn). Ritorna il testo della risposta."""
     url = _GEMINI_URL.format(model=model, api_key=api_key)
     body = {"contents": messages}
-    response = requests.post(url, json=body, timeout=60)
+    try:
+        response = requests.post(url, json=body, timeout=90)
+    except requests.exceptions.Timeout:
+        raise RuntimeError("Timeout: Gemini non ha risposto entro 90s. Riprova tra qualche momento.")
+    except requests.exceptions.RequestException as exc:
+        raise RuntimeError(f"Errore di rete Gemini: {exc}") from exc
     if response.status_code != 200:
         raise RuntimeError(f"Gemini API error {response.status_code}: {_parse_gemini_error(response)}")
     data = response.json()

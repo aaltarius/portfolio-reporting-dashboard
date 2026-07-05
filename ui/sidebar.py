@@ -21,7 +21,7 @@ from persistence.storage import (
     macro_cat,
     save_data, save_quotes_log,
 )
-from core.market_data import deduce_type, find_name, find_ticker, get_price, get_price_details
+from core.market_data import deduce_type, find_name, find_ticker, get_price, get_price_details, get_isin_ticker_cache
 from core.finance import refresh_benchmark_cache
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_qty_it, fmtds
 
@@ -40,14 +40,54 @@ def _latest_valid_price_for_ticker(data: dict, ticker: str) -> tuple[str | None,
     return None, None
 
 
-def _is_stale_price(price_date: str | None, latest_hist_date: str | None) -> bool:
-    """True se la fonte restituisce un prezzo datato prima dell'ultimo storico valido."""
+def _is_stale_price(price_date: str | None, latest_hist_date: str | None, ticker: str = "", tipo: str = "") -> bool:
+    """True se la fonte restituisce un prezzo datato prima dell'ultimo storico valido.
+
+    Non si applica quando latest_hist_date è oggi: il record odierno in storico
+    è stato scritto da un run precedente della stessa fonte (chiusura di ieri sera),
+    confrontare contro di esso sarebbe circolare e genererebbe falsi warning.
+    I fondi NAV (OICVM) sono esentati: il loro NAV è strutturalmente T-1 e la
+    data in storico può essere provvisoria (scritta prima della pubblicazione ufficiale).
+    """
     if not price_date or not latest_hist_date:
+        return False
+    if _is_nav_fund(ticker, tipo):
+        return False
+    today_str = str(date.today())
+    if str(latest_hist_date)[:10] >= today_str:
         return False
     try:
         return str(price_date)[:10] < str(latest_hist_date)[:10]
     except Exception:
         return False
+
+
+def _is_nav_fund(ticker: str, tipo: str) -> bool:
+    """True per fondi gestiti/OICVM che per natura pubblicano NAV T-1."""
+    txt = f"{ticker} {tipo}".lower()
+    return any(tok in txt for tok in ("fam-", "fless", "flex", "multi asset", "multi-asset", "bilanciato", "gestito"))
+
+
+def _is_stale_open_market(price_date: str | None, ticker: str = "", tipo: str = "") -> bool:
+    """True se il prezzo è di un giorno precedente durante l'orario di borsa (fer. ≥ 09:30).
+
+    A differenza di _is_stale_price non blocca l'aggiornamento del prezzo:
+    segnala solo che la quotazione non riflette ancora la sessione odierna.
+    Esclude i fondi gestiti/OICVM il cui NAV è strutturalmente T-1.
+    """
+    if not price_date:
+        return False
+    if str(price_date)[:10] >= str(date.today()):
+        return False
+    now = datetime.now()
+    if now.weekday() >= 5:  # weekend
+        return False
+    from datetime import time as _t
+    if now.time() < _t(9, 30):  # prima che il mercato sia ben avviato
+        return False
+    if _is_nav_fund(ticker, tipo):
+        return False
+    return True
 
 
 def _apply_price_date_entries_to_storico(
@@ -104,21 +144,29 @@ def render_sidebar(data: dict) -> None:
     with st.sidebar:
         st.markdown("# ⚙️ Gestione")
         st.caption(f"v{APP_VERSION}")
+        _btn_area = st.container()
+        st.divider()
+        _arresta_area = st.container()
+        _msg_area = st.container()
 
+    with _arresta_area:
+        if st.button("⏻ Arresta Streamlit", width="stretch", key="sidebar_shutdown_streamlit"):
+            st.session_state["portfolio_dashboard_shutdown_requested"] = True
+            st.session_state["_portfolio_shutdown_timer_started"] = False
+            st.rerun()
 
-
-
-
+    with _btn_area:
         # --- Aggiorna Quotazioni ---
-        if st.button("🔄 Aggiorna Quotazioni", type="primary", width="stretch"):
-            status_box = st.status("Aggiornamento quotazioni in corso...", expanded=True)
-            status_box.write("Recupero prezzi e riallineamento benchmark.")
+        if st.button("🔄 Aggiorna Quotazioni", width="stretch"):
+            with _msg_area:
+                status_box = st.status("Aggiornamento quotazioni in corso...", expanded=True)
+                status_box.write("Recupero prezzi e riallineamento benchmark.")
+                pg = st.progress(0)
             now_ts = datetime.now()
             ts = str(now_ts.date())
             ts_full = now_ts.strftime("%Y-%m-%d %H:%M:%S")
             wd = date.today().weekday() < 5
             res = []
-            pg = st.progress(0)
             n = len(data["strumenti"])
             quotes_data_changed = False
             prev_prices = {}
@@ -148,10 +196,14 @@ def render_sidebar(data: dict) -> None:
             pending_instrument_updates: list[tuple[dict, float, str, str]] = []
             material_quote_diffs: list[str] = []
             material_quote_changes: list[dict[str, object]] = []
+            ticker_recent_histories: dict[str, dict[str, float]] = {}
+            _ev_sb = get_registro_eventi(data)
+            _rimborso_sb = {str(ev.get("ticker") or "") for ev in _ev_sb if ev.get("tipo_evento") == "RIMBORSO A SCADENZA" and str(ev.get("ticker") or "")}
             _chiusi_tickers_set = {
                 str(s.get("ticker") or "")
                 for s in (data.get("strumenti") or [])
-                if s.get("stato") == "chiuso" and str(s.get("ticker") or "")
+                if str(s.get("ticker") or "")
+                and (s.get("stato") == "chiuso" or str(s.get("ticker") or "") in _rimborso_sb)
             }
             _strumenti_attivi_sb = [s for s in data["strumenti"] if str(s.get("ticker", "")) not in _chiusi_tickers_set]
             for i, s in enumerate(_strumenti_attivi_sb):
@@ -164,6 +216,9 @@ def render_sidebar(data: dict) -> None:
                 pr = price_info.get("price")
                 src = price_info.get("source", "Non trovato")
                 price_date = price_info.get("price_date")
+                rec_hist_item = price_info.get("recent_history") or {}
+                if rec_hist_item:
+                    ticker_recent_histories[ticker] = rec_hist_item
 
                 latest_hist_date, latest_hist_px = _latest_valid_price_for_ticker(data, ticker)
                 # Per decidere se il refresh cambia davvero il portafoglio non
@@ -182,7 +237,8 @@ def render_sidebar(data: dict) -> None:
                     latest_hist_px if latest_hist_px is not None else s.get("prezzo")
                 )
 
-                stale = _is_stale_price(price_date, latest_hist_date)
+                stale = _is_stale_price(price_date, latest_hist_date, ticker=ticker, tipo=str(s.get("tipo", "")))
+                stale_today = not stale and _is_stale_open_market(price_date, ticker, str(s.get("tipo", "")))
                 if pr and stale:
                     kept = latest_hist_px if latest_hist_px is not None else s.get("prezzo")
                     # Non scriviamo nulla nello strumento per un dato stale: è
@@ -210,12 +266,15 @@ def render_sidebar(data: dict) -> None:
                     pending_instrument_updates.append((s, float(pr), src, str(price_date or ts)))
                     reference_changed = _quote_value_materially_changed(reference_px_for_change, pr)
                     instrument_changed = _quote_value_materially_changed(current_price_before, pr)
-                    if wd and reference_changed:
+                    is_nav = _is_nav_fund(ticker, str(s.get("tipo", "")))
+                    if wd and reference_changed and not is_nav:
                         try:
                             candidate_today_prices[ticker] = float(pr)
                         except Exception:
                             pass
-                    elif not wd and reference_changed and price_date:
+                    elif reference_changed and price_date:
+                        # Fondi NAV su wd: scrivi sulla data effettiva del NAV, non su oggi
+                        # Strumenti non-wd: comportamento invariato
                         try:
                             candidate_prices_by_date.setdefault(str(price_date)[:10], {})[ticker] = float(pr)
                         except Exception:
@@ -265,6 +324,10 @@ def render_sidebar(data: dict) -> None:
                             "source": src,
                             "price_date": str(price_date or ts),
                         })
+                    _stale_today_warn = (
+                        f"Prezzo del {str(price_date)[:10]} — mercato aperto ma la fonte non ha ancora aggiornato la quotazione odierna."
+                        if stale_today else None
+                    )
                     res.append((s["ticker"], True, fmt_num_it(pr, 3)))
                     delta_pct = None
                     try:
@@ -277,12 +340,12 @@ def render_sidebar(data: dict) -> None:
                         "ticker": s["ticker"],
                         "instrument_name": s.get("nome", s["ticker"]),
                         "source": src,
-                        "status": "ok",
+                        "status": "warning" if stale_today else "ok",
                         "price": float(pr),
                         "previous_price": None if prev_px in (None, "") else float(prev_px),
                         "delta_pct": delta_pct,
-                        "warning": None,
-                        "fallback_used": False,
+                        "warning": _stale_today_warn,
+                        "fallback_used": stale_today,
                         "price_date": price_date,
                         "latest_history_date": latest_hist_date,
                     })
@@ -342,8 +405,29 @@ def render_sidebar(data: dict) -> None:
                     "Refresh quotazioni senza variazioni materiali: aggiornato solo quotes_log; "
                     "nessun save_data e nessuna invalidazione cache"
                 )
+            # --- Backfill giorni mancanti nello storico prezzi ---
+            # Usa lo storico recente (7gg) restituito dal fetch per colmare i
+            # gap dei giorni in cui non si è fatto l'aggiornamento.
+            # Solo date precedenti a oggi; oggi è gestito dalla logica sopra.
+            backfill_changed = False
+            if ticker_recent_histories:
+                storico_bf = data.setdefault("storico_prezzi", {})
+                for ticker_bf, rec_hist_bf in ticker_recent_histories.items():
+                    for hist_date_bf, hist_px_bf in sorted(rec_hist_bf.items()):
+                        if hist_date_bf >= ts:
+                            continue
+                        if ticker_bf not in storico_bf.get(hist_date_bf, {}):
+                            storico_bf.setdefault(hist_date_bf, {})[ticker_bf] = hist_px_bf
+                            backfill_changed = True
+                if backfill_changed:
+                    logger.info(
+                        "Backfill storico prezzi: aggiunte date precedenti mancanti per %d ticker",
+                        len(ticker_recent_histories),
+                    )
+            # --- Fine backfill ---
+
             refreshed_benchmarks = 0
-            if quotes_data_changed:
+            if quotes_data_changed or backfill_changed:
                 try:
                     refreshed_benchmarks = refresh_benchmark_cache(data)
                 except Exception as exc:
@@ -354,11 +438,12 @@ def render_sidebar(data: dict) -> None:
                     "Benchmark non riallineati: refresh quotazioni senza variazioni effettive di prezzo"
                 )
             mutation_details["benchmarks_refreshed"] = int(refreshed_benchmarks or 0)
-            mutation_details["effective_data_change"] = bool(quotes_data_changed or bool(refreshed_benchmarks))
+            mutation_details["effective_data_change"] = bool(quotes_data_changed or backfill_changed or bool(refreshed_benchmarks))
             set_last_mutation_details(mutation_details)
-            effective_data_change = quotes_data_changed or bool(refreshed_benchmarks)
+            effective_data_change = quotes_data_changed or backfill_changed or bool(refreshed_benchmarks)
             if effective_data_change:
                 data["last_quotes_update"] = ts_full
+                data["cache_lookup_strumenti"] = {**data.get("cache_lookup_strumenti", {}), **get_isin_ticker_cache()}
                 save_data(data)
             pg.empty()
             quotes_log = load_quotes_log()
@@ -394,16 +479,58 @@ def render_sidebar(data: dict) -> None:
             else:
                 queue_info("Nessuna variazione effettiva nelle quotazioni: cache e dashboard mantenute.")
                 update_status(status_box, label="Nessuna variazione effettiva nelle quotazioni", state="complete")
-            for tk, success, detail in res:
-                st.caption(f"{'🟢' if success else '🔴'} {tk}: {detail}")
+            with _msg_area:
+                for tk, success, detail in res:
+                    st.caption(f"{'🟢' if success else '🔴'} {tk}: {detail}")
             st.session_state["goto_tab_quotazioni"] = True
             # Il click del bottone ha già avviato questo script run: lasciarlo
             # completare aggiorna la pagina una sola volta ed evita il doppio ciclo
             # update -> riavvio -> full render.
 
-        st.divider()
-        if st.button("⏻ Arresta Streamlit", width="stretch", key="sidebar_shutdown_streamlit"):
-            st.session_state["portfolio_dashboard_shutdown_requested"] = True
-            st.session_state["_portfolio_shutdown_timer_started"] = False
-            st.rerun()
-        st.caption("Chiude davvero il server locale: per riaprire l'app dovrai rilanciare `streamlit run app.py`.")
+        _sidebar_settings = load_settings() or {}
+        _op_mode = str(_sidebar_settings.get("operativo_mode", "entrambi"))
+        _show_op_btns = _op_mode != "tradizionale"
+        _sator_mode = str(_sidebar_settings.get("sator_mode", "entrambi"))
+        _export_pp_mode = str(_sidebar_settings.get("export_pp_mode", "entrambi"))
+
+        if _show_op_btns:
+            if st.button("➕ Inserisci operazione", width="stretch"):
+                import webbrowser
+                webbrowser.open_new_tab("http://localhost:8502/operazioni")
+
+            if st.button("📌 Strumenti", width="stretch"):
+                import webbrowser
+                webbrowser.open_new_tab("http://localhost:8502/strumenti")
+
+            if st.button("📝 Operazioni", width="stretch"):
+                import webbrowser
+                webbrowser.open_new_tab("http://localhost:8502/operazioni_gestione")
+
+            if st.button("💵 Liquidità", width="stretch"):
+                import webbrowser
+                webbrowser.open_new_tab("http://localhost:8502/liquidita_gestione")
+
+        if _export_pp_mode != "tradizionale":
+            if st.button("📊 Esporta PP", width="stretch"):
+                import webbrowser
+                webbrowser.open_new_tab("http://localhost:8502/export_pp")
+
+        if _sator_mode != "tradizionale":
+            if st.button("🧠 SATOR", width="stretch"):
+                import webbrowser
+                webbrowser.open_new_tab("http://localhost:8502/sator")
+
+        _pm = _sidebar_settings.get("privacy_mode", {}) or {}
+        _privacy_active = bool(_pm.get("enabled", False))
+        if _privacy_active:
+            _n_tk = len(_pm.get("hidden_tickers") or [])
+            _n_cat = len(_pm.get("hidden_categories") or [])
+            _parts = []
+            if _n_cat:
+                _parts.append(f"{_n_cat} categ.")
+            if _n_tk:
+                _parts.append(f"{_n_tk} titoli")
+            st.warning(f"🔒 Privacy: {', '.join(_parts)} nascosti" if _parts else "🔒 Privacy attiva")
+        if st.button("🔒 Privacy", width="stretch"):
+            import webbrowser
+            webbrowser.open_new_tab("http://localhost:8502/privacy")

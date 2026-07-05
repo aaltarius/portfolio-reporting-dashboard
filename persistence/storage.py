@@ -83,7 +83,7 @@ def _migrate_json_to_data_dir():
 # ---------------------------------------------------------------------------
 # Domain constants
 # ---------------------------------------------------------------------------
-APP_VERSION    = "4.9.19"
+APP_VERSION    = "4.9.22"
 SCHEMA_VERSION = "3.3"
 
 TIPI_EVENTO_PORTAFOGLIO = [
@@ -128,8 +128,19 @@ def _read_json_file(path, default):
 
 
 def _write_json_file(path, payload):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False, default=str)
+    # Scrittura atomica: scrivi su tmp nella stessa dir, poi rinomina.
+    # Evita file vuoti se il processo viene interrotto a metà write.
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False, default=str)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _deep_clone(value):
@@ -215,6 +226,14 @@ def default_settings():
         "ui_summary_layout": "GIPS Completo",
         "ui_debug_render_monitor": False,
         "ui_show_page_mode_controls": True,
+        "operativo_mode": "entrambi",
+        "sator_mode": "entrambi",
+        "export_pp_mode": "entrambi",
+        "privacy_mode": {
+            "enabled": False,
+            "hidden_tickers": [],
+            "hidden_categories": [],
+        },
         "portfolio_profile": {
             "portfolio_id": "main",
             "portfolio_name": "Portafoglio Principale",

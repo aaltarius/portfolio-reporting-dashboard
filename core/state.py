@@ -18,7 +18,7 @@ from core.finance import (
     compute_portfolio_state, build_portfolio_history_df, build_hist_df,
     append_evento_portafoglio
 )
-from core.market_data import get_price
+from core.market_data import get_price, prime_isin_ticker_cache
 from core.price_frames import build_expanded_price_frame
 
 logger = logging.getLogger("portafoglio.core.state")
@@ -73,6 +73,7 @@ class StateManager:
     def _load_all(self) -> None:
         """Carica tutti i dati da disco."""
         self._data = load_data()
+        prime_isin_ticker_cache(self._data.get("cache_lookup_strumenti", {}))
         self._settings = load_settings()
         self._quotes_log = load_quotes_log()
         self._snapshots_state = load_snapshots()

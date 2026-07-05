@@ -2,10 +2,12 @@
 core/market_data.py — Recupero prezzi da Yahoo Finance e Borsa Italiana.
 Nessuna dipendenza da streamlit.
 """
+import json
 import logging
 import re
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -13,7 +15,27 @@ import yfinance as yf
 from bs4 import BeautifulSoup
 
 _LOOKUP_CACHE_RUNTIME: dict[str, dict[str, Any]] = {}
+_ISIN_YAHOO_TICKER_CACHE: dict[str, str] = {}
 logger = logging.getLogger("portafoglio.core.market_data")
+
+_BTP_TRADE_TIME_CACHE_FILE = Path(__file__).parent.parent / "data" / "cache" / "btp_last_trade_times.json"
+
+
+def _load_btp_trade_time_cache() -> dict[str, Any]:
+    try:
+        if _BTP_TRADE_TIME_CACHE_FILE.exists():
+            return json.loads(_BTP_TRADE_TIME_CACHE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _save_btp_trade_time_cache(cache: dict[str, Any]) -> None:
+    try:
+        _BTP_TRADE_TIME_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _BTP_TRADE_TIME_CACHE_FILE.write_text(json.dumps(cache, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
 
 
 def _log_fallback_debug(step: str, identifier: str, exc: Exception) -> None:
@@ -37,61 +59,175 @@ def _to_price_date(value: Any) -> str | None:
     return None
 
 
-def get_yahoo_price_details(tk: str) -> tuple[float | None, str | None]:
-    """Restituisce prezzo Yahoo e data effettiva del dato, quando disponibile."""
+def _to_price_datetime(value: Any) -> str | None:
+    """Converte timestamp UNIX in 'YYYY-MM-DD HH:MM' in ora locale (es. 2026-06-22 17:35)."""
+    if value is None:
+        return None
     try:
-        h = yf.Ticker(tk).history(period="7d", auto_adjust=True, actions=False)
-        if not h.empty and "Close" in h.columns:
-            close = h["Close"].dropna()
-            if not close.empty:
-                return float(close.iloc[-1]), _to_price_date(close.index[-1])
-    except Exception as exc:
-        _log_fallback_debug("yahoo_history", tk, exc)
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(float(value)).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return None
+    return None
 
+
+def get_yahoo_price_details(tk: str) -> tuple[float | None, str | None, dict[str, float]]:
+    """Restituisce (prezzo, data_prezzo, storico_recente_7gg).
+
+    Strategia "più recente vince": confronta meta.regularMarketPrice (data
+    dell'ultimo scambio, affidabile per ETF/azioni) con l'ultimo close
+    confermato in history (affidabile per fondi OICVM dove regularMarketTime
+    è sistematicamente T-1 rispetto all'ultimo NAV pubblicato).
+    Il recente storico serve per il backfill dei giorni mancanti.
+    """
+    meta_price: float | None = None
+    meta_date: str | None = None      # solo data, usata per confronto e chiavi storico
+    meta_datetime: str | None = None  # data+ora in ora locale, usata come price_date di ritorno
+    hist_price: float | None = None
+    hist_date: str | None = None
+    recent_history: dict[str, float] = {}
+
+    # 1. chart API v8 range=7d: un solo call per meta + storico recente
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{tk}?interval=1d&range=7d"
         r = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=12)
         js = r.json()
         result = js["chart"]["result"][0]
+        meta = result.get("meta", {})
+        rmp = meta.get("regularMarketPrice")
+        rmt = meta.get("regularMarketTime")
+        if rmp and float(rmp) > 0 and rmt:
+            meta_price = float(rmp)
+            meta_date = _to_price_date(rmt)
+            meta_datetime = _to_price_datetime(rmt)
         timestamps = result.get("timestamp") or []
         closes = result["indicators"]["quote"][0].get("close") or []
-        valid = [(ts, c) for ts, c in zip(timestamps, closes) if c is not None]
-        if valid:
-            ts, c = valid[-1]
-            return float(c), _to_price_date(ts)
+        for ts_val, c in zip(timestamps, closes):
+            if c is not None:
+                d = _to_price_date(ts_val)
+                if d:
+                    recent_history[d] = float(c)
+        if recent_history:
+            hist_date = max(recent_history.keys())
+            hist_price = recent_history[hist_date]
     except Exception as exc:
-        _log_fallback_debug("yahoo_chart_api", tk, exc)
+        _log_fallback_debug("yahoo_chart_api_v8", tk, exc)
 
+    # 2. Fallback con yf.history solo se il chart API ha fallito del tutto
+    if not meta_price and not recent_history:
+        try:
+            h = yf.Ticker(tk).history(period="7d", auto_adjust=True, actions=False)
+            if not h.empty and "Close" in h.columns:
+                for idx in h.index:
+                    c = h.loc[idx, "Close"]
+                    d = _to_price_date(idx)
+                    if d and c == c:  # c == c esclude NaN
+                        recent_history[d] = float(c)
+                if recent_history:
+                    hist_date = max(recent_history.keys())
+                    hist_price = recent_history[hist_date]
+        except Exception as exc:
+            _log_fallback_debug("yahoo_history_fallback", tk, exc)
+
+    # 3. Prendi il più recente tra meta e history
+    # Confronto su date pure; ritorno usa sempre data+ora (meta_datetime ha l'ora,
+    # quando vince history la combiniamo con hist_date per mantenere l'ora del NAV)
+    meta_time_suffix = meta_datetime[10:] if meta_datetime and len(meta_datetime) > 10 else ""
+
+    if meta_date and hist_date:
+        if meta_date >= hist_date:
+            if meta_date not in recent_history and meta_price:
+                recent_history[meta_date] = meta_price
+            return meta_price, meta_datetime or meta_date, recent_history
+        else:
+            # hist più recente: combina hist_date con l'ora di meta (es. fondi OICVM)
+            hist_datetime = hist_date + meta_time_suffix if meta_time_suffix else hist_date
+            return hist_price, hist_datetime, recent_history
+    if meta_date:
+        if meta_date not in recent_history and meta_price:
+            recent_history[meta_date] = meta_price
+        return meta_price, meta_datetime or meta_date, recent_history
+    if hist_date:
+        hist_datetime = hist_date + meta_time_suffix if meta_time_suffix else hist_date
+        return hist_price, hist_datetime, recent_history
+
+    # 4. Ultimo fallback: fast_info (nessuna data, nessuno storico)
     try:
         p = yf.Ticker(tk).fast_info.last_price
         if p is not None and float(p) > 0:
-            return float(p), None
+            return float(p), None, recent_history
     except Exception as exc:
         _log_fallback_debug("yahoo_fast_info", tk, exc)
 
-    return None, None
+    return None, None, recent_history
+
+    # --- CODICE PRECEDENTE (commentato il 2026-06-23, da eliminare dopo verifica) ---
+    # def get_yahoo_price_details(tk: str) -> tuple[float | None, str | None]:
+    #     """Restituisce prezzo Yahoo e data effettiva del dato, quando disponibile."""
+    #     try:
+    #         h = yf.Ticker(tk).history(period="7d", auto_adjust=True, actions=False)
+    #         if not h.empty and "Close" in h.columns:
+    #             close = h["Close"].dropna()
+    #             if not close.empty:
+    #                 return float(close.iloc[-1]), _to_price_date(close.index[-1])
+    #     except Exception as exc:
+    #         _log_fallback_debug("yahoo_history", tk, exc)
+    #
+    #     try:
+    #         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{tk}?interval=1d&range=7d"
+    #         r = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=12)
+    #         js = r.json()
+    #         result = js["chart"]["result"][0]
+    #         timestamps = result.get("timestamp") or []
+    #         closes = result["indicators"]["quote"][0].get("close") or []
+    #         valid = [(ts, c) for ts, c in zip(timestamps, closes) if c is not None]
+    #         if valid:
+    #             ts, c = valid[-1]
+    #             return float(c), _to_price_date(ts)
+    #     except Exception as exc:
+    #         _log_fallback_debug("yahoo_chart_api", tk, exc)
+    #
+    #     try:
+    #         p = yf.Ticker(tk).fast_info.last_price
+    #         if p is not None and float(p) > 0:
+    #             return float(p), None
+    #     except Exception as exc:
+    #         _log_fallback_debug("yahoo_fast_info", tk, exc)
+    #
+    #     return None, None
 
 
 def get_yahoo_price(tk: str) -> float | None:
     """Compatibilità: restituisce solo il prezzo."""
-    price, _price_date = get_yahoo_price_details(tk)
+    price, _price_date, _recent_history = get_yahoo_price_details(tk)
     return price
 
 def get_yahoo_ticker(isin: str) -> str | None:
+    if isin in _ISIN_YAHOO_TICKER_CACHE:
+        logger.debug("Ticker Yahoo da cache persistente: isin=%s ticker=%s", isin, _ISIN_YAHOO_TICKER_CACHE[isin])
+        return _ISIN_YAHOO_TICKER_CACHE[isin]
     try:
         r = requests.get(
             f"https://query2.finance.yahoo.com/v1/finance/search?q={isin}&quotesCount=5&newsCount=0",
             headers={"User-Agent": "Mozilla/5.0"}, timeout=10
         ).json()
+        result = None
         for q in r.get("quotes", []):
             if q.get("symbol", "").endswith(".MI"):
-                return q["symbol"]
-        for q in r.get("quotes", []):
-            s = q.get("symbol", "")
-            if not s.startswith("0P") and "." in s:
-                return s
-        if r.get("quotes"):
-            return r["quotes"][0].get("symbol", "")
+                result = q["symbol"]
+                break
+        if not result:
+            for q in r.get("quotes", []):
+                s = q.get("symbol", "")
+                if not s.startswith("0P") and "." in s:
+                    result = s
+                    break
+        if not result and r.get("quotes"):
+            result = r["quotes"][0].get("symbol", "")
+        if result:
+            _ISIN_YAHOO_TICKER_CACHE[isin] = result
+            logger.info("Ticker Yahoo risolto e messo in cache: isin=%s ticker=%s", isin, result)
+        return result
     except Exception as exc:
         _log_fallback_debug("yahoo_search_ticker", isin, exc)
     return None
@@ -129,29 +265,144 @@ def get_borsa_italiana_etf_name(isin: str) -> str:
     return ""
 
 
-def get_btp_price(isin: str) -> float | None:
-    urls = [
+_MESI_IT = {"gennaio":"01","febbraio":"02","marzo":"03","aprile":"04","maggio":"05",
+            "giugno":"06","luglio":"07","agosto":"08","settembre":"09","ottobre":"10",
+            "novembre":"11","dicembre":"12"}
+
+
+def _parse_s24ore_datetime(txt: str) -> str | None:
+    """Estrae 'YYYY-MM-DD HH:MM' dal testo del widget Il Sole 24 Ore se mercato aperto."""
+    if "mercato chiuso" in txt.lower():
+        return None
+    m = re.search(r'(\d{1,2})\s+(\w+)\s+(\d{4})\s+ore\s+(\d{2}):(\d{2})', txt, re.I)
+    if not m:
+        return None
+    dd, mese, yyyy, hh, mn = m.group(1).zfill(2), m.group(2).lower(), m.group(3), m.group(4), m.group(5)
+    mm = _MESI_IT.get(mese)
+    if not mm:
+        return None
+    return f"{yyyy}-{mm}-{dd} {hh}:{mn}"
+
+
+def get_btp_price_details(isin: str) -> dict[str, Any]:
+    """Recupera prezzo e data+ora ultimo contratto BTP.
+
+    Catena fonti:
+    1. Borsa Italiana dati-completi → prezzo + data/ora da 'Ultimo Contratto'
+    2. Borsa Italiana scheda        → stessa logica
+    3. Il Sole 24 Ore widget        → prezzo + data/ora (solo se mercato aperto)
+    Pre-apertura: data da 'Data Pr Ufficiale' + orario dalla cache locale.
+    """
+    _headers_bi = {"User-Agent": "Mozilla/5.0", "Accept-Language": "it-IT"}
+    price: float | None = None
+    price_datetime: str | None = None
+
+    # --- 1+2. Borsa Italiana ---
+    for url in [
         f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/dati-completi.html?isin={isin}&lang=it",
         f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/{isin}-MOTX.html?lang=it",
-    ]
-    for url in urls:
+    ]:
         try:
-            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "it-IT"}, timeout=10)
-            for term in ["Prezzo Ultimo Contratto", "Prezzo di Riferimento", "prezzo_rif"]:
-                idx = resp.text.lower().find(term.lower())
-                if idx >= 0:
-                    for el in BeautifulSoup(resp.text[idx:idx + 500], "html.parser").find_all(string=True):
-                        txt = el.strip().replace(".", "").replace(",", ".")
-                        try:
-                            v = float(txt)
-                            if 30 < v < 200:
-                                return v
-                        except Exception:
-                            continue
+            resp = requests.get(url, headers=_headers_bi, timeout=10)
+            txt_bi = resp.text
+
+            # Data+ora da "Ultimo Contratto"
+            if not price_datetime:
+                try:
+                    idx_uc = txt_bi.lower().find("ultimo contratto")
+                    if idx_uc >= 0:
+                        strong = BeautifulSoup(txt_bi[idx_uc:idx_uc + 300], "html.parser").find("strong")
+                        if strong:
+                            raw = strong.get_text(separator=" ", strip=True).replace("\xa0", " ").strip()
+                            parts = raw.split()
+                            if len(parts) >= 2:
+                                dd, mm, yy = parts[0].split("/")
+                                year = f"20{yy}" if len(yy) == 2 else yy
+                                hh, mn = parts[1].split(".")[:2]
+                                price_datetime = f"{year}-{mm}-{dd} {hh.zfill(2)}:{mn}"
+                except Exception:
+                    pass
+
+            # Fallback data-only da "Data Pr Ufficiale" (pre-apertura)
+            if not price_datetime:
+                try:
+                    idx_dpu = txt_bi.lower().find("data pr ufficiale")
+                    if idx_dpu >= 0:
+                        snippet = BeautifulSoup(txt_bi[idx_dpu:idx_dpu + 200], "html.parser").get_text(" ", strip=True)
+                        m = re.search(r'(\d{2})/(\d{2})/(\d{2,4})', snippet)
+                        if m:
+                            dd2, mm2, yy2 = m.group(1), m.group(2), m.group(3)
+                            year2 = f"20{yy2}" if len(yy2) == 2 else yy2
+                            price_datetime = f"{year2}-{mm2}-{dd2}"  # solo data
+                except Exception:
+                    pass
+
+            # Prezzo
+            if price is None:
+                for term in ["Prezzo Ultimo Contratto", "Prezzo di Riferimento", "prezzo_rif"]:
+                    idx_p = txt_bi.lower().find(term.lower())
+                    if idx_p >= 0:
+                        for el in BeautifulSoup(txt_bi[idx_p:idx_p + 500], "html.parser").find_all(string=True):
+                            t = el.strip().replace(".", "").replace(",", ".")
+                            try:
+                                v = float(t)
+                                if 30 < v < 200:
+                                    price = v
+                                    break
+                            except Exception:
+                                continue
+                    if price is not None:
+                        break
+
+            if price is not None and price_datetime and len(price_datetime) >= 16:
+                break  # prezzo + orario completo: non serve altro
         except Exception as exc:
             _log_fallback_debug("borsa_italiana_btp_price", isin, exc)
-            continue
-    return None
+
+    # --- 3. Il Sole 24 Ore (fallback solo per prezzo) ---
+    # Nota: il widget S24 mostra l'ora corrente (con 20-min delay), NON l'orario dell'ultimo contratto.
+    # È utile solo come fallback per il PREZZO quando Borsa Italiana non risponde.
+    if price is None:
+        try:
+            s24_url = f"https://mercatiwdg.ilsole24ore.com/FinanzaMercati/WidgetSelector/header-dettaglio?topicName={isin}.MOT"
+            r24 = requests.get(s24_url, headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://mercati.ilsole24ore.com/",
+            }, timeout=10)
+            soup24 = BeautifulSoup(r24.text, "html.parser")
+            huge = soup24.find("span", class_=lambda c: c and "fmw-value--huge" in c)
+            if huge:
+                t = huge.get_text(strip=True).replace(".", "").replace(",", ".")
+                try:
+                    v = float(t)
+                    if 30 < v < 200:
+                        price = v
+                        logger.info("BTP Il Sole 24 Ore fallback: isin=%s price=%s", isin, price)
+                except Exception:
+                    pass
+        except Exception as exc:
+            _log_fallback_debug("sole24ore_btp", isin, exc)
+
+    if price is not None:
+        btp_cache = _load_btp_trade_time_cache()
+        if price_datetime and len(price_datetime) >= 16:
+            # Orario confermato (da "Ultimo Contratto"): salva in cache
+            btp_cache[isin] = {"price_date": price_datetime}
+            _save_btp_trade_time_cache(btp_cache)
+        elif price_datetime and len(price_datetime) == 10:
+            # Solo data (pre-apertura): recupera orario dal cache se la data coincide
+            cached = btp_cache.get(isin, {})
+            if str(cached.get("price_date", ""))[:10] == price_datetime:
+                price_datetime = cached["price_date"]
+                logger.info("BTP pre-apertura: orario da cache per %s → %s", isin, price_datetime)
+        logger.info("BTP: isin=%s price=%s datetime=%s", isin, price, price_datetime)
+        return {"price": price, "price_date": price_datetime}
+    return {"price": None, "price_date": None}
+
+
+def get_btp_price(isin: str) -> float | None:
+    """Compatibilità: restituisce solo il prezzo."""
+    return get_btp_price_details(isin).get("price")
 
 
 def find_ticker(isin: str) -> str:
@@ -216,11 +467,12 @@ def _get_cached_price(key: str, timeout_seconds: int) -> tuple[float | None, str
     return None
 
 
-def _set_cached_price(key: str, price: float | None, source: str, price_date: str | None = None) -> None:
+def _set_cached_price(key: str, price: float | None, source: str, price_date: str | None = None, recent_history: dict | None = None) -> None:
     _LOOKUP_CACHE_RUNTIME[key] = {
         "price": price,
         "source": source,
         "price_date": price_date,
+        "recent_history": recent_history or {},
         "ts": time.time(),
     }
 
@@ -231,8 +483,20 @@ def clear_runtime_price_cache() -> None:
     logger.info("Cache runtime prezzi svuotata")
 
 
+def prime_isin_ticker_cache(cache_dict: dict) -> None:
+    """Carica il mapping ISIN→ticker Yahoo dalla cache persistente (chiamare all'avvio)."""
+    if isinstance(cache_dict, dict):
+        _ISIN_YAHOO_TICKER_CACHE.update({k: v for k, v in cache_dict.items() if isinstance(v, str) and v})
+        logger.debug("Cache ISIN→ticker Yahoo inizializzata: %d voci", len(_ISIN_YAHOO_TICKER_CACHE))
+
+
+def get_isin_ticker_cache() -> dict[str, str]:
+    """Restituisce il mapping ISIN→ticker Yahoo corrente per la persistenza su disco."""
+    return dict(_ISIN_YAHOO_TICKER_CACHE)
+
+
 def get_price_details(isin: str, tk: str, timeout_seconds: int = 300) -> dict[str, Any]:
-    """Recupera prezzo, fonte e data effettiva del prezzo quando disponibile."""
+    """Recupera prezzo, fonte, data effettiva e storico recente (per backfill)."""
     key = f"{isin}|{tk}"
     cached = _get_cached_price_record(key, timeout_seconds)
     if cached is not None:
@@ -241,38 +505,48 @@ def get_price_details(isin: str, tk: str, timeout_seconds: int = 300) -> dict[st
             "price": cached.get("price"),
             "source": cached.get("source", "Cache"),
             "price_date": cached.get("price_date"),
+            "recent_history": cached.get("recent_history") or {},
         }
 
     if tk.upper().startswith("BTP"):
-        p = get_btp_price(isin)
+        btp = get_btp_price_details(isin)
+        p, p_date = btp.get("price"), btp.get("price_date")
         if p:
-            _set_cached_price(key, p, "Borsa Italiana", None)
-            logger.info("Prezzo trovato da Borsa Italiana: key=%s", key)
-            return {"price": p, "source": "Borsa Italiana", "price_date": None}
+            _set_cached_price(key, p, "Borsa Italiana", p_date)
+            logger.info("Prezzo trovato da Borsa Italiana: key=%s datetime=%s", key, p_date)
+            return {"price": p, "source": "Borsa Italiana", "price_date": p_date, "recent_history": {}}
+
+    persisted_tk = _ISIN_YAHOO_TICKER_CACHE.get(isin)
+    if persisted_tk and persisted_tk.upper() != tk.upper():
+        p, p_date, rec_hist = get_yahoo_price_details(persisted_tk)
+        if p:
+            _set_cached_price(key, p, f"Yahoo [{persisted_tk}]", p_date, rec_hist)
+            logger.info("Prezzo da ticker persistente: key=%s ticker=%s date=%s", key, persisted_tk, p_date)
+            return {"price": p, "source": f"Yahoo [{persisted_tk}]", "price_date": p_date, "recent_history": rec_hist}
 
     if "." in tk and not tk.upper().startswith("0P"):
-        p, p_date = get_yahoo_price_details(tk)
+        p, p_date, rec_hist = get_yahoo_price_details(tk)
         if p:
-            _set_cached_price(key, p, f"Yahoo [{tk}]", p_date)
+            _set_cached_price(key, p, f"Yahoo [{tk}]", p_date, rec_hist)
             logger.info("Prezzo trovato da Yahoo ticker diretto: key=%s ticker=%s date=%s", key, tk, p_date)
-            return {"price": p, "source": f"Yahoo [{tk}]", "price_date": p_date}
+            return {"price": p, "source": f"Yahoo [{tk}]", "price_date": p_date, "recent_history": rec_hist}
 
     auto = get_yahoo_ticker(isin)
     if auto and auto.upper() != tk.upper():
-        p, p_date = get_yahoo_price_details(auto)
+        p, p_date, rec_hist = get_yahoo_price_details(auto)
         if p:
-            _set_cached_price(key, p, f"Yahoo [{auto}]", p_date)
+            _set_cached_price(key, p, f"Yahoo [{auto}]", p_date, rec_hist)
             logger.info("Prezzo trovato da Yahoo ticker auto-detect: key=%s ticker=%s date=%s", key, auto, p_date)
-            return {"price": p, "source": f"Yahoo [{auto}]", "price_date": p_date}
+            return {"price": p, "source": f"Yahoo [{auto}]", "price_date": p_date, "recent_history": rec_hist}
 
-    p, p_date = get_yahoo_price_details(tk)
+    p, p_date, rec_hist = get_yahoo_price_details(tk)
     if p:
-        _set_cached_price(key, p, f"Yahoo [{tk}]", p_date)
+        _set_cached_price(key, p, f"Yahoo [{tk}]", p_date, rec_hist)
         logger.info("Prezzo trovato da Yahoo fallback finale: key=%s ticker=%s date=%s", key, tk, p_date)
-        return {"price": p, "source": f"Yahoo [{tk}]", "price_date": p_date}
+        return {"price": p, "source": f"Yahoo [{tk}]", "price_date": p_date, "recent_history": rec_hist}
 
     logger.warning("Prezzo non trovato: key=%s", key)
-    return {"price": None, "source": "Non trovato", "price_date": None}
+    return {"price": None, "source": "Non trovato", "price_date": None, "recent_history": {}}
 
 
 def get_price(isin: str, tk: str, timeout_seconds: int = 300) -> tuple[float | None, str]:

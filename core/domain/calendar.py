@@ -18,14 +18,23 @@ CEDOLA_FREQ_PAYMENTS = {
 }
 
 
+_DATE_FORMATS = ("%Y-%m-%d", "%d/%m/%y", "%d/%m/%Y")
+
+
 def _to_ts(value) -> pd.Timestamp | None:
-    try:
-        ts = pd.to_datetime(value)
-    except (ValueError, TypeError, pd.errors.ParserError):
+    if value is None:
         return None
-    if pd.isna(ts):
+    if isinstance(value, (pd.Timestamp,)):
+        return value if not pd.isna(value) else None
+    raw = str(value).strip()
+    if not raw:
         return None
-    return pd.Timestamp(ts)
+    for fmt in _DATE_FORMATS:
+        try:
+            return pd.Timestamp(pd.to_datetime(raw, format=fmt))
+        except (ValueError, TypeError):
+            continue
+    return None
 
 
 def _is_btp(tipo: str) -> bool:

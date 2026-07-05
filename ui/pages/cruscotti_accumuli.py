@@ -17,7 +17,7 @@ import streamlit as st
 from core.cache_signatures import build_portfolio_data_signature, resolve_analysis_render_sig
 from core.render_profiler import profile_step
 from core.analytics_payload_cache import load_entry as load_persistent_analytics_entry, store_entry as store_persistent_analytics_entry
-from core.services.accumuli import build_accumuli_analysis
+from core.services.accumuli import AccumuliResult, build_accumuli_analysis
 from ui.charts.accumuli import (
     build_accumuli_overview_chart,
     build_accumulo_price_pmc_chart,
@@ -202,6 +202,38 @@ def _render_accumuli_freeze_header(entry: dict[str, Any] | None, stale: bool, si
     return st.button("Rigenera analisi accumuli", type="secondary", key=f"accumuli_regen_{signature}")
 
 
+_FIELD_RENAMES = {
+    "elasticita_prossima_rata": "elasticita_prossimo_acquisto",
+    "rata_tipica": "importo_tipico_acquisto",
+}
+
+
+def _migrate_result(result: Any) -> Any:
+    """Rinomina i vecchi nomi di campo nei risultati cached per compatibilità con il codice corrente."""
+    if result is None or not hasattr(result, "summary"):
+        return result
+    summary = result.summary
+    if isinstance(summary, pd.DataFrame) and not summary.empty:
+        old_cols = {old: new for old, new in _FIELD_RENAMES.items() if old in summary.columns and new not in summary.columns}
+        if old_cols:
+            summary = summary.rename(columns=old_cols)
+    by_ticker: dict[str, Any] = {}
+    for tk, v in (result.by_ticker or {}).items():
+        row = v.get("summary", {})
+        if isinstance(row, dict):
+            updated = False
+            for old, new in _FIELD_RENAMES.items():
+                if old in row and new not in row:
+                    row = dict(row)
+                    row[new] = row.pop(old)
+                    updated = True
+            if updated:
+                v = dict(v)
+                v["summary"] = row
+        by_ticker[tk] = v
+    return AccumuliResult(summary, by_ticker)
+
+
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         if pd.isna(value):
@@ -239,6 +271,8 @@ def _style_summary_table(row: pd.Series) -> list[str]:
             style = f"color:{macro_color(cat)};font-weight:850;"
         elif col == "Categoria":
             style = f"color:{macro_color(cat)};font-weight:650;"
+        elif col == "Quote":
+            style = f"color:{P['blue']};font-weight:800;"
         elif col == "P/L":
             style = f"color:{P['green'] if raw_pl >= 0 else P['red']};font-weight:800;"
         elif col == "Stato":
@@ -264,12 +298,13 @@ def _format_summary(summary: pd.DataFrame) -> pd.DataFrame:
             "Strumento": summary["ticker"].astype(str),
             "Categoria": summary["categoria"].astype(str),
             "N. acquisti": pd.to_numeric(summary["n_acquisti"], errors="coerce").fillna(0).astype(int),
+            "Quote": pd.to_numeric(summary["quote"], errors="coerce"),
             "Capitale": pd.to_numeric(summary["capitale"], errors="coerce"),
             "Valore": pd.to_numeric(summary["controvalore"], errors="coerce"),
             "P/L": pd.to_numeric(summary["pl_pct"], errors="coerce"),
             "PMC": pd.to_numeric(summary["pmc"], errors="coerce"),
             "Prezzo": pd.to_numeric(summary["prezzo_attuale"], errors="coerce"),
-            "Elast. PMC": pd.to_numeric(summary["elasticita_prossima_rata"], errors="coerce"),
+            "Elast. PMC": pd.to_numeric(summary["elasticita_prossimo_acquisto"], errors="coerce"),
             "Stato": summary["stato"].astype(str),
             "Priorità": summary["priorita"].astype(str),
         }
@@ -283,7 +318,7 @@ def _render_overview_kpis(summary: pd.DataFrame) -> None:
     total_pl = total_value - total_invested
     total_pl_pct = total_pl / total_invested if total_invested > 0 else 0.0
     below_pmc = int((pd.to_numeric(summary.get("margine_pmc"), errors="coerce") < 0).sum())
-    high_elasticity = int((pd.to_numeric(summary.get("elasticita_prossima_rata"), errors="coerce") >= 0.08).sum())
+    high_elasticity = int((pd.to_numeric(summary.get("elasticita_prossimo_acquisto"), errors="coerce") >= 0.08).sum())
     cols = st.columns(6)
     with cols[0]:
         kpi_card("Strumenti in accumulo", fmt_num_it(len(summary), 0), "PAC espliciti e progressivi", accent=P["blue"])
@@ -296,7 +331,7 @@ def _render_overview_kpis(summary: pd.DataFrame) -> None:
     with cols[4]:
         kpi_card("Sotto PMC", fmt_num_it(below_pmc, 0), "Prezzo sotto carico", accent=P["orange"], value_color=P["orange"] if below_pmc else P["green"])
     with cols[5]:
-        kpi_card("Alta elasticità", fmt_num_it(high_elasticity, 0), "Prossima rata ≥ 8%", accent=P["red" if high_elasticity else "green"], value_color=P["red"] if high_elasticity else P["green"])
+        kpi_card("Alta elasticità", fmt_num_it(high_elasticity, 0), "Prossimo acquisto ≥ 8%", accent=P["red" if high_elasticity else "green"], value_color=P["red"] if high_elasticity else P["green"])
 
 
 def _filter_summary(summary: pd.DataFrame) -> pd.DataFrame:
@@ -344,10 +379,10 @@ def _elasticity_judgment(value: Any) -> str:
     if v < 0.08:
         return "Media: PMC ancora sensibile"
     if v < 0.25:
-        return "Alta: rata incisiva"
+        return "Alta: acquisto incisivo"
     if v < 1.0:
         return "Molto alta: posizione giovane"
-    return "Anomala: rata oltre il capitale"
+    return "Anomala: acquisto oltre il capitale"
 
 
 def _render_summary_table(summary: pd.DataFrame) -> None:
@@ -356,7 +391,7 @@ def _render_summary_table(summary: pd.DataFrame) -> None:
     if display.empty:
         st.info("Nessuno strumento soddisfa i filtri selezionati.")
         return
-    numeric_cols = ["N. acquisti", "Capitale", "Valore", "P/L", "PMC", "Prezzo", "Elast. PMC"]
+    numeric_cols = ["N. acquisti", "Quote", "Capitale", "Valore", "P/L", "PMC", "Prezzo", "Elast. PMC"]
     center_cols = ["Stato", "Priorità"]
     with profile_step("Cruscotti/Accumuli", "summary table: build styler", count=len(display)):
         styled = (
@@ -364,6 +399,7 @@ def _render_summary_table(summary: pd.DataFrame) -> None:
         .format(
             {
                 "N. acquisti": lambda v: fmt_num_it(v, 0),
+                "Quote": lambda v: fmt_qty_it(v, 4),
                 "Capitale": lambda v: fmt_eur_it(v, 0),
                 "Valore": lambda v: fmt_eur_it(v, 0),
                 "P/L": lambda v: fmt_pct_it(v, 1, signed=True),
@@ -383,16 +419,17 @@ def _render_summary_table(summary: pd.DataFrame) -> None:
                 {"selector": "th.col0,td.col0", "props": [("min-width", "110px"), ("max-width", "130px")]},
                 {"selector": "th.col1,td.col1", "props": [("min-width", "48px"), ("max-width", "62px"), ("text-align", "center")]},
                 {"selector": "th.col2,td.col2", "props": [("min-width", "42px"), ("max-width", "52px")]},
-                {"selector": "th.col3,td.col3,th.col4,td.col4", "props": [("min-width", "72px"), ("max-width", "88px")]},
-                {"selector": "th.col5,td.col5,th.col6,td.col6,th.col7,td.col7,th.col8,td.col8", "props": [("min-width", "62px"), ("max-width", "82px")]},
-                {"selector": "th.col9,td.col9", "props": [("min-width", "82px"), ("max-width", "98px"), ("text-align", "center")]},
-                {"selector": "th.col10,td.col10", "props": [("min-width", "66px"), ("max-width", "82px"), ("text-align", "center")]},
+                {"selector": "th.col3,td.col3", "props": [("min-width", "66px"), ("max-width", "82px"), ("color", "#3B82F6"), ("font-weight", "800")]},
+                {"selector": "th.col4,td.col4,th.col5,td.col5", "props": [("min-width", "72px"), ("max-width", "88px")]},
+                {"selector": "th.col6,td.col6,th.col7,td.col7,th.col8,td.col8,th.col9,td.col9", "props": [("min-width", "62px"), ("max-width", "82px")]},
+                {"selector": "th.col10,td.col10", "props": [("min-width", "82px"), ("max-width", "98px"), ("text-align", "center")]},
+                {"selector": "th.col11,td.col11", "props": [("min-width", "66px"), ("max-width", "82px"), ("text-align", "center")]},
                 {
-                    "selector": "th.col3,th.col4,th.col5,th.col6,th.col7,th.col8,td.col3,td.col4,td.col5,td.col6,td.col7,td.col8",
+                    "selector": "th.col3,th.col4,th.col5,th.col6,th.col7,th.col8,th.col9,td.col3,td.col4,td.col5,td.col6,td.col7,td.col8,td.col9",
                     "props": [("text-align", "right")],
                 },
                 {
-                    "selector": "th.col9,th.col10,td.col9,td.col10",
+                    "selector": "th.col10,th.col11,td.col10,td.col11",
                     "props": [("text-align", "center")],
                 },
             ],
@@ -407,6 +444,7 @@ def _render_summary_table(summary: pd.DataFrame) -> None:
             "Strumento": st.column_config.TextColumn("Strumento", width=118),
             "Categoria": st.column_config.TextColumn("Categoria", width=56),
             "N. acquisti": st.column_config.NumberColumn("N.", width=48),
+            "Quote": st.column_config.NumberColumn("Quote", width=72),
             "Capitale": st.column_config.NumberColumn("Capitale", width=82),
             "Valore": st.column_config.NumberColumn("Valore", width=82),
             "P/L": st.column_config.NumberColumn("P/L", width=64),
@@ -440,7 +478,7 @@ def _render_diagnosis(row: pd.Series) -> None:
 def _render_metric_comment(row: pd.Series) -> None:
     state = str(row.get("stato") or "Da monitorare")
     margin = _safe_float(row.get("margine_pmc"))
-    elasticity = _safe_float(row.get("elasticita_prossima_rata"))
+    elasticity = _safe_float(row.get("elasticita_prossimo_acquisto"))
     efficiency = row.get("efficienza_accumulo")
     percentile = row.get("percentile_pmc")
     regularity = row.get("regolarita")
@@ -571,13 +609,13 @@ def _render_detail(row: pd.Series, detail: dict[str, Any], cache_signature: str)
     with profile_step("Cruscotti/Accumuli", f"detail {ticker}: title"):
         render_section_title(f"Dettaglio accumulo – {ticker}", icon="analysis")
     items = [
-        ("Capitale", fmt_eur_it(row.get("capitale"), 0), "Costo aperto", P["blue"], None),
+        ("Quote totali", fmt_qty_it(row.get("quote"), 4), "quote detenute attualmente", P["blue"], P["blue"]),
+        ("Capitale", fmt_eur_it(row.get("capitale"), 0), "Costo aperto", P["muted"], None),
         ("Controvalore", fmt_eur_it(row.get("controvalore"), 0), "Valore corrente", P["green"], P["green"] if _safe_float(row.get("pl_abs")) >= 0 else P["red"]),
         ("P/L", fmt_pct_it(row.get("pl_pct"), 1, signed=True), _pl_judgment(row.get("pl_pct")), P["green"], P["green"] if _safe_float(row.get("pl_pct")) >= 0 else P["red"]),
         ("PMC", fmt_eur_it(row.get("pmc"), 2), "Prezzo medio di carico", P["orange"], None),
         ("Prezzo", fmt_eur_it(row.get("prezzo_attuale"), 2), "Ultimo prezzo disponibile", P["blue"], None),
         ("Margine PMC", fmt_pct_it(row.get("margine_pmc"), 1, signed=True), _margin_judgment(row.get("margine_pmc")), P["green"], P["green"] if _safe_float(row.get("margine_pmc")) >= 0 else P["red"]),
-        ("Efficienza", fmt_num_it(row.get("efficienza_accumulo"), 2), _efficiency_judgment(row.get("efficienza_accumulo")), P["blue"], None),
         ("Volatilità", fmt_pct_it(row.get("volatilita_acquisti"), 1), _volatility_judgment(row.get("volatilita_acquisti")), P["red"], None),
         ("Media mercato", fmt_eur_it(row.get("prezzo_medio_periodo"), 2), _market_mean_judgment(row), P["blue"], None),
         ("Percentile PMC", fmt_pct_it(row.get("percentile_pmc"), 0), _percentile_judgment(row.get("percentile_pmc")), P["orange"], None),
@@ -585,7 +623,9 @@ def _render_detail(row: pd.Series, detail: dict[str, Any], cache_signature: str)
         ("Drawdown max", fmt_pct_it(row.get("drawdown_da_massimo"), 1, signed=True), _drawdown_judgment(row.get("drawdown_da_massimo")), P["red"], P["green"] if _safe_float(row.get("drawdown_da_massimo"), 0.0) >= -0.02 else P["red"]),
     ]
     with profile_step("Cruscotti/Accumuli", f"detail {ticker}: render KPI cards"):
-        for chunk in (items[:4], items[4:8], items[8:]):
+        for chunk in [items[i:i+4] for i in range(0, len(items), 4)]:
+            if not chunk:
+                continue
             cols = st.columns(4)
             for col, (label, value, subtitle, accent, value_color) in zip(cols, chunk):
                 with col:
@@ -653,6 +693,8 @@ def render_accumuli(ctx: SimpleNamespace, show_explanations: bool = True) -> Non
         result = entry.get("result") if isinstance(entry, dict) else None
         with profile_step("Cruscotti/Accumuli", "reuse cached analysis"):
             pass
+
+    result = _migrate_result(result)
 
     # Usa la firma memorizzata nell'entry (versione dell'analisi) anziché quella
     # corrente del portfolio: così un refresh prezzi non invalida le figure

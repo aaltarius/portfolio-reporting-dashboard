@@ -183,6 +183,15 @@ app_logger.info("File di log attivo: %s", get_log_file_path(app_logger))
 app_logger.info("Working directory Streamlit: %s", os.getcwd())
 
 
+# === FORM SERVER (operazioni senza rerun) ===
+@st.cache_resource
+def _start_form_server():
+    from form_server import start_form_server
+    start_form_server()
+    return True
+_start_form_server()
+
+
 # === INITIALIZE STATE ===
 _STATE_MANAGER_SCHEMA = "2026-05-31-derived-runtime-cache-v1"
 
@@ -224,6 +233,42 @@ except Exception:
     pass
 
 render_sidebar(data)
+
+
+def _apply_privacy_filter(data: dict, settings: dict) -> dict:
+    """Filtra in memoria gli strumenti nascosti. Non tocca mai i dati su disco."""
+    import copy
+    pm = (settings or {}).get("privacy_mode", {}) or {}
+    if not pm.get("enabled", False):
+        return data
+    hidden_tickers = {str(t) for t in (pm.get("hidden_tickers") or [])}
+    hidden_categories = {str(c).upper() for c in (pm.get("hidden_categories") or [])}
+    if not hidden_tickers and not hidden_categories:
+        return data
+    data = copy.deepcopy(data)
+    all_hidden: set[str] = set(hidden_tickers)
+    for s in (data.get("strumenti") or []):
+        tk = str(s.get("ticker") or "")
+        if str(s.get("tipo") or "").upper() in hidden_categories and tk:
+            all_hidden.add(tk)
+    if not all_hidden:
+        return data
+    data["strumenti"] = [
+        s for s in (data.get("strumenti") or [])
+        if str(s.get("ticker") or "") not in all_hidden
+    ]
+    for day_prices in (data.get("storico_prezzi") or {}).values():
+        for tk in all_hidden:
+            day_prices.pop(tk, None)
+    if data.get("registro_eventi"):
+        data["registro_eventi"] = [
+            e for e in data["registro_eventi"]
+            if str(e.get("ticker") or "") not in all_hidden
+        ]
+    return data
+
+
+data = _apply_privacy_filter(data, settings)
 
 # Il log quotazioni è un metadato volatile della UI, non parte della
 # firma finanziaria cacheata. Va letto dopo la sidebar perché il pulsante
