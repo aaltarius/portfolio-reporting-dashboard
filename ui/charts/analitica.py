@@ -145,8 +145,8 @@ def build_pl_decomposition_time_chart(dfh, pl_cols, viz_mode, dfmt, theme, ticke
 def build_target_gap_chart(macro_target_df):
 	"""Build target allocation gap chart for Analisi.
 
-	chart_id: analisi_risk_contribution1
-	chiamato da: ui/pages/analisi.py
+	chart_id: analisi_target_gap
+	chiamato da: ui/dashboard_bundles.py (get_analitica_bundle)
 	"""
 	fig = go.Figure()
 	peso_attuale = pd.to_numeric(macro_target_df["Peso attuale"], errors="coerce").fillna(0.0)
@@ -175,7 +175,7 @@ def build_target_gap_chart(macro_target_df):
 		)
 	)
 	fig.update_layout(barmode="overlay")
-	return apply_settings(fig, "analisi_risk_contribution1")
+	return apply_settings(fig, "analisi_target_gap")
 
 
 def build_risk_contribution_chart(risk_df):

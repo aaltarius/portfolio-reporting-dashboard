@@ -33,6 +33,11 @@ from ui.formatting import fmt_eur_it, fmt_pct_it
 from ui.page_chrome import render_page_intro as render_page_intro_shared, render_section_line as render_section_line_shared
 from ui.components import render_section_title, kpi_card, back_to_top, legend_block, render_styled_table
 from ui.charts.tables import color_pl
+from ui.charts.pianificazione import (
+    build_composition_donut_chart,
+    build_ante_post_bucket_chart,
+    build_objective_mix_chart,
+)
 from ui.sator_matrix import (
     SATOR_MATRIX_COLUMNS,
     SATOR_MATRIX_DISABLED_COLUMNS,
@@ -289,49 +294,10 @@ def _render_portfolio_objective_section(ctx: SimpleNamespace, theme) -> None:
 
 
 def _render_objective_mix_chart(objective: dict, current_mix: dict, theme) -> None:
-    """Obiettivo vs mix attuale, stesso stile (colori, tema, etichette) degli altri
-    grafici Core/Difensivo/Satellite della pagina (vedi _render_ante_post_bucket_chart)."""
-    buckets = ("Core", "Difensivo", "Satellite")
-    obiettivo_pct = {
-        "Core": objective.get("core", 0.0) * 100.0,
-        "Difensivo": objective.get("difensivo", 0.0) * 100.0,
-        "Satellite": objective.get("satellite", 0.0) * 100.0,
-    }
-    attuale_pct = {b: float(current_mix.get(b, 0.0)) * 100.0 for b in buckets}
-    try:
-        import plotly.graph_objects as go
-        colors = {
-            "Core": getattr(theme, "color_blue", "#5B8DEF"),
-            "Difensivo": getattr(theme, "color_green", "#22c55e"),
-            "Satellite": getattr(theme, "color_orange", "#E8B960"),
-        }
-        fig = go.Figure()
-        for bucket in buckets:
-            ob = obiettivo_pct[bucket]
-            att = attuale_pct[bucket]
-            fig.add_trace(go.Bar(
-                name=bucket,
-                x=["Obiettivo", "Attuale"],
-                y=[ob, att],
-                marker_color=colors.get(bucket),
-                text=[f"{ob:.0f}%" if ob >= 4 else "", f"{att:.0f}%" if att >= 4 else ""],
-                textposition="inside",
-                hovertemplate=f"{bucket}: %{{y:.1f}}%<extra></extra>",
-            ))
-        fig.update_layout(
-            barmode="stack",
-            height=220,
-            margin=dict(t=8, b=25, l=10, r=150),
-            yaxis=dict(range=[0, 100], ticksuffix="%", title=None),
-            xaxis=dict(title=None),
-            legend=dict(orientation="v", yanchor="middle", y=0.5, x=1.02, xanchor="left"),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-        )
-        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
-    except Exception:
-        mix_df = pd.DataFrame({"Bucket": list(buckets), "Obiettivo": [obiettivo_pct[b] for b in buckets], "Attuale": [attuale_pct[b] for b in buckets]})
-        st.bar_chart(mix_df.set_index("Bucket"), stack=False, y_label="%")
+    """Obiettivo vs mix attuale: builder centralizzato in ui/charts/pianificazione.py,
+    layout governato da ui/charts/settings.py (chart_id pianificazione_obiettivo_mix)."""
+    fig = build_objective_mix_chart(objective, current_mix, theme)
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
 def _satellite_target_from_objective(settings: dict) -> float:
@@ -412,45 +378,13 @@ def _render_bucket_detail_box(combo_df: pd.DataFrame, importi: pd.Series) -> Non
 
 
 def _render_composition_chart(per_funzione: pd.Series, theme) -> None:
-    """Donut della composizione Core/Difensivo/Satellite. Con fallback se Plotly non c'e'."""
+    """Donut della composizione Core/Difensivo/Satellite: builder centralizzato in
+    ui/charts/pianificazione.py, layout governato da ui/charts/settings.py
+    (chart_id pianificazione_composizione)."""
     if per_funzione is None or per_funzione.empty:
         return
-    values = [float(v) for v in per_funzione.values]
-    total = sum(values)
-    labels = [
-        f"{label} - {fmt_eur_it(value, 2)} ({fmt_pct_it(value / total, 1)})" if total > 0 else str(label)
-        for label, value in zip(per_funzione.index, values)
-    ]
-    palette = [
-        getattr(theme, "color_blue", "#5B8DEF"), getattr(theme, "color_green", "#22c55e"),
-        getattr(theme, "color_orange", "#E8B960"), "#B07CC6", "#6FB3B8", "#E07A5F",
-        getattr(theme, "color_gray", "#94a3b8"), "#A3B18A", "#577590",
-    ]
-    try:
-        import plotly.graph_objects as go
-        fig = go.Figure(
-            data=[go.Pie(
-                labels=labels,
-                values=values,
-                hole=0.55,
-                marker=dict(colors=palette[: len(per_funzione)]),
-                textinfo="percent",
-                hovertemplate="%{label}<extra></extra>",
-            )]
-        )
-        fig.update_traces(domain=dict(x=[0.0, 0.68]))
-        fig.update_layout(
-            showlegend=True, height=300, margin=dict(t=10, b=10, l=10, r=210),
-            legend=dict(
-                orientation="v", yanchor="middle", y=0.5, x=1.02, xanchor="left",
-                font=dict(size=13), tracegroupgap=8,
-            ),
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        )
-        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
-    except Exception:
-        st.caption("Composizione dell'ordine per bucket:")
-        st.bar_chart(per_funzione)
+    fig = build_composition_donut_chart(per_funzione, theme)
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
 def _weighted_average(df: pd.DataFrame, value_col: str, amount_col: str = "Importo") -> float:
@@ -580,43 +514,13 @@ def _render_sator_package_comparison(combo_df: pd.DataFrame, master_df: pd.DataF
 
 
 def _render_ante_post_bucket_chart(bucket_df: pd.DataFrame, theme) -> None:
+    """Mix Core/Difensivo/Satellite prima/dopo: builder centralizzato in
+    ui/charts/pianificazione.py, layout governato da ui/charts/settings.py
+    (chart_id pianificazione_ante_post)."""
     if bucket_df is None or bucket_df.empty:
         return
-    try:
-        import plotly.graph_objects as go
-        colors = {
-            "Core": getattr(theme, "color_blue", "#5B8DEF"),
-            "Difensivo": getattr(theme, "color_green", "#22c55e"),
-            "Satellite": getattr(theme, "color_orange", "#E8B960"),
-        }
-        fig = go.Figure()
-        for bucket in ("Core", "Difensivo", "Satellite"):
-            if bucket not in bucket_df.index:
-                continue
-            before = float(bucket_df.loc[bucket, "% prima"]) * 100.0
-            after = float(bucket_df.loc[bucket, "% dopo"]) * 100.0
-            fig.add_trace(go.Bar(
-                name=bucket,
-                x=["Prima", "Dopo"],
-                y=[before, after],
-                marker_color=colors.get(bucket),
-                text=[f"{before:.1f}%" if before >= 4 else "", f"{after:.1f}%" if after >= 4 else ""],
-                textposition="inside",
-                hovertemplate=f"{bucket}: %{{y:.1f}}%<extra></extra>",
-            ))
-        fig.update_layout(
-            barmode="stack",
-            height=260,
-            margin=dict(t=8, b=25, l=10, r=150),
-            yaxis=dict(range=[0, 100], ticksuffix="%", title=None),
-            xaxis=dict(title=None),
-            legend=dict(orientation="v", yanchor="middle", y=0.5, x=1.02, xanchor="left"),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-        )
-        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
-    except Exception:
-        st.bar_chart(bucket_df[["% prima", "% dopo"]])
+    fig = build_ante_post_bucket_chart(bucket_df, theme)
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
 def _render_sator_ante_post(combo_df: pd.DataFrame, master_df: pd.DataFrame, budget: float, theme) -> None:

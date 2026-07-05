@@ -1,251 +1,90 @@
 from __future__ import annotations
 
+import pandas as pd
 import plotly.graph_objects as go
 
 from ui.charts.runtime import finalize_chart
 from ui.formatting import fmt_eur_it, fmt_pct_it
 
 
-def build_planning_allocation_chart(before_df, after_df, theme):
-    """Grouped before/after allocation chart for planning simulations."""
+def build_composition_donut_chart(per_funzione: pd.Series, theme) -> go.Figure:
+    """Donut della composizione Core/Difensivo/Satellite (o per funzione)."""
     fig = go.Figure()
-    if before_df is not None and after_df is not None and not before_df.empty and not after_df.empty:
-        cats = before_df["Categoria"].tolist()
-        after_map = dict(zip(after_df["Categoria"], after_df["Peso"]))
-        before_vals = before_df["Peso"].tolist()
-        after_vals = [after_map.get(cat, 0.0) for cat in cats]
-        fig.add_bar(
-            x=cats,
-            y=before_vals,
-            name="Prima",
-            marker_color=theme.color_blue,
-            text=[fmt_pct_it(v, 1) for v in before_vals],
-            textposition="outside",
-        )
-        fig.add_bar(
-            x=cats,
-            y=after_vals,
-            name="Dopo",
-            marker_color=theme.color_orange,
-            text=[fmt_pct_it(v, 1) for v in after_vals],
-            textposition="outside",
-        )
-    return finalize_chart(
-        fig,
-        "pianificazione_allocation",
-        layout_updates={"barmode": "group", "bargap": 0.24, "bargroupgap": 0.08},
-        yaxis_updates={"tickformat": ".0%"},
-    )
+    if per_funzione is not None and not per_funzione.empty:
+        values = [float(v) for v in per_funzione.values]
+        total = sum(values)
+        labels = [
+            f"{label} - {fmt_eur_it(value, 2)} ({fmt_pct_it(value / total, 1)})" if total > 0 else str(label)
+            for label, value in zip(per_funzione.index, values)
+        ]
+        palette = [
+            getattr(theme, "color_blue", "#5B8DEF"), getattr(theme, "color_green", "#22c55e"),
+            getattr(theme, "color_orange", "#E8B960"), "#B07CC6", "#6FB3B8", "#E07A5F",
+            getattr(theme, "color_gray", "#94a3b8"), "#A3B18A", "#577590",
+        ]
+        fig.add_trace(go.Pie(
+            labels=labels,
+            values=values,
+            hole=0.55,
+            marker=dict(colors=palette[: len(per_funzione)]),
+            textinfo="percent",
+            hovertemplate="%{label}<extra></extra>",
+        ))
+        fig.update_traces(domain=dict(x=[0.0, 0.68]))
+    return finalize_chart(fig, "pianificazione_composizione")
 
 
-def build_planning_scenarios_chart(scenario_df, theme):
-    """Scenario chart for hypothetical return paths."""
+def build_ante_post_bucket_chart(bucket_df: pd.DataFrame, theme) -> go.Figure:
+    """Mix Core/Difensivo/Satellite prima e dopo un ordine simulato."""
     fig = go.Figure()
-    if scenario_df is not None and not scenario_df.empty:
-        colors = [theme.color_blue, theme.color_orange, theme.color_green, theme.color_red]
-        for idx, (scenario, group) in enumerate(scenario_df.groupby("Scenario")):
-            fig.add_trace(
-                go.Scatter(
-                    x=group["Orizzonte"],
-                    y=group["Valore simulato"],
-                    mode="lines+markers+text",
-                    name=str(scenario),
-                    line=dict(width=2.5, color=colors[idx % len(colors)]),
-                    text=[fmt_eur_it(v, 0) for v in group["Valore simulato"]],
-                    textposition="top center",
-                    hovertemplate="%{x}<br>Valore simulato: %{y:,.2f}<extra></extra>",
-                )
-            )
-    return finalize_chart(
-        fig,
-        "pianificazione_scenarios",
-        hovermode="x unified",
-        yaxis_updates={"tickformat": ",.0f"},
-    )
+    if bucket_df is not None and not bucket_df.empty:
+        colors = {
+            "Core": getattr(theme, "color_blue", "#5B8DEF"),
+            "Difensivo": getattr(theme, "color_green", "#22c55e"),
+            "Satellite": getattr(theme, "color_orange", "#E8B960"),
+        }
+        for bucket in ("Core", "Difensivo", "Satellite"):
+            if bucket not in bucket_df.index:
+                continue
+            before = float(bucket_df.loc[bucket, "% prima"]) * 100.0
+            after = float(bucket_df.loc[bucket, "% dopo"]) * 100.0
+            fig.add_trace(go.Bar(
+                name=bucket,
+                x=["Prima", "Dopo"],
+                y=[before, after],
+                marker_color=colors.get(bucket),
+                text=[f"{before:.1f}%" if before >= 4 else "", f"{after:.1f}%" if after >= 4 else ""],
+                textposition="inside",
+                hovertemplate=f"{bucket}: %{{y:.1f}}%<extra></extra>",
+            ))
+    return finalize_chart(fig, "pianificazione_ante_post", layout_updates={"barmode": "stack"})
 
 
-def build_sator_ranking_chart(ranking_df, theme):
+def build_objective_mix_chart(objective: dict, current_mix: dict, theme) -> go.Figure:
+    """Obiettivo di portafoglio vs mix attuale, per bucket Core/Difensivo/Satellite."""
+    buckets = ("Core", "Difensivo", "Satellite")
+    obiettivo_pct = {
+        "Core": objective.get("core", 0.0) * 100.0,
+        "Difensivo": objective.get("difensivo", 0.0) * 100.0,
+        "Satellite": objective.get("satellite", 0.0) * 100.0,
+    }
+    attuale_pct = {b: float(current_mix.get(b, 0.0)) * 100.0 for b in buckets}
+    colors = {
+        "Core": getattr(theme, "color_blue", "#5B8DEF"),
+        "Difensivo": getattr(theme, "color_green", "#22c55e"),
+        "Satellite": getattr(theme, "color_orange", "#E8B960"),
+    }
     fig = go.Figure()
-    if ranking_df is not None and not ranking_df.empty:
-        top = ranking_df.head(10).copy()
-        top = top.sort_values("score_finale", ascending=True)
-        colors = []
-        for _, row in top.iterrows():
-            if str(row.get("challenger_flag") or "") == "Watchlist":
-                colors.append(theme.color_green)
-            elif bool(row.get("in_portfolio")):
-                colors.append(theme.color_blue)
-            else:
-                colors.append(theme.color_orange)
-        fig.add_bar(
-            x=top["score_finale"],
-            y=top["ticker"],
-            orientation="h",
-            marker_color=colors,
-            text=[f"{float(v):.2f}" for v in top["score_finale"]],
-            textposition="outside",
-            customdata=top[["comparison_group", "challenger_flag", "selection_reason"]],
-            hovertemplate="<b>%{y}</b><br>Score: %{x:.2f}<br>Stato: %{customdata[1]}<br>Gruppo: %{customdata[0]}<br>%{customdata[2]}<extra></extra>",
-        )
-    return finalize_chart(
-        fig,
-        "pianificazione_allocation",
-        layout_updates={"showlegend": False},
-        xaxis_updates={"range": [0, 1.05], "tickformat": ".2f"},
-    )
-
-
-def build_sator_scenarios_chart(scenarios_df, theme):
-    fig = go.Figure()
-    if scenarios_df is not None and not scenarios_df.empty:
-        work = scenarios_df.copy()
-        work["Utilizzo"] = work["Importo usato"] / (work["Importo usato"] + work["Residuo"]).replace(0, 1)
-        work = work.sort_values("Importo usato", ascending=True)
-        fig.add_bar(
-            x=work["Importo usato"],
-            y=work["Scenario"],
-            orientation="h",
-            name="Importo usato",
-            marker_color=theme.color_blue,
-            text=[f"{fmt_eur_it(v, 0)} | {fmt_pct_it(u, 0)}" for v, u in zip(work["Importo usato"], work["Utilizzo"])],
-            textposition="outside",
-        )
-        fig.add_bar(
-            x=work["Residuo"],
-            y=work["Scenario"],
-            orientation="h",
-            name="Residuo",
-            marker_color=theme.color_orange,
-            text=[fmt_eur_it(v, 0) if float(v) > 0 else "" for v in work["Residuo"]],
-            textposition="outside",
-        )
-    return finalize_chart(
-        fig,
-        "pianificazione_allocation",
-        layout_updates={"barmode": "stack", "bargap": 0.28, "bargroupgap": 0.08},
-        xaxis_updates={"tickformat": ",.0f"},
-    )
-
-
-def build_sator_challenger_chart(challenger_df, theme):
-    fig = go.Figure()
-    if challenger_df is not None and not challenger_df.empty:
-        work = challenger_df.copy()
-        work["Delta"] = work["Score challenger"].fillna(0.0) - work["Score incumbent"].fillna(0.0)
-        fig.add_bar(
-            x=work["Delta"],
-            y=work["Gruppo"],
-            orientation="h",
-            marker_color=[theme.color_green if v >= 0 else theme.color_red for v in work["Delta"]],
-            text=[fmt_pct_it(v, 1, signed=True) for v in work["Delta"]],
-            textposition="outside",
-            customdata=work[["Incumbent", "Challenger", "Decisione"]],
-            hovertemplate="%{y}<br>Incumbent: %{customdata[0]}<br>Challenger: %{customdata[1]}<br>Delta score: %{x:.2f}<br>%{customdata[2]}<extra></extra>",
-        )
-        fig.add_vline(x=0, line_color="rgba(15,23,42,.35)", line_width=1)
-    return finalize_chart(
-        fig,
-        "pianificazione_allocation",
-        layout_updates={"showlegend": False},
-        xaxis_updates={"tickformat": ".0%"},
-    )
-
-
-def build_sator_projection_chart(projection_df, theme):
-    fig = go.Figure()
-    if projection_df is not None and not projection_df.empty:
-        work = projection_df.copy()
-        fig.add_bar(
-            x=work["Orizzonte"],
-            y=work["Banda prudente"],
-            name="Prudente",
-            marker_color=theme.color_red,
-            text=[fmt_pct_it(v, 1, signed=True) for v in work["Banda prudente"]],
-            textposition="outside",
-        )
-        fig.add_bar(
-            x=work["Orizzonte"],
-            y=work["Atteso condizionale"],
-            name="Atteso",
-            marker_color=theme.color_blue,
-            text=[fmt_pct_it(v, 1, signed=True) for v in work["Atteso condizionale"]],
-            textposition="outside",
-        )
-        fig.add_bar(
-            x=work["Orizzonte"],
-            y=work["Banda favorevole"],
-            name="Favorevole",
-            marker_color=theme.color_green,
-            text=[fmt_pct_it(v, 1, signed=True) for v in work["Banda favorevole"]],
-            textposition="outside",
-        )
-    return finalize_chart(
-        fig,
-        "pianificazione_scenarios",
-        hovermode="x unified",
-        layout_updates={"barmode": "group", "bargap": 0.22, "bargroupgap": 0.08},
-        yaxis_updates={"tickformat": ".0%"},
-    )
-
-
-def build_sator_factor_chart(factor_df, theme):
-    fig = go.Figure()
-    if factor_df is not None and not factor_df.empty:
-        work = factor_df.copy().sort_values("Punteggio", ascending=True)
-        colors = []
-        for score in work["Punteggio"]:
-            if float(score) >= 0.67:
-                colors.append(theme.color_green)
-            elif float(score) >= 0.45:
-                colors.append(theme.color_orange)
-            else:
-                colors.append(theme.color_red)
-        fig.add_bar(
-            x=work["Punteggio"],
-            y=work["Fattore"],
-            orientation="h",
-            marker_color=colors,
-            text=[fmt_pct_it(v, 0) for v in work["Punteggio"]],
-            textposition="outside",
-            customdata=work[["Lettura"]],
-            hovertemplate="<b>%{y}</b><br>Punteggio: %{x:.0%}<br>%{customdata[0]}<extra></extra>",
-        )
-    return finalize_chart(
-        fig,
-        "pianificazione_allocation",
-        layout_updates={"showlegend": False},
-        xaxis_updates={"range": [0, 1.05], "tickformat": ".0%"},
-    )
-
-
-def build_sator_decision_ranking_chart(ranking_df, theme):
-    fig = go.Figure()
-    if ranking_df is not None and not ranking_df.empty:
-        work = ranking_df.copy().sort_values("score_finale", ascending=True)
-        colors = []
-        for score in work["score_finale"]:
-            value = float(score or 0.0)
-            if value >= 0.72:
-                colors.append(theme.color_green)
-            elif value >= 0.56:
-                colors.append(theme.color_blue)
-            elif value >= 0.42:
-                colors.append(theme.color_orange)
-            else:
-                colors.append(theme.color_red)
-        fig.add_bar(
-            x=work["score_finale"],
-            y=work["ticker"],
-            orientation="h",
-            marker_color=colors,
-            text=[f"{float(v):.2f}" for v in work["score_finale"]],
-            textposition="outside",
-            customdata=work[["selection_reason"]],
-            hovertemplate="<b>%{y}</b><br>Giudizio: %{x:.2f}<br>%{customdata[0]}<extra></extra>",
-        )
-    return finalize_chart(
-        fig,
-        "pianificazione_allocation",
-        layout_updates={"showlegend": False},
-        xaxis_updates={"range": [0, 1.05], "tickformat": ".2f"},
-    )
+    for bucket in buckets:
+        ob = obiettivo_pct[bucket]
+        att = attuale_pct[bucket]
+        fig.add_trace(go.Bar(
+            name=bucket,
+            x=["Obiettivo", "Attuale"],
+            y=[ob, att],
+            marker_color=colors.get(bucket),
+            text=[f"{ob:.0f}%" if ob >= 4 else "", f"{att:.0f}%" if att >= 4 else ""],
+            textposition="inside",
+            hovertemplate=f"{bucket}: %{{y:.1f}}%<extra></extra>",
+        ))
+    return finalize_chart(fig, "pianificazione_obiettivo_mix", layout_updates={"barmode": "stack"})
