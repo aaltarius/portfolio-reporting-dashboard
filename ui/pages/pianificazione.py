@@ -10,10 +10,8 @@ import pandas as pd
 import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
 
-from core.asset_categories import get_selected_category_codes
 from core.cache import invalidate_portfolio_cache
 from core.finance import build_bucket_rebalancing_suggestions, compute_portfolio_state
-from core.services.planning import build_static_return_scenarios, simulate_trade_impact
 from core.services.sator import (
     build_sator_matrix_frame,
     build_sator_decision_record,
@@ -31,7 +29,7 @@ from core.services.sator import (
     SATOR_NATURE_VALUES,
 )
 from persistence.storage import load_data, load_sator_decisions, save_data, save_sator_decisions, save_settings
-from ui.formatting import fmt_eur_it, fmt_pct_it, fmt_qty_it
+from ui.formatting import fmt_eur_it, fmt_pct_it
 from ui.page_chrome import render_page_intro as render_page_intro_shared, render_section_line as render_section_line_shared
 from ui.components import render_section_title, kpi_card, back_to_top, legend_block, render_styled_table
 from ui.charts.tables import color_pl
@@ -259,14 +257,14 @@ def _render_portfolio_objective_section(ctx: SimpleNamespace, theme) -> None:
             w_cost = st.number_input("Costo %", min_value=0.0, max_value=100.0, step=1.0, value=float(weights["cost_efficiency"] * 100), key="w_cost")
 
         with st.expander("Come funziona il calcolo interno (non modificabile)", expanded=False):
-            legend_block(
-                "<br>".join([
-                    "<b>Momentum</b>: media pesata dei rendimenti a 1/3/6/12 mesi (10/35/35/20%) — funzione <code>_score_momentum</code> in core/services/sator.py.",
-                    "<b>Rischio</b>: volatilita' (40%) + drawdown massimo (30%) + rendimento/rischio a 12 mesi (30%) — funzione <code>_score_risk</code> in core/services/sator.py.",
-                    "<b>Costo</b>: bonus zero commissioni/PAC, malus TER/spread, penalita' se il prezzo satura il budget — funzione <code>_score_cost</code> in core/services/sator.py.",
-                    "Per modificare questi dettagli serve intervenire direttamente nel codice: qui sopra trovi obiettivo, cap e pesi, che sono invece tuoi.",
-                ]),
-                variant="bottom",
+            st.markdown(
+                "<ul style='margin:0;padding-left:18px;list-style:disc'>"
+                "<li style='margin-bottom:8px'><b>Momentum</b>: media pesata dei rendimenti a 1/3/6/12 mesi (10/35/35/20%) — funzione <code>_score_momentum</code> in core/services/sator.py.</li>"
+                "<li style='margin-bottom:8px'><b>Rischio</b>: volatilita' (40%) + drawdown massimo (30%) + rendimento/rischio a 12 mesi (30%) — funzione <code>_score_risk</code> in core/services/sator.py.</li>"
+                "<li style='margin-bottom:8px'><b>Costo</b>: bonus zero commissioni/PAC, malus TER/spread, penalita' se il prezzo satura il budget — funzione <code>_score_cost</code> in core/services/sator.py.</li>"
+                "<li>Per modificare questi dettagli serve intervenire direttamente nel codice: qui sopra trovi obiettivo, cap e pesi, che sono invece tuoi.</li>"
+                "</ul>",
+                unsafe_allow_html=True,
             )
 
         submitted = st.form_submit_button("Salva obiettivo di portafoglio", width="stretch")
@@ -289,10 +287,11 @@ def _render_portfolio_objective_section(ctx: SimpleNamespace, theme) -> None:
     current_mix = compute_current_bucket_mix(data, state_df)
     mix_df = pd.DataFrame({
         "Bucket": ["Core", "Difensivo", "Satellite"],
-        "Obiettivo": [objective["core"], objective["difensivo"], objective["satellite"]],
-        "Attuale": [current_mix.get("Core", 0.0), current_mix.get("Difensivo", 0.0), current_mix.get("Satellite", 0.0)],
+        "Obiettivo": [objective["core"] * 100, objective["difensivo"] * 100, objective["satellite"] * 100],
+        "Attuale": [current_mix.get("Core", 0.0) * 100, current_mix.get("Difensivo", 0.0) * 100, current_mix.get("Satellite", 0.0) * 100],
     })
     st.bar_chart(mix_df.set_index("Bucket"))
+    st.caption("Valori in % del portafoglio.")
 
 
 def _satellite_target_from_objective(settings: dict) -> float:
@@ -1060,15 +1059,13 @@ def _render_sator_module(ctx: SimpleNamespace, theme) -> None:
 
 def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
     """
-    Scheda Pianificazione: simulatore pre-operazione e scenari statici.
-    Non registra operazioni reali: mostra impatto prima/dopo.
+    Scheda Pianificazione: obiettivo di portafoglio, SATOR e liquidita' da investire.
     """
     theme = get_theme_context()
     settings = ctx.settings
     data = ctx.data
     da = ctx.da.copy() if getattr(ctx, "da", None) is not None else pd.DataFrame()
     liquidita = float(getattr(ctx, "liquidita_attuale", 0.0) or 0.0)
-    visible_categories = list(get_selected_category_codes(settings))
 
     with tab:
 
@@ -1081,166 +1078,8 @@ def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         with st.container():
             _render_portfolio_objective_section(ctx, theme)
 
-        _section_line()
         with st.container():
             _render_sator_module(ctx, theme)
-
-        _section_line()
-        with st.container():
-            render_section_title(
-                "Simulatore pre-operazione",
-                comment="Inserisci un'operazione ipotetica: l'app mostra impatto su allocazione, liquidita e concentrazione senza salvare nulla.",
-                gap_after="sm"
-            )
-            if da.empty:
-                st.info("Non ci sono posizioni aperte sufficienti per simulare sul portafoglio corrente.")
-            operation = st.selectbox(
-                "Tipo operazione",
-                ["Acquisto", "Vendita"],
-                index=0,
-                key="plan_operation",
-            )
-            source_mode = st.radio(
-                "Strumento",
-                ["Esistente", "Ipotetico"],
-                horizontal=True,
-                key="plan_source_mode",
-                disabled=(operation == "Vendita"),
-            )
-            if operation == "Vendita":
-                source_mode = "Esistente"
-
-            tickers = da["Ticker"].astype(str).tolist() if not da.empty and "Ticker" in da.columns else []
-            selected_ticker = tickers[0] if tickers else ""
-            selected_row = pd.Series(dtype=object)
-            if source_mode == "Esistente" and tickers:
-                selected_ticker = st.selectbox("Strumento esistente", tickers, key="plan_existing_ticker")
-                selected_row = da[da["Ticker"].astype(str) == selected_ticker].iloc[0]
-                instrument_name = str(selected_row.get("Strumento") or selected_ticker)
-                category = str(selected_row.get("Categoria") or selected_row.get("Tipo") or "ETF")
-                default_price = float(selected_row.get("Prezzo") or selected_row.get("PMC") or 0.0)
-            else:
-                col_h1, col_h2, col_h3 = st.columns([1, 2, 1], gap="medium")
-                with col_h1:
-                    selected_ticker = st.text_input("Ticker ipotetico", value="NUOVO", key="plan_new_ticker")
-                with col_h2:
-                    instrument_name = st.text_input("Nome strumento", value="Strumento ipotetico", key="plan_new_name")
-                with col_h3:
-                    default_index = visible_categories.index("ETF") if "ETF" in visible_categories else 0
-                    category = st.selectbox("Categoria", visible_categories, index=default_index, key="plan_new_category")
-                default_price = 100.0
-
-            col_i1, col_i2, col_i3, col_i4 = st.columns(4, gap="medium")
-            with col_i1:
-                amount_mode = st.radio("Inserimento", ["Quantita", "Importo"], horizontal=True, key="plan_amount_mode")
-            with col_i2:
-                price = st.number_input("Prezzo", min_value=0.0, value=float(default_price or 0.0), step=0.01, format="%.4f", key="plan_price")
-            with col_i3:
-                if amount_mode == "Importo":
-                    amount = st.number_input("Importo", min_value=0.0, value=1000.0, step=100.0, format="%.2f", key="plan_amount")
-                    quantity = (amount / price) if price > 0 else 0.0
-                    st.caption(f"Quantita stimata: {fmt_qty_it(quantity, 4)}")
-                else:
-                    max_qty = float(selected_row.get("Quote") or 0.0) if operation == "Vendita" and not selected_row.empty else 0.0
-                    default_qty = min(max_qty, 1.0) if operation == "Vendita" and max_qty > 0 else 1.0
-                    quantity = st.number_input("Quantita", min_value=0.0, value=float(default_qty), step=1.0, format="%.4f", key="plan_qty")
-            with col_i4:
-                commissions = st.number_input("Commissioni", min_value=0.0, value=2.95, step=0.50, format="%.2f", key="plan_commissions")
-
-            annual_prudent = st.slider("Scenario prudente annuo", -30.0, 30.0, -5.0, 0.5, format="%.1f%%", key="plan_prudent") / 100.0
-            annual_base = st.slider("Scenario base annuo", -30.0, 30.0, 3.0, 0.5, format="%.1f%%", key="plan_base") / 100.0
-            annual_optimistic = st.slider("Scenario ottimistico annuo", -30.0, 30.0, 8.0, 0.5, format="%.1f%%", key="plan_optimistic") / 100.0
-
-            if st.button("Simula impatto", width="stretch", key="plan_run_simulation"):
-                st.session_state["planning_result"] = simulate_trade_impact(
-                    da,
-                    cash_balance=liquidita,
-                    operation=operation,
-                    ticker=selected_ticker,
-                    name=instrument_name,
-                    category=category,
-                    quantity=quantity,
-                    price=price,
-                    commissions=commissions,
-                )
-                st.session_state["planning_scenarios"] = {
-                    "Prudente": annual_prudent,
-                    "Base": annual_base,
-                    "Ottimistico": annual_optimistic,
-                }
-
-        result = st.session_state.get("planning_result")
-        if result:
-            _section_line()
-            with st.container():
-                render_section_title(
-                    "Impatto simulato",
-                    comment="Confronto statico tra situazione attuale e situazione dopo l'operazione ipotetica.",
-                    gap_after="sm",
-                )
-                metrics = result["metrics"]
-                metric_map = {row["Voce"]: row for _, row in metrics.iterrows()}
-                cash_after = float(metric_map.get("Liquidita", {}).get("Dopo", 0.0))
-                assets_delta = float(metric_map.get("Patrimonio simulato", {}).get("Delta", 0.0))
-                liquidity_delta = float(metric_map.get("Liquidita", {}).get("Delta", 0.0))
-                value_delta = float(metric_map.get("Valore strumenti", {}).get("Delta", 0.0))
-                c1, c2, c3, c4 = st.columns(4, gap="small")
-                with c1:
-                    kpi_card("Importo operazione", fmt_eur_it(result["amount"], 2), result["ticker"], accent=theme.color_blue)
-                with c2:
-                    kpi_card("Liquidita dopo", fmt_eur_it(cash_after, 2), fmt_eur_it(liquidity_delta, 2, signed=True), accent=theme.color_orange, value_color=theme.color_red if cash_after < 0 else None)
-                with c3:
-                    kpi_card("Valore strumenti", fmt_eur_it(metric_map.get("Valore strumenti", {}).get("Dopo", 0), 2), fmt_eur_it(value_delta, 2, signed=True), accent=theme.color_green)
-                with c4:
-                    kpi_card("Patrimonio simulato", fmt_eur_it(metric_map.get("Patrimonio simulato", {}).get("Dopo", 0), 2), fmt_eur_it(assets_delta, 2, signed=True), accent=theme.color_blue)
-
-                for note in result.get("notes", []):
-                    st.caption(note)
-
-                alloc_before = result["allocation_before"]
-                alloc_after = result["allocation_after"]
-                alloc_cmp = alloc_before.merge(alloc_after, on="Categoria", suffixes=(" prima", " dopo"))
-                alloc_cmp["Delta peso"] = alloc_cmp["Peso dopo"] - alloc_cmp["Peso prima"]
-                alloc_cmp["Delta valore"] = alloc_cmp["Valore dopo"] - alloc_cmp["Valore prima"]
-                styled_alloc = alloc_cmp.style.format({
-                    "Valore prima": lambda v: fmt_eur_it(v, 2),
-                    "Valore dopo": lambda v: fmt_eur_it(v, 2),
-                    "Delta valore": lambda v: fmt_eur_it(v, 2, signed=True),
-                    "Peso prima": lambda v: fmt_pct_it(v, 2),
-                    "Peso dopo": lambda v: fmt_pct_it(v, 2),
-                    "Delta peso": lambda v: fmt_pct_it(v, 2, signed=True),
-                }).map(color_pl, subset=["Delta valore", "Delta peso"])
-                render_styled_table(styled_alloc, height="content")
-
-            _section_line()
-            with st.container():
-                render_section_title(
-                    "Concentrazione",
-                    comment="Controlla se la simulazione aumenta troppo il peso dei singoli strumenti.",
-                    gap_after="sm",
-                )
-                concentration_after = result["concentration_after"].head(10)
-                styled_conc = concentration_after.style.format({
-                    "Controvalore": lambda v: fmt_eur_it(v, 2),
-                    "Peso": lambda v: fmt_pct_it(v, 2),
-                })
-                render_styled_table(styled_conc, height="content")
-
-            _section_line()
-            with st.container():
-                render_section_title(
-                    "Scenari temporali",
-                    comment="Scenari ipotetici a 3 mesi, 6 mesi e 1 anno. Sono simulazioni matematiche, non previsioni.",
-                    gap_after="sm",
-                )
-                total_after = float(metric_map.get("Patrimonio simulato", {}).get("Dopo", 0.0))
-                scenarios = build_static_return_scenarios(total_after, st.session_state.get("planning_scenarios", {}))
-                styled_scen = scenarios.style.format({
-                    "Rendimento annuo ipotetico": lambda v: fmt_pct_it(v, 2, signed=True),
-                    "Valore simulato": lambda v: fmt_eur_it(v, 2),
-                    "Delta": lambda v: fmt_eur_it(v, 2, signed=True),
-                }).map(color_pl, subset=["Delta", "Rendimento annuo ipotetico"])
-                render_styled_table(styled_scen, height="content")
 
         _section_line()
         with st.container():
