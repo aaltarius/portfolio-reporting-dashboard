@@ -15,7 +15,6 @@ from core.services.reporting import (
 )
 from core.services.analysis import (
     build_advanced_analysis_data,
-    build_analysis_overview_html,
     build_pl_delta_series,
     build_percentage_return_series,
     build_drawdown_series,
@@ -59,7 +58,6 @@ __all__ = [
     "render_reporting_compliance_markdown",
     "build_portfolio_radar_payload",
     "build_advanced_analysis_data",
-    "build_analysis_overview_html",
     "build_pl_delta_series",
     "build_percentage_return_series",
     "build_drawdown_series",

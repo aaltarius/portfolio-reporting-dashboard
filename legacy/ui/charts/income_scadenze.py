@@ -1,3 +1,6 @@
+# LEGACY (2026-07-07): nessun importer nell'app viva (verificato con grep sull'intero
+# repo). Non confondere con core/services/income_scadenze.py, che e' un file diverso
+# e attivo (build_income_scadenze_summary, usato da Cruscotti).
 from __future__ import annotations
 
 import pandas as pd

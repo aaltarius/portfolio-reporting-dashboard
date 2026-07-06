@@ -10,7 +10,6 @@ from persistence.storage import macro_cat
 from ui.charts.runtime import finalize_chart
 from ui.charts.tables import small_pie_texts as _small_pie_texts
 from ui.charts.settings import apply_settings
-from ui.components import wrap_radar_label
 from ui.formatting import fmt_eur_it, hex_to_rgba
 from ui.theme import instrument_color, macro_color
 
@@ -387,87 +386,7 @@ def build_category_bar_chart(
         chart_id = "home_category_bar_pl"
     return apply_settings(fig, chart_id)
 
-
-def _build_radar_figure(labels, portfolio_values, comparison_values, comparison_name, theme, chart_id):
-    """Shared radar builder for Home.
-
-    chart_id runtime: home_radar_allocation oppure home_radar_quality
-    chiamato da: build_asset_allocation_radar / build_quality_profile_radar
-    """
-    theta = [wrap_radar_label(label) for label in labels]
-    theta_closed = theta + [theta[0]]
-    portfolio_closed = list(portfolio_values) + [portfolio_values[0]]
-    comparison_closed = list(comparison_values) + [comparison_values[0]]
-    data_max = max([float(v or 0.0) for v in portfolio_values + comparison_values] or [1.0])
-    if chart_id == "home_radar_allocation":
-        radial_max = min(100.0, max(20.0, data_max + 5.0))
-        radial_dtick = 5 if radial_max <= 50 else 10
-        ticksuffix = "%"
-    else:
-        radial_max = min(10.0, max(6.0, data_max + 0.8))
-        radial_dtick = 1
-        ticksuffix = None
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatterpolar(
-            r=portfolio_closed,
-            theta=theta_closed,
-            mode="lines",
-            name="Portafoglio attuale",
-            line=dict(color=theme.color_blue, width=3),
-            fill="toself",
-            fillcolor=hex_to_rgba(theme.color_blue, 0.16),
-            hovertemplate="%{theta}<br>Portafoglio attuale: %{r:.1f}<extra></extra>",
-        )
-    )
-    fig.add_trace(
-        go.Scatterpolar(
-            r=comparison_closed,
-            theta=theta_closed,
-            mode="lines",
-            name=comparison_name,
-            line=dict(color="rgba(107,114,128,0.95)", width=2.2, dash="dash"),
-            hovertemplate=f"%{{theta}}<br>{comparison_name}: %{{r:.1f}}<extra></extra>",
-        )
-    )
-    fig = apply_settings(fig, chart_id)
-    radialaxis_cfg = dict(range=[0, radial_max], dtick=radial_dtick)
-    if ticksuffix:
-        radialaxis_cfg["ticksuffix"] = ticksuffix
-    fig.update_layout(polar=dict(radialaxis=radialaxis_cfg))
-    return fig
-
-
-def build_asset_allocation_radar(radar_payload: dict[str, Any], theme):
-    """Radar quantitativo basato sull'allocazione reale del portafoglio.
-
-    chart_id: home_radar_allocation
-    chiamato da: ui/pages/home.py
-    """
-    block = radar_payload.get("quantitative", {}) if isinstance(radar_payload, dict) else {}
-    return _build_radar_figure(
-        block.get("labels", []),
-        block.get("portfolio", []),
-        block.get("comparison", []),
-        str(block.get("comparison_name") or "Benchmark moderato"),
-        theme,
-        "home_radar_allocation",
-    )
-
-
-def build_quality_profile_radar(radar_payload: dict[str, Any], theme):
-    """Radar qualitativo 0-10 basato sul profilo reale del portafoglio.
-
-    chart_id: home_radar_quality
-    chiamato da: ui/pages/home.py
-    """
-    block = radar_payload.get("qualitative", {}) if isinstance(radar_payload, dict) else {}
-    return _build_radar_figure(
-        block.get("labels", []),
-        block.get("portfolio", []),
-        block.get("comparison", []),
-        str(block.get("comparison_name") or "Profilo target"),
-        theme,
-        "home_radar_quality",
-    )
+# build_asset_allocation_radar/build_quality_profile_radar (e il loro helper
+# _build_radar_figure) sono state rimosse il 2026-07-07: duplicate di
+# ui/charts/analitica.py, che e' la versione realmente importata da
+# ui/dashboard_bundles.py — verificato con grep sull'intero repo.

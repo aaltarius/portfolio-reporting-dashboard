@@ -1,3 +1,6 @@
+# LEGACY (2026-07-07): nessun importer nell'app viva (verificato con grep sull'intero
+# repo). report_table_html/build_report_html restano qui solo come riferimento,
+# non caricati da nessuna pagina.
 from __future__ import annotations
 
 import pandas as pd

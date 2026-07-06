@@ -249,41 +249,6 @@ def delete_storico_prezzi_range(
                 del storico[date_str]
     return removed
 
-    # --- CODICE PRECEDENTE (commentato il 2026-06-23, da eliminare dopo verifica) ---
-    # def get_yahoo_price_details(tk: str) -> tuple[float | None, str | None]:
-    #     """Restituisce prezzo Yahoo e data effettiva del dato, quando disponibile."""
-    #     try:
-    #         h = yf.Ticker(tk).history(period="7d", auto_adjust=True, actions=False)
-    #         if not h.empty and "Close" in h.columns:
-    #             close = h["Close"].dropna()
-    #             if not close.empty:
-    #                 return float(close.iloc[-1]), _to_price_date(close.index[-1])
-    #     except Exception as exc:
-    #         _log_fallback_debug("yahoo_history", tk, exc)
-    #
-    #     try:
-    #         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{tk}?interval=1d&range=7d"
-    #         r = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=12)
-    #         js = r.json()
-    #         result = js["chart"]["result"][0]
-    #         timestamps = result.get("timestamp") or []
-    #         closes = result["indicators"]["quote"][0].get("close") or []
-    #         valid = [(ts, c) for ts, c in zip(timestamps, closes) if c is not None]
-    #         if valid:
-    #             ts, c = valid[-1]
-    #             return float(c), _to_price_date(ts)
-    #     except Exception as exc:
-    #         _log_fallback_debug("yahoo_chart_api", tk, exc)
-    #
-    #     try:
-    #         p = yf.Ticker(tk).fast_info.last_price
-    #         if p is not None and float(p) > 0:
-    #             return float(p), None
-    #     except Exception as exc:
-    #         _log_fallback_debug("yahoo_fast_info", tk, exc)
-    #
-    #     return None, None
-
 
 def get_yahoo_price(tk: str) -> float | None:
     """Compatibilità: restituisce solo il prezzo."""
