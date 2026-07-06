@@ -107,6 +107,7 @@ def build_normalized_performance_chart(
     start_date: str,
     *,
     align_starts: bool = False,
+    held_tickers: frozenset[str] | set[str] | None = None,
 ) -> go.Figure:
     """Grafico a linee sovrapposte: rendimento % normalizzato a 0%.
 
@@ -119,6 +120,11 @@ def build_normalized_performance_chart(
         propria prima data disponibile, indipendentemente dal calendario.
         Questo consente di confrontare la traiettoria di performance anche fra
         strumenti entrati in portafoglio in momenti diversi.
+
+    held_tickers: se fornito, i ticker non presenti (fuori portafoglio) sono
+        disegnati con linea tratteggiata e "(fuori portafoglio)" nel nome
+        traccia — distinzione visiva E testuale, non solo di colore. Se None
+        (default), nessuna distinzione: tutte le linee sono continue.
     """
     chart_id = "benchmark_normalized_performance"
     fig = go.Figure()
@@ -170,13 +176,16 @@ def build_normalized_performance_chart(
             hover = f"<b>{tk}</b><br>%{{x|%d/%m/%Y}}<br>Rendimento: %{{y:+.2%}}<extra></extra>"
 
         color = palette[added % len(palette)]
+        is_held = held_tickers is None or tk in held_tickers
+        trace_name = tk if is_held else f"{tk} (fuori portafoglio)"
+        line_style = dict(color=color, width=2.2) if is_held else dict(color=color, width=2.0, dash="dot")
         fig.add_trace(
             go.Scatter(
                 x=x_vals,
                 y=y_vals,
                 mode="lines",
-                name=tk,
-                line=dict(color=color, width=2.2),
+                name=trace_name,
+                line=line_style,
                 hovertemplate=hover,
             )
         )

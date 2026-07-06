@@ -602,8 +602,9 @@ def _render_normalized_performance_section(ctx: SimpleNamespace) -> None:
 
     if build_clicked:
         tickers_selected = [ticker_by_label[lbl] for lbl in selected_labels if lbl in ticker_by_label]
+        held_set = frozenset(t["ticker"] for t in all_tickers if t["active"])
         fig = build_normalized_performance_chart(
-            storico, tickers_selected, start_date, align_starts=align_starts
+            storico, tickers_selected, start_date, align_starts=align_starts, held_tickers=held_set,
         )
         cached_entry = {"fig": fig, "label": f"da {start_date} a {last_date}" if not align_starts else "origini allineate"}
         st.session_state[_NORM_PERF_SESSION_KEY] = cached_entry
