@@ -537,11 +537,11 @@ def _render_normalized_performance_section(ctx: SimpleNamespace) -> None:
         return
 
     options = [
-        f"{t['ticker']} {'(In portafoglio)' if t['active'] else '(Venduto)'}"
+        f"{t['ticker']} {'(In portafoglio)' if t['active'] else '(Fuori portafoglio)'}"
         for t in all_tickers
     ]
     ticker_by_label = {
-        f"{t['ticker']} {'(In portafoglio)' if t['active'] else '(Venduto)'}": t["ticker"]
+        f"{t['ticker']} {'(In portafoglio)' if t['active'] else '(Fuori portafoglio)'}": t["ticker"]
         for t in all_tickers
     }
     default_labels = [
