@@ -40,11 +40,21 @@ def _now_iso() -> str:
 import unicodedata as _unicodedata
 
 
+_APOSTROPHES_RE = re.compile(r"[‘’‛′`´]")
+
+
 def _norm_line(line: str) -> str:
-    """Lowercase, strip accents, collapse inline whitespace."""
+    """Lowercase, strip accents/typographic apostrophes, collapse inline whitespace.
+
+    Non-Fineco factsheet (iShares/Franklin/DWS/Amundi) use curly apostrophes
+    (l'indice, d'investimento) that NFD accent-stripping doesn't touch since
+    they aren't combining-diacritic sequences; stripped here so labels can be
+    written without worrying about which apostrophe glyph a given PDF uses.
+    """
     nfd = _unicodedata.normalize("NFD", line)
     no_acc = "".join(c for c in nfd if _unicodedata.category(c) != "Mn")
-    return re.sub(r"[ \t]+", " ", no_acc).strip().lower()
+    no_apo = _APOSTROPHES_RE.sub("", no_acc)
+    return re.sub(r"[ \t]+", " ", no_apo).strip().lower()
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +67,8 @@ _PDF_LABELS: dict[str, tuple[str, str]] = {
     # Costs
     "commissioni gestione e altri costi":        ("ter",                 "percent"),
     "commissione gestione annua":                ("ter",                 "percent"),
+    "total expense ratio":                       ("ter",                 "percent"),
+    "commissione annuale massima":                ("ter",                 "percent"),
     # Risk
     "deviazione standard":                       ("deviazione_std",      "percent"),
     "indice di sharpe":                          ("sharpe",              "number"),
@@ -69,7 +81,7 @@ _PDF_LABELS: dict[str, tuple[str, str]] = {
     "price to book value":                       ("price_to_book",       "number"),
     "nav":                                       ("nav",                 "last_number"),
     "patrimonio netto":                          ("patrimonio",          "last_number"),
-    "patrimonio":                                ("patrimonio",          "text"),
+    "patrimonio":                                ("patrimonio",          "last_number"),
     # Identity / classification
     "isin":                                      ("isin",                "token"),
     "emittente":                                 ("emittente",           "text"),
@@ -78,6 +90,7 @@ _PDF_LABELS: dict[str, tuple[str, str]] = {
     "categoria":                                 ("categoria_etf",       "text"),
     "specializzazione":                          ("specializzazione",    "token"),
     "fiscalita":                                 ("fiscalita",           "token"),
+    "domicilio":                                 ("domicilio",           "token"),
     # Dates
     "data di partenza":                          ("data_lancio",         "date"),
     "data di lancio":                            ("data_lancio",         "date"),
@@ -85,8 +98,12 @@ _PDF_LABELS: dict[str, tuple[str, str]] = {
     "data emissione":                            ("data_emissione",      "date"),
     "data godimento":                            ("data_godimento",      "date"),
     "prossima cedola":                           ("prossima_cedola",     "date"),
-    # Valuta (longer alias first)
+    # Valuta (longer alias first: se una di queste matcha, la bare "valuta"
+    # sotto viene saltata — evita che catturi la parola "valuta" nel testo
+    # legale boilerplate sul rischio cambio, presente in quasi ogni factsheet)
     "valuta nav":                                ("valuta",              "token"),
+    "valuta di base":                            ("valuta",              "token"),
+    "valuta del fondo":                          ("valuta",              "token"),
     "valuta":                                    ("valuta",              "token"),
     # BTP-specific
     "rendimento effettivo a scadenza netto":     ("ytm_netto",           "percent"),
@@ -112,14 +129,21 @@ _PDF_LABELS: dict[str, tuple[str, str]] = {
 }
 
 _NO_VALUE: frozenset = frozenset({"-", "--", "n.d.", "n/d", "—", "vedi composizione", ""})
-_DATE_RE_VAL  = re.compile(r"\d{2}/\d{2}/\d{4}")
+_DATE_RE_VAL  = re.compile(r"\d{2}[/.]\d{2}[/.]\d{4}")
 _PCT_RE_VAL   = re.compile(r"[+\-]?\s*\d+[,.]?\d*\s*%")
 _NUM_RE_VAL   = re.compile(r"\d[\d.,]*")
+_LEADING_PUNCT_RE = re.compile(r"^[:\-–—\s]+")
 
 
 def _extract_typed_value(remainder: str, next_line: str, vtype: str) -> Optional[str]:
-    """Return a typed value from *remainder* (rest of label's line) or *next_line* fallback."""
+    """Return a typed value from *remainder* (rest of label's line) or *next_line* fallback.
+
+    Some issuers print "Label :Valore" (colon glued to the value, e.g. Amundi
+    "Codice ISIN :FR0010754200") rather than Fineco's "Label Valore" — strip
+    any such leading separator before token/text parsing.
+    """
     src = remainder.strip() if remainder.strip() else next_line.strip()
+    src = _LEADING_PUNCT_RE.sub("", src)
 
     if vtype == "percent":
         m = _PCT_RE_VAL.search(remainder) or _PCT_RE_VAL.search(next_line)
@@ -140,11 +164,13 @@ def _extract_typed_value(remainder: str, next_line: str, vtype: str) -> Optional
         m = _DATE_RE_VAL.search(remainder) or _DATE_RE_VAL.search(next_line)
         if not m:
             return None
-        raw = m.group(0)  # "DD/MM/YYYY" dal PDF
-        try:
-            return datetime.datetime.strptime(raw, "%d/%m/%Y").strftime("%Y-%m-%d")
-        except ValueError:
-            return raw
+        raw = m.group(0)  # "DD/MM/YYYY" (Fineco) o "DD.MM.YYYY" (es. Franklin Templeton)
+        for fmt in ("%d/%m/%Y", "%d.%m.%Y"):
+            try:
+                return datetime.datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+        return raw
 
     if vtype == "token":
         parts = src.split()
@@ -152,8 +178,26 @@ def _extract_typed_value(remainder: str, next_line: str, vtype: str) -> Optional
         return val if val and val.lower() not in _NO_VALUE else None
 
     # vtype == "text"
-    val = remainder.strip() or next_line.strip()
-    return val if val and val.lower() not in _NO_VALUE else None
+    val = src
+    if val and val.lower() not in _NO_VALUE and not _looks_like_bled_text(val):
+        return val
+    return None
+
+
+_TEXT_VALUE_BAD_PREFIXES = ("eu sfdr", "sfdr")
+
+
+def _looks_like_bled_text(val: str) -> bool:
+    """True se *val* sembra testo "sbordato" da una colonna/tabella adiacente
+    invece del vero valore dell'etichetta — capita nei factsheet a piu'
+    colonne (iShares/Franklin, Amundi) dove pdfplumber unisce righe di
+    colonne diverse alla stessa altezza, o quando l'etichetta e' in realta'
+    l'intestazione di una tabella (es. "Emittente ISIN Ponderazione")."""
+    norm = _norm_line(val)
+    if norm.startswith(_TEXT_VALUE_BAD_PREFIXES):
+        return True
+    first_word = norm.split()[0] if norm.split() else ""
+    return first_word in _PDF_LABELS
 
 
 def _scan_labels(text: str) -> dict:
@@ -168,6 +212,15 @@ def _scan_labels(text: str) -> dict:
     handles PDFs that pack multiple fields onto one physical line (e.g.
     "Nav 141,58  Commissioni gestione e altri costi 0,12%") as well as ISINs
     preceded by token prefixes ("CFD ISIN IE00BGV5VN51").
+
+    Deliberately does NOT try to recognize a label glued to punctuation with
+    no surrounding space (e.g. "(NAV)"): on dense multi-column factsheets
+    (iShares/Franklin, Amundi) pdfplumber often merges an unrelated column's
+    text onto the same line, and "(NAV)" mentioned in disclaimer prose vastly
+    outnumbers genuine "(NAV): value" field rows — matching it there produced
+    more wrong extractions than right ones when tested against real sample
+    factsheets, so plain-Fineco-style "Label Value" (space-separated) stays
+    the only recognized shape here.
     """
     out: dict = {}
     lines = text.split("\n")
@@ -303,6 +356,46 @@ def _scan_distribuzione(text: str) -> dict:
         return {"distribuzione": "Distribuzione"}
     if re.search(r"[Dd]ividendo distribuito\s*\(-\)", text):
         return {"distribuzione": "Accumulazione"}
+    # Altri emittenti (iShares/Franklin, Xtrackers/DWS, Amundi...) non usano la
+    # dicitura Fineco "Dividendo distribuito": etichettano la stessa cosa come
+    # "Impiego del reddito" / "Utilizzo dei proventi" / "Tipologia dei
+    # dividendi", seguita da un valore preso da un piccolo vocabolario noto —
+    # più sicuro di una cattura di testo libero (niente rischio di "sbordare"
+    # nella colonna/paragrafo adiacente del PDF).
+    for anchor in (r"[Ii]mpiego del reddito", r"[Uu]tilizzo dei proventi", r"[Tt]ipologia dei dividendi"):
+        m = re.search(anchor + r"[^\n]{0,40}?(Accumulazione|Distribuzione|Capitalizzazione)", text)
+        if m:
+            return {"distribuzione": m.group(1)}
+    return {}
+
+
+def _scan_replica(text: str) -> dict:
+    """Metodologia di replica da vocabolario noto (fisica/ottimizzata/sintetica),
+    cercata ovunque nel testo: più robusta di una cattura per etichetta perché
+    non risente del testo di colonne/paragrafi adiacenti nei factsheet a più
+    colonne (iShares/Franklin, Xtrackers/DWS)."""
+    m = re.search(
+        r"Replica\s+(?:diretta\s*\(fisica\)|fisica|ottimizzata|completa|sintetica)"
+        r"|Replica\s+sintetica\s*\(swap\)"
+        r"|Sintetica(?:\s*\(swap\))?",
+        text,
+    )
+    return {"replica": m.group(0).strip()} if m else {}
+
+
+def _scan_aum(text: str) -> dict:
+    """Patrimonio in gestione (AUM) come stringa con valuta e scala inclusi
+    (es. "USD 8,66 miliardi", "$2,29 Mld"): un numero nudo non è confrontabile
+    tra emittenti che usano valute e ordini di grandezza diversi (milioni vs
+    miliardi), quindi qui si preserva l'intera espressione invece di ridurla
+    a un float come fa il vtype "last_number" per il campo Fineco "patrimonio"."""
+    for anchor in (r"[Pp]atrimonio in gestione", r"[Aa]ttivi amministrati del [Ff]ondo"):
+        m = re.search(
+            anchor + r"[^\n]{0,15}?([$€£]?\s?[A-Z]{0,3}\s?[\d.,]+\s?(?:Mld|mld|miliardi|milioni|mln|Mln|bn|Bn))",
+            text,
+        )
+        if m:
+            return {"aum": m.group(1).strip()}
     return {}
 
 
@@ -517,7 +610,9 @@ def enrich_fondo(strumento: dict) -> dict:
 
 
 def parse_fineco_pdf(pdf_bytes: bytes, tipo: str = "") -> dict:
-    """Parse a Fineco 'Scheda titolo' PDF exported from the web platform.
+    """Parse a fund/ETF factsheet PDF: Fineco's own 'Scheda titolo' export as
+    well as official issuer monthly factsheets (iShares/Franklin Templeton,
+    Xtrackers/DWS, Amundi/Lyxor...).
 
     Accepts any ETF/ETC/FAM/BTP layout without type-switching.
     Returns a dict of extracted fields, or {} if the PDF is not parsable.
@@ -538,6 +633,8 @@ def parse_fineco_pdf(pdf_bytes: bytes, tipo: str = "") -> dict:
     out.update(_scan_rendimenti(text))
     out.update(_scan_morningstar(text))
     out.update(_scan_distribuzione(text))
+    out.update(_scan_replica(text))
+    out.update(_scan_aum(text))
 
     holdings = _scan_holdings(text)
     if holdings:
