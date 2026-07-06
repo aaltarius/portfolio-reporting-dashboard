@@ -82,10 +82,20 @@ def resolve_period_start_date(sorted_dates: list[str], period: str) -> str:
 
 
 def get_all_historical_tickers(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Ritorna tutti i ticker mai presenti in storico_prezzi, con flag active/sold."""
+    """Ritorna tutti i ticker mai presenti in storico_prezzi, con flag active.
+
+    "active" significa "in portafoglio ora" (stato == "aperto"): uno strumento
+    chiuso ha ancora un record in strumenti (l'anagrafica resta per lo
+    storico) ma non conta come posseduto, esattamente come un ticker mai
+    acquistato (es. un benchmark di riferimento o uno strumento solo
+    osservato)."""
     storico: dict[str, dict[str, float]] = data.get("storico_prezzi") or {}
     strumenti: list[dict] = data.get("strumenti") or []
-    active_set = {s.get("ticker", "") for s in strumenti if s.get("ticker")}
+    active_set = {
+        s.get("ticker", "")
+        for s in strumenti
+        if s.get("ticker") and str(s.get("stato", "aperto")) == "aperto"
+    }
     all_tickers: set[str] = set()
     for prices in storico.values():
         all_tickers.update(prices.keys())
