@@ -92,19 +92,19 @@ def quarterly_table_html(quarterly_returns, theme=None):
                 ann = prod - 1.0
         except Exception:
             pass
-        rows_html += f"<tr style='background:{surface};'><td style='font-weight:700;padding:8px 11px;font-size:0.90rem;color:{text};border-top:1px solid {top_border};'>{yr}</td>" + "".join((_cell(q_vals[i]) for i in range(4))) + _cell(ann, is_total=True) + "</tr>"
+        rows_html += f"<tr style='background:{surface};'><td style='font-weight:700;padding:8px 11px;font-size:0.82rem;color:{text};border-top:1px solid {top_border};'>{yr}</td>" + "".join((_cell(q_vals[i]) for i in range(4))) + _cell(ann, is_total=True) + "</tr>"
     hdr = ("Anno", "T1", "T2", "T3", "T4", "TOT")
 
     def _hdr_style(i):
         align = "left" if i == 0 else "center"
         border_left = f"border-left:2px solid {hex_to_rgba('#ffffff', 0.30)};" if i == len(hdr) - 1 else ""
-        return f"padding:8px 11px;text-align:{align};font-weight:700;font-size:0.86rem;letter-spacing:.03em;text-transform:uppercase;{border_left}"
+        return f"padding:8px 11px;text-align:{align};font-weight:700;font-size:0.78rem;letter-spacing:.03em;text-transform:uppercase;{border_left}"
 
     hdr_html = "".join((f"<th style='{_hdr_style(i)}'>{h}</th>" for i, h in enumerate(hdr)))
     legend = _returns_scale_legend_html(min(all_vals) if all_vals else None, max(all_vals) if all_vals else None, positive, negative, muted, font_family)
     return (
         f"<div style='font-family:{font_family};'>"
-        f"<div style='overflow-x:auto;'><table style='width:100%;border-collapse:collapse;font-size:0.90rem;border:1px solid {border};border-radius:12px;overflow:hidden;background:{surface};'>"
+        f"<div style='overflow-x:auto;'><table style='width:100%;border-collapse:collapse;font-size:0.82rem;border:1px solid {border};border-radius:12px;overflow:hidden;background:{surface};'>"
         f"<thead><tr style='background:{primary};color:white;'>{hdr_html}</tr></thead><tbody>{rows_html}</tbody></table></div>"
         f"{legend}</div>"
     )
@@ -155,12 +155,12 @@ def monthly_heatmap_html(monthly_returns, theme=None):
                 prod *= 1.0 + v
                 has_any = True
             txt = fmt_pct_it(v, 1, signed=True) if v is not None else "—"
-            cells += f"<td style='text-align:center;padding:7px 8px;font-size:0.82rem;{_cell_color(v)}'>{txt}</td>"
+            cells += f"<td style='text-align:center;padding:7px 8px;font-size:0.74rem;{_cell_color(v)}'>{txt}</td>"
         ann = prod - 1.0 if has_any else None
         ann_style = _cell_color(ann)
         ann_txt = fmt_pct_it(ann, 1, signed=True) if ann is not None else "—"
-        rows_html += f"<tr style='background:{surface};'><td style='font-weight:700;padding:7px 9px;font-size:0.88rem;'>{yr}</td>{cells}<td style='text-align:right;padding:7px 9px;font-size:0.84rem;font-weight:700;border-left:2px solid {border};{ann_style}'>{ann_txt}</td></tr>"
-    hdr_html = "<th style='padding:7px 9px;text-align:left;font-size:0.86rem;text-transform:uppercase;letter-spacing:.03em;'>Anno</th>" + "".join((f"<th style='padding:7px 8px;text-align:center;font-size:0.84rem;text-transform:uppercase;letter-spacing:.02em;'>{m}</th>" for m in mesi_labels)) + f"<th style='padding:7px 9px;text-align:right;font-size:0.84rem;text-transform:uppercase;letter-spacing:.02em;border-left:2px solid {hex_to_rgba('#ffffff', 0.30)};'>Tot.</th>"
+        rows_html += f"<tr style='background:{surface};'><td style='font-weight:700;padding:7px 9px;font-size:0.80rem;'>{yr}</td>{cells}<td style='text-align:right;padding:7px 9px;font-size:0.76rem;font-weight:700;border-left:2px solid {border};{ann_style}'>{ann_txt}</td></tr>"
+    hdr_html = "<th style='padding:7px 9px;text-align:left;font-size:0.78rem;text-transform:uppercase;letter-spacing:.03em;'>Anno</th>" + "".join((f"<th style='padding:7px 8px;text-align:center;font-size:0.76rem;text-transform:uppercase;letter-spacing:.02em;'>{m}</th>" for m in mesi_labels)) + f"<th style='padding:7px 9px;text-align:right;font-size:0.76rem;text-transform:uppercase;letter-spacing:.02em;border-left:2px solid {hex_to_rgba('#ffffff', 0.30)};'>Tot.</th>"
     legend = _returns_scale_legend_html(min(all_vals) if all_vals else None, max(all_vals) if all_vals else None, positive, negative, muted, font_family)
     return (
         f"<div style='font-family:{font_family};'>"

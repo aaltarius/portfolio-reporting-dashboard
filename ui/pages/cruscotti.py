@@ -724,7 +724,7 @@ def _render_analitica(bundle: Any) -> None:
             _returns_blocks.append(monthly_heatmap_html(_mr, theme_obj))
         if _qr:
             _returns_blocks.append(quarterly_table_html(_qr, theme_obj))
-        render_html_iframe("<div style='margin-top:8px;'></div>".join(_returns_blocks), height="content")
+        render_html_iframe("<div style='height:22px;'></div>".join(_returns_blocks), height="content")
         legend_block("Intensità del colore proporzionale alla dimensione del rendimento (verde positivo, rosso negativo); la legenda min/max sotto ogni tabella indica gli estremi osservati.", variant="bottom")
 
     render_section_title("Scostamento da Allocazione Target", icon="portfolio")
