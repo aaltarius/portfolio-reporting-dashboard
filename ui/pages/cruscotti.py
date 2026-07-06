@@ -29,6 +29,7 @@ from ui.charts.operazioni import build_monthly_purchase_spending_time_chart, bui
 from ui.charts.calendario_btp import render_btp_calendar
 from ui.charts.settings import apply_settings
 from ui.charts.tables import color_pl, style_macro_cols
+from ui.charts.summary import quarterly_table_html, monthly_heatmap_html
 from core.services import get_category_allocation_breakdown, build_monthly_purchase_spending, get_portfolio_operations
 from core.services.income_scadenze import build_income_scadenze_summary
 from persistence.storage import macro_cat
@@ -712,12 +713,18 @@ def _render_analitica(bundle: Any) -> None:
             "</div>"
         )
         legend_block(validation_explanation, variant="bottom")
-    # _qr = summary_payload.get("quarterly_returns", [])
-    # if _qr:
-    #     ... quarterly_table_html implementation ...
-    # _mr = summary_payload.get("monthly_returns", [])
-    # if _mr and (_layout_full or _layout_analytic):
-    #     ... monthly_heatmap_html implementation ...
+
+    _qr = summary_payload.get("quarterly_returns", [])
+    if _qr:
+        render_section_title("Rendimenti per trimestre", icon="metrics")
+        render_html_iframe(quarterly_table_html(_qr, theme_obj), height="content")
+        legend_block("Rendimento di portafoglio per trimestre e totale annuo. Sfondo verde/rosso in base al segno.", variant="bottom")
+
+    _mr = summary_payload.get("monthly_returns", [])
+    if _mr and (_layout_full or _layout_analytic):
+        render_section_title("Rendimenti mensili", icon="metrics")
+        render_html_iframe(monthly_heatmap_html(_mr, theme_obj), height="content")
+        legend_block("Mappa di calore dei rendimenti mensili: intensità del colore proporzionale alla dimensione del rendimento (stessa logica dei rendimenti mensili di justETF).", variant="bottom")
 
     render_section_title("Scostamento da Allocazione Target", icon="portfolio")
     st.plotly_chart(bundle.target_gap_figure, width="stretch")
