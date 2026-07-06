@@ -61,3 +61,42 @@ def classify_natura(strumento: dict) -> str:
             return label
 
     return _FALLBACK_LABEL
+
+
+import re
+
+_BOND_SIGNAL_TOKENS = ("obbligazio", "bond", " gov ", "aggregate", "titoli di stato")
+_EQUITY_SIGNAL_TOKENS = ("azioni,", "azionario", "equity")
+
+
+def suggest_tipo_correction(strumento: dict) -> str | None:
+    """Se benchmark/focus_etf sono in aperta contraddizione con il tipo
+    salvato (es. segnale obbligazionario ma tipo dice azionario), ritorna il
+    tipo corretto. Altrimenti None. Non richiede dati di rete: usa solo campi
+    gia' presenti sullo strumento."""
+    benchmark = str(strumento.get("benchmark") or "")
+    focus = str(strumento.get("focus_etf") or "")
+    tipo = str(strumento.get("tipo") or "")
+    if not (benchmark or focus) or not tipo:
+        return None
+
+    signal_text = f"{benchmark} {focus}".lower()
+    tipo_lower = tipo.lower()
+
+    signals_bond = any(tok in signal_text for tok in _BOND_SIGNAL_TOKENS)
+    # Word-boundary match for equity tokens: a plain substring check on
+    # "azioni," would false-positive inside "obbligazioni," (e.g. XBAE.MI's
+    # bond-fund focus_etf text), wrongly flipping signals_equity to True.
+    signals_equity = any(
+        re.search(rf"\b{re.escape(tok)}", signal_text) for tok in _EQUITY_SIGNAL_TOKENS
+    )
+    tipo_says_equity = bool(re.search(r"\baz\.", tipo_lower)) or "azionario" in tipo_lower
+    tipo_says_bond = "obbl" in tipo_lower or "titolo di stato" in tipo_lower
+
+    if signals_bond and not signals_equity and tipo_says_equity and not tipo_says_bond:
+        corrected = re.sub(r"\bAz\.", "Obbl.", tipo, flags=re.IGNORECASE)
+        return corrected if corrected != tipo else None
+    if signals_equity and not signals_bond and tipo_says_bond and not tipo_says_equity:
+        corrected = re.sub(r"\bObbl\.", "Az.", tipo, flags=re.IGNORECASE)
+        return corrected if corrected != tipo else None
+    return None
