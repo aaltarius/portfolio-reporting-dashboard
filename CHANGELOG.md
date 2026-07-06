@@ -1,5 +1,32 @@
 # Changelog
 
+## 4.9.26 - Coerenza in/fuori portafoglio in Benchmark, arricchimento unificato, mappe di calore ripristinate
+
+**Cruscotti > Benchmark — distinzione in/fuori portafoglio:**
+- `get_all_historical_tickers` e `build_instrument_benchmark_matrix` consideravano "in portafoglio" qualunque ticker con un record in `strumenti`, indipendentemente dallo stato: uno strumento chiuso restava etichettato "(In portafoglio)", un ticker mai posseduto (es. un benchmark di riferimento) risultava "(Venduto)"
+- primo tentativo di fix — criterio `stato == "aperto"` — rivelatosi insufficiente sui dati reali: il campo `stato` risultava "aperto" su tutti i 26 strumenti del portafoglio, inclusi i 10 venduti per intero (l'auto-tag a "osservato" introdotto in `operazioni.py` dopo una vendita totale non era mai stato applicato retroattivamente agli strumenti già venduti prima)
+- fix definitivo: nuova funzione condivisa `core/domain/positions.py::held_tickers(data)`, che calcola le quote correnti dagli eventi reali (stesso motore di `compute_portfolio_state`) invece di fidarsi del campo stato — verificato sui dati reali del portafoglio: 16 strumenti posseduti / 10 fuori portafoglio
+- la matrice "Abbinamento strumenti/benchmark" e il grafico "Mappa coerenza/extra-rendimento" ora escludono del tutto le posizioni non possedute (prima le mescolavano senza alcuna etichetta)
+- nel grafico "Performance normalizzata" gli strumenti fuori portafoglio hanno ora linea tratteggiata e "(fuori portafoglio)" nel nome traccia, non solo un colore diverso — utile anche per chi non percepisce bene i colori
+
+**Rendimenti mensili e trimestrali — mappe di calore ripristinate in Cruscotti:**
+- il grafico esisteva già (`quarterly_table_html`/`monthly_heatmap_html` in `ui/charts/summary.py`, la prima ancora usata nel report PDF esportabile) ma la chiamata in `cruscotti.py` era ridotta a un commento placeholder da prima dell'inizio dello storico git di questo repository — ricollegata
+- le celle a intensità alta (rendimento vicino al massimo/minimo osservato) avevano testo dello stesso colore verde/rosso dello sfondo, poco leggibile: ora il testo passa a bianco sopra una soglia di intensità
+- le tabelle vivono in `<iframe>` (isolamento CSS totale dal resto della pagina) e non ereditavano il font dell'app: ora il font-family è dichiarato esplicitamente
+- aggiunta una legenda min/max a gradiente sotto ogni tabella, come i rendimenti mensili di justETF
+- titolo unico "Rendimenti mensili e trimestrali - mappe di calore", mappa mensile prima della tabella trimestrale; intestazioni trimestrali T1/T2/T3/T4/TOT al posto di Q1-Q4/Anno, valori centrati come nei mensili, riga verticale prima della colonna TOT in entrambe le tabelle
+
+**Arricchimento strumenti unificato in Strumenti (sidebar), stesso pattern già usato per lo storico prezzi:**
+- prima sparso su tre punti scollegati: pulsante "Arricchisci tutti" in Gestione Dati (Streamlit, rerun completo percepito come bloccante per l'intera app), link "Arricchisci ora" nel popup Quotazioni (un punto pensato per la sola lettura che in realtà scriveva dati), form di modifica manuale/import PDF nella Scheda completa (`form_server.py`)
+- ora tutto in un unico tab "🔎 Arricchimento" nella pagina `/strumenti`: selezione strumento, arricchimento automatico, import da PDF Fineco, modifica manuale dei campi — stesso pattern già collaudato dal tab "Storico" (form POST classico, nessun rerun Streamlit)
+- Gestione Dati torna un puro visualizzatore (tabella stato/completezza per strumento, nessun pulsante che scrive); il popup Quotazioni non ha più alcun link di scrittura
+
+**Import da PDF esteso oltre la Scheda Fineco:**
+- il parser (`core/instrument_enrichment.py`) era tarato solo sull'export "Scheda titolo" della piattaforma Fineco; testato con successo anche contro 3 factsheet ufficiali di altri emittenti (Franklin Templeton/iShares, Xtrackers/DWS, Amundi): nuove etichette riconosciute (TER, domicilio, valuta, metodo di replica, politica di distribuzione, AUM con valuta e scala inclusi), date sia in formato `GG/MM/AAAA` che `GG.MM.AAAA`, normalizzazione degli apostrofi tipografici, guardie contro falsi positivi da intestazioni di tabella o testo "sbordato" tra colonne nei PDF a più colonne
+- limite noto, non risolto: i factsheet a 3 colonne molto dense (es. Amundi) restano parzialmente inaffidabili per i campi `benchmark`/`nav` — limite strutturale dell'estrazione testuale semplice su layout multi-colonna, non un'etichetta mancante
+
+**Fix minore:** il ticker Yahoo per l'ISIN `XS2940466316` (iShares Bitcoin ETP) restava bloccato su `BTCN.AS` nella cache di risoluzione automatica (`cache_lookup_strumenti`), nonostante il ticker corretto `IB1T.PA` fosse impostato sullo strumento — modificare il ticker da `/strumenti` non sincronizzava questa cache, che ha sempre priorità sul ticker esplicito ad ogni refresh quotazioni. L'azione "modifica" ora aggiorna anche la cache.
+
 ## 4.9.25 - Conferma candidati e classificazione automatica alla creazione di uno strumento
 
 **Flusso cerca/conferma per l'aggiunta di uno strumento (`/strumenti`):**
