@@ -427,6 +427,12 @@ def build_instrument_benchmark_matrix(
         ticker = str(s.get("ticker") or "").strip()
         if not ticker:
             continue
+        # "In portafoglio" per questa matrice significa "possiedo quote ora":
+        # uno strumento chiuso resta in strumenti (anagrafica per lo storico)
+        # ma non deve comparire qui, esattamente come in Performance
+        # normalizzata (ui/charts/benchmark.py::get_all_historical_tickers).
+        if str(s.get("stato", "aperto")) != "aperto":
+            continue
         m = master.get(ticker, {}) if isinstance(master.get(ticker, {}), dict) else {}
         raw_type = str(m.get("type_raw") or s.get("tipo") or "")
         category = macro_cat(raw_type)
