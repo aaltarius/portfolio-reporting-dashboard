@@ -68,14 +68,15 @@ def quarterly_table_html(quarterly_returns, theme=None):
     abs_vals = sorted((abs(v) for v in all_vals if pd.notna(v)))
     p90 = abs_vals[int(len(abs_vals) * 0.90)] if abs_vals else 0.01
 
-    def _cell(v):
+    def _cell(v, is_total=False):
+        left_border = f"border-left:2px solid {border};" if is_total else ""
         if v is None:
-            return f"<td style='text-align:center;color:{muted};padding:8px 11px;border-top:1px solid {top_border};'>—</td>"
+            return f"<td style='text-align:center;color:{muted};padding:8px 11px;border-top:1px solid {top_border};{left_border}'>—</td>"
         intensity = min(abs(float(v)) / max(p90, 1e-6), 1.0)
         col = positive if float(v) >= 0 else negative
         bg = hex_to_rgba(col, 0.10 + 0.45 * intensity)
         txt_color = _contrast_text_color(intensity, col)
-        return f"<td style='text-align:center;color:{txt_color};font-weight:600;padding:8px 11px;background:{bg};border-top:1px solid {top_border};'>{fmt_pct_it(v, 1, signed=True)}</td>"
+        return f"<td style='text-align:center;color:{txt_color};font-weight:600;padding:8px 11px;background:{bg};border-top:1px solid {top_border};{left_border}'>{fmt_pct_it(v, 1, signed=True)}</td>"
 
     rows_html = ""
     for yr in sorted(by_year.keys()):
@@ -91,9 +92,15 @@ def quarterly_table_html(quarterly_returns, theme=None):
                 ann = prod - 1.0
         except Exception:
             pass
-        rows_html += f"<tr style='background:{surface};'><td style='font-weight:700;padding:8px 11px;font-size:0.90rem;color:{text};border-top:1px solid {top_border};'>{yr}</td>" + "".join((_cell(q_vals[i]) for i in range(4))) + _cell(ann) + "</tr>"
+        rows_html += f"<tr style='background:{surface};'><td style='font-weight:700;padding:8px 11px;font-size:0.90rem;color:{text};border-top:1px solid {top_border};'>{yr}</td>" + "".join((_cell(q_vals[i]) for i in range(4))) + _cell(ann, is_total=True) + "</tr>"
     hdr = ("Anno", "T1", "T2", "T3", "T4", "TOT")
-    hdr_html = "".join((f"<th style='padding:8px 11px;text-align:{('left' if i == 0 else 'center')};font-weight:700;font-size:0.86rem;letter-spacing:.03em;text-transform:uppercase;'>{h}</th>" for i, h in enumerate(hdr)))
+
+    def _hdr_style(i):
+        align = "left" if i == 0 else "center"
+        border_left = f"border-left:2px solid {hex_to_rgba('#ffffff', 0.30)};" if i == len(hdr) - 1 else ""
+        return f"padding:8px 11px;text-align:{align};font-weight:700;font-size:0.86rem;letter-spacing:.03em;text-transform:uppercase;{border_left}"
+
+    hdr_html = "".join((f"<th style='{_hdr_style(i)}'>{h}</th>" for i, h in enumerate(hdr)))
     legend = _returns_scale_legend_html(min(all_vals) if all_vals else None, max(all_vals) if all_vals else None, positive, negative, muted, font_family)
     return (
         f"<div style='font-family:{font_family};'>"

@@ -718,11 +718,13 @@ def _render_analitica(bundle: Any) -> None:
     _mr = summary_payload.get("monthly_returns", [])
     _show_mr = bool(_mr) and (_layout_full or _layout_analytic)
     if _qr or _show_mr:
-        render_section_title("Rendimenti - mappe di calore", icon="metrics")
+        render_section_title("Rendimenti mensili e trimestrali - mappe di calore", icon="metrics")
+        _returns_blocks = []
         if _show_mr:
-            render_html_iframe(monthly_heatmap_html(_mr, theme_obj), height="content")
+            _returns_blocks.append(monthly_heatmap_html(_mr, theme_obj))
         if _qr:
-            render_html_iframe(quarterly_table_html(_qr, theme_obj), height="content")
+            _returns_blocks.append(quarterly_table_html(_qr, theme_obj))
+        render_html_iframe("<div style='margin-top:8px;'></div>".join(_returns_blocks), height="content")
         legend_block("Intensità del colore proporzionale alla dimensione del rendimento (verde positivo, rosso negativo); la legenda min/max sotto ogni tabella indica gli estremi osservati.", variant="bottom")
 
     render_section_title("Scostamento da Allocazione Target", icon="portfolio")
