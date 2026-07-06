@@ -715,16 +715,15 @@ def _render_analitica(bundle: Any) -> None:
         legend_block(validation_explanation, variant="bottom")
 
     _qr = summary_payload.get("quarterly_returns", [])
-    if _qr:
-        render_section_title("Rendimenti trimestrali", icon="metrics")
-        render_html_iframe(quarterly_table_html(_qr, theme_obj), height="content")
-        legend_block("Rendimento di portafoglio per trimestre e totale annuo. Intensità del colore proporzionale alla dimensione del rendimento.", variant="bottom")
-
     _mr = summary_payload.get("monthly_returns", [])
-    if _mr and (_layout_full or _layout_analytic):
-        render_section_title("Rendimenti mensili — mappa di calore", icon="metrics")
-        render_html_iframe(monthly_heatmap_html(_mr, theme_obj), height="content")
-        legend_block("Mappa di calore dei rendimenti mensili: intensità del colore proporzionale alla dimensione del rendimento (stessa logica dei rendimenti mensili di justETF).", variant="bottom")
+    _show_mr = bool(_mr) and (_layout_full or _layout_analytic)
+    if _qr or _show_mr:
+        render_section_title("Rendimenti - mappe di calore", icon="metrics")
+        if _show_mr:
+            render_html_iframe(monthly_heatmap_html(_mr, theme_obj), height="content")
+        if _qr:
+            render_html_iframe(quarterly_table_html(_qr, theme_obj), height="content")
+        legend_block("Intensità del colore proporzionale alla dimensione del rendimento (verde positivo, rosso negativo); la legenda min/max sotto ogni tabella indica gli estremi osservati.", variant="bottom")
 
     render_section_title("Scostamento da Allocazione Target", icon="portfolio")
     st.plotly_chart(bundle.target_gap_figure, width="stretch")
