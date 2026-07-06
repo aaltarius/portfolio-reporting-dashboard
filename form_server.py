@@ -253,6 +253,93 @@ def _fs_backfill_storico(data: dict, ticker: str, since: str | None = None) -> t
     return True, f"{ticker}: nessuna data mancante{perimetro}."
 
 
+def _fs_arricchisci_strumento(data: dict, ticker: str) -> tuple:
+    """Recupera dati finanziari aggiuntivi per un singolo strumento (YTM, TER,
+    benchmark, composizione, a seconda della categoria) e salva."""
+    from persistence.storage import save_data
+    from core.instrument_enrichment import enrich_strumento
+
+    strumento = next((s for s in (data.get("strumenti") or []) if s.get("ticker") == ticker), None)
+    if strumento is None:
+        return False, f"Strumento '{ticker}' non trovato."
+    enrich_strumento(strumento)
+    save_data(data)
+    if strumento.get("enrichment_error"):
+        return False, f"{ticker}: {strumento['enrichment_error']}"
+    return True, f"{ticker}: arricchimento completato."
+
+
+def _fs_category_field_specs(cat: str) -> list:
+    """(label, nome campo, placeholder) per categoria — usati nel form di
+    modifica manuale dati completi (tab Arricchimento in Strumenti)."""
+    if cat == "btp":
+        return [
+            ("YTM Netto", "ytm_netto", "es. 2,27%"), ("YTM Lordo", "ytm_lordo", "es. 2,89%"),
+            ("Duration Modificata", "duration_modificata", "es. 0,09"), ("Scadenza", "scadenza", "es. 01/08/2026"),
+            ("Cedola Annuale", "cedola_annuale", "es. 0,00%"), ("Frequenza Cedola", "cedola_frequenza", "es. Semestrale"),
+            ("Tipo Cedola", "tipo_cedola", "es. FISSO"), ("Prossima Cedola", "prossima_cedola", "es. 01/08/2026"),
+            ("Rateo Lordo", "rateo_lordo", ""), ("Rateo Netto", "rateo_netto", ""),
+            ("Rating Emittente", "rating_emittente", "es. BBB+"), ("Data Emissione", "data_emissione", ""),
+            ("Prezzo Emissione", "prezzo_emissione", ""), ("Prezzo Rimborso", "prezzo_rimborso", ""),
+            ("Rateo Interessi", "rateo_interessi", ""), ("Rateo Disagio", "rateo_disaggio", ""),
+            ("Ritenute Totali", "ritenute_totali", ""),
+        ]
+    if cat in ("etf", "etc"):
+        return [
+            ("TER", "ter", "es. 0,40%"), ("Benchmark", "benchmark", "es. FTSE MIB NR EUR"),
+            ("Categoria", "categoria_etf", "es. Italy Equity"), ("Emittente", "emittente", "es. Amundi Asset Management"),
+            ("Rating Morningstar (stelle)", "rating_morningstar", "es. 4"),
+            ("Rendimento 1A", "rendimento_1a", "es. +37,30%"), ("Rendimento 3A", "rendimento_3a", "es. +117,68%"),
+            ("Beta", "beta", "es. 1,05"), ("Deviazione Standard", "deviazione_std", "es. 13,00%"),
+            ("Indice di Sharpe", "sharpe", "es. 2,00"), ("VaR", "var", "es. 35,61"),
+            ("Distribuzione", "distribuzione", "es. Distribuzione"), ("Fiscalità", "fiscalita", "es. Armonizzato"),
+            ("Data Lancio", "data_lancio", "es. 03/11/2003"),
+        ]
+    return [
+        ("TER / Commissione Gestione", "ter", "es. 1,84%"),
+        ("Categoria (Morningstar)", "categoria_fam", "es. Bilanciati Flessibili EUR"),
+        ("Rating Morningstar (stelle)", "rating_morningstar", "es. 3"),
+        ("Livello Rischio (1-7)", "livello_rischio", "es. 4"),
+        ("Rendimento YTD", "rendimento_ytd", "es. 4,47%"), ("Rendimento 1A", "rendimento_1a", "es. 11,85%"),
+        ("Rendimento 3A", "rendimento_3a", "es. 26,52%"),
+        ("% Azionario", "composizione_az", "es. 60,50%"), ("% Obbligazionario", "composizione_obbl", "es. 20,40%"),
+        ("% Liquidità", "composizione_liq", "es. 18,90%"),
+        ("Valuta NAV", "valuta", "es. EUR"), ("Max 52 Settimane", "max_52w", "es. 145,26"),
+        ("Min 52 Settimane", "min_52w", "es. 130,51"), ("Data Lancio", "data_lancio", "es. 27/11/2018"),
+        ("Patrimonio", "patrimonio", "es. 422,73 Mln. EUR"),
+    ]
+
+
+def _fs_render_dati_completi_fields(strumento: dict) -> str:
+    """Form dei campi arricchimento per lo strumento, precompilati con badge fonte
+    (Auto/PDF/Manuale), per la modifica manuale nella tab Arricchimento."""
+    from core.instrument_enrichment import _categoria
+    cat = _categoria(strumento.get("tipo", ""))
+    src = strumento.get("enrichment_source") or {}
+    colors = {"auto": "#0ea5e9", "pdf": "#8b5cf6", "manuale": "#f59e0b"}
+    labels = {"auto": "Auto", "pdf": "PDF", "manuale": "Manuale"}
+
+    def _badge(field: str) -> str:
+        s = src.get(field, "")
+        if not s:
+            return ""
+        c = colors.get(s, "#94a3b8")
+        lb = labels.get(s, s)
+        return f'<span style="font-size:10px;padding:1px 6px;border-radius:9px;background:{c};color:#fff;margin-left:6px;">{lb}</span>'
+
+    rows = []
+    for label, name, placeholder in _fs_category_field_specs(cat):
+        val = strumento.get(name, "")
+        rows.append(
+            f'<div style="margin-bottom:10px;">'
+            f'<label style="font-size:12px;font-weight:600;color:#64748b;">{escape(label)}{_badge(name)}</label>'
+            f'<input name="{name}" value="{escape(str(val or ""))}" placeholder="{escape(placeholder)}" '
+            f'style="width:100%;padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;margin-top:3px;box-sizing:border-box;">'
+            f'</div>'
+        )
+    return "".join(rows)
+
+
 def _fs_parse_flex_date(value: str) -> str:
     """Converte una data GG/MM/AAAA o YYYY-MM-DD in ISO YYYY-MM-DD. Stringa vuota -> vuota.
 
@@ -942,7 +1029,7 @@ def _fs_render_confirm_form(isin: str, candidati: list) -> str:
 
 def _render_strumenti_page(
     data: dict, ok_msg: str = "", err_msg: str = "", active_tab: str = "add",
-    cerca_isin: str = "", candidati: "list | None" = None,
+    cerca_isin: str = "", candidati: "list | None" = None, selected_ticker: str = "",
 ) -> str:
     strumenti = data.get("strumenti", [])
     chiusi = [s for s in strumenti if s.get("stato", "aperto") == "chiuso"]
@@ -1009,6 +1096,20 @@ def _render_strumenti_page(
 
     _suggested_since_iso = earliest_storico_date(data.get("storico_prezzi") or {}) or ""
     _suggested_since = fmt_date_only_it(_suggested_since_iso) if _suggested_since_iso else ""
+
+    def _enrichment_status_label(s: dict) -> str:
+        if s.get("enrichment_error"):
+            return "errore"
+        if s.get("enriched_at"):
+            return f"arricchito {fmt_date_only_it((s.get('enriched_at') or '')[:10])}"
+        return "mai arricchito"
+
+    arricchimento_opts = "\n".join(
+        f'<option value="{escape(s.get("ticker",""))}"{" selected" if s.get("ticker","")==selected_ticker else ""}>'
+        f'{escape(s.get("ticker",""))} — {escape(str(s.get("nome",""))[:35])} ({_enrichment_status_label(s)})</option>'
+        for s in strumenti
+    )
+    strumento_arricchimento = next((s for s in strumenti if s.get("ticker", "") == selected_ticker), None) if selected_ticker else None
 
     if chiusi:
         rows = "".join(
@@ -1129,6 +1230,48 @@ def _render_strumenti_page(
       <button type="submit" class="btn-danger" style="margin-top:14px">🗑️ Elimina storico</button>
     </form>"""
 
+    if strumento_arricchimento is not None:
+        _tk_sel = escape(strumento_arricchimento.get("ticker", ""))
+        _stato_sel = escape(_enrichment_status_label(strumento_arricchimento))
+        _fields_html = _fs_render_dati_completi_fields(strumento_arricchimento)
+        arricchimento_dettaglio = f"""
+    <div class="hint" style="margin:14px 0 20px">Stato: <b>{_stato_sel}</b></div>
+
+    <form method="POST" action="/strumenti" autocomplete="off" style="margin-bottom:26px">
+      <input type="hidden" name="azione" value="arricchisci">
+      <input type="hidden" name="ticker" value="{_tk_sel}">
+      <button type="submit" class="btn-confirm">⬇ Arricchisci automaticamente</button>
+    </form>
+
+    <h2>Importa da PDF Fineco</h2>
+    <div class="hint" style="margin-bottom:14px">Carica il PDF della pagina Fineco dello strumento (Ctrl+P &rarr; Salva come PDF).</div>
+    <form method="POST" action="/strumenti" enctype="multipart/form-data" autocomplete="off" style="margin-bottom:26px">
+      <input type="hidden" name="azione" value="importa_pdf">
+      <input type="hidden" name="ticker" value="{_tk_sel}">
+      <input type="file" name="pdf_file" accept=".pdf">
+      <button type="submit" class="btn-confirm" style="margin-top:12px">Importa PDF</button>
+    </form>
+
+    <h2>Modifica manuale</h2>
+    <form method="POST" action="/strumenti" autocomplete="off">
+      <input type="hidden" name="azione" value="salva_dati_completi">
+      <input type="hidden" name="ticker" value="{_tk_sel}">
+      {_fields_html}
+      <button type="submit" class="btn-confirm" style="margin-top:14px">&#128190; Salva modifiche</button>
+    </form>"""
+    else:
+        arricchimento_dettaglio = '<div class="hint" style="margin-top:14px">Seleziona uno strumento per arricchirlo, importare un PDF Fineco o modificarne i dati a mano.</div>'
+
+    tab_arricchimento = no_str if not strumenti else f"""
+    <h2>Arricchisci / modifica dati strumento</h2>
+    <div class="hint" style="margin-bottom:14px">Per lo strumento selezionato: recupero automatico dalle fonti pubbliche (YTM/duration per i BTP, TER/benchmark/composizione per ETF ed ETC, rendimenti per i fondi FAM), import da PDF Fineco, o inserimento manuale dei campi.</div>
+    <label class="lbl">Strumento</label>
+    <select onchange="location.href='/strumenti?tab=arricchimento&amp;ticker='+encodeURIComponent(this.value)">
+      <option value="">— seleziona —</option>
+      {arricchimento_opts}
+    </select>
+    {arricchimento_dettaglio}"""
+
     return f"""<!DOCTYPE html>
 <html lang="it">
 <head>
@@ -1147,12 +1290,14 @@ def _render_strumenti_page(
     {_tb("✏️ Modifica","edit")}
     {_tb("🗑️ Elimina","del")}
     {_tb("📈 Storico","storico")}
+    {_tb("🔎 Arricchimento","arricchimento")}
     {_tb("📁 Chiusi","closed")}
   </div>
   {_tp("add", tab_add)}
   {_tp("edit", tab_edit)}
   {_tp("del", tab_del)}
   {_tp("storico", tab_storico)}
+  {_tp("arricchimento", tab_arricchimento)}
   {_tp("closed", chiusi_html)}
   <div class="back-links"><a href="{STREAMLIT_URL}" target="_blank">← Torna a Streamlit</a></div>
 </div>
@@ -2117,7 +2262,7 @@ if(hasAnalysis){{prefillSug();}}
 
 # ─── Render: Scheda Strumento ────────────────────────────────────────────────
 
-def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "", mode: str = "view") -> str:
+def _render_scheda_strumento(strumento: dict) -> str:
     ticker = strumento.get("ticker", "")
     nome   = strumento.get("nome", "")
     isin   = strumento.get("isin", "") or "—"
@@ -2131,18 +2276,6 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
     from core.instrument_enrichment import _categoria
     cat = _categoria(tipo)
 
-    def _badge(field: str) -> str:
-        s = src.get(field, "")
-        colors = {"auto": "#0ea5e9", "pdf": "#8b5cf6", "manuale": "#f59e0b"}
-        labels = {"auto": "Auto", "pdf": "PDF", "manuale": "Manuale"}
-        if not s:
-            return ""
-        c = colors.get(s, "#94a3b8")
-        lb = labels.get(s, s)
-        return f'<span style="font-size:10px;padding:1px 6px;border-radius:9px;background:{c};color:#fff;margin-left:6px;">{lb}</span>'
-
-    ok_html  = f'<div class="alert alert-ok">{ok_msg}</div>' if ok_msg else ""
-    err_html = f'<div class="alert alert-err">{err_msg}</div>' if err_msg else ""
     enrich_err_html = f'<div class="alert alert-warn">&#9888; Errore fetch: {enrichment_error}</div>' if enrichment_error else ""
 
     # Chip stato arricchimento
@@ -2181,7 +2314,6 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
   .actions{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;}
   .btn{display:inline-block;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;cursor:pointer;border:none;white-space:nowrap;}
   .btn-primary{background:#0f172a;color:#fff;}
-  .btn-fetch{background:#0ea5e9;color:#fff;}
   .btn-secondary{background:#fff;color:#475569;border:1px solid #e2e8f0;}
   /* Hero KPIs */
   .hero{display:grid;gap:10px;margin-bottom:14px;}
@@ -2276,20 +2408,18 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
     {stato_chip}
   </div>
   <div class="hdr-meta">ISIN: {isin}{(' &nbsp;·&nbsp; Fonte: ' + src_label) if src_label else ''}</div>
+  <div class="hdr-meta">Per arricchire, modificare o importare da PDF: <a href="/strumenti?tab=arricchimento&amp;ticker={ticker}" target="_blank">Strumenti &#8594; Arricchimento</a></div>
   {_score_html}
 </div>
-{ok_html}{err_html}{enrich_err_html}
+{enrich_err_html}
 <div class="actions">
-  <a href="/strumento/{ticker}/fetch" class="btn btn-fetch">&#8635; Aggiorna dati</a>
-  <a href="/strumento/{ticker}?mode=edit" class="btn btn-secondary">&#9998; Modifica</a>
   <a href="javascript:window.close()" class="btn btn-secondary">Chiudi</a>
 </div>"""
 
     def _html_close() -> str:
         return "</div></body></html>"
 
-    # ── VIEW MODE ──────────────────────────────────────────────────────────────
-    if mode != "edit":
+    if True:  # la Scheda completa e' sola lettura: modifica/PDF/arricchimento vivono in Strumenti
         def _v(name: str):
             return strumento.get(name)
 
@@ -2510,85 +2640,9 @@ def _render_scheda_strumento(strumento: dict, ok_msg: str = "", err_msg: str = "
             )
 
         if not any(tag in body for tag in ("kpi-card", "sec")):
-            body = '<div class="sec"><p style="color:#94a3b8;font-size:13px;">Nessun dato disponibile — clicca <strong>Aggiorna dati</strong> per caricarli.</p></div>'
+            body = f'<div class="sec"><p style="color:#94a3b8;font-size:13px;">Nessun dato disponibile — vai in <strong><a href="/strumenti?tab=arricchimento&amp;ticker={ticker}">Strumenti &#8594; Arricchimento</a></strong> per caricarli (automatico, da PDF o a mano).</p></div>'
 
         return _html_open() + body + '<div class="foot"></div>' + _html_close()
-
-    # ── EDIT MODE ──────────────────────────────────────────────────────────────
-    def _field_row(label: str, name: str, placeholder: str = "") -> str:
-        val = strumento.get(name, "")
-        return f"""
-        <div style="margin-bottom:10px;">
-          <label style="font-size:12px;font-weight:600;color:#64748b;">{label}{_badge(name)}</label>
-          <input name="{name}" value="{val or ''}" placeholder="{placeholder}"
-                 style="width:100%;padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;margin-top:3px;box-sizing:border-box;">
-        </div>"""
-
-    if cat == "btp":
-        fields_html = (
-            _field_row("YTM Netto", "ytm_netto", "es. 2,27%") + _field_row("YTM Lordo", "ytm_lordo", "es. 2,89%") +
-            _field_row("Duration Modificata", "duration_modificata", "es. 0,09") + _field_row("Scadenza", "scadenza", "es. 01/08/2026") +
-            _field_row("Cedola Annuale", "cedola_annuale", "es. 0,00%") + _field_row("Frequenza Cedola", "cedola_frequenza", "es. Semestrale") +
-            _field_row("Tipo Cedola", "tipo_cedola", "es. FISSO") + _field_row("Prossima Cedola", "prossima_cedola", "es. 01/08/2026") +
-            _field_row("Rateo Lordo", "rateo_lordo") + _field_row("Rateo Netto", "rateo_netto") +
-            _field_row("Rating Emittente", "rating_emittente", "es. BBB+") + _field_row("Data Emissione", "data_emissione") +
-            _field_row("Prezzo Emissione", "prezzo_emissione") + _field_row("Prezzo Rimborso", "prezzo_rimborso") +
-            _field_row("Rateo Interessi", "rateo_interessi") + _field_row("Rateo Disagio", "rateo_disaggio") +
-            _field_row("Ritenute Totali", "ritenute_totali")
-        )
-    elif cat in ("etf", "etc"):
-        fields_html = (
-            _field_row("TER", "ter", "es. 0,40%") + _field_row("Benchmark", "benchmark", "es. FTSE MIB NR EUR") +
-            _field_row("Categoria", "categoria_etf", "es. Italy Equity") + _field_row("Emittente", "emittente", "es. Amundi Asset Management") +
-            _field_row("Rating Morningstar (stelle)", "rating_morningstar", "es. 4") +
-            _field_row("Rendimento 1A", "rendimento_1a", "es. +37,30%") + _field_row("Rendimento 3A", "rendimento_3a", "es. +117,68%") +
-            _field_row("Beta", "beta", "es. 1,05") + _field_row("Deviazione Standard", "deviazione_std", "es. 13,00%") +
-            _field_row("Indice di Sharpe", "sharpe", "es. 2,00") + _field_row("VaR", "var", "es. 35,61") +
-            _field_row("Distribuzione", "distribuzione", "es. Distribuzione") + _field_row("Fiscalità", "fiscalita", "es. Armonizzato") +
-            _field_row("Data Lancio", "data_lancio", "es. 03/11/2003")
-        )
-    else:  # fam
-        fields_html = (
-            _field_row("TER / Commissione Gestione", "ter", "es. 1,84%") +
-            _field_row("Categoria (Morningstar)", "categoria_fam", "es. Bilanciati Flessibili EUR") +
-            _field_row("Rating Morningstar (stelle)", "rating_morningstar", "es. 3") +
-            _field_row("Livello Rischio (1-7)", "livello_rischio", "es. 4") +
-            _field_row("Rendimento YTD", "rendimento_ytd", "es. 4,47%") + _field_row("Rendimento 1A", "rendimento_1a", "es. 11,85%") +
-            _field_row("Rendimento 3A", "rendimento_3a", "es. 26,52%") +
-            _field_row("% Azionario", "composizione_az", "es. 60,50%") + _field_row("% Obbligazionario", "composizione_obbl", "es. 20,40%") +
-            _field_row("% Liquidità", "composizione_liq", "es. 18,90%") +
-            _field_row("Valuta NAV", "valuta", "es. EUR") + _field_row("Max 52 Settimane", "max_52w", "es. 145,26") +
-            _field_row("Min 52 Settimane", "min_52w", "es. 130,51") + _field_row("Data Lancio", "data_lancio", "es. 27/11/2018") +
-            _field_row("Patrimonio", "patrimonio", "es. 422,73 Mln. EUR")
-        )
-
-    # edit mode: reuse _html_open (without fetch/modifica buttons) + edit sections
-    edit_open = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Modifica {ticker}</title>
-<style>{base_css}
-  .section{{background:#fff;border-radius:12px;padding:18px 20px;margin-bottom:12px;box-shadow:0 1px 6px rgba(0,0,0,.07);}}
-  .section h2{{font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px;}}
-</style></head><body><div class="page">
-<div class="hdr">
-  <div class="hdr-name">{nome}</div>
-  <div class="chips"><span class="chip chip-tipo">{tipo}</span>{stato_chip}</div>
-  <div class="hdr-meta">ISIN: {isin}</div>
-</div>
-{ok_html}{err_html}{enrich_err_html}
-<div class="actions">
-  <a href="/strumento/{ticker}" class="btn btn-secondary">&#8592; Scheda</a>
-  <a href="javascript:window.close()" class="btn btn-secondary">Chiudi</a>
-</div>"""
-    return (edit_open +
-            f'<div class="section"><h2>Importa da PDF Fineco</h2>'
-            f'<p style="font-size:12px;color:#64748b;margin-bottom:10px;">Carica il PDF dalla pagina Fineco del titolo (Ctrl+P &rarr; Salva come PDF).</p>'
-            f'<form method="post" enctype="multipart/form-data" action="/strumento/{ticker}?action=pdf">'
-            f'<input type="file" name="pdf_file" accept=".pdf" style="font-size:13px;">'
-            f'<input type="submit" value="Importa PDF" class="btn btn-primary" style="margin-left:10px;"></form></div>' +
-            f'<div class="section"><h2>Modifica manuale</h2>'
-            f'<form method="post" action="/strumento/{ticker}?action=save">{fields_html}'
-            f'<input type="submit" value="Salva modifiche" class="btn btn-primary"></form></div>'
-            '</div></body></html>')
 
 
 # ─── FastAPI app ──────────────────────────────────────────────────────────────
@@ -2755,14 +2809,14 @@ def _build_fastapi_app():
     # ── Strumenti ──────────────────────────────────────────────────────────────
 
     @_app.get("/strumenti", response_class=HTMLResponse)
-    async def get_strumenti(tab: str = "add", ok: str = "", err: str = ""):
+    async def get_strumenti(tab: str = "add", ok: str = "", err: str = "", ticker: str = ""):
         from persistence.storage import load_data as _ld
         try:
             d = _ld()
         except Exception as exc:
             d = {}
             err = str(exc)
-        return HTMLResponse(_render_strumenti_page(d, ok_msg=ok, err_msg=err, active_tab=tab))
+        return HTMLResponse(_render_strumenti_page(d, ok_msg=ok, err_msg=err, active_tab=tab, selected_ticker=ticker))
 
     @_app.post("/strumenti", response_class=HTMLResponse)
     async def post_strumenti(
@@ -2783,16 +2837,17 @@ def _build_fastapi_app():
         nominale: str = Form("100"),
         storico_data_da: str = Form(""),
         storico_data_a: str = Form(""),
+        pdf_file: Optional[UploadFile] = File(None),
     ):
         from fastapi.responses import RedirectResponse
         from persistence.storage import load_data as _ld, save_data
 
-        def err_page(msg: str, tab: str = "add") -> HTMLResponse:
+        def err_page(msg: str, tab: str = "add", sel_ticker: str = "") -> HTMLResponse:
             try:
                 d = _ld()
             except Exception:
                 d = {}
-            return HTMLResponse(_render_strumenti_page(d, err_msg=msg, active_tab=tab))
+            return HTMLResponse(_render_strumenti_page(d, err_msg=msg, active_tab=tab, selected_ticker=sel_ticker))
 
         if azione == "cerca":
             isin = isin.upper().strip()
@@ -2870,6 +2925,11 @@ def _build_fastapi_app():
             se["nome"] = nome
             se["tipo"] = tipo
             se["ticker"] = ticker_new or ticker
+            isin_val = se.get("isin")
+            if isin_val:
+                from core.market_data import set_isin_ticker
+                set_isin_ticker(isin_val, se["ticker"])
+                d.setdefault("cache_lookup_strumenti", {})[isin_val] = se["ticker"]
             if _fs_is_btp_like(se):
                 try:
                     se["scadenza"] = _fs_parse_flex_date(scadenza)
@@ -2948,6 +3008,81 @@ def _build_fastapi_app():
             if ok:
                 return RedirectResponse(f"/strumenti?tab=storico&ok={urlquote(msg)}", status_code=303)
             return err_page(msg, "storico")
+
+        elif azione == "arricchisci":
+            ticker = ticker.strip()
+            if not ticker:
+                return err_page("Ticker non specificato.", "arricchimento")
+            try:
+                d = _ld()
+            except Exception as exc:
+                return err_page(str(exc), "arricchimento", ticker)
+            ok, msg = _fs_arricchisci_strumento(d, ticker)
+            from urllib.parse import quote as urlquote
+            if ok:
+                return RedirectResponse(f"/strumenti?tab=arricchimento&ticker={urlquote(ticker)}&ok={urlquote(msg)}", status_code=303)
+            return err_page(msg, "arricchimento", ticker)
+
+        elif azione == "importa_pdf":
+            ticker = ticker.strip()
+            if not ticker:
+                return err_page("Ticker non specificato.", "arricchimento")
+            if not pdf_file or not pdf_file.filename:
+                return err_page("Nessun file PDF selezionato.", "arricchimento", ticker)
+            try:
+                d = _ld()
+            except Exception as exc:
+                return err_page(str(exc), "arricchimento", ticker)
+            strumento = next((s for s in (d.get("strumenti") or []) if s.get("ticker") == ticker), None)
+            if strumento is None:
+                return err_page("Strumento non trovato.", "arricchimento")
+            from urllib.parse import quote as urlquote
+            try:
+                from core.instrument_enrichment import parse_fineco_pdf, _categoria
+                pdf_bytes = await pdf_file.read()
+                parsed = parse_fineco_pdf(pdf_bytes, _categoria(strumento.get("tipo", "")))
+                if not parsed:
+                    return err_page("PDF non riconosciuto.", "arricchimento", ticker)
+                src = strumento.get("enrichment_source") or {}
+                for field, val in parsed.items():
+                    if field != "enrichment_source":
+                        strumento[field] = val
+                        src[field] = "pdf"
+                strumento["enrichment_source"] = src
+                import datetime as _dt
+                strumento["enriched_at"] = _dt.datetime.utcnow().isoformat()
+                save_data(d)
+            except Exception as exc:
+                return err_page(str(exc)[:120], "arricchimento", ticker)
+            return RedirectResponse(f"/strumenti?tab=arricchimento&ticker={urlquote(ticker)}&ok={urlquote('PDF importato con successo.')}", status_code=303)
+
+        elif azione == "salva_dati_completi":
+            ticker = ticker.strip()
+            if not ticker:
+                return err_page("Ticker non specificato.", "arricchimento")
+            try:
+                d = _ld()
+            except Exception as exc:
+                return err_page(str(exc), "arricchimento", ticker)
+            strumento = next((s for s in (d.get("strumenti") or []) if s.get("ticker") == ticker), None)
+            if strumento is None:
+                return err_page("Strumento non trovato.", "arricchimento")
+            form_data = dict(await request.form())
+            src = strumento.get("enrichment_source") or {}
+            skip_keys = {"azione", "ticker"}
+            for key, val in form_data.items():
+                if key in skip_keys:
+                    continue
+                val = str(val).strip()
+                if val:
+                    strumento[key] = val
+                    src[key] = "manuale"
+            strumento["enrichment_source"] = src
+            import datetime as _dt
+            strumento["enriched_at"] = _dt.datetime.utcnow().isoformat()
+            save_data(d)
+            from urllib.parse import quote as urlquote
+            return RedirectResponse(f"/strumenti?tab=arricchimento&ticker={urlquote(ticker)}&ok={urlquote('Modifiche salvate.')}", status_code=303)
 
         return err_page("Azione non riconosciuta.", "add")
 
@@ -3186,79 +3321,14 @@ def _build_fastapi_app():
 
     # ── Scheda strumento ──────────────────────────────────────────────────────────
 
-    @_app.get("/strumento/{ticker}/fetch")
-    async def get_fetch_strumento(ticker: str):
-        from persistence.storage import load_data as _ld, save_data as _sd
-        from core.instrument_enrichment import enrich_strumento
-        d = _ld()
-        strumento = next((s for s in (d.get("strumenti") or []) if s.get("ticker") == ticker), None)
-        if strumento is None:
-            return RedirectResponse(f"/strumento/{ticker}?err=Strumento+non+trovato", status_code=303)
-        enrich_strumento(strumento)
-        _sd(d)
-        if strumento.get("enrichment_error"):
-            return RedirectResponse(f"/strumento/{ticker}?err={strumento['enrichment_error']}", status_code=303)
-        return RedirectResponse(f"/strumento/{ticker}?ok=Arricchimento+completato", status_code=303)
-
     @_app.get("/strumento/{ticker}", response_class=HTMLResponse)
-    async def get_scheda_strumento(ticker: str, ok: str = "", err: str = "", mode: str = "view"):
+    async def get_scheda_strumento(ticker: str):
         from persistence.storage import load_data as _ld
         d = _ld()
         strumento = next((s for s in (d.get("strumenti") or []) if s.get("ticker") == ticker), None)
         if strumento is None:
             return HTMLResponse(f"<h3>Strumento '{ticker}' non trovato.</h3>", status_code=404)
-        return HTMLResponse(_render_scheda_strumento(strumento, ok_msg=ok, err_msg=err, mode=mode))
-
-    @_app.post("/strumento/{ticker}", response_class=HTMLResponse)
-    async def post_scheda_strumento(
-        ticker: str,
-        request: Request,
-        action: str = "save",
-        pdf_file: Optional[UploadFile] = File(None),
-    ):
-        from persistence.storage import load_data as _ld, save_data as _sd
-        d = _ld()
-        strumento = next((s for s in (d.get("strumenti") or []) if s.get("ticker") == ticker), None)
-        if strumento is None:
-            return RedirectResponse(f"/strumento/{ticker}?err=Strumento+non+trovato", status_code=303)
-
-        try:
-            if action == "pdf":
-                if not pdf_file or not pdf_file.filename:
-                    return RedirectResponse(f"/strumento/{ticker}?err=Nessun+file+selezionato", status_code=303)
-                from core.instrument_enrichment import parse_fineco_pdf, _categoria
-                pdf_bytes = await pdf_file.read()
-                tipo = _categoria(strumento.get("tipo", ""))
-                parsed = parse_fineco_pdf(pdf_bytes, tipo)
-                if not parsed:
-                    return RedirectResponse(f"/strumento/{ticker}?err=PDF+non+riconosciuto", status_code=303)
-                src = strumento.get("enrichment_source") or {}
-                for field, val in parsed.items():
-                    if field != "enrichment_source":
-                        strumento[field] = val
-                        src[field] = "pdf"
-                strumento["enrichment_source"] = src
-                import datetime as _dt
-                strumento["enriched_at"] = _dt.datetime.utcnow().isoformat()
-                _sd(d)
-                return RedirectResponse(f"/strumento/{ticker}?ok=PDF+importato+con+successo", status_code=303)
-
-            # action == "save" — form manuale
-            form_data = await request.form()
-            src = strumento.get("enrichment_source") or {}
-            for key, val in form_data.items():
-                val = str(val).strip()
-                if val:
-                    strumento[key] = val
-                    src[key] = "manuale"
-            strumento["enrichment_source"] = src
-            import datetime as _dt
-            strumento["enriched_at"] = _dt.datetime.utcnow().isoformat()
-            _sd(d)
-            return RedirectResponse(f"/strumento/{ticker}?ok=Modifiche+salvate", status_code=303)
-
-        except Exception as exc:
-            return RedirectResponse(f"/strumento/{ticker}?err={str(exc)[:80]}", status_code=303)
+        return HTMLResponse(_render_scheda_strumento(strumento))
 
     # ── SATOR ─────────────────────────────────────────────────────────────────
 

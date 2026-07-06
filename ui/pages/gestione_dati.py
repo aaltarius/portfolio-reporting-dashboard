@@ -526,8 +526,7 @@ def _section_line() -> None:
 
 
 def _render_arricchimento(data: dict, ctx) -> None:
-    from core.instrument_enrichment import enrich_strumento, enrich_all
-    from persistence.storage import load_data, save_data
+    from persistence.storage import load_data
 
     # Legge sempre dal disco (ctx.data è una copia filtrata/cached non adatta al salvataggio)
     raw_data = load_data()
@@ -562,14 +561,23 @@ def _render_arricchimento(data: dict, ctx) -> None:
         filled = sum(1 for f in fields if s.get(f) not in (None, "", "—"))
         return round(filled / len(fields) * 100)
 
+    _tickers_for_count = {s.get("ticker", "") for s in strumenti}
+    date_count_by_ticker: dict = dict.fromkeys(_tickers_for_count, 0)
+    for _day_prices in (raw_data.get("storico_prezzi") or {}).values():
+        if isinstance(_day_prices, dict):
+            for _tk in _day_prices:
+                if _tk in date_count_by_ticker:
+                    date_count_by_ticker[_tk] += 1
+
     rows = [
         {
-            "Ticker":     s.get("ticker", ""),
-            "Nome":       s.get("nome", ""),
-            "Tipo":       s.get("tipo", ""),
-            "Stato":      _stato(s),
-            "Aggiornato": fmt_date_only_it((s.get("enriched_at") or "")[:10]) if s.get("enriched_at") else "—",
-            "%":          _completezza(s),
+            "Ticker":       s.get("ticker", ""),
+            "Nome":         s.get("nome", ""),
+            "Tipo":         s.get("tipo", ""),
+            "Stato":        _stato(s),
+            "Aggiornato":   fmt_date_only_it((s.get("enriched_at") or "")[:10]) if s.get("enriched_at") else "—",
+            "%":            _completezza(s),
+            "Date storico": date_count_by_ticker.get(s.get("ticker", ""), 0),
         }
         for s in strumenti
     ]
@@ -583,45 +591,20 @@ def _render_arricchimento(data: dict, ctx) -> None:
             hide_index=True,
             height=table_h,
             column_config={
-                "Ticker":     st.column_config.TextColumn("Ticker", width="small"),
-                "Nome":       st.column_config.TextColumn("Nome"),
-                "Tipo":       st.column_config.TextColumn("Tipo"),
-                "Stato":      st.column_config.TextColumn("Stato", width="small"),
-                "Aggiornato": st.column_config.TextColumn("Aggiornato", width="small"),
-                "%":          st.column_config.ProgressColumn("Completezza", min_value=0, max_value=100, width="small", format="%d%%"),
+                "Ticker":       st.column_config.TextColumn("Ticker", width="small"),
+                "Nome":         st.column_config.TextColumn("Nome"),
+                "Tipo":         st.column_config.TextColumn("Tipo"),
+                "Stato":        st.column_config.TextColumn("Stato", width="small"),
+                "Aggiornato":   st.column_config.TextColumn("Aggiornato", width="small"),
+                "%":            st.column_config.ProgressColumn("Completezza", min_value=0, max_value=100, width="small", format="%d%%"),
+                "Date storico": st.column_config.NumberColumn("Date storico", width="small"),
             },
         )
 
-    col_bulk, col_single, _ = st.columns([2, 2, 4])
-    with col_bulk:
-        if st.button("⬇ Arricchisci tutti", key="enrich_all_btn", width="stretch"):
-            progress_bar = st.progress(0, text="Avvio...")
-
-            def _cb(done: int, tot: int, ticker: str) -> None:
-                progress_bar.progress(done / tot, text=f"{ticker} ({done}/{tot})")
-
-            ok, err, msgs = enrich_all(raw_data, on_progress=_cb)
-            save_data(raw_data)
-            progress_bar.empty()
-            if err:
-                st.warning(f"Completato: {ok} ok, {err} errori — {'; '.join(msgs[:3])}")
-            else:
-                st.success(f"Arricchimento completato: {ok} strumenti aggiornati.")
-            st.rerun()
-
-    with col_single:
-        ticker_options = [s.get("ticker", "") for s in strumenti]
-        sel = st.selectbox("Aggiorna singolo", [""] + ticker_options, key="enrich_single_sel", label_visibility="collapsed")
-        if sel and st.button("Aggiorna", key="enrich_single_btn"):
-            target = next((s for s in (raw_data.get("strumenti") or []) if s.get("ticker") == sel), None)
-            if target:
-                try:
-                    enrich_strumento(target)
-                    save_data(raw_data)
-                    st.success(f"{sel} aggiornato.")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"Errore: {exc}")
+    st.caption(
+        "Arricchimento automatico, import da PDF Fineco e modifica manuale dei campi si fanno tutti da "
+        "Strumenti → tab \"Arricchimento\" (sidebar) — non da qui."
+    )
 
 
 def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
@@ -916,7 +899,7 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         _section_line()
         render_section_title(
             "Arricchimento strumenti",
-            comment="Recupera dati finanziari aggiuntivi per ogni strumento (YTM, TER, benchmark, composizione). Clicca 'Scheda completa' dal popup Quotazioni per import da PDF o inserimento manuale.",
+            comment="Stato dell'arricchimento dati per strumento (YTM, TER, benchmark, composizione) e volume di storico prezzi salvato. Tutte le azioni (automatico, PDF, manuale) si eseguono da Strumenti → Arricchimento, non da qui.",
             icon="data",
         )
         _render_arricchimento(data, ctx)

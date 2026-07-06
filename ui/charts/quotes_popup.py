@@ -847,7 +847,7 @@ function showQuoteModal(tk){
     if(detItems.length)enrHtml+='<div class="enr-details">'+detItems.join('')+'</div>';
     enrHtml+='<a class="enr-scheda" href="http://localhost:8502/strumento/'+tk+'" target="_blank">Scheda completa →</a>';
   } else {
-    enrHtml+='<div class="enr-miss">Dati finanziari non ancora caricati — <a href="http://localhost:8502/strumento/'+tk+'/fetch" target="_blank" style="color:#0ea5e9;">Arricchisci ora</a></div>';
+    enrHtml+='<div class="enr-miss">Dati finanziari non ancora caricati.</div>';
     enrHtml+='<a class="enr-scheda" href="http://localhost:8502/strumento/'+tk+'" target="_blank">Scheda completa →</a>';
   }
   if(enr.error)enrHtml+='<div style="color:#f59e0b;font-size:11px;margin-top:4px;">⚠ '+enr.error+'</div>';
