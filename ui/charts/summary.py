@@ -19,6 +19,29 @@ from ui.theme import P, get_theme_context, macro_color
 #   summary_rolling_sharpe, summary_pl_scatter, summary_rolling_12m
 
 
+def _returns_scale_legend_html(min_v, max_v, positive, negative, muted, font_family):
+    """Legenda min/max a gradiente, come i rendimenti mensili di justETF."""
+    if min_v is None or max_v is None:
+        return ""
+    grad = (
+        f"linear-gradient(to right, {hex_to_rgba(negative, 0.85)}, {hex_to_rgba(negative, 0.15)}, "
+        f"rgba(148,163,184,0.12), {hex_to_rgba(positive, 0.15)}, {hex_to_rgba(positive, 0.85)})"
+    )
+    return (
+        f"<div style='display:flex;align-items:center;gap:10px;margin-top:10px;font-family:{font_family};'>"
+        f"<span style='font-size:0.76rem;color:{negative};font-weight:700;white-space:nowrap;'>Min {fmt_pct_it(min_v, 1, signed=True)}</span>"
+        f"<div style='flex:1;height:9px;border-radius:5px;background:{grad};'></div>"
+        f"<span style='font-size:0.76rem;color:{positive};font-weight:700;white-space:nowrap;'>Max {fmt_pct_it(max_v, 1, signed=True)}</span>"
+        f"</div>"
+    )
+
+
+def _contrast_text_color(intensity, dark_color, light_text="#ffffff", threshold=0.42):
+    """Testo bianco sopra soglia (sfondo saturo/scuro), colore scuro sotto (sfondo tenue) —
+    evita il verde-su-verde/rosso-su-rosso illeggibile a intensita' alta."""
+    return light_text if intensity > threshold else dark_color
+
+
 def quarterly_table_html(quarterly_returns, theme=None):
     if theme is None:
         try:
@@ -32,20 +55,27 @@ def quarterly_table_html(quarterly_returns, theme=None):
     primary = getattr(theme, "color_blue", "#1a3a5c") if theme is not None else "#1a3a5c"
     positive = getattr(theme, "color_green", "#1a7a4a") if theme is not None else "#1a7a4a"
     negative = getattr(theme, "color_red", "#c0392b") if theme is not None else "#c0392b"
+    font_family = (getattr(theme, "colors", {}) or {}).get("font_family", "system-ui, -apple-system, sans-serif") if theme is not None else "system-ui, -apple-system, sans-serif"
     top_border = hex_to_rgba(primary, 0.10) if isinstance(primary, str) and primary.startswith("#") else "rgba(26,58,92,0.10)"
     if not quarterly_returns:
-        return f"<p style='color:{muted};font-size:0.92rem;'>Dati storici insufficienti per il calcolo trimestrale.</p>"
+        return f"<p style='color:{muted};font-size:0.92rem;font-family:{font_family};'>Dati storici insufficienti per il calcolo trimestrale.</p>"
     by_year = {}
+    all_vals = []
     for r in quarterly_returns:
         yr, q = (int(r["year"]), int(r["quarter"]))
         by_year.setdefault(yr, {})[q] = float(r["ptf"])
+        all_vals.append(float(r["ptf"]))
+    abs_vals = sorted((abs(v) for v in all_vals if pd.notna(v)))
+    p90 = abs_vals[int(len(abs_vals) * 0.90)] if abs_vals else 0.01
 
     def _cell(v):
         if v is None:
             return f"<td style='text-align:right;color:{muted};padding:8px 11px;border-top:1px solid {top_border};'>—</td>"
+        intensity = min(abs(float(v)) / max(p90, 1e-6), 1.0)
         col = positive if float(v) >= 0 else negative
-        bg = hex_to_rgba(col, 0.09)
-        return f"<td style='text-align:right;color:{col};font-weight:600;padding:8px 11px;background:{bg};border-top:1px solid {top_border};'>{fmt_pct_it(v, 1, signed=True)}</td>"
+        bg = hex_to_rgba(col, 0.10 + 0.45 * intensity)
+        txt_color = _contrast_text_color(intensity, col)
+        return f"<td style='text-align:right;color:{txt_color};font-weight:600;padding:8px 11px;background:{bg};border-top:1px solid {top_border};'>{fmt_pct_it(v, 1, signed=True)}</td>"
 
     rows_html = ""
     for yr in sorted(by_year.keys()):
@@ -63,8 +93,14 @@ def quarterly_table_html(quarterly_returns, theme=None):
             pass
         rows_html += f"<tr style='background:{surface};'><td style='font-weight:700;padding:8px 11px;font-size:0.90rem;color:{text};border-top:1px solid {top_border};'>{yr}</td>" + "".join((_cell(q_vals[i]) for i in range(4))) + _cell(ann) + "</tr>"
     hdr = ("Anno", "Q1", "Q2", "Q3", "Q4", "Anno")
-    hdr_html = "".join((f"<th style='padding:8px 11px;text-align:{('left' if i == 0 else 'right')};font-weight:700;font-size:0.90rem;letter-spacing:.02em;'>{h}</th>" for i, h in enumerate(hdr)))
-    return f"<div style='overflow-x:auto;'><table style='width:100%;border-collapse:collapse;font-size:0.92rem;border:1px solid {border};border-radius:12px;overflow:hidden;background:{surface};'><thead><tr style='background:{primary};color:white;'>{hdr_html}</tr></thead><tbody>{rows_html}</tbody></table></div>"
+    hdr_html = "".join((f"<th style='padding:8px 11px;text-align:{('left' if i == 0 else 'right')};font-weight:700;font-size:0.86rem;letter-spacing:.03em;text-transform:uppercase;'>{h}</th>" for i, h in enumerate(hdr)))
+    legend = _returns_scale_legend_html(min(all_vals) if all_vals else None, max(all_vals) if all_vals else None, positive, negative, muted, font_family)
+    return (
+        f"<div style='font-family:{font_family};'>"
+        f"<div style='overflow-x:auto;'><table style='width:100%;border-collapse:collapse;font-size:0.90rem;border:1px solid {border};border-radius:12px;overflow:hidden;background:{surface};'>"
+        f"<thead><tr style='background:{primary};color:white;'>{hdr_html}</tr></thead><tbody>{rows_html}</tbody></table></div>"
+        f"{legend}</div>"
+    )
 
 
 def monthly_heatmap_html(monthly_returns, theme=None):
@@ -79,9 +115,10 @@ def monthly_heatmap_html(monthly_returns, theme=None):
     primary = getattr(theme, "color_blue", "#1a3a5c") if theme is not None else "#1a3a5c"
     positive = getattr(theme, "color_green", "#1a7a4a") if theme is not None else "#1a7a4a"
     negative = getattr(theme, "color_red", "#c0392b") if theme is not None else "#c0392b"
+    font_family = (getattr(theme, "colors", {}) or {}).get("font_family", "system-ui, -apple-system, sans-serif") if theme is not None else "system-ui, -apple-system, sans-serif"
     mesi_labels = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
     if not monthly_returns:
-        return f"<p style='color:{muted};font-size:0.92rem;'>Dati mensili insufficienti.</p>"
+        return f"<p style='color:{muted};font-size:0.92rem;font-family:{font_family};'>Dati mensili insufficienti.</p>"
     by_year = {}
     all_vals = []
     for r in monthly_returns:
@@ -95,9 +132,9 @@ def monthly_heatmap_html(monthly_returns, theme=None):
         if v is None:
             return f"color:{muted};background:{surface};"
         intensity = min(abs(float(v)) / max(p90, 1e-6), 1.0)
-        if v >= 0:
-            return f"background:{hex_to_rgba(positive, 0.12 + 0.55 * intensity)};color:{positive};font-weight:{('700' if intensity > 0.5 else '500')};"
-        return f"background:{hex_to_rgba(negative, 0.12 + 0.55 * intensity)};color:{negative};font-weight:{('700' if intensity > 0.5 else '500')};"
+        col = positive if v >= 0 else negative
+        txt_color = _contrast_text_color(intensity, col)
+        return f"background:{hex_to_rgba(col, 0.12 + 0.60 * intensity)};color:{txt_color};font-weight:{('700' if intensity > 0.5 else '600')};"
 
     rows_html = ""
     for yr in sorted(by_year.keys()):
@@ -111,13 +148,19 @@ def monthly_heatmap_html(monthly_returns, theme=None):
                 prod *= 1.0 + v
                 has_any = True
             txt = fmt_pct_it(v, 1, signed=True) if v is not None else "—"
-            cells += f"<td style='text-align:center;padding:7px 8px;font-size:0.84rem;{_cell_color(v)}'>{txt}</td>"
+            cells += f"<td style='text-align:center;padding:7px 8px;font-size:0.82rem;{_cell_color(v)}'>{txt}</td>"
         ann = prod - 1.0 if has_any else None
         ann_style = _cell_color(ann)
         ann_txt = fmt_pct_it(ann, 1, signed=True) if ann is not None else "—"
-        rows_html += f"<tr style='background:{surface};'><td style='font-weight:700;padding:7px 9px;font-size:0.90rem;'>{yr}</td>{cells}<td style='text-align:right;padding:7px 9px;font-size:0.86rem;font-weight:700;border-left:2px solid {border};{ann_style}'>{ann_txt}</td></tr>"
-    hdr_html = "<th style='padding:7px 9px;text-align:left;font-size:0.88rem;'>Anno</th>" + "".join((f"<th style='padding:7px 8px;text-align:center;font-size:0.86rem;'>{m}</th>" for m in mesi_labels)) + f"<th style='padding:7px 9px;text-align:right;font-size:0.86rem;border-left:2px solid {hex_to_rgba('#ffffff', 0.30)};'>TOT</th>"
-    return f"<div style='overflow-x:auto;'><table style='width:100%;border-collapse:collapse;border:1px solid {border};border-radius:12px;overflow:hidden;background:{surface};'><thead><tr style='background:{primary};color:white;'>{hdr_html}</tr></thead><tbody>{rows_html}</tbody></table></div>"
+        rows_html += f"<tr style='background:{surface};'><td style='font-weight:700;padding:7px 9px;font-size:0.88rem;'>{yr}</td>{cells}<td style='text-align:right;padding:7px 9px;font-size:0.84rem;font-weight:700;border-left:2px solid {border};{ann_style}'>{ann_txt}</td></tr>"
+    hdr_html = "<th style='padding:7px 9px;text-align:left;font-size:0.86rem;text-transform:uppercase;letter-spacing:.03em;'>Anno</th>" + "".join((f"<th style='padding:7px 8px;text-align:center;font-size:0.84rem;text-transform:uppercase;letter-spacing:.02em;'>{m}</th>" for m in mesi_labels)) + f"<th style='padding:7px 9px;text-align:right;font-size:0.84rem;text-transform:uppercase;letter-spacing:.02em;border-left:2px solid {hex_to_rgba('#ffffff', 0.30)};'>Tot.</th>"
+    legend = _returns_scale_legend_html(min(all_vals) if all_vals else None, max(all_vals) if all_vals else None, positive, negative, muted, font_family)
+    return (
+        f"<div style='font-family:{font_family};'>"
+        f"<div style='overflow-x:auto;'><table style='width:100%;border-collapse:collapse;border:1px solid {border};border-radius:12px;overflow:hidden;background:{surface};'>"
+        f"<thead><tr style='background:{primary};color:white;'>{hdr_html}</tr></thead><tbody>{rows_html}</tbody></table></div>"
+        f"{legend}</div>"
+    )
 
 
 def summary_series_df(summary_payload):

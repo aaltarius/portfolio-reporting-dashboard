@@ -716,13 +716,13 @@ def _render_analitica(bundle: Any) -> None:
 
     _qr = summary_payload.get("quarterly_returns", [])
     if _qr:
-        render_section_title("Rendimenti per trimestre", icon="metrics")
+        render_section_title("Rendimenti trimestrali", icon="metrics")
         render_html_iframe(quarterly_table_html(_qr, theme_obj), height="content")
-        legend_block("Rendimento di portafoglio per trimestre e totale annuo. Sfondo verde/rosso in base al segno.", variant="bottom")
+        legend_block("Rendimento di portafoglio per trimestre e totale annuo. Intensità del colore proporzionale alla dimensione del rendimento.", variant="bottom")
 
     _mr = summary_payload.get("monthly_returns", [])
     if _mr and (_layout_full or _layout_analytic):
-        render_section_title("Rendimenti mensili", icon="metrics")
+        render_section_title("Rendimenti mensili — mappa di calore", icon="metrics")
         render_html_iframe(monthly_heatmap_html(_mr, theme_obj), height="content")
         legend_block("Mappa di calore dei rendimenti mensili: intensità del colore proporzionale alla dimensione del rendimento (stessa logica dei rendimenti mensili di justETF).", variant="bottom")
 
