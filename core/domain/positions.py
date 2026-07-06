@@ -182,3 +182,17 @@ def build_ptf_df(data: dict[str, Any]) -> pd.DataFrame:
     """Build portfolio positions dataframe."""
     result = compute_portfolio_state(data, include_closed=True)
     return result.get("df", pd.DataFrame())
+
+
+def held_tickers(data: dict[str, Any]) -> frozenset[str]:
+    """Ticker con quote correnti > 0, calcolate dagli eventi reali.
+
+    Il campo `stato` sullo strumento non e' una fonte affidabile per "lo
+    possiedo adesso": puo' restare "aperto" anche dopo una vendita totale se
+    nessuno lo ha mai ritaggato manualmente. Le quote effettive calcolate da
+    compute_portfolio_state riflettono sempre la realta' del registro eventi."""
+    df = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
+    if df.empty or "Ticker" not in df.columns or "Quote" not in df.columns:
+        return frozenset()
+    qty = pd.to_numeric(df["Quote"], errors="coerce").fillna(0.0)
+    return frozenset(df.loc[qty > _EPS, "Ticker"].astype(str))

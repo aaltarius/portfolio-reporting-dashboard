@@ -13,6 +13,7 @@ import pandas as pd
 
 from persistence.storage import macro_cat
 from core.benchmark_registry import resolve_instrument_benchmark as _central_resolve_instrument_benchmark
+from core.domain.positions import held_tickers
 
 BENCHMARK_TICKER_FALLBACKS = {"BTI.MI": "EMB"}
 CUSTOM_BENCHMARK_COMPONENT_OPTIONS = {
@@ -420,6 +421,7 @@ def build_instrument_benchmark_matrix(
     strumenti = data.get("strumenti", []) if isinstance(data.get("strumenti", []), list) else []
     master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
     values = _position_values_by_ticker(da_frame)
+    held = held_tickers(data)
     rows: list[dict[str, Any]] = []
     for s in strumenti:
         if not isinstance(s, dict):
@@ -428,10 +430,11 @@ def build_instrument_benchmark_matrix(
         if not ticker:
             continue
         # "In portafoglio" per questa matrice significa "possiedo quote ora":
-        # uno strumento chiuso resta in strumenti (anagrafica per lo storico)
-        # ma non deve comparire qui, esattamente come in Performance
-        # normalizzata (ui/charts/benchmark.py::get_all_historical_tickers).
-        if str(s.get("stato", "aperto")) != "aperto":
+        # il campo stato puo' restare "aperto" anche dopo una vendita totale
+        # se nessuno lo ritagga a mano, quindi il criterio e' la quantita'
+        # reale calcolata dagli eventi (held_tickers), non lo stato dichiarato
+        # — stesso criterio di ui/charts/benchmark.py::get_all_historical_tickers.
+        if ticker not in held:
             continue
         m = master.get(ticker, {}) if isinstance(master.get(ticker, {}), dict) else {}
         raw_type = str(m.get("type_raw") or s.get("tipo") or "")

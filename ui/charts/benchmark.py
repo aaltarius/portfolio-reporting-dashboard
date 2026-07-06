@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 
 from ui.charts.settings import apply_settings
 from ui.theme import P, macro_color
+from core.domain.positions import held_tickers
 
 
 def build_portfolio_benchmark_comparison_chart(history: pd.DataFrame) -> go.Figure:
@@ -84,18 +85,13 @@ def resolve_period_start_date(sorted_dates: list[str], period: str) -> str:
 def get_all_historical_tickers(data: dict[str, Any]) -> list[dict[str, Any]]:
     """Ritorna tutti i ticker mai presenti in storico_prezzi, con flag active.
 
-    "active" significa "in portafoglio ora" (stato == "aperto"): uno strumento
-    chiuso ha ancora un record in strumenti (l'anagrafica resta per lo
-    storico) ma non conta come posseduto, esattamente come un ticker mai
-    acquistato (es. un benchmark di riferimento o uno strumento solo
-    osservato)."""
+    "active" significa "possiedo quote ora", calcolato dagli eventi reali
+    (held_tickers) — non dal campo stato dello strumento, che puo' restare
+    "aperto" anche dopo una vendita totale se nessuno lo ritagga a mano.
+    Un ticker mai acquistato (es. un benchmark di riferimento) o venduto per
+    intero risulta ugualmente "non posseduto"."""
     storico: dict[str, dict[str, float]] = data.get("storico_prezzi") or {}
-    strumenti: list[dict] = data.get("strumenti") or []
-    active_set = {
-        s.get("ticker", "")
-        for s in strumenti
-        if s.get("ticker") and str(s.get("stato", "aperto")) == "aperto"
-    }
+    active_set = held_tickers(data)
     all_tickers: set[str] = set()
     for prices in storico.values():
         all_tickers.update(prices.keys())
