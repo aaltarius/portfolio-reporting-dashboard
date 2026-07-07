@@ -648,10 +648,12 @@ def parse_fineco_pdf(pdf_bytes: bytes, tipo: str = "") -> dict:
 # ---------------------------------------------------------------------------
 
 def enrich_strumento(strumento: dict) -> dict:
+    from core.instrument_classification import classify_natura, suggest_tipo_correction
+
     cat = _categoria(strumento.get("tipo", ""))
     if cat == "btp":
-        return enrich_btp(strumento)
-    if cat in ("etf", "etc"):
+        strumento = enrich_btp(strumento)
+    elif cat in ("etf", "etc"):
         strumento = enrich_etf_etc(strumento)
         focus = strumento.get("focus_etf", "")
         if focus and not strumento.get("enrichment_error"):
@@ -660,9 +662,15 @@ def enrich_strumento(strumento: dict) -> dict:
                 str(strumento.get("isin", "")), str(strumento.get("ticker", "")),
                 str(strumento.get("nome", "")), focus_etf=focus,
             ) or strumento.get("tipo", "")
-        return strumento
-    if cat == "fondo":
-        return enrich_fondo(strumento)
+            corrected_tipo = suggest_tipo_correction(strumento)
+            if corrected_tipo:
+                strumento["tipo"] = corrected_tipo
+    elif cat == "fondo":
+        strumento = enrich_fondo(strumento)
+
+    natura_source = (strumento.get("enrichment_source") or {}).get("natura")
+    if natura_source != "manuale":
+        strumento["natura"] = classify_natura(strumento)
     return strumento
 
 
