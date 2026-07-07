@@ -189,7 +189,7 @@ thead th{{
 thead th:last-child{{border-right:none;}}
 thead th:nth-child(1),thead th:nth-child(2){{text-align:center;width:26px;cursor:default;padding:9px 6px;}}
 thead th:nth-child(3),thead th:nth-child(4),thead th:nth-child(5){{text-align:left;}}
-thead th:hover:not(:nth-child(1)){{background:#e3e6e9;}}
+thead th:hover:not(:nth-child(1)):not(:nth-child(2)){{background:#e3e6e9;}}
 thead th .sort-ind{{font-size:9px;margin-left:3px;color:#9094a3;}}
 thead th.asc .sort-ind::after{{content:'▲';color:#262730;}}
 thead th.desc .sort-ind::after{{content:'▼';color:#262730;}}
