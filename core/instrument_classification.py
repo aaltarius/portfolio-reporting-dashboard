@@ -58,6 +58,12 @@ def classify_natura(strumento: dict) -> str:
 
     for tokens, label in _RULES[10:]:  # da "Energia" in poi
         if any(tok in txt for tok in tokens):
+            if label == "Fondo gestito / multi-asset" and "passivo" in txt:
+                # "gestito" (gestione attiva) e "passivo" sono in aperta
+                # contraddizione: un fondo il cui stesso tipo dice "Passivo"
+                # non e' a gestione attiva, anche se multi-asset/bilanciato
+                # (es. FAM-PU6, tipo "Fondo Bilan. Passivo").
+                return "Fondo bilanciato"
             return label
 
     return _FALLBACK_LABEL

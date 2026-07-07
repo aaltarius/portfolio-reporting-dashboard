@@ -145,6 +145,7 @@ _DIVERSIFICATA = (
 
 _STATIC_VISUALS: dict[str, tuple[str, str]] = {
     "Fondo gestito / multi-asset": _FONDO_GESTITO,
+    "Fondo bilanciato": _FONDO_GESTITO,
     "Quality factor": _QUALITY,
     "Difesa / sicurezza": _DIFESA,
     "Bene rifugio": _BENE_RIFUGIO,
