@@ -283,6 +283,7 @@ def _fs_category_field_specs(cat: str) -> list:
             ("Prezzo Emissione", "prezzo_emissione", ""), ("Prezzo Rimborso", "prezzo_rimborso", ""),
             ("Rateo Interessi", "rateo_interessi", ""), ("Rateo Disagio", "rateo_disaggio", ""),
             ("Ritenute Totali", "ritenute_totali", ""),
+            ("Natura", "natura", "es. Quality factor"),
         ]
     if cat in ("etf", "etc"):
         return [
@@ -294,6 +295,7 @@ def _fs_category_field_specs(cat: str) -> list:
             ("Indice di Sharpe", "sharpe", "es. 2,00"), ("VaR", "var", "es. 35,61"),
             ("Distribuzione", "distribuzione", "es. Distribuzione"), ("Fiscalità", "fiscalita", "es. Armonizzato"),
             ("Data Lancio", "data_lancio", "es. 03/11/2003"),
+            ("Natura", "natura", "es. Quality factor"),
         ]
     return [
         ("TER / Commissione Gestione", "ter", "es. 1,84%"),
@@ -307,6 +309,7 @@ def _fs_category_field_specs(cat: str) -> list:
         ("Valuta NAV", "valuta", "es. EUR"), ("Max 52 Settimane", "max_52w", "es. 145,26"),
         ("Min 52 Settimane", "min_52w", "es. 130,51"), ("Data Lancio", "data_lancio", "es. 27/11/2018"),
         ("Patrimonio", "patrimonio", "es. 422,73 Mln. EUR"),
+        ("Natura", "natura", "es. Quality factor"),
     ]
 
 
@@ -386,16 +389,21 @@ def _fs_resolve_strumento_scelto(form_values: dict, n_candidati: int) -> dict:
 def _fs_apply_enrichment_if_eligible(isin: str, tk: str, nm: str, tp: str, fonte: str) -> dict:
     """Se lo strumento non e' un BTP e la scelta non e' manuale, arricchisce da
     justETF e ricalcola il tipo dal focus_etf se disponibile. Restituisce sempre
-    almeno {'tipo': ...}, piu' gli eventuali campi di arricchimento riusciti da
-    unire al record dello strumento salvato. Nessuna chiamata di rete se non
-    ammissibile; nessun campo aggiuntivo se l'arricchimento fallisce."""
+    almeno {'tipo': ..., 'natura': ...}, piu' gli eventuali campi di
+    arricchimento riusciti da unire al record dello strumento salvato. Nessuna
+    chiamata di rete se non ammissibile; nessun campo aggiuntivo se
+    l'arricchimento fallisce."""
+    from core.instrument_classification import classify_natura
+
     if isin.upper().startswith("IT") or fonte == "Manuale":
-        return {"tipo": tp}
+        natura = classify_natura({"isin": isin, "ticker": tk, "nome": nm, "tipo": tp})
+        return {"tipo": tp, "natura": natura}
 
     from core.instrument_enrichment import enrich_etf_etc
     result = enrich_etf_etc({"isin": isin, "ticker": tk})
     if result.get("enrichment_error"):
-        return {"tipo": tp}
+        natura = classify_natura({"isin": isin, "ticker": tk, "nome": nm, "tipo": tp})
+        return {"tipo": tp, "natura": natura}
 
     focus = result.get("focus_etf", "")
     new_tipo = tp
@@ -404,7 +412,8 @@ def _fs_apply_enrichment_if_eligible(isin: str, tk: str, nm: str, tp: str, fonte
         new_tipo = deduce_type(isin, tk, nm, focus_etf=focus) or tp
 
     extra = {k: v for k, v in result.items() if k not in ("isin", "ticker", "enrichment_error")}
-    return {"tipo": new_tipo, **extra}
+    natura = classify_natura({"isin": isin, "ticker": tk, "nome": nm, "tipo": new_tipo, **extra})
+    return {"tipo": new_tipo, "natura": natura, **extra}
 
 
 def _fs_resolve_price_and_enrichment(scelto: dict, isin: str, tk: str, nm: str, tp: str) -> tuple:
