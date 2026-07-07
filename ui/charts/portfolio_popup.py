@@ -4,6 +4,7 @@ import json
 
 import pandas as pd
 from persistence.storage import macro_cat
+from ui.charts.natura_icons import get_natura_visual
 from ui.streamlit_compat import iframe_height_for_rows, render_html_iframe
 from ui.theme import CATEGORY_COLORS, macro_color
 
@@ -125,6 +126,9 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
         tk = str(row.get("Ticker", ""))
         tipo = str(row.get("Tipo", ""))
         nome = str(row.get("Strumento", ""))
+        info = info_map.get(tk, {})
+        natura_label = str(info.get("natura") or "Esposizione diversificata")
+        natura_color, natura_svg = get_natura_visual(natura_label)
         col = _cat_col(tipo)
         sym, sym_col = _trend_sym(tk)
         try:
@@ -137,7 +141,8 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
         pl_p_str = _fmt_pct(pl_p, 2, signed=True)
         sym_sort = "1" if sym == "▲" else "2" if sym == "—" else "3"
         rows_html += (
-            f'''<tr>\n          <td data-sort="{sym_sort}" style="color:{sym_col};font-weight:800;">{sym}</td>\n'''
+            f'''<tr>\n          <td class="natura-cell" title="{natura_label}" style="color:{natura_color};width:20px;text-align:center;">{natura_svg}</td>\n'''
+            f'''          <td data-sort="{sym_sort}" style="color:{sym_col};font-weight:800;">{sym}</td>\n'''
             f'''          <td data-sort="{tk}"><a class="tk-link" style="color:{col}" href="#" onclick="showModal('{tk}');return false;">{tk}</a></td>\n'''
             f'''          <td data-sort="{nome}" style="color:{col};max-width:140px;" title="{nome}">{nome[:24]}</td>\n'''
             f'''          <td data-sort="{tipo}" style="color:{col};max-width:80px;" title="{tipo}">{tipo[:16]}</td>\n'''
@@ -158,7 +163,7 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
     _total_pl_p = _total_pl_e / abs(_total_cost) if abs(_total_cost) > 1e-09 else 0.0
     _total_pl_col = "#1E8449" if _total_pl_e >= 0 else "#FF4B4B"
     tfoot_html = (
-        f'<tfoot><tr><td></td><td colspan="6" style="font-weight:800;font-size:0.85rem;letter-spacing:.02em;padding:9px 12px;">TOTALE</td>'
+        f'<tfoot><tr><td></td><td></td><td colspan="6" style="font-weight:800;font-size:0.85rem;letter-spacing:.02em;padding:9px 12px;">TOTALE</td>'
         f'<td class="num" style="font-weight:700;padding:9px 12px;">{_fmt_eur(_total_ctv, 2)}</td>'
         f'<td class="num" style="font-weight:700;padding:9px 12px;">{_fmt_eur(_total_cost, 2)}</td>'
         f'<td class="num" style="font-weight:700;padding:9px 12px;">{_fmt_eur(_total_comm, 2)}</td>'
@@ -182,8 +187,8 @@ thead th{{
   text-align:right;white-space:nowrap;position:relative;user-select:none;cursor:pointer;
 }}
 thead th:last-child{{border-right:none;}}
-thead th:nth-child(1){{text-align:center;width:26px;cursor:default;padding:9px 6px;}}
-thead th:nth-child(2),thead th:nth-child(3),thead th:nth-child(4){{text-align:left;}}
+thead th:nth-child(1),thead th:nth-child(2){{text-align:center;width:26px;cursor:default;padding:9px 6px;}}
+thead th:nth-child(3),thead th:nth-child(4),thead th:nth-child(5){{text-align:left;}}
 thead th:hover:not(:nth-child(1)){{background:#e3e6e9;}}
 thead th .sort-ind{{font-size:9px;margin-left:3px;color:#9094a3;}}
 thead th.asc .sort-ind::after{{content:'▲';color:#262730;}}
@@ -195,7 +200,8 @@ tbody tr:last-child{{border-bottom:none;}}
 tbody tr:hover{{background:#f0f2f6;}}
 tbody td{{padding:9px 12px;vertical-align:middle;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border-right:1px solid #f0f2f6;}}
 tbody td:last-child{{border-right:none;}}
-tbody td:nth-child(1){{padding:9px 6px;text-align:center;}}
+tbody td:nth-child(1),tbody td:nth-child(2){{padding:9px 6px;text-align:center;}}
+.natura-cell svg{{width:15px;height:15px;}}
 tfoot tr{{border-top:2px solid #d1d5db;background:#f8f9fa;}}
 tfoot td{{vertical-align:middle;white-space:nowrap;border-right:1px solid #e6e9ef;}}
 tfoot td:first-child{{padding:9px 6px;text-align:center;border-right:1px solid #e6e9ef;}}
@@ -231,17 +237,18 @@ svg.spark{{width:100%;height:140px;display:block;border-radius:10px;background:#
 <table id="ptf-table">
 <thead><tr>
   <th data-col="0"></th>
-  <th data-col="1">Ticker<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="2">Strumento<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="3">Tipo<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="4">Quote<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="5">Prezzo<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="6">PMC<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="7">Controvalore<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="8">Costo<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="9">Comm.<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="10">P/L €<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="11">P/L %<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="1"></th>
+  <th data-col="2">Ticker<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="3">Strumento<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="4">Tipo<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="5">Quote<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="6">Prezzo<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="7">PMC<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="8">Controvalore<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="9">Costo<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="10">Comm.<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="11">P/L €<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="12">P/L %<span class="sort-ind"></span><span class="rh"></span></th>
 </tr></thead>
 <tbody id="ptf-body">{rows_html}</tbody>
 {tfoot_html}
