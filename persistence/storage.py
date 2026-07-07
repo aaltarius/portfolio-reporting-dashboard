@@ -1118,6 +1118,27 @@ def save_meta(m):
     logger.debug("Meta salvati: path=%s", META_FILE)
 
 
+def _backfill_natura_and_tipo(strumenti: list) -> bool:
+    """Backfill una tantum: calcola 'natura' per gli strumenti che non
+    l'hanno ancora (usando solo dati gia' salvati su disco, nessuna chiamata
+    di rete) e corregge 'tipo' se in aperta contraddizione con
+    benchmark/focus_etf gia' presenti. Non tocca strumenti con 'natura' gia'
+    valorizzato o marcato manuale. Ritorna True se qualcosa e' cambiato."""
+    from core.instrument_classification import classify_natura, suggest_tipo_correction
+
+    changed = False
+    for s in strumenti:
+        natura_source = (s.get("enrichment_source") or {}).get("natura")
+        if "natura" not in s and natura_source != "manuale":
+            s["natura"] = classify_natura(s)
+            changed = True
+        corrected_tipo = suggest_tipo_correction(s)
+        if corrected_tipo and corrected_tipo != s.get("tipo"):
+            s["tipo"] = corrected_tipo
+            changed = True
+    return changed
+
+
 def load_data():
     from persistence.parquet_utils import load_storico_prezzi_hybrid
 
@@ -1133,6 +1154,7 @@ def load_data():
     d["storico_prezzi"] = load_storico_prezzi_hybrid(STORICO_PREZZI_FILE)
 
     d.setdefault("instrument_master", _build_instrument_master(d.get("strumenti", []), d.get("benchmark_data", {})))
+    _backfill_natura_and_tipo(d.get("strumenti", []))
     if raw != d:
         _write_json_file(DATA_FILE, d)
     logger.debug("Dati caricati: strumenti=%s eventi=%s storico_prezzi=%s", len(d.get("strumenti", [])), len(d.get("registro_eventi", [])), len(d.get("storico_prezzi", {})))
