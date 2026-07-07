@@ -1,5 +1,20 @@
 # Changelog
 
+## 4.9.27 - Classificazione automatica della natura/esposizione degli strumenti
+
+**Icona "natura" in Quotazioni e Portafoglio, ora calcolata da dati affidabili invece che dal nome abbreviato:**
+- l'icona descrittiva accanto a ogni strumento (Quality factor, Commodities, Mercati emergenti, Bene rifugio, ecc.) veniva ricalcolata a ogni apertura della pagina Quotazioni cercando parole chiave nel solo nome commerciale, spesso abbreviato da Fineco — verifica manuale contro i 26 strumenti reali del portafoglio ha trovato 6 classificazioni sbagliate: `IWQU.MI` e `XDWT.MI` finivano in categorie generiche perché il nome abbreviava "Quality"/"Technology" in modo che le parole chiave non riconoscevano più; `FAMAMW.MI` (Metals and Mining) finiva su "Commodities" generico invece che su "Metalli e miniere"; i 4 fondi `FAM-*` venivano tutti etichettati "Fondo gestito / multi-asset" solo per il prefisso del ticker, ignorando il loro vero tipo (uno di questi, `FAM-PU8`, è un fondo azionario, non multi-asset); `FLXI.MI` (azionario India) e `IB1T.PA` (Bitcoin) cadevano nel fallback "Esposizione diversificata" — l'opposto della realtà per un'esposizione concentrata
+- la classificazione (`core/instrument_classification.py`, nuovo modulo) ora usa anche `benchmark` e `focus_etf` catturati dall'arricchimento justETF, che riportano per esteso ciò che il nome Fineco abbrevia (es. benchmark "MSCI World Sector Neutral Quality" per `IWQU.MI`, che il nome visualizzato tronca in "Wl Qu Fac"); aggiunta una regola dedicata per singolo paese azionario (Italia, India, Cina, Brasile, Giappone) basata sul testo di benchmark/focus, non su calcoli percentuali — questi ultimi si sono rivelati inaffidabili durante lo sviluppo (il campo `paesi_top` di `FLXI.MI` conteneva dati di un'altra tabella, scambiati durante lo scraping justETF); rimossa la regola sul prefisso ticker "FAM-", troppo ampia
+- l'etichetta è ora calcolata una volta e salvata sullo strumento (nuovo campo `natura`), non ricalcolata a ogni render: viene impostata alla creazione dello strumento, ricalcolata a ogni arricchimento successivo, e per i 26 strumenti già presenti è stata retroattivamente calcolata al primo caricamento dati dopo l'aggiornamento, usando solo dati già salvati su disco (nessuna nuova chiamata di rete); resta modificabile a mano dal tab Arricchimento in Strumenti, come ogni altro campo arricchito, e una modifica manuale non viene mai sovrascritta da un arricchimento automatico successivo
+- l'icona compare ora anche nella tabella Portafoglio (Home), tra le colonne "Tipo" e "Quote" — prima esisteva solo in Quotazioni
+
+**Correzione automatica del campo tipo quando l'arricchimento lo smentisce:**
+- `XBAE.MI` aveva tipo salvato "ETF Az. Globale" (azionario) ma è in realtà un "Xtrackers II ESG Global Aggregate Bond UCITS ETF" (obbligazionario) — il tipo sbagliato non alterava l'icona (che legge anche benchmark/focus) ma falsava le viste che dipendono dal tipo altrove nell'app (categoria, allocazione, corrispondenza con il benchmark); ora, quando benchmark/focus_etf sono in aperta contraddizione con il tipo salvato, la correzione scatta in automatico a fine arricchimento (e anche nella migrazione una tantum sopra), con lo stesso meccanismo già esistente per cui "il focus di investimento rifinisce il tipo"
+
+**Rifinitura post-verifica in app:**
+- l'etichetta "Fondo gestito / multi-asset" si contraddiceva da sola per i fondi il cui stesso campo tipo dice "Passivo" (es. `FAM-PU6`, "Fondo Bilan. Passivo": "gestito" implica gestione attiva) — ora diventa "Fondo bilanciato" quando il testo contiene "passivo", senza toccare i fondi davvero a gestione attiva (es. `FAM-FLEX`)
+- la colonna icona in Portafoglio era stata inserita come prima colonna della tabella; spostata tra "Tipo" e "Quote"
+
 ## 4.9.26 - Coerenza in/fuori portafoglio in Benchmark, arricchimento unificato, mappe di calore ripristinate
 
 **Cruscotti > Benchmark — distinzione in/fuori portafoglio:**
