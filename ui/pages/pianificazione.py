@@ -547,10 +547,13 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
         gap_after="sm",
     )
 
+    rings_df = build_portfolio_rings_frame(data, state_df)
+
+    held_tickers = set(rings_df["ticker"]) if not rings_df.empty else set()
     warnings: list[str] = []
     for item in data.get("strumenti", []) or []:
         ticker = str(item.get("ticker") or "").strip().upper()
-        if not ticker:
+        if not ticker or ticker not in held_tickers:
             continue
         natura = str(item.get("natura") or "")
         if not natura or natura == "Esposizione diversificata":
@@ -563,7 +566,6 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
     objective = settings.get("portfolio_objective", {"core": 0.55, "difensivo": 0.25, "satellite": 0.20})
     objective_key = {"Core": "core", "Difensivo": "difensivo", "Satellite": "satellite"}
 
-    rings_df = build_portfolio_rings_frame(data, state_df)
     if rings_df.empty:
         st.info("Nessuno strumento posseduto: la mappa di allocazione comparira' dopo il primo acquisto.")
     else:
