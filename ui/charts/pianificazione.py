@@ -140,3 +140,32 @@ def build_allocation_rings_chart(rings_df: pd.DataFrame, objective: dict, theme)
         textinfo="label",
     ))
     return finalize_chart(fig, "pianificazione_allocation_rings")
+
+
+def build_coverage_matrix_chart(matrix_df: pd.DataFrame, theme) -> go.Figure:
+    """Heatmap 0/4: copertura e sovrapposizione per natura/area di mercato tra
+    gli strumenti posseduti (righe) e le natura di posseduti + candidati SATOR
+    (colonne)."""
+    fig = go.Figure()
+    if matrix_df is None or matrix_df.empty:
+        return finalize_chart(fig, "pianificazione_coverage_matrix")
+    z = matrix_df.to_numpy()
+    accent = getattr(theme, "color_blue", "#5B8DEF")
+    fig.add_trace(go.Heatmap(
+        z=z,
+        x=list(matrix_df.columns),
+        y=list(matrix_df.index),
+        zmin=0,
+        zmax=4,
+        colorscale=[[0.0, "rgba(91,141,239,0.06)"], [1.0, accent]],
+        text=z,
+        texttemplate="%{text}",
+        textfont=dict(size=11),
+        hovertemplate="%{y} · %{x}<br>Punteggio: %{z}<extra></extra>",
+        showscale=False,
+        xgap=2,
+        ygap=2,
+    ))
+    rows = len(matrix_df.index)
+    fig.update_layout(height=max(320, min(760, 170 + rows * 30)))
+    return finalize_chart(fig, "pianificazione_coverage_matrix")

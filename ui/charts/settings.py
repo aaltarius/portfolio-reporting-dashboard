@@ -1502,6 +1502,15 @@ CHARTS: dict[str, dict[str, Any]] = {
      'margin_delta': {'t': 0, 'b': 0, 'l': 0, 'r': 0},
      'title': '<b>Allocazione: bucket e strumenti</b>'},
 
+    'pianificazione_coverage_matrix': {'type': 'heatmap',
+     'height': None,
+     'legend': 'off',
+     'show_buttons': False,
+     'show_all_heatmap_labels': True,
+     'x_tickangle': -45,
+     'margin_delta': {'t': 0, 'b': 0, 'l': 10, 'r': 0},
+     'title': '<b>Copertura e sovrapposizione per area di mercato</b>'},
+
     # ------------------------------------------------------------------
     # DA VERIFICARE / LEGACY
     # ------------------------------------------------------------------
