@@ -1847,6 +1847,7 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
             "why":      str(row.get("_why", "")),
             "sem":      str(row.get("Sem", "⚪")),
             "dati_ok":  bool(row.get("_storico_ok", True)),
+            "zero_commission": bool(row.get("_zero_commission", False)),
         })
 
     rows_js = json.dumps(rows_data, ensure_ascii=False).replace("</", "<\\/")
@@ -1871,10 +1872,14 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
             "<span title='Storico troppo corto (<30 giorni di quotazioni): Momentum e Rischio sono indicativi' "
             "style='color:#c2410c;font-size:.7rem;margin-left:2px'>&#9888;</span>"
         )
+        comm_badge = "" if r["zero_commission"] else (
+            "<span class='sc-badge sc-m' title='Non a zero commissioni: l'acquisto comporta un costo di negoziazione' "
+            "style='margin-left:3px;padding:1px 4px'>€</span>"
+        )
         table_rows += (
             f"<tr>"
             f"<td style='font-size:1.05rem;padding-left:4px;width:22px'>{sem}</td>"
-            f"<td style='font-weight:800;white-space:nowrap;width:66px;overflow:hidden;text-overflow:ellipsis'>{tk}{dati_warning}</td>"
+            f"<td style='font-weight:800;white-space:nowrap;width:66px;overflow:hidden;text-overflow:ellipsis'>{tk}{comm_badge}{dati_warning}</td>"
             f"<td style='width:106px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#475569' title='{name_esc}'>{name_short}</td>"
             f"<td style='width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.7rem;color:#64748b' title='{escape(funz_full)}'>{funz}</td>"
             f"<td style='text-align:center;width:24px'>{_ruolo_badge(r['bucket'])}</td>"

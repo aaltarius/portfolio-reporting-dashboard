@@ -813,6 +813,7 @@ def build_sator_matrix_frame(
         "_funzione": work["function_label"].astype(str),
         "_storico_ok": work["storico_sufficiente"].astype(bool),
         "_why": work["selection_reason"].astype(str),
+        "_zero_commission": work["zero_commission"].astype(bool),
     })
     return frame
 
