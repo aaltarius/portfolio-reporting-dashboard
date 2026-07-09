@@ -29,7 +29,7 @@ import pandas as pd
 
 from core.finance import build_ptf_df, compute_portfolio_state
 from core.price_frames import build_expanded_price_frame
-from persistence.storage import macro_cat
+from persistence.storage import load_sator_decisions, macro_cat
 
 
 # --------------------------------------------------------------------------- #
@@ -912,6 +912,45 @@ def build_coverage_matrix_frame(data: dict[str, Any], state_df: pd.DataFrame) ->
     for ticker, natura in held_natura.items():
         matrix.loc[ticker, natura] = 4
     return matrix
+
+
+def build_next_purchase_bubble_frame(data: dict[str, Any]) -> tuple[pd.DataFrame, list[str]]:
+    """Legge l'ultima fotografia SATOR salvata (per created_at) e ritorna il
+    frame per la mappa a bolle dei prossimi acquisti, piu' la lista di ticker
+    esclusi per dati insufficienti (fotografia pre-esistente senza i punteggi,
+    o strumento non piu' presente in data["strumenti"])."""
+    columns = ["ticker", "name", "bucket", "importo", "diversification_benefit", "risk_efficiency"]
+    decisions = load_sator_decisions()
+    items = list((decisions or {}).get("items") or [])
+    if not items:
+        return pd.DataFrame(columns=columns), []
+    latest = max(items, key=lambda it: str(it.get("created_at") or ""))
+    strumenti_map = {
+        str(item.get("ticker") or "").strip().upper(): item
+        for item in data.get("strumenti", []) or []
+    }
+    rows = []
+    missing: list[str] = []
+    for line in latest.get("order_lines", []) or []:
+        ticker = str(line.get("ticker") or "").strip().upper()
+        if not ticker:
+            continue
+        risk = line.get("risk_efficiency")
+        div = line.get("diversification_benefit")
+        strumento = strumenti_map.get(ticker)
+        if risk is None or div is None or strumento is None:
+            missing.append(ticker)
+            continue
+        rows.append({
+            "ticker": ticker,
+            "name": str(line.get("name") or strumento.get("nome") or ticker),
+            "bucket": str(line.get("bucket") or "Satellite"),
+            "importo": _safe_float(line.get("amount"), 0.0),
+            "diversification_benefit": _safe_float(div, 0.0),
+            "risk_efficiency": _safe_float(risk, 0.0),
+        })
+    frame = pd.DataFrame(rows, columns=columns) if rows else pd.DataFrame(columns=columns)
+    return frame, missing
 
 
 def _suggested_quotes(ranking_df: pd.DataFrame, budget: float, *, max_lines: int = MAX_LINEE_SUGGERITE) -> list[int]:
