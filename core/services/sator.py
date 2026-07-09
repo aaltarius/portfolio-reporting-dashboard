@@ -846,6 +846,40 @@ def compute_current_bucket_mix(data: dict[str, Any], state_df: pd.DataFrame) -> 
     return _compute_bucket_weights(data, state_df, current_weights)
 
 
+def build_portfolio_rings_frame(data: dict[str, Any], state_df: pd.DataFrame) -> pd.DataFrame:
+    """Una riga per strumento posseduto: ticker, name, bucket (Core/Difensivo/
+    Satellite), natura (classificazione arricchimento, campo strumento["natura"]),
+    value (controvalore totale). Base dati per il donut ad anelli concentrici
+    della Dashboard decisionale in Pianificazione."""
+    columns = ["ticker", "name", "bucket", "natura", "value"]
+    held = _tickers_posseduti(state_df)
+    if not held:
+        return pd.DataFrame(columns=columns)
+    buckets = compute_instrument_buckets(data, held)
+    controvalore_map: dict[str, float] = {}
+    if state_df is not None and not state_df.empty and "Ticker" in state_df.columns and "Controvalore" in state_df.columns:
+        for _, row in state_df.iterrows():
+            t = str(row.get("Ticker") or "").strip().upper()
+            if t:
+                controvalore_map[t] = controvalore_map.get(t, 0.0) + _safe_float(row.get("Controvalore"), 0.0)
+    rows = []
+    for item in data.get("strumenti", []) or []:
+        ticker = str(item.get("ticker") or "").strip().upper()
+        if ticker not in held:
+            continue
+        value = controvalore_map.get(ticker, 0.0)
+        if value <= 0:
+            continue
+        rows.append({
+            "ticker": ticker,
+            "name": str(item.get("nome") or ticker),
+            "bucket": buckets.get(ticker, "Satellite"),
+            "natura": str(item.get("natura") or "Esposizione diversificata"),
+            "value": value,
+        })
+    return pd.DataFrame(rows, columns=columns) if rows else pd.DataFrame(columns=columns)
+
+
 def _suggested_quotes(ranking_df: pd.DataFrame, budget: float, *, max_lines: int = MAX_LINEE_SUGGERITE) -> list[int]:
     """Allocazione suggerita trasparente, a quote intere, entro budget.
 
