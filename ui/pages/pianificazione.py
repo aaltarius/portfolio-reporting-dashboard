@@ -27,16 +27,23 @@ from core.services.sator import (
     SATOR_STATE_VALUES,
     SATOR_ROLE_VALUES,
     SATOR_NATURE_VALUES,
+    build_portfolio_rings_frame,
+    build_coverage_matrix_frame,
+    build_next_purchase_bubble_frame,
 )
 from persistence.storage import load_data, load_sator_decisions, save_data, save_sator_decisions, save_settings
 from ui.formatting import fmt_eur_it, fmt_pct_it
 from ui.page_chrome import render_page_intro as render_page_intro_shared, render_section_line as render_section_line_shared
 from ui.components import render_section_title, kpi_card, back_to_top, legend_block, render_styled_table
 from ui.charts.tables import color_pl
+from core.instrument_classification import suggest_tipo_correction
 from ui.charts.pianificazione import (
     build_composition_donut_chart,
     build_ante_post_bucket_chart,
     build_objective_mix_chart,
+    build_allocation_rings_chart,
+    build_coverage_matrix_chart,
+    build_next_purchase_bubble_chart,
 )
 from ui.sator_matrix import (
     SATOR_MATRIX_COLUMNS,
@@ -521,6 +528,118 @@ def _render_ante_post_bucket_chart(bucket_df: pd.DataFrame, theme) -> None:
         return
     fig = build_ante_post_bucket_chart(bucket_df, theme)
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+
+
+def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
+    """Dashboard decisionale: 3 grafici indipendenti dal modulo SATOR
+    congelato (_render_sator_module, in via di dismissione a favore della
+    pagina SATOR attiva in sidebar). Usa solo il portafoglio corrente e
+    l'ultima fotografia SATOR salvata su disco, mai lo stato di sessione
+    del modulo congelato."""
+    data = ctx.data
+    settings = ctx.settings
+    ensure_sator_metadata(data)
+    state_df = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
+
+    render_section_title(
+        "Dashboard decisionale",
+        comment="Non si limita a descrivere il portafoglio: aiuta a leggere se il paniere e' coerente col target, dove ci sono doppioni o aree scoperte, e come si posizionano i candidati dell'ultima fotografia SATOR salvata rispetto al prossimo acquisto.",
+        gap_after="sm",
+    )
+
+    warnings: list[str] = []
+    for item in data.get("strumenti", []) or []:
+        ticker = str(item.get("ticker") or "").strip().upper()
+        if not ticker:
+            continue
+        natura = str(item.get("natura") or "")
+        if not natura or natura == "Esposizione diversificata":
+            warnings.append(f"{ticker}: natura non chiaramente classificata (\"Esposizione diversificata\"); verifica in Arricchimento.")
+        elif suggest_tipo_correction(item):
+            warnings.append(f"{ticker}: benchmark/focus in contraddizione col tipo salvato; verifica in Arricchimento.")
+    if warnings:
+        st.warning("Classificazioni da verificare:\n\n" + "\n".join(f"- {w}" for w in warnings))
+
+    objective = settings.get("portfolio_objective", {"core": 0.55, "difensivo": 0.25, "satellite": 0.20})
+    objective_key = {"Core": "core", "Difensivo": "difensivo", "Satellite": "satellite"}
+
+    rings_df = build_portfolio_rings_frame(data, state_df)
+    if rings_df.empty:
+        st.info("Nessuno strumento posseduto: la mappa di allocazione comparira' dopo il primo acquisto.")
+    else:
+        render_section_title(
+            "Allocazione: bucket e strumenti", comment="Anello interno: Core/Difensivo/Satellite. Anello esterno: singolo strumento, colorato per natura/esposizione.", gap_after="sm",
+        )
+        fig_rings = build_allocation_rings_chart(rings_df, objective, theme)
+        st.plotly_chart(fig_rings, width="stretch", config={"displayModeBar": False})
+        bucket_totals = rings_df.groupby("bucket")["value"].sum()
+        total_value = float(bucket_totals.sum())
+        current_mix = {
+            b: (float(bucket_totals.get(b, 0.0)) / total_value if total_value > 0 else 0.0)
+            for b in ("Core", "Difensivo", "Satellite")
+        }
+        letture = [
+            f"{b} &middot; attuale {fmt_pct_it(current_mix[b], 1)} vs obiettivo {fmt_pct_it(float(objective.get(objective_key[b], 0.0)), 1)}"
+            for b in ("Core", "Difensivo", "Satellite")
+        ]
+        composizione_rows: list[tuple[str, object]] = [("Coerenza col target", letture)]
+        for b in ("Core", "Difensivo", "Satellite"):
+            sub = rings_df[rings_df["bucket"] == b]
+            if sub.empty:
+                continue
+            composizione_rows.append((
+                b,
+                [f"{r['ticker']} &middot; {r['natura']} &middot; {fmt_eur_it(float(r['value']), 2)}" for _, r in sub.iterrows()],
+            ))
+        _render_sator_explain_box(composizione_rows, title="Lettura dell'allocazione")
+
+    matrix_df = build_coverage_matrix_frame(data, state_df)
+    if matrix_df.empty:
+        st.info("Nessuno strumento posseduto: la matrice di copertura comparira' dopo il primo acquisto.")
+    else:
+        render_section_title(
+            "Copertura e sovrapposizione",
+            comment="Righe: strumenti posseduti. Colonne: aree di mercato coperte dal portafoglio o apribili da un candidato SATOR. Punteggio 4 = area prevalente dello strumento, 0 = nessuna esposizione.",
+            gap_after="sm",
+        )
+        fig_matrix = build_coverage_matrix_chart(matrix_df, theme)
+        st.plotly_chart(fig_matrix, width="stretch", config={"displayModeBar": False})
+        doppioni = [col for col in matrix_df.columns if (matrix_df[col] == 4).sum() >= 2]
+        scoperte = [col for col in matrix_df.columns if (matrix_df[col] == 4).sum() == 0]
+        note_matrix: list[tuple[str, object]] = []
+        if doppioni:
+            note_matrix.append(("Doppioni", [f"{col}: {', '.join(matrix_df.index[matrix_df[col] == 4])}" for col in doppioni]))
+        else:
+            note_matrix.append(("Doppioni", "Nessuna area coperta da piu' di uno strumento."))
+        note_matrix.append((
+            "Aree scoperte",
+            ", ".join(scoperte) if scoperte else "Nessuna: ogni area vista dai candidati e' gia' coperta da almeno uno strumento posseduto.",
+        ))
+        _render_sator_explain_box(note_matrix, title="Lettura della matrice")
+
+    render_section_title(
+        "Prossimo acquisto: mappa decisionale",
+        comment="Dati dall'ultima fotografia SATOR salvata (Storico decisionale piu' sotto, o dalla pagina SATOR attiva in sidebar) — non da un'analisi dal vivo.",
+        gap_after="sm",
+    )
+    decisions_state = load_sator_decisions()
+    bubble_df, missing_tickers = build_next_purchase_bubble_frame(data)
+    if not (decisions_state.get("items") or []):
+        st.info("Nessuna fotografia SATOR salvata: apri il modulo SATOR piu' sotto (o la pagina SATOR in sidebar) e salva una decisione per popolare questa mappa.")
+    elif bubble_df.empty:
+        st.info("L'ultima fotografia SATOR salvata non contiene ancora i punteggi necessari per questa mappa: salvane una nuova per popolarla.")
+    else:
+        if missing_tickers:
+            st.warning("Dati insufficienti nell'ultima fotografia per: " + ", ".join(missing_tickers) + ". Salva una fotografia aggiornata per includerli.")
+        fig_bubble = build_next_purchase_bubble_chart(bubble_df, theme)
+        st.plotly_chart(fig_bubble, width="stretch", config={"displayModeBar": False})
+        legend_block(
+            "Quadranti: in basso a destra = buon contributo difensivo; in alto a destra = diversifica ma aumenta volatilita'; "
+            "in alto a sinistra = satellite aggressivo/ridondante; in basso a sinistra = poco utile/non prioritario. "
+            "Dimensione bolla = importo proposto nella fotografia.",
+            variant="bottom",
+        )
+    _section_line()
 
 
 def _render_sator_ante_post(combo_df: pd.DataFrame, master_df: pd.DataFrame, budget: float, theme) -> None:
@@ -1021,6 +1140,10 @@ def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         )
         with st.container():
             _render_portfolio_objective_section(ctx, theme)
+
+        _section_line()
+        with st.container():
+            _render_decision_dashboard_section(ctx, theme)
 
         with st.container():
             _render_sator_module(ctx, theme)
