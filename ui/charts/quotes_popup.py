@@ -8,6 +8,7 @@ import pandas as pd
 
 from persistence.storage import macro_cat
 from core.finance import build_ptf_df
+from core.instrument_classification import is_nav_fund
 from ui.charts.natura_icons import get_natura_visual
 from ui.streamlit_compat import iframe_height_for_rows, iframe_scroll_for_rows, render_html_iframe
 from ui.theme import macro_color
@@ -109,7 +110,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
             sym, sym_col, sym_sort = "▼", "#FF4B4B", "3"
         else:
             sym, sym_col, sym_sort = "—", "#9CA3AF", "2"
-        is_fam = nature_label == "Fondo gestito / multi-asset"
+        is_fam = is_nav_fund(ticker, tipo)
         if is_fam and "ERRORE" not in esito:
             esito_label, esito_title = "🔵 NAV", "Fondo gestito: NAV non confrontabile giornalmente"
         elif esito == "OK":

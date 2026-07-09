@@ -23,6 +23,7 @@ from persistence.storage import (
 )
 from core.market_data import deduce_type, find_name, find_ticker, get_price, get_price_details, get_isin_ticker_cache
 from core.finance import refresh_benchmark_cache
+from core.instrument_classification import is_nav_fund as _is_nav_fund
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_qty_it, fmtds
 
 logger = logging.getLogger("portafoglio.ui.sidebar")
@@ -60,12 +61,6 @@ def _is_stale_price(price_date: str | None, latest_hist_date: str | None, ticker
         return str(price_date)[:10] < str(latest_hist_date)[:10]
     except Exception:
         return False
-
-
-def _is_nav_fund(ticker: str, tipo: str) -> bool:
-    """True per fondi gestiti/OICVM che per natura pubblicano NAV T-1."""
-    txt = f"{ticker} {tipo}".lower()
-    return any(tok in txt for tok in ("fam-", "fless", "flex", "multi asset", "multi-asset", "bilanciato", "gestito"))
 
 
 def _is_stale_open_market(price_date: str | None, ticker: str = "", tipo: str = "") -> bool:

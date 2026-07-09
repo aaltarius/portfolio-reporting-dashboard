@@ -33,6 +33,18 @@ _RULES: list[tuple[tuple[str, ...], str]] = [
 
 _FALLBACK_LABEL = "Esposizione diversificata"
 
+_NAV_FUND_TOKENS = ("fam-", "fless", "flex", "multi asset", "multi-asset", "bilanciato", "gestito")
+
+
+def is_nav_fund(ticker: str, tipo: str) -> bool:
+    """True per fondi gestiti/OICVM che per natura pubblicano NAV non ogni
+    giorno di mercato, ma quando il fondo stesso decide (es. i FAM-). Non va
+    confuso con la classificazione "natura"/esposizione (classify_natura):
+    un FAM- puo' avere natura "Mercati emergenti" o "Fondo bilanciato" ma
+    resta comunque un fondo a pubblicazione NAV irregolare."""
+    txt = f"{ticker} {tipo}".lower()
+    return any(tok in txt for tok in _NAV_FUND_TOKENS)
+
 
 def _match_text(strumento: dict) -> str:
     parts = (
