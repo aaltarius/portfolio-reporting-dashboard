@@ -1511,6 +1511,15 @@ CHARTS: dict[str, dict[str, Any]] = {
      'margin_delta': {'t': 0, 'b': 0, 'l': 10, 'r': 0},
      'title': '<b>Copertura e sovrapposizione per area di mercato</b>'},
 
+    'pianificazione_next_purchase_bubble': {'type': 'scatter',
+     'height': 460,
+     'legend': 'bottom',
+     'show_buttons': False,
+     'margin_delta': {'t': 0, 'b': 0, 'l': 0, 'r': 0},
+     'x_tickformat': '.2f',
+     'y_tickformat': '.2f',
+     'title': '<b>Prossimo acquisto: mappa decisionale</b>'},
+
     # ------------------------------------------------------------------
     # DA VERIFICARE / LEGACY
     # ------------------------------------------------------------------

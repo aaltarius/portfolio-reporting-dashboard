@@ -169,3 +169,72 @@ def build_coverage_matrix_chart(matrix_df: pd.DataFrame, theme) -> go.Figure:
     rows = len(matrix_df.index)
     fig.update_layout(height=max(320, min(760, 170 + rows * 30)))
     return finalize_chart(fig, "pianificazione_coverage_matrix")
+
+
+_BUBBLE_QUADRANT_LABELS = (
+    (0.29, 0.08, "Poco utile / non prioritario", "rgba(100,116,139,0.9)"),
+    (0.79, 0.08, "Buon contributo difensivo", "rgba(21,128,61,0.9)"),
+    (0.79, 0.71, "Diversifica ma aumenta volatilità", "rgba(161,98,7,0.9)"),
+    (0.29, 0.71, "Satellite aggressivo / ridondante", "rgba(185,28,28,0.9)"),
+)
+_BUBBLE_DIV_THRESHOLD = 0.58
+_BUBBLE_RISK_THRESHOLD = 0.42
+
+
+def build_next_purchase_bubble_chart(bubble_df: pd.DataFrame, theme) -> go.Figure:
+    """Mappa a bolle dei prossimi acquisti (ultima fotografia SATOR salvata):
+    X = diversificazione apportata, Y = rischio stimato (1 - risk_efficiency),
+    dimensione bolla = importo proposto. Soglie 0,58/0,42 riprese da
+    _build_manual_choice_feedback in ui/pages/pianificazione.py."""
+    fig = go.Figure()
+    if bubble_df is None or bubble_df.empty:
+        return finalize_chart(fig, "pianificazione_next_purchase_bubble")
+    df = bubble_df.copy()
+    df["rischio"] = 1.0 - df["risk_efficiency"]
+    max_importo = max(float(df["importo"].max()), 1.0)
+    df["marker_size"] = 14.0 + (df["importo"].clip(lower=0.0) / max_importo) * 26.0
+    bucket_colors = {
+        "Core": getattr(theme, "color_blue", "#5B8DEF"),
+        "Difensivo": getattr(theme, "color_green", "#22c55e"),
+        "Satellite": getattr(theme, "color_orange", "#E8B960"),
+    }
+    for bucket in ("Core", "Difensivo", "Satellite"):
+        sub = df[df["bucket"] == bucket]
+        if sub.empty:
+            continue
+        fig.add_trace(go.Scatter(
+            x=sub["diversification_benefit"],
+            y=sub["rischio"],
+            mode="markers+text",
+            text=sub["ticker"],
+            textposition="top center",
+            name=bucket,
+            marker=dict(
+                size=sub["marker_size"],
+                color=bucket_colors[bucket],
+                opacity=0.82,
+                line=dict(color="rgba(17,24,39,0.28)", width=1),
+            ),
+            customdata=sub[["name", "importo"]].to_numpy(),
+            hovertemplate=(
+                "<b>%{text}</b> — %{customdata[0]}<br>"
+                "Diversificazione: %{x:.2f}<br>"
+                "Rischio stimato: %{y:.2f}<br>"
+                "Importo proposto: € %{customdata[1]:,.0f}<extra></extra>"
+            ),
+        ))
+    quadrants = (
+        (0.0, _BUBBLE_DIV_THRESHOLD, 0.0, _BUBBLE_RISK_THRESHOLD, "rgba(100,116,139,0.05)"),
+        (_BUBBLE_DIV_THRESHOLD, 1.0, 0.0, _BUBBLE_RISK_THRESHOLD, "rgba(34,197,94,0.06)"),
+        (_BUBBLE_DIV_THRESHOLD, 1.0, _BUBBLE_RISK_THRESHOLD, 1.0, "rgba(234,179,8,0.06)"),
+        (0.0, _BUBBLE_DIV_THRESHOLD, _BUBBLE_RISK_THRESHOLD, 1.0, "rgba(239,68,68,0.05)"),
+    )
+    for x0, x1, y0, y1, color in quadrants:
+        fig.add_shape(type="rect", x0=x0, x1=x1, y0=y0, y1=y1, fillcolor=color, line_width=0, layer="below")
+    fig.add_vline(x=_BUBBLE_DIV_THRESHOLD, line_dash="dash", line_color="rgba(100,116,139,0.55)", line_width=1)
+    fig.add_hline(y=_BUBBLE_RISK_THRESHOLD, line_dash="dash", line_color="rgba(100,116,139,0.55)", line_width=1)
+    for x, y, text, color in _BUBBLE_QUADRANT_LABELS:
+        fig.add_annotation(x=x, y=y, text=text, showarrow=False, font=dict(size=10, color=color))
+    fig.update_xaxes(title_text="Diversificazione apportata", range=[0.0, 1.0], tickformat=".2f")
+    fig.update_yaxes(title_text="Rischio stimato", range=[0.0, 1.0], tickformat=".2f")
+    return finalize_chart(fig, "pianificazione_next_purchase_bubble")
