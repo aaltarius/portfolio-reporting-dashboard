@@ -162,7 +162,13 @@ def ensure_sator_metadata(data: dict[str, Any]) -> bool:
     instrument_master = data.setdefault("instrument_master", {})
     positions = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
     held = _tickers_posseduti(positions)
-    non_strutturali = ("active", "state", "commission_mode", "pac_enabled", "zero_commission", "ter", "spread_pct")
+    # I campi di costo (commission_mode, zero_commission, ter, spread_pct) NON
+    # sono piu' tra i "non strutturali" seminati qui: si leggono a runtime dai
+    # campi arricchimento dello strumento (infer_sator_metadata), cosi' un
+    # aggiornamento in Strumenti -> Arricchimento si riflette subito nel
+    # punteggio Costo. Restano overridabili a mano solo tramite l'editor
+    # universo (flag user_edited), vedi _score_universe.
+    non_strutturali = ("active", "state", "pac_enabled")
     for item in data.get("strumenti", []) or []:
         ticker = str(item.get("ticker") or "").strip().upper()
         if not ticker:
@@ -231,6 +237,12 @@ def infer_sator_metadata(item: dict[str, Any], in_portfolio: bool) -> dict[str, 
         # forzato nel core globale (era questo a falsare i confronti)
         nature, role = "altro", "satellite_tematico"
 
+    # Costo: letto dai campi arricchimento dello strumento (tab Strumenti ->
+    # Arricchimento), non da un editor separato — cosi' il flusso sidebar/
+    # form_server (quello effettivamente usato) alimenta subito il fattore
+    # Costo senza passare da nessuna pagina Streamlit dedicata.
+    zero_commission = str(item.get("zero_commissioni") or "").strip().lower() in ("true", "si", "sì", "1", "yes")
+
     return {
         "active": True,
         "state": "in_portafoglio" if in_portfolio else "candidato",
@@ -238,11 +250,11 @@ def infer_sator_metadata(item: dict[str, Any], in_portfolio: bool) -> dict[str, 
         "role": role,
         "comparison_group": _infer_comparison_group(nature, role, ticker, name),
         "function_label": _infer_function_label(nature, role),
-        "commission_mode": "non_definito",
+        "commission_mode": "zero_commissioni" if zero_commission else "standard",
         "pac_enabled": category != "GOV",
-        "zero_commission": False,
-        "ter": 0.0,
-        "spread_pct": 0.0,
+        "zero_commission": zero_commission,
+        "ter": _parse_it_pct(item.get("ter")),
+        "spread_pct": _parse_it_pct(item.get("spread_pct")),
     }
 
 
@@ -543,11 +555,15 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
             "role": _meta_strutturale(sator, inf, "role"),
             "comparison_group": _meta_strutturale(sator, inf, "comparison_group"),
             "function_label": _meta_strutturale(sator, inf, "function_label"),
-            "commission_mode": str(sator.get("commission_mode") or inf["commission_mode"]),
+            # Costo: SEMPRE dal valore live (Strumenti -> Arricchimento), mai
+            # dal vecchio editor universo dormiente — anche se in passato uno
+            # strumento e' stato marcato user_edited=True da li', quel dato e'
+            # ormai fuori sincrono con l'unica fonte che l'utente aggiorna.
+            "commission_mode": inf["commission_mode"],
             "pac_enabled": bool(sator.get("pac_enabled", inf["pac_enabled"])),
-            "zero_commission": bool(sator.get("zero_commission", inf["zero_commission"])),
-            "ter": _safe_float(sator.get("ter", inf["ter"]), 0.0),
-            "spread_pct": _safe_float(sator.get("spread_pct", inf["spread_pct"]), 0.0),
+            "zero_commission": inf["zero_commission"],
+            "ter": inf["ter"],
+            "spread_pct": inf["spread_pct"],
             "current_qty": _safe_float(positions_map.get(ticker, {}).get("Quote"), 0.0),
             "current_weight": ctx.current_weights.get(ticker, 0.0),
             "nature_weight": peso_natura,
@@ -1400,6 +1416,20 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except Exception:
         return float(default)
+
+
+def _parse_it_pct(value: Any) -> float:
+    """Converte una percentuale in formato italiano ('0,40%', '+1,2 %') in
+    frazione (0.0040). Stringa vuota o non numerica -> 0.0."""
+    if value is None:
+        return 0.0
+    try:
+        cleaned = str(value).replace("%", "").replace("+", "").replace(" ", "").replace(",", ".")
+        if not cleaned:
+            return 0.0
+        return float(cleaned) / 100.0
+    except (ValueError, TypeError):
+        return 0.0
 
 
 def _coerce_choice(value: Any, allowed: tuple[str, ...], default: str) -> str:

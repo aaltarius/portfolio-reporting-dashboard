@@ -287,7 +287,10 @@ def _fs_category_field_specs(cat: str) -> list:
         ]
     if cat in ("etf", "etc"):
         return [
-            ("TER", "ter", "es. 0,40%"), ("Benchmark", "benchmark", "es. FTSE MIB NR EUR"),
+            ("TER", "ter", "es. 0,40%"),
+            ("Zero commissioni", "zero_commissioni", "spunta se su Fineco lo compri senza commissioni"),
+            ("Spread %", "spread_pct", "es. 0,05% (facoltativo)"),
+            ("Benchmark", "benchmark", "es. FTSE MIB NR EUR"),
             ("Categoria", "categoria_etf", "es. Italy Equity"), ("Emittente", "emittente", "es. Amundi Asset Management"),
             ("Rating Morningstar (stelle)", "rating_morningstar", "es. 4"),
             ("Rendimento 1A", "rendimento_1a", "es. +37,30%"), ("Rendimento 3A", "rendimento_3a", "es. +117,68%"),
@@ -333,6 +336,20 @@ def _fs_render_dati_completi_fields(strumento: dict) -> str:
     rows = []
     for label, name, placeholder in _fs_category_field_specs(cat):
         val = strumento.get(name, "")
+        if name == "zero_commissioni":
+            checked = "checked" if str(val).strip().lower() in ("true", "si", "sì", "1", "yes") else ""
+            rows.append(
+                f'<div style="margin-bottom:10px;">'
+                f'<label style="font-size:12px;font-weight:600;color:#64748b;">{escape(label)}{_badge(name)}</label>'
+                f'<label style="display:flex;align-items:center;gap:8px;margin-top:5px;cursor:pointer;font-size:13px;color:#334155;">'
+                f'<input type="hidden" name="{name}" value="false">'
+                f'<input type="checkbox" name="{name}" value="true" {checked} '
+                f'style="width:16px;height:16px;accent-color:#6366f1;">'
+                f'{escape(placeholder)}'
+                f'</label>'
+                f'</div>'
+            )
+            continue
         rows.append(
             f'<div style="margin-bottom:10px;">'
             f'<label style="font-size:12px;font-weight:600;color:#64748b;">{escape(label)}{_badge(name)}</label>'
