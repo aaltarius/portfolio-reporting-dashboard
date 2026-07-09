@@ -1495,6 +1495,13 @@ CHARTS: dict[str, dict[str, Any]] = {
      'y_tickformat': '.0f',
      'y_ticksuffix': '%'},
 
+    'pianificazione_allocation_rings': {'type': 'custom',
+     'height': 420,
+     'legend': 'off',
+     'show_buttons': False,
+     'margin_delta': {'t': 0, 'b': 0, 'l': 0, 'r': 0},
+     'title': '<b>Allocazione: bucket e strumenti</b>'},
+
     # ------------------------------------------------------------------
     # DA VERIFICARE / LEGACY
     # ------------------------------------------------------------------

@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 
 from ui.charts.runtime import finalize_chart
 from ui.formatting import fmt_eur_it, fmt_pct_it
+from ui.charts.natura_icons import get_natura_visual
 
 
 def build_composition_donut_chart(per_funzione: pd.Series, theme) -> go.Figure:
@@ -88,3 +89,54 @@ def build_objective_mix_chart(objective: dict, current_mix: dict, theme) -> go.F
             hovertemplate=f"{bucket}: %{{y:.1f}}%<extra></extra>",
         ))
     return finalize_chart(fig, "pianificazione_obiettivo_mix", layout_updates={"barmode": "stack"})
+
+
+def build_allocation_rings_chart(rings_df: pd.DataFrame, objective: dict, theme) -> go.Figure:
+    """Donut ad anelli concentrici: interno Core/Difensivo/Satellite, esterno
+    singolo strumento posseduto colorato per natura/esposizione."""
+    fig = go.Figure()
+    if rings_df is None or rings_df.empty:
+        return finalize_chart(fig, "pianificazione_allocation_rings")
+    bucket_colors = {
+        "Core": getattr(theme, "color_blue", "#5B8DEF"),
+        "Difensivo": getattr(theme, "color_green", "#22c55e"),
+        "Satellite": getattr(theme, "color_orange", "#E8B960"),
+    }
+    ids: list[str] = []
+    labels: list[str] = []
+    parents: list[str] = []
+    values: list[float] = []
+    colors: list[str] = []
+    hover: list[str] = []
+    for bucket in ("Core", "Difensivo", "Satellite"):
+        sub = rings_df[rings_df["bucket"] == bucket]
+        if sub.empty:
+            continue
+        total = float(sub["value"].sum())
+        ids.append(bucket)
+        labels.append(bucket)
+        parents.append("")
+        values.append(total)
+        colors.append(bucket_colors[bucket])
+        hover.append(f"{bucket}<br>{fmt_eur_it(total, 2)}")
+        for _, row in sub.iterrows():
+            leaf_id = f"{bucket}::{row['ticker']}"
+            ids.append(leaf_id)
+            labels.append(str(row["ticker"]))
+            parents.append(bucket)
+            values.append(float(row["value"]))
+            leaf_color, _ = get_natura_visual(str(row["natura"]))
+            colors.append(leaf_color)
+            hover.append(f"{row['ticker']} — {row['name']}<br>Natura: {row['natura']}<br>{fmt_eur_it(float(row['value']), 2)}")
+    fig.add_trace(go.Sunburst(
+        ids=ids,
+        labels=labels,
+        parents=parents,
+        values=values,
+        branchvalues="total",
+        marker=dict(colors=colors, line=dict(color="rgba(255,255,255,0.6)", width=1)),
+        customdata=hover,
+        hovertemplate="%{customdata}<extra></extra>",
+        textinfo="label",
+    ))
+    return finalize_chart(fig, "pianificazione_allocation_rings")
