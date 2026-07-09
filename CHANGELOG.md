@@ -1,5 +1,25 @@
 # Changelog
 
+## 4.9.28 - Dashboard decisionale in Pianificazione, costi SATOR live, badge € in tabella
+
+**Nuova sezione "Dashboard decisionale" nella scheda Pianificazione:**
+- aggiunta subito dopo "Obiettivo di portafoglio" e prima del modulo SATOR Streamlit (ormai congelato: il percorso attivo per SATOR è la pagina `/sator` raggiunta dalla sidebar) — indipendente dal suo stato di sessione, usa solo il portafoglio corrente e l'ultima fotografia SATOR salvata su disco
+- **donut ad anelli concentrici**: anello interno Core/Difensivo/Satellite, anello esterno i singoli strumenti posseduti colorati per natura/esposizione (stessa palette dell'icona già in Portafoglio/Quotazioni), con lettura testuale di coerenza rispetto al target impostato
+- **matrice di copertura e sovrapposizione**: righe = strumenti posseduti, colonne = aree di mercato (unione tra natura dei posseduti e dei candidati SATOR), punteggio 0/4 — evidenzia doppioni (due strumenti sulla stessa area) e aree scoperte
+- **mappa a bolle dei prossimi acquisti**: dati dall'ultima fotografia SATOR salvata (non da un'analisi dal vivo), quattro quadranti decisionali su diversificazione (asse X, soglia 0,58) e rischio stimato (asse Y = 1 − risk_efficiency, soglia 0,42 — stesse soglie già usate altrove nella pagina), dimensione bolla = importo proposto
+- avvisi gialli per strumenti posseduti con natura non chiaramente classificata ("Esposizione diversificata") o con contraddizione benchmark/tipo, e per ticker della fotografia salvata con dati insufficienti (fotografia precedente a questo aggiornamento)
+- `build_sator_decision_record` ora salva anche `risk_efficiency`/`diversification_benefit` per ogni riga dell'ordine, in modo retrocompatibile (le fotografie salvate prima di questo aggiornamento restano leggibili, semplicemente non hanno questi due campi)
+
+**Costi SATOR (zero commissioni/TER/spread) letti live dall'arricchimento:**
+- il fattore Costo del punteggio SATOR leggeva sempre valori vuoti (`commission_mode` "non_definito", `zero_commission` False, `ter`/`spread` 0.0): i campi non erano mai stati collegati a una sorgente dati reale, quindi il fattore Costo non riusciva a distinguere i titoli tra loro
+- zero commissioni/TER/spread si inseriscono ora nel tab Strumenti → Arricchimento (nuovo campo con checkbox per zero commissioni) e vengono letti live da `infer_sator_metadata`: un aggiornamento in Arricchimento si riflette subito nel punteggio Costo, senza passare dal vecchio editor universo dormiente
+
+**Badge € nella tabella SATOR:**
+- accanto al ticker, un badge € (stesso stile dei punteggi in tabella) segnala gli strumenti non a zero commissioni, con tooltip esplicativo
+
+**Rifinitura interna — classificazione fondi NAV irregolare:**
+- `is_nav_fund` (fondi gestiti/OICVM con pubblicazione NAV non giornaliera, es. i FAM-) era duplicata in `ui/sidebar.py`, mentre `ui/charts/quotes_popup.py` usava un'euristica diversa e meno precisa basata sulla natura/esposizione dello strumento; ora è un'unica funzione condivisa in `core/instrument_classification.py`
+
 ## 4.9.27 - Classificazione automatica della natura/esposizione degli strumenti
 
 **Icona "natura" in Quotazioni e Portafoglio, ora calcolata da dati affidabili invece che dal nome abbreviato:**
