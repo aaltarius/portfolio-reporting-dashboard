@@ -880,6 +880,40 @@ def build_portfolio_rings_frame(data: dict[str, Any], state_df: pd.DataFrame) ->
     return pd.DataFrame(rows, columns=columns) if rows else pd.DataFrame(columns=columns)
 
 
+def build_coverage_matrix_frame(data: dict[str, Any], state_df: pd.DataFrame) -> pd.DataFrame:
+    """Righe = strumenti posseduti, colonne = unione delle natura tra posseduti
+    e candidati SATOR (stato watchlist/candidato). Valore 4 nella natura
+    prevalente dello strumento, 0 altrove: un doppione reale emerge quando due
+    righe condividono una colonna a 4; una colonna tutta a 0 e' un'area
+    scoperta (aperta solo da un candidato se comunque presente come colonna)."""
+    held = _tickers_posseduti(state_df)
+    if not held:
+        return pd.DataFrame()
+    master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
+    held_natura: dict[str, str] = {}
+    candidate_natura: set[str] = set()
+    for item in data.get("strumenti", []) or []:
+        ticker = str(item.get("ticker") or "").strip().upper()
+        if not ticker:
+            continue
+        natura = str(item.get("natura") or "Esposizione diversificata")
+        if ticker in held:
+            held_natura[ticker] = natura
+            continue
+        inf = infer_sator_metadata(item, False)
+        sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
+        state = _coerce_choice(sator.get("state", inf["state"]), SATOR_STATE_VALUES, inf["state"])
+        if state in ("watchlist", "candidato"):
+            candidate_natura.add(natura)
+    if not held_natura:
+        return pd.DataFrame()
+    columns = sorted(set(held_natura.values()) | candidate_natura)
+    matrix = pd.DataFrame(0, index=sorted(held_natura.keys()), columns=columns, dtype=int)
+    for ticker, natura in held_natura.items():
+        matrix.loc[ticker, natura] = 4
+    return matrix
+
+
 def _suggested_quotes(ranking_df: pd.DataFrame, budget: float, *, max_lines: int = MAX_LINEE_SUGGERITE) -> list[int]:
     """Allocazione suggerita trasparente, a quote intere, entro budget.
 
