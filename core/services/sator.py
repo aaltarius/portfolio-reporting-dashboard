@@ -1046,6 +1046,8 @@ def build_sator_decision_record(
                 entry["bucket"] = _role_bucket(str(r.get("role", "")))
                 entry["voto"] = round(float(_safe_float(r.get("voto"), 0.0)), 1)
                 entry["score_finale"] = round(float(_safe_float(r.get("score_finale"), 0.0)), 4)
+                entry["risk_efficiency"] = round(float(_safe_float(r.get("risk_efficiency"), 0.0)), 4)
+                entry["diversification_benefit"] = round(float(_safe_float(r.get("diversification_benefit"), 0.0)), 4)
         enriched_lines.append(entry)
 
     # Ripartizione core/difensivo/satellite (importi e percentuali)
