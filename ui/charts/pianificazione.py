@@ -160,14 +160,29 @@ def build_allocation_rings_chart(rings_df: pd.DataFrame, objective: dict, theme)
     return finalize_chart(fig, "pianificazione_allocation_rings")
 
 
+def _format_matrix_cell(value: float) -> str:
+    """Formatta il punteggio della matrice di copertura: interi senza
+    decimali (es. 4, 2), frazioni arrotondate a 2 decimali senza zeri
+    superflui (es. 1.33, 0.5) - il punteggio si divide tra gli strumenti
+    che condividono la stessa area (vedi build_coverage_matrix_frame)."""
+    if value <= 0:
+        return "0"
+    if abs(value - round(value)) < 1e-9:
+        return str(int(round(value)))
+    return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
 def build_coverage_matrix_chart(matrix_df: pd.DataFrame, theme) -> go.Figure:
-    """Heatmap 0/4: copertura e sovrapposizione per natura/area di mercato tra
+    """Heatmap: copertura e sovrapposizione per natura/area di mercato tra
     gli strumenti posseduti (righe) e le natura di posseduti + candidati SATOR
-    (colonne)."""
+    (colonne). Il punteggio 4 di un'area si divide equamente tra gli
+    strumenti posseduti che la condividono (vedi build_coverage_matrix_frame
+    in core/services/sator.py)."""
     fig = go.Figure()
     if matrix_df is None or matrix_df.empty:
         return finalize_chart(fig, "pianificazione_coverage_matrix")
-    z = matrix_df.to_numpy()
+    z = matrix_df.to_numpy(dtype=float)
+    text = [[_format_matrix_cell(v) for v in row] for row in z]
     accent = getattr(theme, "color_blue", "#5B8DEF")
     fig.add_trace(go.Heatmap(
         z=z,
@@ -176,10 +191,10 @@ def build_coverage_matrix_chart(matrix_df: pd.DataFrame, theme) -> go.Figure:
         zmin=0,
         zmax=4,
         colorscale=[[0.0, "rgba(91,141,239,0.06)"], [1.0, accent]],
-        text=z,
+        text=text,
         texttemplate="%{text}",
         textfont=dict(size=11),
-        hovertemplate="%{y} · %{x}<br>Punteggio: %{z}<extra></extra>",
+        hovertemplate="%{y} · %{x}<br>Punteggio: %{text}<extra></extra>",
         showscale=False,
         xgap=2,
         ygap=2,

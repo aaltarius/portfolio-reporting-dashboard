@@ -29,6 +29,7 @@ from core.services.sator import (
     SATOR_NATURE_VALUES,
     build_portfolio_rings_frame,
     build_coverage_matrix_frame,
+    sator_matrix_doppioni_scoperte,
     build_next_purchase_bubble_frame,
 )
 from persistence.storage import load_data, load_sator_decisions, save_data, save_sator_decisions, save_settings
@@ -618,16 +619,18 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
     else:
         render_section_title(
             "Copertura e sovrapposizione",
-            comment="Righe: strumenti posseduti. Colonne: aree di mercato coperte dal portafoglio o apribili da un candidato SATOR. Punteggio 4 = area prevalente dello strumento, 0 = nessuna esposizione.",
+            comment="Righe: strumenti posseduti. Colonne: aree di mercato coperte dal portafoglio o apribili da un candidato SATOR. Punteggio 4 = l'area e' coperta per intero; se piu' strumenti condividono la stessa area, il 4 si divide equamente tra loro - ogni colonna posseduta somma sempre a 4, quindi il valore per riga indica quanto di quell'area e' 'tua' rispetto agli altri strumenti che la coprono gia'.",
             gap_after="sm",
         )
         fig_matrix = build_coverage_matrix_chart(matrix_df, theme)
         st.plotly_chart(fig_matrix, width="stretch", config={"displayModeBar": False})
-        doppioni = [col for col in matrix_df.columns if (matrix_df[col] == 4).sum() >= 2]
-        scoperte = [col for col in matrix_df.columns if (matrix_df[col] == 4).sum() == 0]
+        doppioni, scoperte = sator_matrix_doppioni_scoperte(matrix_df)
         note_matrix: list[tuple[str, object]] = []
         if doppioni:
-            note_matrix.append(("Doppioni", [f"{col}: {', '.join(matrix_df.index[matrix_df[col] == 4])}" for col in doppioni]))
+            note_matrix.append((
+                "Doppioni",
+                [(col, ", ".join(matrix_df.index[matrix_df[col] > 0])) for col in doppioni],
+            ))
         else:
             note_matrix.append(("Doppioni", "Nessuna area coperta da piu' di uno strumento."))
         note_matrix.append((

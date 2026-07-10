@@ -1507,7 +1507,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'legend': 'off',
      'show_buttons': False,
      'show_all_heatmap_labels': True,
-     'x_tickangle': -45,
+     'x_tickangle': -90,
      'margin_delta': {'t': 0, 'b': 0, 'l': 10, 'r': 0},
      'title': '<b>Copertura e sovrapposizione per area di mercato</b>'},
 
