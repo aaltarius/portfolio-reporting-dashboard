@@ -564,7 +564,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
         st.info("Nessuno strumento posseduto: la mappa di allocazione comparira' dopo il primo acquisto.")
     else:
         render_section_title(
-            "Allocazione: bucket e strumenti", comment="Anello interno: Core/Difensivo/Satellite. Anello esterno: singolo strumento, colorato per natura/esposizione.", gap_after="sm",
+            "Allocazione: bucket e strumenti", comment="Anello interno: Core/Difensivo/Satellite. Anello esterno: natura/esposizione (piu' strumenti della stessa natura si aggregano in un'unica fetta, colorata per natura; l'hover elenca i singoli strumenti che la compongono).", gap_after="sm",
         )
         fig_rings = build_allocation_rings_chart(rings_df, objective, theme)
         st.plotly_chart(fig_rings, width="stretch", config={"displayModeBar": False})
