@@ -165,7 +165,7 @@ def _format_matrix_cell(value: float) -> str:
     decimali (es. 4, 2), frazioni arrotondate a 2 decimali senza zeri
     superflui (es. 1.33, 0.5) - il punteggio si divide tra gli strumenti
     che condividono la stessa area (vedi build_coverage_matrix_frame)."""
-    if value <= 0:
+    if value == 0:
         return "0"
     if abs(value - round(value)) < 1e-9:
         return str(int(round(value)))

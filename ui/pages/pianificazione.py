@@ -171,6 +171,7 @@ def _build_sator_explain_html(rows: list[tuple[str, object]], title: str | None 
 
 
 def _render_sator_explain_box(rows: list[tuple[str, object]], title: str | None = None) -> None:
+    """Vedi _build_sator_explain_html per la logica di costruzione dell'HTML."""
     st.markdown(_build_sator_explain_html(rows, title), unsafe_allow_html=True)
 
 
@@ -697,9 +698,9 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
             "Dimensione bolla = importo proposto nella fotografia.",
             variant="bottom",
         )
-        latest_decision = latest_sator_decision(decisions_state.get("items") or [])
-        if latest_decision:
-            _render_sator_reference_summary(latest_decision)
+    latest_decision = latest_sator_decision(decisions_state.get("items") or [])
+    if latest_decision:
+        _render_sator_reference_summary(latest_decision)
 
 
 def _render_sator_ante_post(combo_df: pd.DataFrame, master_df: pd.DataFrame, budget: float, theme) -> None:
