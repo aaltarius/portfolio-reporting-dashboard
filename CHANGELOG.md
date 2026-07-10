@@ -3,7 +3,8 @@
 ## 4.9.29 - Rifiniture Dashboard decisionale
 
 **Allocazione: bucket e strumenti:**
-- il grafico passa da sunburst a due donut concentrici con un gap visibile tra anello interno (Core/Difensivo/Satellite) ed esterno (natura/esposizione), con legenda a destra sulle nature possedute; l'hover dell'anello esterno elenca i singoli strumenti che compongono ciascuna fetta
+- il grafico passa da sunburst a due donut concentrici con un gap visibile tra anello interno (Core/Difensivo/Satellite) ed esterno (natura/esposizione, raggruppata per bucket cosí i confini dei due anelli coincidono esattamente — un portafoglio con un bucket molto dominante, es. quasi tutto BTP, non fa più sembrare che uno strumento "sconfini" in un altro bucket); legenda a destra sulle nature possedute; l'hover dell'anello esterno elenca i singoli strumenti che compongono ciascuna fetta
+- contromisura a una stranezza di rendering di Plotly che, anche disattivando l'ordinamento automatico, disegna comunque la prima fetta al suo posto ma inverte l'ordine di tutte le altre (`_pie_clockwise_order` in `ui/charts/pianificazione.py`) — riguarda entrambi gli anelli; la legenda dell'anello esterno usa tracce fittizie dedicate per restare nell'ordine corretto, indipendente da questa stranezza
 
 **Riquadri "Lettura di...":**
 - le righe con più campi (ticker/natura/importo, colonna/elenco strumenti, ecc.) si allineano ora in colonne a larghezza fissa invece di un'unica riga di testo unita da punto e virgola — interessa "Lettura dell'allocazione", "Lettura della matrice", "Lettura ante-post" e "Dettaglio composizione ordine"
@@ -13,7 +14,7 @@
 - etichette colonna verticali per una matrice più compatta
 
 **Prossimo acquisto: mappa decisionale:**
-- sotto la mappa a bolle, nuovo riquadro "Fotografia di riferimento" con data/nota, importo vs budget, mix bucket e righe ordine dell'ultima fotografia SATOR salvata (stessi dati già presenti nello Storico decisionale, resi visibili senza dover scorrere fino a lì)
+- sotto la mappa a bolle, nuovo riquadro "Fotografia di riferimento" con data/nota, importo vs budget, mix bucket e righe ordine dell'ultima fotografia SATOR salvata (stessi dati già presenti nello Storico decisionale, resi visibili senza dover scorrere fino a lì) — visibile anche quando la fotografia più recente è precedente a questo aggiornamento e non ha ancora i punteggi per la mappa a bolle (prima restava nascosto proprio nel caso per cui era stato pensato)
 
 **Pulizia:**
 - rimossa l'intestazione "Dashboard decisionale" (ridondante con i titoli dei tre grafici sottostanti) e la riga orizzontale doppia che compariva prima di "Liquidità da investire" quando il modulo SATOR Streamlit è nascosto (Impostazioni → SATOR "Solo pagina sidebar")
