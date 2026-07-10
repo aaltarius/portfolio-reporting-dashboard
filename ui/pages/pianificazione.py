@@ -128,25 +128,48 @@ def _render_sator_alerts(alerts: list[dict[str, str]]) -> None:
             st.info(text)
 
 
-def _render_sator_explain_box(rows: list[tuple[str, object]], title: str | None = None) -> None:
-    """Riquadro chiave/testo. Se il testo e' una lista, ogni voce va a capo su una
-    riga propria: cosi' gli elenchi di strumenti restano leggibili invece di
-    finire tutti in linea separati da punto e virgola."""
+_EXPLAIN_COLS_TEMPLATES = {
+    2: "minmax(90px,160px) 1fr",
+    3: "minmax(70px,100px) 1fr minmax(80px,120px)",
+    4: "minmax(70px,100px) 1fr minmax(50px,70px) minmax(80px,110px)",
+}
+
+
+def _build_sator_explain_html(rows: list[tuple[str, object]], title: str | None = None) -> str:
+    """Costruisce l'HTML del riquadro chiave/testo (puro, senza st.markdown,
+    per essere testabile). Se il testo e' una lista, ogni voce va a capo su
+    una riga propria. Se una voce e' a sua volta una tupla di campi (invece
+    di una stringa), i campi si allineano in colonne a larghezza fissa
+    (grid CSS) cosi' ticker/natura/importo restano leggibili invece di
+    un'unica riga di testo unita da punto e virgola."""
     title_html = f'<div class="sator-explain-title">{title}</div>' if title else ""
     blocks = []
     for key, text in rows:
         if isinstance(text, (list, tuple)):
-            text_html = "".join(
-                f'<div class="sator-explain-line">{line}</div>'
-                for line in text
-            )
+            lines_html = []
+            for line in text:
+                if isinstance(line, (list, tuple)):
+                    fields = [str(f) for f in line]
+                    template = _EXPLAIN_COLS_TEMPLATES.get(len(fields), " ".join(["1fr"] * len(fields)))
+                    spans = "".join(f"<span>{field}</span>" for field in fields)
+                    lines_html.append(
+                        f'<div class="sator-explain-line sator-explain-line--cols" '
+                        f'style="grid-template-columns:{template}">{spans}</div>'
+                    )
+                else:
+                    lines_html.append(f'<div class="sator-explain-line">{line}</div>')
+            text_html = "".join(lines_html)
         else:
             text_html = str(text)
         blocks.append(
             f'<div class="sator-explain-row"><div class="sator-explain-key">{key}</div>'
             f'<div class="sator-explain-text">{text_html}</div></div>'
         )
-    st.markdown(f'<div class="sator-explain">{title_html}{"".join(blocks)}</div>', unsafe_allow_html=True)
+    return f'<div class="sator-explain">{title_html}{"".join(blocks)}</div>'
+
+
+def _render_sator_explain_box(rows: list[tuple[str, object]], title: str | None = None) -> None:
+    st.markdown(_build_sator_explain_html(rows, title), unsafe_allow_html=True)
 
 
 def _build_combo_kpis(combo_df: pd.DataFrame, budget: float) -> dict[str, float]:
@@ -375,9 +398,9 @@ def _render_bucket_detail_box(combo_df: pd.DataFrame, importi: pd.Series) -> Non
             rows.append((bucket, "Nessuna quota selezionata."))
             continue
         totale = float(pd.to_numeric(part["Importo"], errors="coerce").fillna(0.0).sum())
-        righe = [f"<b>Totale {fmt_eur_it(totale, 2)}</b>"]
+        righe: list[str | tuple[str, str, str, str]] = [f"<b>Totale {fmt_eur_it(totale, 2)}</b>"]
         righe += [
-            f"{r['Ticker']} &middot; {r['Funzione']} &middot; {int(r['Quote'])}q &middot; {fmt_eur_it(float(r['Importo']), 2)}"
+            (str(r["Ticker"]), str(r["Funzione"]), f"{int(r['Quote'])}q", fmt_eur_it(float(r["Importo"]), 2))
             for _, r in part.iterrows()
         ]
         rows.append((bucket, righe))
@@ -585,7 +608,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
                 continue
             composizione_rows.append((
                 b,
-                [f"{r['ticker']} &middot; {r['natura']} &middot; {fmt_eur_it(float(r['value']), 2)}" for _, r in sub.iterrows()],
+                [(str(r["ticker"]), str(r["natura"]), fmt_eur_it(float(r["value"]), 2)) for _, r in sub.iterrows()],
             ))
         _render_sator_explain_box(composizione_rows, title="Lettura dell'allocazione")
 
@@ -687,7 +710,7 @@ def _render_sator_ante_post(combo_df: pd.DataFrame, master_df: pd.DataFrame, bud
         ]
         nuove = combo_df[(combo_df["Stato"] != "in_portafoglio") | (pd.to_numeric(combo_df["Quote possedute"], errors="coerce").fillna(0.0) <= 0)]
         if not nuove.empty:
-            rows.append(("New entry", [f"{r['Ticker']} &middot; apre {r['Funzione']} ({int(r['Quote'])}q)" for _, r in nuove.iterrows()]))
+            rows.append(("New entry", [(str(r["Ticker"]), f"apre {r['Funzione']} ({int(r['Quote'])}q)") for _, r in nuove.iterrows()]))
         else:
             rows.append(("New entry", "Nessuna nuova linea: l'ordine incrementa strumenti gia' presenti."))
         _render_sator_explain_box(rows, title="Lettura ante-post")

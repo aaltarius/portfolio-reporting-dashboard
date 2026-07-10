@@ -231,6 +231,18 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
 .sator-explain-line{
   padding:2px 0;
 }
+.sator-explain-line--cols{
+  display:grid;
+  gap:0 10px;
+  align-items:baseline;
+}
+.sator-explain-line--cols > span:first-child{
+  font-weight:700;
+}
+.sator-explain-line--cols > span:last-child{
+  text-align:right;
+  white-space:nowrap;
+}
 .sator-explain-title,
 .sator-explain-key,
 .sator-explain-text{
