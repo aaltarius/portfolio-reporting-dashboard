@@ -541,12 +541,6 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
     ensure_sator_metadata(data)
     state_df = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
 
-    render_section_title(
-        "Dashboard decisionale",
-        comment="Non si limita a descrivere il portafoglio: aiuta a leggere se il paniere e' coerente col target, dove ci sono doppioni o aree scoperte, e come si posizionano i candidati dell'ultima fotografia SATOR salvata rispetto al prossimo acquisto.",
-        gap_after="sm",
-    )
-
     rings_df = build_portfolio_rings_frame(data, state_df)
 
     held_tickers = set(rings_df["ticker"]) if not rings_df.empty else set()
@@ -641,7 +635,6 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
             "Dimensione bolla = importo proposto nella fotografia.",
             variant="bottom",
         )
-    _section_line()
 
 
 def _render_sator_ante_post(combo_df: pd.DataFrame, master_df: pd.DataFrame, budget: float, theme) -> None:
