@@ -92,8 +92,10 @@ def build_objective_mix_chart(objective: dict, current_mix: dict, theme) -> go.F
 
 
 def build_allocation_rings_chart(rings_df: pd.DataFrame, objective: dict, theme) -> go.Figure:
-    """Donut ad anelli concentrici: interno Core/Difensivo/Satellite, esterno
-    singolo strumento posseduto colorato per natura/esposizione."""
+    """Donut a due anelli distanziati: interno Core/Difensivo/Satellite,
+    esterno natura/esposizione (strumenti posseduti aggregati per natura,
+    con legenda sull'anello esterno). L'hover dell'anello esterno elenca i
+    singoli strumenti che compongono ciascuna fetta di natura."""
     fig = go.Figure()
     if rings_df is None or rings_df.empty:
         return finalize_chart(fig, "pianificazione_allocation_rings")
@@ -102,42 +104,58 @@ def build_allocation_rings_chart(rings_df: pd.DataFrame, objective: dict, theme)
         "Difensivo": getattr(theme, "color_green", "#22c55e"),
         "Satellite": getattr(theme, "color_orange", "#E8B960"),
     }
-    ids: list[str] = []
-    labels: list[str] = []
-    parents: list[str] = []
-    values: list[float] = []
-    colors: list[str] = []
-    hover: list[str] = []
+    inner_labels: list[str] = []
+    inner_values: list[float] = []
+    inner_colors: list[str] = []
+    inner_hover: list[str] = []
     for bucket in ("Core", "Difensivo", "Satellite"):
         sub = rings_df[rings_df["bucket"] == bucket]
         if sub.empty:
             continue
         total = float(sub["value"].sum())
-        ids.append(bucket)
-        labels.append(bucket)
-        parents.append("")
-        values.append(total)
-        colors.append(bucket_colors[bucket])
-        hover.append(f"{bucket}<br>{fmt_eur_it(total, 2)}")
-        for _, row in sub.iterrows():
-            leaf_id = f"{bucket}::{row['ticker']}"
-            ids.append(leaf_id)
-            labels.append(str(row["ticker"]))
-            parents.append(bucket)
-            values.append(float(row["value"]))
-            leaf_color, _ = get_natura_visual(str(row["natura"]))
-            colors.append(leaf_color)
-            hover.append(f"{row['ticker']} — {row['name']}<br>Natura: {row['natura']}<br>{fmt_eur_it(float(row['value']), 2)}")
-    fig.add_trace(go.Sunburst(
-        ids=ids,
-        labels=labels,
-        parents=parents,
-        values=values,
-        branchvalues="total",
-        marker=dict(colors=colors, line=dict(color="rgba(255,255,255,0.6)", width=1)),
-        customdata=hover,
-        hovertemplate="%{customdata}<extra></extra>",
+        inner_labels.append(bucket)
+        inner_values.append(total)
+        inner_colors.append(bucket_colors[bucket])
+        inner_hover.append(f"{bucket}<br>{fmt_eur_it(total, 2)}")
+
+    natura_groups: dict[str, dict[str, object]] = {}
+    for _, row in rings_df.iterrows():
+        natura = str(row["natura"])
+        group = natura_groups.setdefault(natura, {"value": 0.0, "items": []})
+        group["value"] = float(group["value"]) + float(row["value"])
+        group["items"].append((str(row["ticker"]), float(row["value"])))
+    outer_labels = list(natura_groups.keys())
+    outer_values = [float(natura_groups[n]["value"]) for n in outer_labels]
+    outer_colors = [get_natura_visual(n)[0] for n in outer_labels]
+    outer_hover = [
+        "<br>".join(
+            [f"<b>{n}</b>"] + [f"{tk}: {fmt_eur_it(v, 2)}" for tk, v in natura_groups[n]["items"]]
+        )
+        for n in outer_labels
+    ]
+
+    fig.add_trace(go.Pie(
+        labels=inner_labels,
+        values=inner_values,
+        hole=0.5,
+        domain=dict(x=[0.22, 0.78], y=[0.22, 0.78]),
+        marker=dict(colors=inner_colors, line=dict(color="rgba(255,255,255,0.6)", width=1)),
         textinfo="label",
+        customdata=inner_hover,
+        hovertemplate="%{customdata}<extra></extra>",
+        showlegend=False,
+        sort=False,
+    ))
+    fig.add_trace(go.Pie(
+        labels=outer_labels,
+        values=outer_values,
+        hole=0.60,
+        domain=dict(x=[0.0, 1.0], y=[0.0, 1.0]),
+        marker=dict(colors=outer_colors, line=dict(color="rgba(255,255,255,0.6)", width=1)),
+        textinfo="percent",
+        customdata=outer_hover,
+        hovertemplate="%{customdata}<extra></extra>",
+        showlegend=True,
     ))
     return finalize_chart(fig, "pianificazione_allocation_rings")
 

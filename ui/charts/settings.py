@@ -1495,11 +1495,11 @@ CHARTS: dict[str, dict[str, Any]] = {
      'y_tickformat': '.0f',
      'y_ticksuffix': '%'},
 
-    'pianificazione_allocation_rings': {'type': 'custom',
+    'pianificazione_allocation_rings': {'type': 'pie',
      'height': 420,
-     'legend': 'off',
+     'legend': 'right',
      'show_buttons': False,
-     'margin_delta': {'t': 0, 'b': 0, 'l': 0, 'r': 0},
+     'margin_delta': {'t': 0, 'b': 0, 'l': -20, 'r': 110},
      'title': '<b>Allocazione: bucket e strumenti</b>'},
 
     'pianificazione_coverage_matrix': {'type': 'heatmap',
