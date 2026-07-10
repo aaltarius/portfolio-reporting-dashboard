@@ -949,6 +949,13 @@ def sator_matrix_doppioni_scoperte(matrix_df: pd.DataFrame) -> tuple[list[str], 
     return doppioni, scoperte
 
 
+def latest_sator_decision(items: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Fotografia SATOR piu' recente per created_at, o None se items e' vuoto."""
+    if not items:
+        return None
+    return max(items, key=lambda it: str(it.get("created_at") or ""))
+
+
 def build_next_purchase_bubble_frame(data: dict[str, Any]) -> tuple[pd.DataFrame, list[str]]:
     """Legge l'ultima fotografia SATOR salvata (per created_at) e ritorna il
     frame per la mappa a bolle dei prossimi acquisti, piu' la lista di ticker
@@ -957,9 +964,9 @@ def build_next_purchase_bubble_frame(data: dict[str, Any]) -> tuple[pd.DataFrame
     columns = ["ticker", "name", "bucket", "importo", "diversification_benefit", "risk_efficiency"]
     decisions = load_sator_decisions()
     items = list((decisions or {}).get("items") or [])
-    if not items:
+    latest = latest_sator_decision(items)
+    if latest is None:
         return pd.DataFrame(columns=columns), []
-    latest = max(items, key=lambda it: str(it.get("created_at") or ""))
     strumenti_map = {
         str(item.get("ticker") or "").strip().upper(): item
         for item in data.get("strumenti", []) or []

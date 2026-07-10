@@ -31,6 +31,7 @@ from core.services.sator import (
     build_coverage_matrix_frame,
     sator_matrix_doppioni_scoperte,
     build_next_purchase_bubble_frame,
+    latest_sator_decision,
 )
 from persistence.storage import load_data, load_sator_decisions, save_data, save_sator_decisions, save_settings
 from ui.formatting import fmt_eur_it, fmt_pct_it
@@ -408,6 +409,41 @@ def _render_bucket_detail_box(combo_df: pd.DataFrame, importi: pd.Series) -> Non
     _render_sator_explain_box(rows, title="Dettaglio composizione ordine")
 
 
+def _sator_reference_summary_rows(latest: dict) -> list[tuple[str, object]]:
+    """Righe per il riquadro 'Fotografia di riferimento' sotto la mappa a
+    bolle dei prossimi acquisti: stessi campi gia' salvati da
+    build_sator_decision_record (core/services/sator.py), nessuna nuova
+    lettura di dati."""
+    data_label = str(latest.get("month_id") or latest.get("created_at") or "n/d")
+    note = str(latest.get("note") or "").strip()
+    rows: list[tuple[str, object]] = [
+        ("Fotografia", data_label + (f" &middot; {note}" if note else "")),
+        ("Importo", f"{fmt_eur_it(float(latest.get('importo_ordine', 0.0)), 2)} su budget {fmt_eur_it(float(latest.get('budget', 0.0)), 2)}"),
+    ]
+    ripartizione = latest.get("ripartizione") or {}
+    mix_parts = [
+        f"{b} {fmt_pct_it(float((ripartizione.get(b) or {}).get('pct', 0.0)) / 100.0, 1)}"
+        for b in ("Core", "Difensivo", "Satellite")
+        if ripartizione.get(b)
+    ]
+    if mix_parts:
+        rows.append(("Mix bucket", " / ".join(mix_parts)))
+    order_lines = latest.get("order_lines") or []
+    if order_lines:
+        rows.append((
+            "Righe ordine",
+            [
+                (str(line.get("ticker", "")), f"{int(line.get('shares', 0))}q", fmt_eur_it(float(line.get("amount", 0.0)), 2))
+                for line in order_lines
+            ],
+        ))
+    return rows
+
+
+def _render_sator_reference_summary(latest: dict) -> None:
+    _render_sator_explain_box(_sator_reference_summary_rows(latest), title="Fotografia di riferimento")
+
+
 def _render_composition_chart(per_funzione: pd.Series, theme) -> None:
     """Donut della composizione Core/Difensivo/Satellite: builder centralizzato in
     ui/charts/pianificazione.py, layout governato da ui/charts/settings.py
@@ -661,6 +697,9 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
             "Dimensione bolla = importo proposto nella fotografia.",
             variant="bottom",
         )
+        latest_decision = latest_sator_decision(decisions_state.get("items") or [])
+        if latest_decision:
+            _render_sator_reference_summary(latest_decision)
 
 
 def _render_sator_ante_post(combo_df: pd.DataFrame, master_df: pd.DataFrame, budget: float, theme) -> None:
