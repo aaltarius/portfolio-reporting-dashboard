@@ -93,9 +93,14 @@ def build_objective_mix_chart(objective: dict, current_mix: dict, theme) -> go.F
 
 def build_allocation_rings_chart(rings_df: pd.DataFrame, objective: dict, theme) -> go.Figure:
     """Donut a due anelli distanziati: interno Core/Difensivo/Satellite,
-    esterno natura/esposizione (strumenti posseduti aggregati per natura,
-    con legenda sull'anello esterno). L'hover dell'anello esterno elenca i
-    singoli strumenti che compongono ciascuna fetta di natura."""
+    esterno natura/esposizione (strumenti posseduti aggregati per natura
+    *all'interno dello stesso bucket*, con legenda sull'anello esterno).
+    Le fette esterne sono costruite nello stesso ordine di bucket
+    dell'anello interno (Core, Difensivo, Satellite) e sort=False su
+    entrambe le tracce: l'arco di ciascun bucket nell'anello interno
+    corrisponde cosi' esattamente all'arco delle sue natura nell'anello
+    esterno. L'hover dell'anello esterno elenca i singoli strumenti che
+    compongono ciascuna fetta di natura."""
     fig = go.Figure()
     if rings_df is None or rings_df.empty:
         return finalize_chart(fig, "pianificazione_allocation_rings")
@@ -108,6 +113,10 @@ def build_allocation_rings_chart(rings_df: pd.DataFrame, objective: dict, theme)
     inner_values: list[float] = []
     inner_colors: list[str] = []
     inner_hover: list[str] = []
+    outer_labels: list[str] = []
+    outer_values: list[float] = []
+    outer_colors: list[str] = []
+    outer_hover: list[str] = []
     for bucket in ("Core", "Difensivo", "Satellite"):
         sub = rings_df[rings_df["bucket"] == bucket]
         if sub.empty:
@@ -118,21 +127,21 @@ def build_allocation_rings_chart(rings_df: pd.DataFrame, objective: dict, theme)
         inner_colors.append(bucket_colors[bucket])
         inner_hover.append(f"{bucket}<br>{fmt_eur_it(total, 2)}")
 
-    natura_groups: dict[str, dict[str, object]] = {}
-    for _, row in rings_df.iterrows():
-        natura = str(row["natura"])
-        group = natura_groups.setdefault(natura, {"value": 0.0, "items": []})
-        group["value"] = float(group["value"]) + float(row["value"])
-        group["items"].append((str(row["ticker"]), float(row["value"])))
-    outer_labels = list(natura_groups.keys())
-    outer_values = [float(natura_groups[n]["value"]) for n in outer_labels]
-    outer_colors = [get_natura_visual(n)[0] for n in outer_labels]
-    outer_hover = [
-        "<br>".join(
-            [f"<b>{n}</b>"] + [f"{tk}: {fmt_eur_it(v, 2)}" for tk, v in natura_groups[n]["items"]]
-        )
-        for n in outer_labels
-    ]
+        natura_groups: dict[str, dict[str, object]] = {}
+        for _, row in sub.iterrows():
+            natura = str(row["natura"])
+            group = natura_groups.setdefault(natura, {"value": 0.0, "items": []})
+            group["value"] = float(group["value"]) + float(row["value"])
+            group["items"].append((str(row["ticker"]), float(row["value"])))
+        for natura, group in natura_groups.items():
+            outer_labels.append(natura)
+            outer_values.append(float(group["value"]))
+            outer_colors.append(get_natura_visual(natura)[0])
+            outer_hover.append(
+                "<br>".join(
+                    [f"<b>{natura}</b>"] + [f"{tk}: {fmt_eur_it(v, 2)}" for tk, v in group["items"]]
+                )
+            )
 
     fig.add_trace(go.Pie(
         labels=inner_labels,
@@ -156,6 +165,7 @@ def build_allocation_rings_chart(rings_df: pd.DataFrame, objective: dict, theme)
         customdata=outer_hover,
         hovertemplate="%{customdata}<extra></extra>",
         showlegend=True,
+        sort=False,
     ))
     return finalize_chart(fig, "pianificazione_allocation_rings")
 
