@@ -91,16 +91,35 @@ def build_objective_mix_chart(objective: dict, current_mix: dict, theme) -> go.F
     return finalize_chart(fig, "pianificazione_obiettivo_mix", layout_updates={"barmode": "stack"})
 
 
+def _pie_clockwise_order(items: list) -> list:
+    """Contromisura per un comportamento di rendering di Plotly (verificato
+    empiricamente su plotly 6.7.0, presente sia con sort=False sia col
+    sort di default): anche passando le fette nell'ordine voluto, Plotly
+    disegna in senso orario la prima fetta al suo posto ma TUTTE le altre
+    in ordine invertito (es. [Core, Difensivo, Satellite] -> visivamente
+    Core, Satellite, Difensivo). Passandogli invece [items[0]] +
+    reversed(items[1:]), la sua stessa inversione a runtime restituisce
+    l'ordine voluto - la doppia inversione si annulla. Senza questa
+    contromisura l'anello esterno del donut Allocazione (o qualunque Pie
+    con piu' di 2 fette e un ordine che deve avere un senso, es. allineato
+    a un altro anello) risulta visivamente sfalsato rispetto all'ordine
+    dei dati, anche se i dati stessi sono corretti."""
+    if len(items) <= 2:
+        return list(items)
+    return [items[0]] + list(reversed(items[1:]))
+
+
 def build_allocation_rings_chart(rings_df: pd.DataFrame, objective: dict, theme) -> go.Figure:
     """Donut a due anelli distanziati: interno Core/Difensivo/Satellite,
     esterno natura/esposizione (strumenti posseduti aggregati per natura
     *all'interno dello stesso bucket*, con legenda sull'anello esterno).
     Le fette esterne sono costruite nello stesso ordine di bucket
-    dell'anello interno (Core, Difensivo, Satellite) e sort=False su
-    entrambe le tracce: l'arco di ciascun bucket nell'anello interno
-    corrisponde cosi' esattamente all'arco delle sue natura nell'anello
-    esterno. L'hover dell'anello esterno elenca i singoli strumenti che
-    compongono ciascuna fetta di natura."""
+    dell'anello interno (Core, Difensivo, Satellite): l'arco di ciascun
+    bucket nell'anello interno corrisponde cosi' esattamente all'arco
+    delle sue natura nell'anello esterno - vedi _pie_clockwise_order per
+    la contromisura al bug di rendering di Plotly che altrimenti sfalsa
+    l'ordine visivo. L'hover dell'anello esterno elenca i singoli
+    strumenti che compongono ciascuna fetta di natura."""
     fig = go.Figure()
     if rings_df is None or rings_df.empty:
         return finalize_chart(fig, "pianificazione_allocation_rings")
@@ -144,33 +163,53 @@ def build_allocation_rings_chart(rings_df: pd.DataFrame, objective: dict, theme)
             )
 
     fig.add_trace(go.Pie(
-        labels=inner_labels,
-        values=inner_values,
+        labels=_pie_clockwise_order(inner_labels),
+        values=_pie_clockwise_order(inner_values),
         hole=0.5,
         domain=dict(x=[0.22, 0.78], y=[0.22, 0.78]),
-        marker=dict(colors=inner_colors, line=dict(color="rgba(255,255,255,0.6)", width=1)),
+        marker=dict(colors=_pie_clockwise_order(inner_colors), line=dict(color="rgba(255,255,255,0.6)", width=1)),
         textinfo="label",
         textposition="inside",
         insidetextorientation="horizontal",
-        customdata=inner_hover,
+        customdata=_pie_clockwise_order(inner_hover),
         hovertemplate="%{customdata}<extra></extra>",
         showlegend=False,
         sort=False,
     ))
     fig.add_trace(go.Pie(
-        labels=outer_labels,
-        values=outer_values,
+        labels=_pie_clockwise_order(outer_labels),
+        values=_pie_clockwise_order(outer_values),
         hole=0.60,
         domain=dict(x=[0.0, 1.0], y=[0.0, 1.0]),
-        marker=dict(colors=outer_colors, line=dict(color="rgba(255,255,255,0.6)", width=1)),
+        marker=dict(colors=_pie_clockwise_order(outer_colors), line=dict(color="rgba(255,255,255,0.6)", width=1)),
         textinfo="percent",
         textposition="inside",
-        customdata=outer_hover,
+        customdata=_pie_clockwise_order(outer_hover),
         hovertemplate="%{customdata}<extra></extra>",
-        showlegend=True,
+        showlegend=False,
         sort=False,
     ))
-    return finalize_chart(fig, "pianificazione_allocation_rings")
+    # La legenda della fetta esterna non puo' usare showlegend sulla traccia
+    # Pie stessa: la sua lista di legenda segue l'ordine dati grezzo (senza
+    # la contromisura di _pie_clockwise_order), quindi risulterebbe nello
+    # stesso ordine sfalsato che _pie_clockwise_order corregge solo per il
+    # disegno delle fette. Tracce fittizie (nessun punto reale disegnato)
+    # una per natura unica, nell'ordine vero, danno una legenda leggibile e
+    # indipendente dal bug di rendering.
+    legend_seen: set[str] = set()
+    for natura, color in zip(outer_labels, outer_colors):
+        if natura in legend_seen:
+            continue
+        legend_seen.add(natura)
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers",
+            marker=dict(size=10, color=color, symbol="square"),
+            name=natura, showlegend=True, hoverinfo="skip",
+        ))
+    fig = finalize_chart(fig, "pianificazione_allocation_rings")
+    fig.update_xaxes(visible=False, showgrid=False, showline=False, zeroline=False)
+    fig.update_yaxes(visible=False, showgrid=False, showline=False, zeroline=False)
+    return fig
 
 
 def _format_matrix_cell(value: float) -> str:
