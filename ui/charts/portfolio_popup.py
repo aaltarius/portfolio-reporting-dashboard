@@ -409,3 +409,203 @@ setTimeout(sendH,600);
 </body></html>"""
     html_content = html_content.replace("__TICKER_JSON__", ticker_json)
     render_html_iframe(html_content, height=iframe_h, scrolling=False)
+
+
+def render_weekly_pl_table(result):
+    """Render the per-instrument weekly P/L table (Ticker/Strumento/Tipo/Quote + daily deltas + Totale).
+
+    Chiamato da: ui/pages/home.py, sezione "Andamento dell'ultima settimana".
+    """
+    if not result or not result.get("rows"):
+        return
+    days = result["days"]
+    rows = result["rows"]
+    day_totals = result["day_totals"]
+    grand_total = result["grand_total"]
+    n_days = len(days)
+
+    def _cat_col(tipo):
+        cat = macro_cat(tipo)
+        return CATEGORY_COLORS.get(cat, macro_color(cat))
+
+    def _fmt_num(v, dec=2):
+        try:
+            f = float(v)
+            s = f"{f:,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            return s
+        except Exception:
+            return "n/d"
+
+    def _fmt_eur(v, dec=2, signed=False):
+        try:
+            f = float(v)
+            s = _fmt_num(f, dec)
+            if signed and f > 0:
+                return f"+{s} €"
+            return f"{s} €"
+        except Exception:
+            return "n/d"
+
+    def _fmt_day(v):
+        if v is None:
+            return "—"
+        try:
+            f = float(v)
+        except Exception:
+            return "—"
+        s = f"{abs(f):,.0f}".replace(",", ".")
+        if f > 0:
+            return f"+{s}"
+        if f < 0:
+            return f"-{s}"
+        return "0"
+
+    def _sort_val(v):
+        if v is None:
+            return "-999999999"
+        try:
+            return str(round(float(v), 6))
+        except Exception:
+            return "-999999999"
+
+    day_ths = "".join(
+        f'<th data-col="{4 + i}">{d}<span class="sort-ind"></span><span class="rh"></span></th>\n'
+        for i, d in enumerate(days)
+    )
+    total_col = 4 + n_days
+
+    rows_html = ""
+    for row in rows:
+        col = _cat_col(row["tipo"])
+        cells = ""
+        for v in row["deltas"]:
+            cell_col = "#1E8449" if (v is not None and v >= 0) else ("#FF4B4B" if v is not None else "#9CA3AF")
+            cells += f'<td class="num" data-sort="{_sort_val(v)}" style="color:{cell_col};">{_fmt_day(v)}</td>\n'
+        totale = row["totale"]
+        tot_col = "#1E8449" if totale >= 0 else "#FF4B4B"
+        strumento = str(row["strumento"])
+        tipo = str(row["tipo"])
+        rows_html += (
+            '<tr>\n'
+            f'<td data-sort="{row["ticker"]}" style="color:{col};font-weight:700;">{row["ticker"]}</td>\n'
+            f'<td data-sort="{strumento}" style="color:{col};max-width:130px;" title="{strumento}">{strumento[:24]}</td>\n'
+            f'<td data-sort="{tipo}" style="color:{col};max-width:70px;" title="{tipo}">{tipo[:16]}</td>\n'
+            f'<td class="num" data-sort="{_sort_val(row["quote"])}">{_fmt_num(row["quote"], 3)}</td>\n'
+            f'{cells}'
+            f'<td class="num" data-sort="{_sort_val(totale)}" style="color:{tot_col};font-weight:700;">{_fmt_eur(totale, 2, signed=True)}</td>\n'
+            '</tr>'
+        )
+
+    total_cells = ""
+    for v in day_totals:
+        cell_col = "#1E8449" if v >= 0 else "#FF4B4B"
+        total_cells += f'<td class="num" style="color:{cell_col};font-weight:700;padding:9px 12px;">{_fmt_day(v)}</td>\n'
+    grand_col = "#1E8449" if grand_total >= 0 else "#FF4B4B"
+    tfoot_html = (
+        '<tfoot><tr>'
+        '<td colspan="4" style="font-weight:800;font-size:0.85rem;letter-spacing:.02em;padding:9px 12px;">TOTALE</td>'
+        f'{total_cells}'
+        f'<td class="num" style="color:{grand_col};font-weight:800;padding:9px 12px;">{_fmt_eur(grand_total, 2, signed=True)}</td>'
+        '</tr></tfoot>'
+    )
+
+    n_rows = len(rows)
+    iframe_h = iframe_height_for_rows(
+        n_rows, row_height=35, header_height=48, padding=50, min_height=160, max_height=1100, content_until_rows=18
+    )
+    html_content = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+*{{box-sizing:border-box;margin:0;padding:0;}}
+html,body{{background:transparent;font-family:"Source Sans Pro",system-ui,-apple-system,sans-serif;font-size:14px;overflow:hidden;color:#262730;}}
+.tw{{border:1px solid #e6e9ef;border-radius:8px;overflow:hidden;background:#fff;width:100%;}}
+table{{width:100%;border-collapse:collapse;table-layout:auto;}}
+thead th{{
+  background:#f0f2f6;font-size:12px;font-weight:600;letter-spacing:.01em;
+  color:#262730;padding:9px 12px;border-bottom:1px solid #e6e9ef;border-right:1px solid #e6e9ef;
+  text-align:right;white-space:nowrap;position:relative;user-select:none;cursor:pointer;
+}}
+thead th:last-child{{border-right:none;}}
+thead th:nth-child(1),thead th:nth-child(2),thead th:nth-child(3){{text-align:left;}}
+thead th:hover{{background:#e3e6e9;}}
+thead th .sort-ind{{font-size:9px;margin-left:3px;color:#9094a3;}}
+thead th.asc .sort-ind::after{{content:'▲';color:#262730;}}
+thead th.desc .sort-ind::after{{content:'▼';color:#262730;}}
+.rh{{position:absolute;right:0;top:0;height:100%;width:4px;cursor:col-resize;background:transparent;z-index:1;}}
+.rh:hover{{background:#9094a3;opacity:.4;}}
+tbody tr{{border-bottom:1px solid #f0f2f6;}}
+tbody tr:last-child{{border-bottom:none;}}
+tbody tr:hover{{background:#f0f2f6;}}
+tbody td{{padding:9px 12px;vertical-align:middle;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border-right:1px solid #f0f2f6;}}
+tbody td:last-child{{border-right:none;}}
+tfoot tr{{border-top:2px solid #d1d5db;background:#f8f9fa;}}
+tfoot td{{vertical-align:middle;white-space:nowrap;border-right:1px solid #e6e9ef;}}
+tfoot td:last-child{{border-right:none;}}
+.num{{text-align:right;font-variant-numeric:tabular-nums;}}
+</style></head>
+<body>
+<div class="tw">
+<table id="wpl-table">
+<thead><tr>
+  <th data-col="0">Ticker<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="1">Strumento<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="2">Tipo<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="3">Quote<span class="sort-ind"></span><span class="rh"></span></th>
+  {day_ths}
+  <th data-col="{total_col}">P/L totale<span class="sort-ind"></span><span class="rh"></span></th>
+</tr></thead>
+<tbody id="wpl-body">{rows_html}</tbody>
+{tfoot_html}
+</table>
+</div>
+<script>
+var _sCol=-1,_sAsc=true;
+function sortTable(col){{
+  var tbody=document.getElementById('wpl-body');
+  var rows=Array.from(tbody.querySelectorAll('tr'));
+  var asc=(_sCol===col)?!_sAsc:true;_sCol=col;_sAsc=asc;
+  rows.sort(function(a,b){{
+    var av=a.children[col].getAttribute('data-sort')||'';
+    var bv=b.children[col].getAttribute('data-sort')||'';
+    var an=parseFloat(av),bn=parseFloat(bv);
+    if(!isNaN(an)&&!isNaN(bn))return asc?an-bn:bn-an;
+    return asc?av.localeCompare(bv,'it'):bv.localeCompare(av,'it');
+  }});
+  rows.forEach(function(r){{tbody.appendChild(r);}});
+  document.querySelectorAll('thead th').forEach(function(th,i){{
+    th.classList.remove('asc','desc');
+    if(i===col)th.classList.add(asc?'asc':'desc');
+  }});
+}}
+document.querySelectorAll('thead th[data-col]').forEach(function(th){{
+  th.addEventListener('click',function(e){{
+    if(e.target.classList.contains('rh'))return;
+    sortTable(parseInt(th.getAttribute('data-col')));
+  }});
+}});
+(function(){{
+  var rz=null,sx,sw;
+  document.querySelectorAll('.rh').forEach(function(h){{
+    h.addEventListener('mousedown',function(e){{
+      e.stopPropagation();e.preventDefault();
+      rz=h.parentElement;sx=e.clientX;sw=rz.offsetWidth;
+      document.addEventListener('mousemove',mv);document.addEventListener('mouseup',up);
+    }});
+  }});
+  function mv(e){{if(!rz)return;rz.style.width=Math.max(36,sw+(e.clientX-sx))+'px';}}
+  function up(){{rz=null;document.removeEventListener('mousemove',mv);document.removeEventListener('mouseup',up);}}
+}})();
+function sendH(){{
+  var t=document.getElementById('wpl-table');
+  if(!t)return;
+  var h=Math.ceil(t.getBoundingClientRect().height)+2;
+  var py=0; try{{py=window.parent.scrollY||window.parent.pageYOffset||0;}}catch(e){{}}
+  window.parent.postMessage({{type:'streamlit:setFrameHeight',height:h}},'*');
+  [10,60,200].forEach(function(d){{setTimeout(function(){{try{{window.parent.scrollTo({{top:py,behavior:'instant'}});}}catch(e){{}}}} ,d);}});
+}}
+sendH();
+requestAnimationFrame(sendH);
+setTimeout(sendH,150);
+setTimeout(sendH,600);
+</script>
+</body></html>"""
+    render_html_iframe(html_content, height=iframe_h, scrolling=False)
