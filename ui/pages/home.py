@@ -20,6 +20,7 @@ from core.settings_profiles import resolve_figure_cache_strategy
 
 from core.services import (
     build_pl_delta_series,
+    build_weekly_pl_table,
 )
 from persistence.storage import macro_cat
 from core.finance import build_proventi_summary
@@ -39,7 +40,7 @@ from ui.charts.home import (
     build_portfolio_pl_chart,
     build_portfolio_pl_category_chart,
 )
-from ui.charts.portfolio_popup import render_portfolio_table_with_popup
+from ui.charts.portfolio_popup import render_portfolio_table_with_popup, render_weekly_pl_table
 from ui.charts.tables import color_pl, style_macro_cols
 from ui.page_chrome import render_page_intro as render_page_intro_shared
 from ui.charts.settings import apply_settings
@@ -557,6 +558,23 @@ def _render_portfolio_table_section(
                         with profile_step("Portafoglio/UltimaGiornata", "render grafico andamento clone", count=len(dfh_top)):
                             st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
                             _render_home_andamento_clone(dfh_top, data, theme, settings, chart_loader=chart_loader)
+
+        if should_render_section("Portafoglio", "Andamento dell'ultima settimana", settings):
+            with profile_step("Portafoglio", "render andamento ultima settimana", count=len(da)):
+                weekly = build_weekly_pl_table(da, dfh_top)
+                if weekly:
+                    render_section_title(
+                        "Andamento dell'ultima settimana",
+                        icon="quotes",
+                        gap_after="xs",
+                    )
+                    render_weekly_pl_table(weekly)
+                    legend_block(
+                        "P/L giornaliero per strumento negli ultimi giorni di quotazione disponibili, calcolato come "
+                        "variazione del risultato non realizzato (quantità × prezzo − costo) rispetto al giorno "
+                        "precedente. La colonna P/L totale è la somma dei giorni mostrati in tabella, non il P/L "
+                        "complessivo dello strumento. Celle vuote: strumento non ancora in portafoglio in quella data."
+                    )
 
         if should_render_section("Portafoglio", "Proventi per strumento", settings):
             _render_proventi_section(proventi, data)
