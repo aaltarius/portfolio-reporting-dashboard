@@ -505,7 +505,7 @@ def render_weekly_pl_table(result, da, data):
 
     day_ths = "".join(
         f'<th data-col="{5 + i}"'
-        + (' style="border-left:3px solid #9094a3;"' if week_gap_before[i] else '')
+        + (' style="border-left:2px solid #d1d5db;"' if week_gap_before[i] else '')
         + f'>{d}<span class="sort-ind"></span><span class="rh"></span></th>\n'
         for i, d in enumerate(days)
     )
@@ -525,7 +525,7 @@ def render_weekly_pl_table(result, da, data):
             day_max, day_min = day_extrema[i]
             is_extreme = v is not None and (v == day_max or v == day_min)
             weight = "700" if is_extreme else "400"
-            gap_style = "border-left:3px solid #9094a3;" if week_gap_before[i] else ""
+            gap_style = "border-left:2px solid #d1d5db;" if week_gap_before[i] else ""
             cells += f'<td class="num" data-sort="{_sort_val(v)}" style="color:{cell_col};font-weight:{weight};{gap_style}">{_fmt_day(v)}</td>\n'
         totale = row["totale"]
         tot_col = "#1E8449" if totale >= 0 else "#FF4B4B"
@@ -547,7 +547,7 @@ def render_weekly_pl_table(result, da, data):
     total_cells = ""
     for i, v in enumerate(day_totals):
         cell_col = "#1E8449" if v >= 0 else "#FF4B4B"
-        gap_style = "border-left:3px solid #9094a3;" if week_gap_before[i] else ""
+        gap_style = "border-left:2px solid #d1d5db;" if week_gap_before[i] else ""
         total_cells += f'<td class="num" style="color:{cell_col};font-weight:700;padding:9px 12px;{gap_style}">{_fmt_day(v)}</td>\n'
     grand_col = "#1E8449" if grand_total >= 0 else "#FF4B4B"
     tfoot_html = (
