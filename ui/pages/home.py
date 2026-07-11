@@ -561,14 +561,14 @@ def _render_portfolio_table_section(
 
         if should_render_section("Portafoglio", "Andamento dell'ultima settimana", settings):
             with profile_step("Portafoglio", "render andamento ultima settimana", count=len(da)):
-                weekly = build_weekly_pl_table(da, dfh_top)
+                weekly = build_weekly_pl_table(da, dfh_top, data)
                 if weekly:
                     render_section_title(
                         "Andamento dell'ultima settimana",
                         icon="quotes",
                         gap_after="xs",
                     )
-                    render_weekly_pl_table(weekly)
+                    render_weekly_pl_table(weekly, da, data)
                     legend_block(
                         "P/L giornaliero per strumento negli ultimi giorni di quotazione disponibili, calcolato come "
                         "variazione del risultato non realizzato (quantità × prezzo − costo) rispetto al giorno "
