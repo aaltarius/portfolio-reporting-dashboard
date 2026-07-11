@@ -63,6 +63,9 @@ def build_pl_delta_series(df_history: pd.DataFrame, theme: ThemeConfig) -> dict[
     }
 
 
+_WEEKDAY_INITIALS_IT = {0: "L", 1: "M", 2: "M", 3: "G", 4: "V", 5: "S", 6: "D"}
+
+
 def build_weekly_pl_table(
     da: pd.DataFrame, dfh_top: pd.DataFrame, data: dict[str, Any], max_days: int = 7
 ) -> dict[str, Any] | None:
@@ -90,8 +93,13 @@ def build_weekly_pl_table(
     if n_days < 1:
         return None
 
+    day_dates = [pd.to_datetime(window.iloc[i + 1]["Data"]) for i in range(n_days)]
     days = [
-        pd.to_datetime(window.iloc[i + 1]["Data"]).strftime("%d/%m")
+        f"{_WEEKDAY_INITIALS_IT[d.weekday()]} {d.strftime('%d/%m')}"
+        for d in day_dates
+    ]
+    week_gap_before = [
+        i > 0 and day_dates[i - 1].weekday() == 4 and day_dates[i].weekday() == 0
         for i in range(n_days)
     ]
 
@@ -128,6 +136,7 @@ def build_weekly_pl_table(
 
     return {
         "days": days,
+        "week_gap_before": week_gap_before,
         "rows": rows,
         "day_totals": day_totals,
         "grand_total": grand_total,
