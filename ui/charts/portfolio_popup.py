@@ -18,15 +18,13 @@ from ui.theme import CATEGORY_COLORS, macro_color
 # versione realmente importata da ui/pages/quotazioni.py — verificato con
 # grep sull'intero repo.
 
-def render_portfolio_table_with_popup(df, data, direction_map=None):
-    """Render the portfolio table with inline popup details for each ticker.
 
-    Chiamato da: flussi UI del portafoglio/home che mostrano la tabella holdings.
-    Nota: non passa da apply_settings perche' non e' un grafico Plotly ma un blocco HTML.
+def _build_ticker_info(df, data):
+    """Dizionario per-ticker (nome/isin/prezzo/pmc/... + sparkline) usato dal modale di dettaglio.
+
+    Condiviso da render_portfolio_table_with_popup e render_weekly_pl_table
+    cosi' il click sul ticker apre lo stesso identico popup in entrambe le tabelle.
     """
-    if df is None or df.empty:
-        return
-    direction_map = direction_map or {}
     storico = data.get("storico_prezzi", {}) or {}
     info_map = {s["ticker"]: s for s in data.get("strumenti", [])}
     ds_sorted = sorted(storico.keys())[-60:]
@@ -69,6 +67,155 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
             "pl_p": _pl_p,
             "spark": spark,
         }
+    return ticker_info
+
+
+_MODAL_CSS = """
+a.tk-link{text-decoration:none;font-weight:700;cursor:pointer;border-bottom:1.5px dotted;transition:opacity .15s;}
+a.tk-link:hover{opacity:0.65;}
+#mo{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center;}
+#mo.on{display:flex;}
+#mc{background:#fff;border-radius:18px;padding:20px 24px 18px;max-width:900px;width:97%;max-height:90vh;overflow-y:auto;box-shadow:0 12px 52px rgba(0,0,0,.26);position:relative;color:#1f2937;}
+#mc-close{position:absolute;top:10px;right:14px;cursor:pointer;font-size:1.3rem;color:#9ca3af;background:none;border:none;line-height:1;}
+#mc-close:hover{color:#374151;}
+.mc-cols{display:grid;grid-template-columns:40% 60%;gap:18px;align-items:start;}
+.mc-left{min-width:0;}
+.mc-right{min-width:0;display:flex;flex-direction:column;gap:8px;}
+.mc-ticker{font-size:1.8rem;font-weight:900;letter-spacing:-.01em;margin-bottom:2px;}
+.mc-nome{font-size:1.0rem;color:#374151;font-weight:600;}
+.mc-meta{font-size:0.85rem;color:#9ca3af;margin:4px 0 12px;}
+.mc-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;}
+.mc-kpi{border:1px solid #e5e7eb;border-radius:8px;padding:8px 12px;}
+.mc-kpi-l{font-size:0.82rem;text-transform:uppercase;color:#9ca3af;font-weight:700;letter-spacing:.04em;margin-bottom:3px;}
+.mc-kpi-v{font-size:1.15rem;font-weight:700;font-variant-numeric:tabular-nums;}
+.pos{color:#1E8449;} .neg{color:#FF4B4B;}
+.mc-price-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:11px;padding:10px 14px;display:flex;align-items:baseline;gap:12px;}
+.mc-price-val{font-size:2.0rem;font-weight:800;font-variant-numeric:tabular-nums;}
+.mc-price-sub{font-size:0.95rem;color:#6b7280;}
+.mc-spark-label{font-size:0.78rem;text-transform:uppercase;color:#9ca3af;font-weight:700;letter-spacing:.05em;}
+svg.spark{width:100%;height:140px;display:block;border-radius:10px;background:#f9fafb;}
+.mc-footer{font-size:0.78rem;color:#9ca3af;}
+"""
+
+_MODAL_HTML = """
+<div id="mo" onclick="if(event.target===this)closeM()">
+<div id="mc">
+  <button id="mc-close" onclick="closeM()">&#x2715;</button>
+  <div class="mc-cols">
+    <div class="mc-left">
+      <div class="mc-ticker" id="m-tk"></div>
+      <div class="mc-nome" id="m-nm"></div>
+      <div class="mc-meta" id="m-meta"></div>
+      <div class="mc-grid" id="m-grid"></div>
+    </div>
+    <div class="mc-right">
+      <div class="mc-price-box">
+        <div>
+          <div style="font-size:0.78rem;text-transform:uppercase;color:#9ca3af;font-weight:700;margin-bottom:2px;">Prezzo attuale</div>
+          <div class="mc-price-val" id="m-px"></div>
+        </div>
+        <div id="m-delta" class="mc-price-sub"></div>
+      </div>
+      <div class="mc-spark-label">Andamento prezzo (ultimi 60 giorni disponibili)</div>
+      <svg class="spark" id="m-spark" viewBox="0 0 520 140" preserveAspectRatio="none"></svg>
+      <div class="mc-footer" id="m-footer"></div>
+    </div>
+  </div>
+</div>
+</div>
+"""
+
+_MODAL_JS = """
+var D=__TICKER_JSON__;
+function fi(v,d,sgn){
+  if(v==null||isNaN(v))return'n/d';
+  var n=parseFloat(v).toLocaleString('it-IT',{minimumFractionDigits:d,maximumFractionDigits:d});
+  return (sgn&&v>0?'+':'')+n;
+}
+function fe(v,d,sgn){return fi(v,d!=null?d:2,sgn)+' €';}
+function fmtDateIt(v){if(!v)return 'n/d';var p=String(v).slice(0,10).split('-');return p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):String(v);}
+function fp(v,d,sgn){
+  if(v==null||isNaN(v))return'n/d';
+  var pct=parseFloat(v)*100;
+  var n=pct.toLocaleString('it-IT',{minimumFractionDigits:d!=null?d:1,maximumFractionDigits:d!=null?d:1});
+  return(sgn&&pct>0?'+':'')+n+'%';
+}
+function kpi(label,val,cls){
+  return '<div class="mc-kpi"><div class="mc-kpi-l">'+label+'</div><div class="mc-kpi-v'+(cls?' '+cls:'')+'">'+val+'</div></div>';
+}
+function sparkline(data,plPositive,pmc){
+  var svg=document.getElementById('m-spark');
+  svg.innerHTML='';
+  var W=520,H=140,pad=6;
+  if(!data||data.length<2){
+    var t=document.createElementNS('http://www.w3.org/2000/svg','text');
+    t.setAttribute('x','50%');t.setAttribute('y','52%');t.setAttribute('text-anchor','middle');
+    t.setAttribute('fill','#d1d5db');t.setAttribute('font-size','10');t.setAttribute('font-family','system-ui');
+    t.textContent='Dati storici non disponibili';svg.appendChild(t);return;
+  }
+  var vals=data.map(function(p){return p.v;});
+  var mn=Math.min.apply(null,vals),mx=Math.max.apply(null,vals);if(pmc!=null&&!isNaN(pmc)){mn=Math.min(mn,pmc);mx=Math.max(mx,pmc);}var rng=mx-mn||0.001;var toY=function(v){return H-pad-((v-mn)/rng*(H-pad*2));};
+  var pts=[];
+  vals.forEach(function(v,i){
+    var x=pad+(i/(vals.length-1))*(W-pad*2);
+    var y=toY(v);
+    pts.push(x.toFixed(1)+','+y.toFixed(1));
+  });
+  var col=plPositive?'#1E8449':'#FF4B4B';
+  var fill=plPositive?'rgba(30,132,73,0.12)':'rgba(255,75,75,0.12)';
+  var lx=parseFloat(pts[vals.length-1].split(',')[0]),ly=parseFloat(pts[vals.length-1].split(',')[1]);var pmcY=(pmc!=null&&!isNaN(pmc))?toY(pmc):null;
+  var area=document.createElementNS('http://www.w3.org/2000/svg','polygon');
+  area.setAttribute('points',pts[0].split(',')[0]+','+(H-pad)+' '+pts.join(' ')+' '+lx+','+(H-pad));
+  area.setAttribute('fill',fill);svg.appendChild(area);if(pmcY!=null){var pmcLine=document.createElementNS('http://www.w3.org/2000/svg','line');pmcLine.setAttribute('x1',pad);pmcLine.setAttribute('x2',W-pad);pmcLine.setAttribute('y1',pmcY);pmcLine.setAttribute('y2',pmcY);pmcLine.setAttribute('stroke','#6b7280');pmcLine.setAttribute('stroke-width','1.8');pmcLine.setAttribute('stroke-dasharray','7 5');pmcLine.setAttribute('opacity','0.98');svg.appendChild(pmcLine);var pmcText=document.createElementNS('http://www.w3.org/2000/svg','text');pmcText.setAttribute('x',W-pad-4);pmcText.setAttribute('y',Math.max(12,pmcY-4));pmcText.setAttribute('text-anchor','end');pmcText.setAttribute('fill','#4b5563');pmcText.setAttribute('font-size','10');pmcText.setAttribute('font-family','system-ui');pmcText.textContent='PMC';svg.appendChild(pmcText);}
+  var line=document.createElementNS('http://www.w3.org/2000/svg','polyline');
+  line.setAttribute('points',pts.join(' '));
+  line.setAttribute('fill','none');line.setAttribute('stroke',col);line.setAttribute('stroke-width','2');
+  svg.appendChild(line);
+  var dot=document.createElementNS('http://www.w3.org/2000/svg','circle');
+  dot.setAttribute('cx',lx);dot.setAttribute('cy',ly);dot.setAttribute('r','4');
+  dot.setAttribute('fill',col);dot.setAttribute('stroke','#fff');dot.setAttribute('stroke-width','1.5');
+  svg.appendChild(dot);
+}
+function showModal(tk){
+  var d=D[tk];if(!d)return;
+  var plCls=d.pl_e>=0?'pos':'neg';
+  var delta=d.pmc>0?(d.prezzo/d.pmc-1)*100:null;
+  document.getElementById('m-tk').textContent=tk;
+  document.getElementById('m-tk').style.color=d.pl_e>=0?'#1E8449':'#374151';
+  document.getElementById('m-nm').textContent=d.nome;
+  document.getElementById('m-meta').textContent='ISIN: '+d.isin+' · '+d.tipo;
+  document.getElementById('m-px').textContent=fe(d.prezzo,3,false);
+  document.getElementById('m-px').className='mc-price-val '+plCls;
+  document.getElementById('m-delta').innerHTML=delta!=null?'<span class="'+plCls+'">'+(delta>=0?'+':'')+fi(delta,2,false)+'% vs PMC</span>':'';
+  document.getElementById('m-grid').innerHTML=
+    kpi('PMC',fe(d.pmc,3,false))+
+    kpi('Quantità',fi(d.qty,3,false))+
+    kpi('Controvalore',fe(d.ctv,2,false))+
+    kpi('Costo storico',fe(d.costo,2,false))+
+    kpi('P/L €',fe(d.pl_e,2,true),plCls)+
+    kpi('P/L %',fp(d.pl_p,2,true),plCls)+
+    kpi('Commissioni',fe(d.comm,2,false))+
+    kpi('Fonte / Agg.',d.fonte+' · '+fmtDateIt(d.aggiornato));
+  sparkline(d.spark,d.pl_e>=0,d.pmc);
+  document.getElementById('m-footer').textContent='Quotazione aggiornata al '+fmtDateIt(d.aggiornato)+' · Fonte: '+d.fonte;
+  document.getElementById('mo').classList.add('on');
+}
+function closeM(){document.getElementById('mo').classList.remove('on');}
+document.addEventListener('keydown',function(e){if(e.key==='Escape')closeM();});
+"""
+
+
+def render_portfolio_table_with_popup(df, data, direction_map=None):
+    """Render the portfolio table with inline popup details for each ticker.
+
+    Chiamato da: flussi UI del portafoglio/home che mostrano la tabella holdings.
+    Nota: non passa da apply_settings perche' non e' un grafico Plotly ma un blocco HTML.
+    """
+    if df is None or df.empty:
+        return
+    direction_map = direction_map or {}
+    info_map = {s["ticker"]: s for s in data.get("strumenti", [])}
+    ticker_info = _build_ticker_info(df, data)
     cat_color_map = CATEGORY_COLORS
 
     def _cat_col(tipo):
@@ -207,30 +354,7 @@ tfoot td{{vertical-align:middle;white-space:nowrap;border-right:1px solid #e6e9e
 tfoot td:first-child{{padding:9px 6px;text-align:center;border-right:1px solid #e6e9ef;}}
 tfoot td:last-child{{border-right:none;}}
 .num{{text-align:right;font-variant-numeric:tabular-nums;}}
-a.tk-link{{text-decoration:none;font-weight:700;cursor:pointer;border-bottom:1.5px dotted;transition:opacity .15s;}}
-a.tk-link:hover{{opacity:0.65;}}
-#mo{{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center;}}
-#mo.on{{display:flex;}}
-#mc{{background:#fff;border-radius:18px;padding:20px 24px 18px;max-width:900px;width:97%;max-height:90vh;overflow-y:auto;box-shadow:0 12px 52px rgba(0,0,0,.26);position:relative;color:#1f2937;}}
-#mc-close{{position:absolute;top:10px;right:14px;cursor:pointer;font-size:1.3rem;color:#9ca3af;background:none;border:none;line-height:1;}}
-#mc-close:hover{{color:#374151;}}
-.mc-cols{{display:grid;grid-template-columns:40% 60%;gap:18px;align-items:start;}}
-.mc-left{{min-width:0;}}
-.mc-right{{min-width:0;display:flex;flex-direction:column;gap:8px;}}
-.mc-ticker{{font-size:1.8rem;font-weight:900;letter-spacing:-.01em;margin-bottom:2px;}}
-.mc-nome{{font-size:1.0rem;color:#374151;font-weight:600;}}
-.mc-meta{{font-size:0.85rem;color:#9ca3af;margin:4px 0 12px;}}
-.mc-grid{{display:grid;grid-template-columns:1fr 1fr;gap:5px;}}
-.mc-kpi{{border:1px solid #e5e7eb;border-radius:8px;padding:8px 12px;}}
-.mc-kpi-l{{font-size:0.82rem;text-transform:uppercase;color:#9ca3af;font-weight:700;letter-spacing:.04em;margin-bottom:3px;}}
-.mc-kpi-v{{font-size:1.15rem;font-weight:700;font-variant-numeric:tabular-nums;}}
-.pos{{color:#1E8449;}} .neg{{color:#FF4B4B;}}
-.mc-price-box{{background:#f9fafb;border:1px solid #e5e7eb;border-radius:11px;padding:10px 14px;display:flex;align-items:baseline;gap:12px;}}
-.mc-price-val{{font-size:2.0rem;font-weight:800;font-variant-numeric:tabular-nums;}}
-.mc-price-sub{{font-size:0.95rem;color:#6b7280;}}
-.mc-spark-label{{font-size:0.78rem;text-transform:uppercase;color:#9ca3af;font-weight:700;letter-spacing:.05em;}}
-svg.spark{{width:100%;height:140px;display:block;border-radius:10px;background:#f9fafb;}}
-.mc-footer{{font-size:0.78rem;color:#9ca3af;}}
+{_MODAL_CSS}
 </style></head>
 <body>
 <div class="tw">
@@ -254,108 +378,9 @@ svg.spark{{width:100%;height:140px;display:block;border-radius:10px;background:#
 {tfoot_html}
 </table>
 </div>
-<div id="mo" onclick="if(event.target===this)closeM()">
-<div id="mc">
-  <button id="mc-close" onclick="closeM()">&#x2715;</button>
-  <div class="mc-cols">
-    <div class="mc-left">
-      <div class="mc-ticker" id="m-tk"></div>
-      <div class="mc-nome" id="m-nm"></div>
-      <div class="mc-meta" id="m-meta"></div>
-      <div class="mc-grid" id="m-grid"></div>
-    </div>
-    <div class="mc-right">
-      <div class="mc-price-box">
-        <div>
-          <div style="font-size:0.78rem;text-transform:uppercase;color:#9ca3af;font-weight:700;margin-bottom:2px;">Prezzo attuale</div>
-          <div class="mc-price-val" id="m-px"></div>
-        </div>
-        <div id="m-delta" class="mc-price-sub"></div>
-      </div>
-      <div class="mc-spark-label">Andamento prezzo (ultimi 60 giorni disponibili)</div>
-      <svg class="spark" id="m-spark" viewBox="0 0 520 140" preserveAspectRatio="none"></svg>
-      <div class="mc-footer" id="m-footer"></div>
-    </div>
-  </div>
-</div>
-</div>
+{_MODAL_HTML}
 <script>
-var D=__TICKER_JSON__;
-function fi(v,d,sgn){{
-  if(v==null||isNaN(v))return'n/d';
-  var n=parseFloat(v).toLocaleString('it-IT',{{minimumFractionDigits:d,maximumFractionDigits:d}});
-  return (sgn&&v>0?'+':'')+n;
-}}
-function fe(v,d,sgn){{return fi(v,d!=null?d:2,sgn)+' €';}}
-function fmtDateIt(v){{if(!v)return 'n/d';var p=String(v).slice(0,10).split('-');return p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):String(v);}}
-function fp(v,d,sgn){{
-  if(v==null||isNaN(v))return'n/d';
-  var pct=parseFloat(v)*100;
-  var n=pct.toLocaleString('it-IT',{{minimumFractionDigits:d!=null?d:1,maximumFractionDigits:d!=null?d:1}});
-  return(sgn&&pct>0?'+':'')+n+'%';
-}}
-function kpi(label,val,cls){{
-  return '<div class="mc-kpi"><div class="mc-kpi-l">'+label+'</div><div class="mc-kpi-v'+(cls?' '+cls:'')+'">'+val+'</div></div>';
-}}
-function sparkline(data,plPositive,pmc){{
-  var svg=document.getElementById('m-spark');
-  svg.innerHTML='';
-  var W=520,H=140,pad=6;
-  if(!data||data.length<2){{
-    var t=document.createElementNS('http://www.w3.org/2000/svg','text');
-    t.setAttribute('x','50%');t.setAttribute('y','52%');t.setAttribute('text-anchor','middle');
-    t.setAttribute('fill','#d1d5db');t.setAttribute('font-size','10');t.setAttribute('font-family','system-ui');
-    t.textContent='Dati storici non disponibili';svg.appendChild(t);return;
-  }}
-  var vals=data.map(function(p){{return p.v;}});
-  var mn=Math.min.apply(null,vals),mx=Math.max.apply(null,vals);if(pmc!=null&&!isNaN(pmc)){{mn=Math.min(mn,pmc);mx=Math.max(mx,pmc);}}var rng=mx-mn||0.001;var toY=function(v){{return H-pad-((v-mn)/rng*(H-pad*2));}};
-  var pts=[];
-  vals.forEach(function(v,i){{
-    var x=pad+(i/(vals.length-1))*(W-pad*2);
-    var y=toY(v);
-    pts.push(x.toFixed(1)+','+y.toFixed(1));
-  }});
-  var col=plPositive?'#1E8449':'#FF4B4B';
-  var fill=plPositive?'rgba(30,132,73,0.12)':'rgba(255,75,75,0.12)';
-  var lx=parseFloat(pts[vals.length-1].split(',')[0]),ly=parseFloat(pts[vals.length-1].split(',')[1]);var pmcY=(pmc!=null&&!isNaN(pmc))?toY(pmc):null;
-  var area=document.createElementNS('http://www.w3.org/2000/svg','polygon');
-  area.setAttribute('points',pts[0].split(',')[0]+','+(H-pad)+' '+pts.join(' ')+' '+lx+','+(H-pad));
-  area.setAttribute('fill',fill);svg.appendChild(area);if(pmcY!=null){{var pmcLine=document.createElementNS('http://www.w3.org/2000/svg','line');pmcLine.setAttribute('x1',pad);pmcLine.setAttribute('x2',W-pad);pmcLine.setAttribute('y1',pmcY);pmcLine.setAttribute('y2',pmcY);pmcLine.setAttribute('stroke','#6b7280');pmcLine.setAttribute('stroke-width','1.8');pmcLine.setAttribute('stroke-dasharray','7 5');pmcLine.setAttribute('opacity','0.98');svg.appendChild(pmcLine);var pmcText=document.createElementNS('http://www.w3.org/2000/svg','text');pmcText.setAttribute('x',W-pad-4);pmcText.setAttribute('y',Math.max(12,pmcY-4));pmcText.setAttribute('text-anchor','end');pmcText.setAttribute('fill','#4b5563');pmcText.setAttribute('font-size','10');pmcText.setAttribute('font-family','system-ui');pmcText.textContent='PMC';svg.appendChild(pmcText);}}
-  var line=document.createElementNS('http://www.w3.org/2000/svg','polyline');
-  line.setAttribute('points',pts.join(' '));
-  line.setAttribute('fill','none');line.setAttribute('stroke',col);line.setAttribute('stroke-width','2');
-  svg.appendChild(line);
-  var dot=document.createElementNS('http://www.w3.org/2000/svg','circle');
-  dot.setAttribute('cx',lx);dot.setAttribute('cy',ly);dot.setAttribute('r','4');
-  dot.setAttribute('fill',col);dot.setAttribute('stroke','#fff');dot.setAttribute('stroke-width','1.5');
-  svg.appendChild(dot);
-}}
-function showModal(tk){{
-  var d=D[tk];if(!d)return;
-  var plCls=d.pl_e>=0?'pos':'neg';
-  var delta=d.pmc>0?(d.prezzo/d.pmc-1)*100:null;
-  document.getElementById('m-tk').textContent=tk;
-  document.getElementById('m-tk').style.color=d.pl_e>=0?'#1E8449':'#374151';
-  document.getElementById('m-nm').textContent=d.nome;
-  document.getElementById('m-meta').textContent='ISIN: '+d.isin+' · '+d.tipo;
-  document.getElementById('m-px').textContent=fe(d.prezzo,3,false);
-  document.getElementById('m-px').className='mc-price-val '+plCls;
-  document.getElementById('m-delta').innerHTML=delta!=null?'<span class="'+plCls+'">'+(delta>=0?'+':'')+fi(delta,2,false)+'% vs PMC</span>':'';
-  document.getElementById('m-grid').innerHTML=
-    kpi('PMC',fe(d.pmc,3,false))+
-    kpi('Quantità',fi(d.qty,3,false))+
-    kpi('Controvalore',fe(d.ctv,2,false))+
-    kpi('Costo storico',fe(d.costo,2,false))+
-    kpi('P/L €',fe(d.pl_e,2,true),plCls)+
-    kpi('P/L %',fp(d.pl_p,2,true),plCls)+
-    kpi('Commissioni',fe(d.comm,2,false))+
-    kpi('Fonte / Agg.',d.fonte+' · '+fmtDateIt(d.aggiornato));
-  sparkline(d.spark,d.pl_e>=0,d.pmc);
-  document.getElementById('m-footer').textContent='Quotazione aggiornata al '+fmtDateIt(d.aggiornato)+' · Fonte: '+d.fonte;
-  document.getElementById('mo').classList.add('on');
-}}
-function closeM(){{document.getElementById('mo').classList.remove('on');}}
-document.addEventListener('keydown',function(e){{if(e.key==='Escape')closeM();}});
+{_MODAL_JS}
 var _sCol=-1,_sAsc=true;
 function sortTable(col){{
   if(col===0||col===4)return;
