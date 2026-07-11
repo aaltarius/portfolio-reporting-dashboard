@@ -64,17 +64,28 @@ def build_pl_delta_series(df_history: pd.DataFrame, theme: ThemeConfig) -> dict[
 
 
 def build_weekly_pl_table(
-    da: pd.DataFrame, dfh_top: pd.DataFrame, max_days: int = 7
+    da: pd.DataFrame, dfh_top: pd.DataFrame, data: dict[str, Any], max_days: int = 7
 ) -> dict[str, Any] | None:
-    """Per-instrument daily P/L deltas for the last `max_days` trading days.
+    """Per-instrument daily P/L deltas for the last `max_days` real trading days.
 
     Same PL_<ticker> delta methodology as build_pl_delta_series, broken out
     per instrument (rows of `da`) instead of summed across the portfolio.
+    Drops a trailing synthetic "today" row (added by build_portfolio_history_df
+    on non-trading days) that isn't backed by a real storico_prezzi date.
     """
     if da is None or da.empty or dfh_top is None or len(dfh_top) < 2:
         return None
 
-    window = dfh_top.tail(max_days + 1).reset_index(drop=True)
+    window_source = dfh_top
+    real_dates = set((data or {}).get("storico_prezzi", {}).keys())
+    if real_dates:
+        last_date_str = pd.to_datetime(window_source.iloc[-1]["Data"]).strftime("%Y-%m-%d")
+        if last_date_str not in real_dates:
+            window_source = window_source.iloc[:-1]
+    if len(window_source) < 2:
+        return None
+
+    window = window_source.tail(max_days + 1).reset_index(drop=True)
     n_days = len(window) - 1
     if n_days < 1:
         return None
