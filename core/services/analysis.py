@@ -63,6 +63,66 @@ def build_pl_delta_series(df_history: pd.DataFrame, theme: ThemeConfig) -> dict[
     }
 
 
+def build_weekly_pl_table(
+    da: pd.DataFrame, dfh_top: pd.DataFrame, max_days: int = 7
+) -> dict[str, Any] | None:
+    """Per-instrument daily P/L deltas for the last `max_days` trading days.
+
+    Same PL_<ticker> delta methodology as build_pl_delta_series, broken out
+    per instrument (rows of `da`) instead of summed across the portfolio.
+    """
+    if da is None or da.empty or dfh_top is None or len(dfh_top) < 2:
+        return None
+
+    window = dfh_top.tail(max_days + 1).reset_index(drop=True)
+    n_days = len(window) - 1
+    if n_days < 1:
+        return None
+
+    days = [
+        pd.to_datetime(window.iloc[i + 1]["Data"]).strftime("%d/%m")
+        for i in range(n_days)
+    ]
+
+    rows: list[dict[str, Any]] = []
+    day_totals = [0.0] * n_days
+    grand_total = 0.0
+    for _, pos in da.iterrows():
+        tk = str(pos.get("Ticker", ""))
+        col = f"PL_{tk}"
+        deltas: list[float | None] = []
+        totale = 0.0
+        for i in range(n_days):
+            if col not in window.columns:
+                deltas.append(None)
+                continue
+            prev_v = window.iloc[i].get(col)
+            curr_v = window.iloc[i + 1].get(col)
+            if pd.notna(prev_v) and pd.notna(curr_v):
+                delta = float(curr_v) - float(prev_v)
+                deltas.append(delta)
+                totale += delta
+                day_totals[i] += delta
+            else:
+                deltas.append(None)
+        grand_total += totale
+        rows.append({
+            "ticker": tk,
+            "strumento": str(pos.get("Strumento", tk)),
+            "tipo": str(pos.get("Tipo", "")),
+            "quote": float(pos.get("Quote", 0) or 0),
+            "deltas": deltas,
+            "totale": totale,
+        })
+
+    return {
+        "days": days,
+        "rows": rows,
+        "day_totals": day_totals,
+        "grand_total": grand_total,
+    }
+
+
 def build_percentage_return_series(df_history: pd.DataFrame, data=None) -> dict[str, Any]:
     """
     Calculates percentage return series relative to net capital and cost.

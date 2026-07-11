@@ -16,6 +16,7 @@ from core.services.reporting import (
 from core.services.analysis import (
     build_advanced_analysis_data,
     build_pl_delta_series,
+    build_weekly_pl_table,
     build_percentage_return_series,
     build_drawdown_series,
     build_monthly_returns,
@@ -59,6 +60,7 @@ __all__ = [
     "build_portfolio_radar_payload",
     "build_advanced_analysis_data",
     "build_pl_delta_series",
+    "build_weekly_pl_table",
     "build_percentage_return_series",
     "build_drawdown_series",
     "build_monthly_returns",
