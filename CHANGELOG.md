@@ -1,5 +1,24 @@
 # Changelog
 
+## 4.9.30 - Tabella "Andamento dell'ultima settimana" in Portafoglio
+
+**Nuova tabella P/L settimanale per strumento:**
+- tra la tabella Controvalore e "Proventi per strumento", nuova sezione che mostra il P/L giornaliero di ogni strumento posseduto negli ultimi giorni di quotazione reali (fino a 7), con colonna "P/L totale" (somma della settimana) e riga TOTALE in fondo — stessa veste grafica interattiva della tabella Controvalore (intestazioni ordinabili, colonne ridimensionabili), senza scroll orizzontale né verticale
+- `core/services/analysis.py::build_weekly_pl_table` calcola i delta con lo stesso metodo già in uso per "Andamento dell'ultima giornata" (colonne `PL_<ticker>` cumulate per strumento, delta contato solo tra giorni in cui lo strumento era posseduto in entrambi)
+- le intestazioni giorno mostrano l'iniziale del giorno della settimana prima della data (es. "V 10/07", convenzione L M M G V S D) e un separatore verticale (stesso spessore/colore del bordo tabella/riga TOTALE) segna il salto tra la colonna di venerdì e quella del lunedì successivo
+
+**Esclusione del giorno "fantasma" nei weekend:**
+- quando l'ultima riga dello storico portafoglio è un punto sintetico (prezzi ri-letti in un giorno di mercato chiuso, senza movimento reale — tipicamente un refresh di sabato che riconferma la chiusura di venerdì), la tabella lo mostrava come se fosse un giorno di trading vero, con delta a zero per tutti gli strumenti che "consumava" una delle colonne disponibili senza portare informazione; ora la funzione scarta quella riga confrontandola con le date reali di `storico_prezzi`, mostrando sempre gli ultimi giorni di borsa effettivamente aperta
+
+**Popup di dettaglio ticker condiviso con la tabella Controvalore:**
+- cliccare un ticker nella nuova tabella apre lo stesso identico popup (KPI grid, sparkline prezzo, fonte/aggiornamento) già presente in Controvalore, invece di non aprire nulla: il codice del modale (CSS/HTML/JS e il calcolo dei dati per strumento) è stato estratto in helper condivisi in `ui/charts/portfolio_popup.py`, usati da entrambe le tabelle — non due copie mantenute a mano
+
+**Altre rifiniture:**
+- colonna "Tipo" mostra la sigla di macro-categoria (GOV/FND/ETF/ETC/...) invece del testo esteso, e nuova colonna icona natura tra Tipo e Quote (stessa fonte e posizione della tabella Controvalore)
+- valori giornalieri a due decimali; la colonna "P/L totale" resta a due decimali con il simbolo "€"
+- per ogni colonna giorno, la cella con il valore più alto e quella con il valore più basso (pareggi inclusi) sono evidenziate in grassetto
+- nuova colonna con freccia diagonale subito prima di "P/L totale": verde (↗) se il risultato della settimana per quello strumento è positivo, rossa (↘) se negativo
+
 ## 4.9.29 - Rifiniture Dashboard decisionale
 
 **Allocazione: bucket e strumenti:**
