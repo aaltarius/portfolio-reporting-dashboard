@@ -436,10 +436,11 @@ setTimeout(sendH,600);
     render_html_iframe(html_content, height=iframe_h, scrolling=False)
 
 
-def render_weekly_pl_table(result):
+def render_weekly_pl_table(result, da, data):
     """Render the per-instrument weekly P/L table (Ticker/Strumento/Tipo/Quote + daily deltas + Totale).
 
     Chiamato da: ui/pages/home.py, sezione "Andamento dell'ultima settimana".
+    Stesso popup di dettaglio ticker della tabella Controvalore (via _build_ticker_info/_MODAL_*).
     """
     if not result or not result.get("rows"):
         return
@@ -448,6 +449,9 @@ def render_weekly_pl_table(result):
     day_totals = result["day_totals"]
     grand_total = result["grand_total"]
     n_days = len(days)
+
+    ticker_info = _build_ticker_info(da, data) if da is not None and data is not None else {}
+    info_map = {s["ticker"]: s for s in (data or {}).get("strumenti", [])}
 
     def _cat_col(tipo):
         cat = macro_cat(tipo)
@@ -478,12 +482,12 @@ def render_weekly_pl_table(result):
             f = float(v)
         except Exception:
             return "—"
-        s = f"{abs(f):,.0f}".replace(",", ".")
+        s = _fmt_num(abs(f), 2)
         if f > 0:
             return f"+{s}"
         if f < 0:
             return f"-{s}"
-        return "0"
+        return s
 
     def _sort_val(v):
         if v is None:
@@ -493,30 +497,45 @@ def render_weekly_pl_table(result):
         except Exception:
             return "-999999999"
 
+    day_extrema = []
+    for i in range(n_days):
+        vals = [r["deltas"][i] for r in rows if r["deltas"][i] is not None]
+        day_extrema.append((max(vals), min(vals)) if vals else (None, None))
+
     day_ths = "".join(
-        f'<th data-col="{4 + i}">{d}<span class="sort-ind"></span><span class="rh"></span></th>\n'
+        f'<th data-col="{5 + i}">{d}<span class="sort-ind"></span><span class="rh"></span></th>\n'
         for i, d in enumerate(days)
     )
-    total_col = 4 + n_days
+    arrow_col_idx = 5 + n_days
+    total_col = arrow_col_idx + 1
 
     rows_html = ""
     for row in rows:
+        tk = row["ticker"]
         col = _cat_col(row["tipo"])
+        tipo_code = macro_cat(row["tipo"])
+        natura_label = str(info_map.get(tk, {}).get("natura") or "Esposizione diversificata")
+        natura_color, natura_svg = get_natura_visual(natura_label)
         cells = ""
-        for v in row["deltas"]:
+        for i, v in enumerate(row["deltas"]):
             cell_col = "#1E8449" if (v is not None and v >= 0) else ("#FF4B4B" if v is not None else "#9CA3AF")
-            cells += f'<td class="num" data-sort="{_sort_val(v)}" style="color:{cell_col};">{_fmt_day(v)}</td>\n'
+            day_max, day_min = day_extrema[i]
+            is_extreme = v is not None and (v == day_max or v == day_min)
+            weight = "700" if is_extreme else "400"
+            cells += f'<td class="num" data-sort="{_sort_val(v)}" style="color:{cell_col};font-weight:{weight};">{_fmt_day(v)}</td>\n'
         totale = row["totale"]
         tot_col = "#1E8449" if totale >= 0 else "#FF4B4B"
+        arrow_char = "↗" if totale >= 0 else "↘"
         strumento = str(row["strumento"])
-        tipo = str(row["tipo"])
         rows_html += (
             '<tr>\n'
-            f'<td data-sort="{row["ticker"]}" style="color:{col};font-weight:700;">{row["ticker"]}</td>\n'
+            f'<td data-sort="{tk}"><a class="tk-link" style="color:{col}" href="#" onclick="showModal(\'{tk}\');return false;">{tk}</a></td>\n'
             f'<td data-sort="{strumento}" style="color:{col};max-width:130px;" title="{strumento}">{strumento[:24]}</td>\n'
-            f'<td data-sort="{tipo}" style="color:{col};max-width:70px;" title="{tipo}">{tipo[:16]}</td>\n'
+            f'<td data-sort="{tipo_code}" style="color:{col};">{tipo_code}</td>\n'
+            f'<td class="natura-cell" title="{natura_label}" style="color:{natura_color};width:20px;text-align:center;">{natura_svg}</td>\n'
             f'<td class="num" data-sort="{_sort_val(row["quote"])}">{_fmt_num(row["quote"], 3)}</td>\n'
             f'{cells}'
+            f'<td style="color:{tot_col};font-weight:800;text-align:center;width:26px;">{arrow_char}</td>\n'
             f'<td class="num" data-sort="{_sort_val(totale)}" style="color:{tot_col};font-weight:700;">{_fmt_eur(totale, 2, signed=True)}</td>\n'
             '</tr>'
         )
@@ -528,12 +547,14 @@ def render_weekly_pl_table(result):
     grand_col = "#1E8449" if grand_total >= 0 else "#FF4B4B"
     tfoot_html = (
         '<tfoot><tr>'
-        '<td colspan="4" style="font-weight:800;font-size:0.85rem;letter-spacing:.02em;padding:9px 12px;">TOTALE</td>'
+        '<td colspan="5" style="font-weight:800;font-size:0.85rem;letter-spacing:.02em;padding:9px 12px;">TOTALE</td>'
         f'{total_cells}'
+        '<td></td>'
         f'<td class="num" style="color:{grand_col};font-weight:800;padding:9px 12px;">{_fmt_eur(grand_total, 2, signed=True)}</td>'
         '</tr></tfoot>'
     )
 
+    ticker_json = json.dumps(ticker_info, ensure_ascii=False)
     n_rows = len(rows)
     iframe_h = iframe_height_for_rows(
         n_rows, row_height=35, header_height=48, padding=50, min_height=160, max_height=1100, content_until_rows=18
@@ -562,10 +583,12 @@ tbody tr:last-child{{border-bottom:none;}}
 tbody tr:hover{{background:#f0f2f6;}}
 tbody td{{padding:9px 12px;vertical-align:middle;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border-right:1px solid #f0f2f6;}}
 tbody td:last-child{{border-right:none;}}
+.natura-cell svg{{width:15px;height:15px;}}
 tfoot tr{{border-top:2px solid #d1d5db;background:#f8f9fa;}}
 tfoot td{{vertical-align:middle;white-space:nowrap;border-right:1px solid #e6e9ef;}}
 tfoot td:last-child{{border-right:none;}}
 .num{{text-align:right;font-variant-numeric:tabular-nums;}}
+{_MODAL_CSS}
 </style></head>
 <body>
 <div class="tw">
@@ -574,17 +597,24 @@ tfoot td:last-child{{border-right:none;}}
   <th data-col="0">Ticker<span class="sort-ind"></span><span class="rh"></span></th>
   <th data-col="1">Strumento<span class="sort-ind"></span><span class="rh"></span></th>
   <th data-col="2">Tipo<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="3">Quote<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="3" style="text-align:center;width:20px;cursor:default;"></th>
+  <th data-col="4">Quote<span class="sort-ind"></span><span class="rh"></span></th>
   {day_ths}
+  <th data-col="{arrow_col_idx}" style="text-align:center;width:26px;cursor:default;"></th>
   <th data-col="{total_col}">P/L totale<span class="sort-ind"></span><span class="rh"></span></th>
 </tr></thead>
 <tbody id="wpl-body">{rows_html}</tbody>
 {tfoot_html}
 </table>
 </div>
+{_MODAL_HTML}
 <script>
+{_MODAL_JS}
 var _sCol=-1,_sAsc=true;
+var _naturaCol=3;
+var _arrowCol={arrow_col_idx};
 function sortTable(col){{
+  if(col===_naturaCol||col===_arrowCol)return;
   var tbody=document.getElementById('wpl-body');
   var rows=Array.from(tbody.querySelectorAll('tr'));
   var asc=(_sCol===col)?!_sAsc:true;_sCol=col;_sAsc=asc;
@@ -633,4 +663,5 @@ setTimeout(sendH,150);
 setTimeout(sendH,600);
 </script>
 </body></html>"""
+    html_content = html_content.replace("__TICKER_JSON__", ticker_json)
     render_html_iframe(html_content, height=iframe_h, scrolling=False)
