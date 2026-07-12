@@ -28,6 +28,7 @@ from core.services.sator import (
     SATOR_ROLE_VALUES,
     SATOR_NATURE_VALUES,
     build_portfolio_rings_frame,
+    compute_watchlist_reminders,
     build_coverage_matrix_frame,
     sator_matrix_doppioni_scoperte,
     build_next_purchase_bubble_frame,
@@ -194,6 +195,7 @@ def _build_bucket_allocation_table_html(
     objective: dict,
     objective_key: dict[str, str],
     theme,
+    watchlist_reminders: dict[str, list[str]] | None = None,
 ) -> str:
     """Tabella unica Core/Difensivo/Satellite: una riga-bucket con barra
     obiettivo-vs-attuale (fill = attuale, tacca = obiettivo) seguita dalle
@@ -211,7 +213,8 @@ def _build_bucket_allocation_table_html(
     body_rows: list[str] = []
     for b in ("Core", "Difensivo", "Satellite"):
         sub = rings_df[rings_df["bucket"] == b]
-        if sub.empty:
+        reminders_for_bucket = (watchlist_reminders or {}).get(b, [])
+        if sub.empty and not reminders_for_bucket:
             continue
         tone = bucket_colors[b]
         target = float(objective.get(objective_key[b], 0.0))
@@ -236,30 +239,40 @@ def _build_bucket_allocation_table_html(
             </div>
           </td>
         </tr>''')
-        sub = sub.copy()
-        sub["natura"] = sub["natura"].apply(lambda v: str(v) if v else "Esposizione diversificata")
-        sub = sub.sort_values("value", ascending=False)
-        natura_groups = (
-            sub.groupby("natura", sort=False)
-            .agg(value=("value", "sum"), tickers=("ticker", lambda s: ", ".join(s.astype(str))))
-            .sort_values("value", ascending=False)
-        )
-        for natura_label, grp in natura_groups.iterrows():
-            natura_color, natura_svg = get_natura_visual(natura_label)
-            group_value = float(grp["value"])
-            pct_of_bucket = (group_value / bucket_value * 100.0) if bucket_value > 0 else 0.0
-            tickers_html = grp["tickers"]
+        if not sub.empty:
+            sub = sub.copy()
+            sub["natura"] = sub["natura"].apply(lambda v: str(v) if v else "Esposizione diversificata")
+            sub = sub.sort_values("value", ascending=False)
+            natura_groups = (
+                sub.groupby("natura", sort=False)
+                .agg(value=("value", "sum"), tickers=("ticker", lambda s: ", ".join(s.astype(str))))
+                .sort_values("value", ascending=False)
+            )
+            for natura_label, grp in natura_groups.iterrows():
+                natura_color, natura_svg = get_natura_visual(natura_label)
+                group_value = float(grp["value"])
+                pct_of_bucket = (group_value / bucket_value * 100.0) if bucket_value > 0 else 0.0
+                tickers_html = grp["tickers"]
+                body_rows.append(f'''
+                <tr class="bucket-alloc-instrument-row" style="--tone:{tone}">
+                  <td><span class="bucket-alloc-natura" style="--natura-color:{natura_color}">{natura_svg}{natura_label}</span></td>
+                  <td class="bucket-alloc-ticker">{tickers_html}</td>
+                  <td class="num">{fmt_eur_it(group_value, 2)}</td>
+                  <td>
+                    <div class="bucket-alloc-mini-track">
+                      <div class="bucket-alloc-mini-fill" style="width:{pct_of_bucket:.2f}%"></div>
+                    </div>
+                    <span class="bucket-alloc-mini-caption">{pct_of_bucket:.0f}% del bucket</span>
+                  </td>
+                </tr>''')
+        for reminder_natura in reminders_for_bucket:
+            natura_color, natura_svg = get_natura_visual(reminder_natura)
             body_rows.append(f'''
-            <tr class="bucket-alloc-instrument-row" style="--tone:{tone}">
-              <td><span class="bucket-alloc-natura" style="--natura-color:{natura_color}">{natura_svg}{natura_label}</span></td>
-              <td class="bucket-alloc-ticker">{tickers_html}</td>
-              <td class="num">{fmt_eur_it(group_value, 2)}</td>
-              <td>
-                <div class="bucket-alloc-mini-track">
-                  <div class="bucket-alloc-mini-fill" style="width:{pct_of_bucket:.2f}%"></div>
-                </div>
-                <span class="bucket-alloc-mini-caption">{pct_of_bucket:.0f}% del bucket</span>
-              </td>
+            <tr class="bucket-alloc-watchlist-row" style="--tone:{tone}">
+              <td><span class="bucket-alloc-natura" style="--natura-color:{natura_color}">{natura_svg}{reminder_natura}</span></td>
+              <td class="bucket-alloc-ticker"></td>
+              <td class="num">{fmt_eur_it(0.0, 2)}</td>
+              <td><span class="bucket-alloc-mini-caption">In osservazione</span></td>
             </tr>''')
     body_rows.append(f'''
     <tr class="bucket-alloc-total-row">
@@ -281,9 +294,10 @@ def _render_bucket_allocation_table(
     objective: dict,
     objective_key: dict[str, str],
     theme,
+    watchlist_reminders: dict[str, list[str]] | None = None,
 ) -> None:
     st.markdown(
-        _build_bucket_allocation_table_html(rings_df, bucket_totals, current_mix, objective, objective_key, theme),
+        _build_bucket_allocation_table_html(rings_df, bucket_totals, current_mix, objective, objective_key, theme, watchlist_reminders),
         unsafe_allow_html=True,
     )
 
@@ -748,7 +762,8 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
             b: (float(bucket_totals.get(b, 0.0)) / total_value if total_value > 0 else 0.0)
             for b in ("Core", "Difensivo", "Satellite")
         }
-        _render_bucket_allocation_table(rings_df, bucket_totals, current_mix, objective, objective_key, theme)
+        watchlist_reminders = compute_watchlist_reminders(data, state_df)
+        _render_bucket_allocation_table(rings_df, bucket_totals, current_mix, objective, objective_key, theme, watchlist_reminders)
 
     matrix_df = build_coverage_matrix_frame(data, state_df)
     if matrix_df.empty:
