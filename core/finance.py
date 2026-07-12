@@ -770,6 +770,8 @@ def get_cached_benchmark_series(
                 ser = ser[ser > 0]
             try:
                 pd.to_pickle({"cache_id": cache_id, "value": ser.copy()}, persist_path)
+                from core.derived_cache_utils import prune_sibling_pkl
+                prune_sibling_pkl(_BENCHMARK_SERIES_CACHE_DIR, bench_ticker, persist_path)
             except Exception:
                 pass
         runtime_cache[cache_id] = ser

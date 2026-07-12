@@ -6,10 +6,13 @@ from __future__ import annotations
 import logging
 import os
 from collections import deque
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 
 DEFAULT_LOGGER_NAME = "portafoglio"
+LOG_MAX_BYTES = 5 * 1024 * 1024
+LOG_BACKUP_COUNT = 3
 LOG_LEVEL_MAP = {
     "DEBUG": logging.DEBUG,
     "INFO": logging.INFO,
@@ -62,7 +65,12 @@ def configure_logging(
         handler.setFormatter(formatter)
 
     if existing_file_handler is None:
-        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler = RotatingFileHandler(
+            log_file,
+            maxBytes=LOG_MAX_BYTES,
+            backupCount=LOG_BACKUP_COUNT,
+            encoding="utf-8",
+        )
         file_handler.setLevel(level)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)

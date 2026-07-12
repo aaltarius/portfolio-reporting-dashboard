@@ -62,6 +62,25 @@ _OLD_FILES = [
     ("portafoglio_meta.json",            META_FILE),
 ]
 
+def _backup_settings_before_migration_enabled() -> bool:
+    """Legge la policy di backup dal settings ancora in BASE_DIR (non migrato).
+
+    Non si può usare load_settings() qui: al primo avvio dopo l'upgrade,
+    SETTINGS_FILE (nuovo path) non esiste ancora, quindi restituirebbe sempre
+    i default invece della preferenza realmente configurata dall'utente.
+    """
+    old_settings_path = os.path.join(BASE_DIR, "portafoglio_settings.json")
+    try:
+        if os.path.exists(old_settings_path):
+            with open(old_settings_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            backup_cfg = raw.get("backup", {}) if isinstance(raw, dict) else {}
+            return bool(backup_cfg.get("enabled", True)) and bool(backup_cfg.get("backup_before_migration", True))
+    except Exception:
+        logger.warning("Lettura policy backup pre-migrazione fallita, uso default", exc_info=True)
+    return True
+
+
 def _migrate_json_to_data_dir():
     """Sposta i file JSON da BASE_DIR a DATA_DIR se non sono già lì."""
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -69,6 +88,23 @@ def _migrate_json_to_data_dir():
     os.makedirs(os.path.join(DATA_DIR, "portfolio"), exist_ok=True)
     os.makedirs(os.path.join(DATA_DIR, "cache"), exist_ok=True)
     os.makedirs(PRICES_DIR, exist_ok=True)
+
+    to_migrate = [
+        (fname, new_path) for fname, new_path in _OLD_FILES
+        if os.path.exists(os.path.join(BASE_DIR, fname)) and not os.path.exists(new_path)
+    ]
+    if to_migrate and _backup_settings_before_migration_enabled():
+        try:
+            stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            pre_migration_dir = os.path.join(BACKUP_DIR, f"{stamp}_pre_migration")
+            _ensure_dir(pre_migration_dir)
+            for fname, _new_path in to_migrate:
+                shutil.copy2(os.path.join(BASE_DIR, fname), os.path.join(pre_migration_dir, fname))
+            logger.info("Backup pre-migrazione creato: folder=%s files=%s", pre_migration_dir, len(to_migrate))
+            _prune_backups()
+        except Exception:
+            logger.warning("Backup pre-migrazione fallito, la migrazione prosegue comunque", exc_info=True)
+
     for fname, new_path in _OLD_FILES:
         old_path = os.path.join(BASE_DIR, fname)
         if os.path.exists(old_path) and not os.path.exists(new_path):
@@ -998,6 +1034,39 @@ def _build_instrument_master(strumenti, benchmark_data=None):
 # ---------------------------------------------------------------------------
 # Backup Utility
 # ---------------------------------------------------------------------------
+def _prune_backups(keep_last_n=None):
+    """Elimina le cartelle di backup più vecchie oltre il limite configurato.
+
+    Le cartelle sono nominate con timestamp ``YYYY-MM-DD_HH-MM-SS`` (o un tag
+    esplicito), quindi l'ordine alfabetico decrescente coincide con quello
+    cronologico per il formato standard; per i tag non standard si usa comunque
+    l'mtime della cartella come fallback per l'ordinamento.
+    """
+    if not os.path.isdir(BACKUP_DIR):
+        return 0
+    if keep_last_n is None:
+        keep_last_n = int(load_settings().get("backup", {}).get("keep_last_n", 20) or 20)
+    keep_last_n = max(int(keep_last_n), 0)
+
+    entries = [
+        os.path.join(BACKUP_DIR, name)
+        for name in os.listdir(BACKUP_DIR)
+        if os.path.isdir(os.path.join(BACKUP_DIR, name))
+    ]
+    entries.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+
+    removed = 0
+    for old_folder in entries[keep_last_n:]:
+        try:
+            shutil.rmtree(old_folder, ignore_errors=True)
+            removed += 1
+        except Exception:
+            logger.warning("Impossibile rimuovere backup obsoleto: %s", old_folder, exc_info=True)
+    if removed:
+        logger.info("Backup retention: rimosse %s cartelle oltre il limite di %s", removed, keep_last_n)
+    return removed
+
+
 def create_backup_bundle(tag=None):
     _ensure_dir(BACKUP_DIR)
     stamp = tag or datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -1017,6 +1086,7 @@ def create_backup_bundle(tag=None):
             "backup_created",
             {"folder": folder, "file_count": len(copied), "tag": tag or stamp},
         )
+    _prune_backups(settings.get("backup", {}).get("keep_last_n", 20))
     return folder, copied
 
 

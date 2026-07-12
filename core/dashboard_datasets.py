@@ -30,7 +30,6 @@ from core.benchmark_registry import resolve_instrument_benchmark
 import yfinance as yf
 
 _BENCHMARK_NORMALIZED_CACHE_DIR = os.path.join(DATA_DIR, "cache", "derived_runtime", "normalized_benchmarks")
-_SUMMARY_PAYLOAD_CACHE_DIR = os.path.join(DATA_DIR, "cache", "derived_runtime", "summary_payloads")
 
 
 @dataclass(slots=True)
@@ -189,6 +188,15 @@ def _get_runtime_normalized_benchmark_series(
         ).encode()
     ).hexdigest()[:16]
     persist_path = os.path.join(_BENCHMARK_NORMALIZED_CACHE_DIR, f"{benchmark_ticker}_{persist_sig}.pkl")
+
+    def _persist(payload: dict[str, Any]) -> None:
+        try:
+            pd.to_pickle(payload, persist_path)
+            from core.derived_cache_utils import prune_sibling_pkl
+            prune_sibling_pkl(_BENCHMARK_NORMALIZED_CACHE_DIR, benchmark_ticker, persist_path)
+        except Exception:
+            pass
+
     if os.path.exists(persist_path):
         try:
             persisted = pd.read_pickle(persist_path)
@@ -212,35 +220,23 @@ def _get_runtime_normalized_benchmark_series(
     raw_series = get_cached_benchmark_series(data, benchmark_ticker, min_start=start_date)
     if raw_series.empty:
         cache[cache_key] = None
-        try:
-            pd.to_pickle({"cache_key": cache_key, "value": None}, persist_path)
-        except Exception:
-            pass
+        _persist({"cache_key": cache_key, "value": None})
         return None
     sliced = raw_series[raw_series.index >= pd.to_datetime(start_date)]
     if sliced.empty:
         cache[cache_key] = None
-        try:
-            pd.to_pickle({"cache_key": cache_key, "value": None}, persist_path)
-        except Exception:
-            pass
+        _persist({"cache_key": cache_key, "value": None})
         return None
     base_value = float(sliced.iloc[0])
     if base_value == 0 or pd.isna(base_value):
         cache[cache_key] = None
-        try:
-            pd.to_pickle({"cache_key": cache_key, "value": None}, persist_path)
-        except Exception:
-            pass
+        _persist({"cache_key": cache_key, "value": None})
         return None
     normalized = sliced.divide(base_value).multiply(100.0)
     chart_series = _downsample_plot_series(normalized)
     result = (benchmark_label, list(chart_series.index), list(chart_series.values))
     cache[cache_key] = result
-    try:
-        pd.to_pickle({"cache_key": cache_key, "value": result}, persist_path)
-    except Exception:
-        pass
+    _persist({"cache_key": cache_key, "value": result})
     return result
 
 
