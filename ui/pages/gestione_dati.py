@@ -526,10 +526,12 @@ def _section_line() -> None:
 
 
 def _render_arricchimento(data: dict, ctx) -> None:
-    from persistence.storage import load_data
+    from persistence.storage import load_data, load_settings, apply_privacy_filter
 
-    # Legge sempre dal disco (ctx.data è una copia filtrata/cached non adatta al salvataggio)
-    raw_data = load_data()
+    # Legge sempre dal disco (ctx.data è una copia filtrata/cached non adatta al salvataggio).
+    # Sola lettura (nessun save_data qui sotto): applichiamo comunque il filtro privacy
+    # perché questa tabella mostra ticker/nome per ogni strumento.
+    raw_data = apply_privacy_filter(load_data(), load_settings())
     strumenti = [s for s in (raw_data.get("strumenti") or []) if str(s.get("stato", "aperto")) == "aperto"]
 
     from core.instrument_enrichment import _categoria
@@ -666,6 +668,10 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
 
         with st.expander("Bonifica avanzata per categoria / ticker", expanded=False):
             st.caption("Strumento tecnico per ispezionare e rimuovere record di test o porzioni incoerenti dei dataset applicativi.")
+            # NON applicare qui il filtro privacy: raw_data finisce direttamente
+            # in save_data() più sotto (bonifica/cancellazione record) — filtrarlo
+            # cancellerebbe per sempre lo strumento nascosto al primo utilizzo di
+            # questo strumento, anche su una categoria/ticker diversi.
             raw_data = load_data()
             category_options = [code for code in ASSET_CATEGORY_REGISTRY.keys() if code != "ALTRO"]
             cleanup_category = st.selectbox(

@@ -1295,3 +1295,58 @@ def _data_mtime() -> float:
         return max(mtimes) if mtimes else 0.0
     except OSError:
         return 0.0
+
+
+from core.config import PRIVACY_HIDDEN_TICKER_SENTINEL  # noqa: E402  (fonte unica)
+
+
+def apply_privacy_filter(data: dict, settings: dict) -> dict:
+    """Filtra in memoria gli strumenti nascosti dalla Modalita' Privacy. Non
+    tocca mai i dati su disco: opera su una copia, da usare solo per il
+    rendering (mai per un dict che poi finisce in save_data()).
+
+    Rimuove lo strumento nascosto da ``strumenti`` e ``storico_prezzi``. Gli
+    eventi collegati (ACQUISTO/VENDITA/CEDOLA/DIVIDENDO/...) restano nel
+    registro con il ticker sostituito da PRIVACY_HIDDEN_TICKER_SENTINEL:
+    servono per calcolare correttamente la liquidita' totale (che somma i
+    flussi di cassa di tutti gli eventi), ma senza rivelare a quale strumento
+    si riferiscono nelle viste che elencano gli eventi per ticker/nome.
+    """
+    import copy
+    pm = (settings or {}).get("privacy_mode", {}) or {}
+    if not pm.get("enabled", False):
+        return data
+    hidden_tickers = {str(t) for t in (pm.get("hidden_tickers") or [])}
+    hidden_categories = {str(c).upper() for c in (pm.get("hidden_categories") or [])}
+    if not hidden_tickers and not hidden_categories:
+        return data
+    data = copy.deepcopy(data)
+    all_hidden: set[str] = set(hidden_tickers)
+    for s in (data.get("strumenti") or []):
+        tk = str(s.get("ticker") or "")
+        if str(s.get("tipo") or "").upper() in hidden_categories and tk:
+            all_hidden.add(tk)
+    if not all_hidden:
+        return data
+    data["strumenti"] = [
+        s for s in (data.get("strumenti") or [])
+        if str(s.get("ticker") or "") not in all_hidden
+    ]
+    for day_prices in (data.get("storico_prezzi") or {}).values():
+        for tk in all_hidden:
+            day_prices.pop(tk, None)
+    for e in (data.get("registro_eventi") or []):
+        if str(e.get("ticker") or "") in all_hidden:
+            e["ticker"] = PRIVACY_HIDDEN_TICKER_SENTINEL
+        # Il ticker nascosto puo' comparire anche nella nota di un evento non
+        # suo — es. il versamento automatico generato da "Inserisci operazione"
+        # scrive "Versamento automatico per acquisto <ticker>" su un evento
+        # VERSAMENTO (ticker="", quindi non toccato dal ciclo sopra).
+        note = e.get("note")
+        if note:
+            note_str = str(note)
+            for tk in all_hidden:
+                if tk and tk in note_str:
+                    note_str = note_str.replace(tk, PRIVACY_HIDDEN_TICKER_SENTINEL)
+            e["note"] = note_str
+    return data

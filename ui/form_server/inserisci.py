@@ -468,9 +468,9 @@ def _render_success(summary: str) -> str:
 @router.get("/", response_class=HTMLResponse)
 @router.get("/operazioni", response_class=HTMLResponse)
 async def get_form():
-    from persistence.storage import load_data
+    from persistence.storage import load_data, load_settings, apply_privacy_filter
     try:
-        data = load_data()
+        data = apply_privacy_filter(load_data(), load_settings())
         tickers = _get_tickers_info(data)
     except Exception as exc:
         logger.error("Errore caricamento dati: %s", exc)
@@ -484,9 +484,9 @@ async def post_form(cart_data: str = Form("[]")):
     from core.finance import append_evento_portafoglio
 
     def show_error(msg: str):
-        from persistence.storage import load_data as _ld
+        from persistence.storage import load_data as _ld, load_settings as _ls, apply_privacy_filter
         try:
-            tickers = _get_tickers_info(_ld())
+            tickers = _get_tickers_info(apply_privacy_filter(_ld(), _ls()))
         except Exception:
             tickers = []
         return HTMLResponse(_render_form(tickers, error=msg))
@@ -500,7 +500,7 @@ async def post_form(cart_data: str = Form("[]")):
         return show_error("Carrello vuoto — aggiungi almeno una voce prima di confermare.")
 
     try:
-        data = load_data()
+        data = load_data()  # NON filtrato: qui finisce in save_data() più sotto
     except Exception as exc:
         return show_error(f"Impossibile caricare i dati: {exc}")
 

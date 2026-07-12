@@ -13,6 +13,19 @@ from ui.components import legend_block, render_section_title, vertical_gap
 
 def render_ai_reports(ctx: SimpleNamespace, *, api_key: str, model: str) -> None:
     """Libreria report AI salvati e confronto diff tra due analisi."""
+    settings = getattr(ctx, "settings", {}) or {}
+    if (settings.get("privacy_mode", {}) or {}).get("enabled", False):
+        # I report salvati sono testo libero generato dall'AI prima che la
+        # privacy fosse attivata: possono citare per nome gli strumenti
+        # nascosti (non filtrabile in modo affidabile a posteriori), quindi
+        # restano nascosti finche' la privacy e' attiva.
+        legend_block(
+            "Report nascosti mentre la Modalità Privacy è attiva (possono citare strumenti nascosti). "
+            "Torneranno visibili disattivandola.",
+            variant="bottom",
+        )
+        return
+
     reports = load_ai_reports()
 
     if not reports:

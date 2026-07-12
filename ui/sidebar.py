@@ -515,17 +515,6 @@ def render_sidebar(data: dict) -> None:
                 import webbrowser
                 webbrowser.open_new_tab("http://localhost:8502/sator")
 
-        _pm = _sidebar_settings.get("privacy_mode", {}) or {}
-        _privacy_active = bool(_pm.get("enabled", False))
-        if _privacy_active:
-            _n_tk = len(_pm.get("hidden_tickers") or [])
-            _n_cat = len(_pm.get("hidden_categories") or [])
-            _parts = []
-            if _n_cat:
-                _parts.append(f"{_n_cat} categ.")
-            if _n_tk:
-                _parts.append(f"{_n_tk} titoli")
-            st.warning(f"🔒 Privacy: {', '.join(_parts)} nascosti" if _parts else "🔒 Privacy attiva")
         if st.button("🔒 Privacy", width="stretch"):
             import webbrowser
             webbrowser.open_new_tab("http://localhost:8502/privacy")

@@ -73,9 +73,9 @@ def _render_export_pp_page(data: dict, ok_msg: str = "", err_msg: str = "") -> s
 
 @router.get("/export_pp", response_class=HTMLResponse)
 async def get_export_pp():
-    from persistence.storage import load_data as _ld
+    from persistence.storage import load_data as _ld, load_settings as _ls, apply_privacy_filter
     try:
-        d = _ld()
+        d = apply_privacy_filter(_ld(), _ls())
     except Exception:
         d = {}
     return HTMLResponse(_render_export_pp_page(d))
@@ -83,10 +83,10 @@ async def get_export_pp():
 
 @router.get("/export_pp/transazioni")
 async def get_export_pp_transazioni():
-    from persistence.storage import load_data as _ld
+    from persistence.storage import load_data as _ld, load_settings as _ls, apply_privacy_filter
     from core.services.portfolio_performance_export import build_portfolio_performance_csv
     try:
-        d = _ld()
+        d = apply_privacy_filter(_ld(), _ls())
         csv_str = build_portfolio_performance_csv(d)
         return Response(
             content=csv_str.encode("utf-8-sig"),
@@ -100,10 +100,10 @@ async def get_export_pp_transazioni():
 
 @router.get("/export_pp/prezzi")
 async def get_export_pp_prezzi():
-    from persistence.storage import load_data as _ld
+    from persistence.storage import load_data as _ld, load_settings as _ls, apply_privacy_filter
     from core.services.portfolio_performance_export import build_portfolio_performance_prices_zip
     try:
-        d = _ld()
+        d = apply_privacy_filter(_ld(), _ls())
         zip_bytes = build_portfolio_performance_prices_zip(d)
         return Response(
             content=zip_bytes,

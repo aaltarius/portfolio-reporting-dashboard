@@ -13,7 +13,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from core.config import COLORS
+from core.config import COLORS, PRIVACY_HIDDEN_TICKER_SENTINEL
 
 
 ASSET_CATEGORY_REGISTRY: dict[str, dict[str, str]] = {
@@ -215,6 +215,12 @@ def filter_data_by_selected_categories(
         if not isinstance(record, dict):
             return True
         ticker = str(record.get("ticker") or "").strip()
+        if ticker == PRIVACY_HIDDEN_TICKER_SENTINEL:
+            # Evento di uno strumento nascosto dalla privacy: il ticker e'
+            # gia' mascherato (non e' un ticker reale, quindi non puo' mai
+            # comparire in selected_tickers) ma va comunque tenuto per non
+            # falsare i flussi di cassa aggregati (es. liquidita').
+            return True
         if ticker:
             return ticker in selected_tickers
         blob = _text_blob(record)

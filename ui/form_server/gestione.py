@@ -356,9 +356,9 @@ document.addEventListener('DOMContentLoaded',loadEv);
 
 @router.get("/operazioni_gestione", response_class=HTMLResponse)
 async def get_operazioni_gestione(tab: str = "edit", ok: str = "", err: str = ""):
-    from persistence.storage import load_data as _ld
+    from persistence.storage import load_data as _ld, load_settings as _ls, apply_privacy_filter
     try:
-        d = _ld()
+        d = apply_privacy_filter(_ld(), _ls())
     except Exception as exc:
         d = {}
         err = str(exc)
@@ -382,12 +382,16 @@ async def post_operazioni_gestione(
     importo_lordo: str = Form("0"),
     aliquota_perc: str = Form("0"),
 ):
-    from persistence.storage import load_data as _ld, _safe_float
+    from persistence.storage import load_data as _ld, load_settings as _ls, apply_privacy_filter, _safe_float
     from urllib.parse import quote as urlquote
 
     def err_page(msg: str) -> HTMLResponse:
+        # Solo per il re-render in caso di errore: qui SI applica il filtro
+        # privacy. Il "d" usato per il salvataggio (sotto) resta invece
+        # sempre non filtrato, altrimenti un salvataggio con privacy attiva
+        # cancellerebbe per sempre lo strumento nascosto dal disco.
         try:
-            d = _ld()
+            d = apply_privacy_filter(_ld(), _ls())
         except Exception:
             d = {}
         return HTMLResponse(_render_eventi_page(
@@ -397,7 +401,7 @@ async def post_operazioni_gestione(
         ))
 
     try:
-        d = _ld()
+        d = _ld()  # NON filtrato: puo' finire in save_data() più sotto
     except Exception as exc:
         return err_page(str(exc))
 
@@ -443,9 +447,9 @@ async def post_operazioni_gestione(
 
 @router.get("/liquidita_gestione", response_class=HTMLResponse)
 async def get_liquidita_gestione(tab: str = "edit", ok: str = "", err: str = ""):
-    from persistence.storage import load_data as _ld
+    from persistence.storage import load_data as _ld, load_settings as _ls, apply_privacy_filter
     try:
-        d = _ld()
+        d = apply_privacy_filter(_ld(), _ls())
     except Exception as exc:
         d = {}
         err = str(exc)
@@ -464,12 +468,16 @@ async def post_liquidita_gestione(
     note: str = Form(""),
     importo_lordo: str = Form("0"),
 ):
-    from persistence.storage import load_data as _ld, _safe_float
+    from persistence.storage import load_data as _ld, load_settings as _ls, apply_privacy_filter, _safe_float
     from urllib.parse import quote as urlquote
 
     def err_page(msg: str) -> HTMLResponse:
+        # Solo per il re-render in caso di errore: qui SI applica il filtro
+        # privacy. Il "d" usato per il salvataggio (sotto) resta invece
+        # sempre non filtrato, altrimenti un salvataggio con privacy attiva
+        # cancellerebbe per sempre lo strumento nascosto dal disco.
         try:
-            d = _ld()
+            d = apply_privacy_filter(_ld(), _ls())
         except Exception:
             d = {}
         return HTMLResponse(_render_eventi_page(
@@ -479,7 +487,7 @@ async def post_liquidita_gestione(
         ))
 
     try:
-        d = _ld()
+        d = _ld()  # NON filtrato: puo' finire in save_data() più sotto
     except Exception as exc:
         return err_page(str(exc))
 

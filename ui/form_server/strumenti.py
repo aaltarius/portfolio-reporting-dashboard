@@ -714,9 +714,9 @@ document.addEventListener('DOMContentLoaded',()=>{{loadEdit();loadDel();}});
 
 @router.get("/strumenti", response_class=HTMLResponse)
 async def get_strumenti(tab: str = "add", ok: str = "", err: str = "", ticker: str = ""):
-    from persistence.storage import load_data as _ld
+    from persistence.storage import load_data as _ld, load_settings as _ls, apply_privacy_filter
     try:
-        d = _ld()
+        d = apply_privacy_filter(_ld(), _ls())
     except Exception as exc:
         d = {}
         err = str(exc)
@@ -744,11 +744,15 @@ async def post_strumenti(
     storico_data_a: str = Form(""),
     pdf_file: Optional[UploadFile] = File(None),
 ):
-    from persistence.storage import load_data as _ld, save_data
+    from persistence.storage import load_data as _ld, load_settings as _ls, apply_privacy_filter, save_data
 
     def err_page(msg: str, tab: str = "add", sel_ticker: str = "") -> HTMLResponse:
+        # Solo per il re-render in caso di errore: qui SI applica il filtro
+        # privacy. I "d" usati per le operazioni di scrittura più sotto
+        # restano invece sempre non filtrati, altrimenti un salvataggio con
+        # privacy attiva cancellerebbe per sempre lo strumento nascosto.
         try:
-            d = _ld()
+            d = apply_privacy_filter(_ld(), _ls())
         except Exception:
             d = {}
         return HTMLResponse(_render_strumenti_page(d, err_msg=msg, active_tab=tab, selected_ticker=sel_ticker))
@@ -758,7 +762,7 @@ async def post_strumenti(
         if len(isin) != 12:
             return err_page("L'ISIN deve avere 12 caratteri.", "add")
         try:
-            d = _ld()
+            d = apply_privacy_filter(_ld(), _ls())  # ramo di sola ricerca, non salva mai
         except Exception as exc:
             return err_page(str(exc), "add")
         if any(s.get("isin") == isin for s in d.get("strumenti", [])):

@@ -399,8 +399,8 @@ def _render_scheda_strumento(strumento: dict) -> str:
 
 @router.get("/strumento/{ticker}", response_class=HTMLResponse)
 async def get_scheda_strumento(ticker: str):
-    from persistence.storage import load_data as _ld
-    d = _ld()
+    from persistence.storage import load_data as _ld, load_settings as _ls, apply_privacy_filter
+    d = apply_privacy_filter(_ld(), _ls())
     strumento = next((s for s in (d.get("strumenti") or []) if s.get("ticker") == ticker), None)
     if strumento is None:
         return HTMLResponse(f"<h3>Strumento '{ticker}' non trovato.</h3>", status_code=404)

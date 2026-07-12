@@ -33,6 +33,7 @@ if 'active_tab' not in st.session_state:
 # === IMPORTS ===
 from persistence.storage import (
     APP_VERSION, SCHEMA_VERSION, load_quotes_log, _data_mtime, load_settings,
+    apply_privacy_filter,
 )
 from core.asset_categories import get_selected_category_codes
 from core.cache_signatures import build_portfolio_data_signature, build_portfolio_signature_components, theme_signature
@@ -235,40 +236,7 @@ except Exception:
 render_sidebar(data)
 
 
-def _apply_privacy_filter(data: dict, settings: dict) -> dict:
-    """Filtra in memoria gli strumenti nascosti. Non tocca mai i dati su disco."""
-    import copy
-    pm = (settings or {}).get("privacy_mode", {}) or {}
-    if not pm.get("enabled", False):
-        return data
-    hidden_tickers = {str(t) for t in (pm.get("hidden_tickers") or [])}
-    hidden_categories = {str(c).upper() for c in (pm.get("hidden_categories") or [])}
-    if not hidden_tickers and not hidden_categories:
-        return data
-    data = copy.deepcopy(data)
-    all_hidden: set[str] = set(hidden_tickers)
-    for s in (data.get("strumenti") or []):
-        tk = str(s.get("ticker") or "")
-        if str(s.get("tipo") or "").upper() in hidden_categories and tk:
-            all_hidden.add(tk)
-    if not all_hidden:
-        return data
-    data["strumenti"] = [
-        s for s in (data.get("strumenti") or [])
-        if str(s.get("ticker") or "") not in all_hidden
-    ]
-    for day_prices in (data.get("storico_prezzi") or {}).values():
-        for tk in all_hidden:
-            day_prices.pop(tk, None)
-    if data.get("registro_eventi"):
-        data["registro_eventi"] = [
-            e for e in data["registro_eventi"]
-            if str(e.get("ticker") or "") not in all_hidden
-        ]
-    return data
-
-
-data = _apply_privacy_filter(data, settings)
+data = apply_privacy_filter(data, settings)
 
 # Il log quotazioni è un metadato volatile della UI, non parte della
 # firma finanziaria cacheata. Va letto dopo la sidebar perché il pulsante

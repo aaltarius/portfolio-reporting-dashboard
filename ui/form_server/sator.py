@@ -633,11 +633,11 @@ async def post_sator(
     if azione == "analizza":
         try:
             import pandas as pd
-            from persistence.storage import load_data as _ld, load_settings as _ls
+            from persistence.storage import load_data as _ld, load_settings as _ls, apply_privacy_filter
             from core.services.sator import run_sator_analysis, build_sator_matrix_frame
 
-            data = _ld()
             settings = _ls()
+            data = apply_privacy_filter(_ld(), settings)
             budget_f = float(budget or 5000)
             sev_i = max(1, min(4, int(severity or 2)))
             ml_i = max(1, min(10, int(max_lines or 5)))

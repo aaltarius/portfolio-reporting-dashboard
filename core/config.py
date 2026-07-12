@@ -14,6 +14,15 @@ from typing import Any
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
 
+PRIVACY_HIDDEN_TICKER_SENTINEL = "—"
+"""Ticker sostitutivo per gli eventi di uno strumento nascosto dalla Modalita'
+Privacy (persistence.storage.apply_privacy_filter). Deve essere un valore
+*non vuoto* (compute_portfolio_state in core/finance.py richiede un ticker
+"truthy" per contare il flusso di cassa di ACQUISTO/VENDITA verso la
+liquidita'), ma che non coincide mai con un ticker reale. Vive qui (non in
+persistence/storage.py) perche' sia core/asset_categories.py sia
+persistence/storage.py devono poterlo importare senza creare un ciclo."""
+
 COLORS: dict[str, str] = {
     "success": "#1E8449",
     "danger": "#FF4B4B",
