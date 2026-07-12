@@ -19,6 +19,12 @@
 - per ogni colonna giorno, la cella con il valore più alto e quella con il valore più basso (pareggi inclusi) sono evidenziate in grassetto
 - nuova colonna con freccia diagonale subito prima di "P/L totale": verde (↗) se il risultato della settimana per quello strumento è positivo, rossa (↘) se negativo
 
+**Refactor tecnico — modularizzazione di `form_server.py`:**
+- `form_server.py` (3540 righe, unico file `.py` sciolto in root insieme ad `app.py`) è stato smontato in `ui/form_server/`, un modulo per pagina/route (`inserisci.py`, `strumenti.py`, `gestione.py`, `sator.py`, `scheda_strumento.py`, `export_pp.py`, `privacy.py`) più `shell.py` per gli asset condivisi (CSS, snippet JS dei tab, helper numerico) — stesso pattern "un file per pagina" già in uso in `ui/pages/` per le pagine Streamlit
+- l'entrypoint stesso è stato spostato da `form_server.py` (root) a `ui/form_server/__init__.py`; `app.py` ora importa `from ui.form_server import start_form_server` invece di `from form_server import start_form_server` — non resta più nessun secondo entrypoint sciolto in root
+- nessun comportamento applicativo cambiato: stesse route, stessi form, stessa logica di dominio — verificato ricostruendo l'app FastAPI e interrogando ogni route (incluse le sotto-pagine di Strumenti e i rami di errore) con dati reali
+- la duplicazione di alcune funzioni di gestione eventi tra `ui/form_server/gestione.py` e `ui/pages/operazioni.py` (Centro Operativo) resta intenzionale: riflette la scelta ancora aperta se tenere quelle funzionalità solo su sidebar, solo nell'app principale, o entrambe (Impostazioni → `operativo_mode`/`sator_mode`/`export_pp_mode`)
+
 ## 4.9.29 - Rifiniture Dashboard decisionale
 
 **Allocazione: bucket e strumenti:**

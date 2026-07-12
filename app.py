@@ -186,7 +186,7 @@ app_logger.info("Working directory Streamlit: %s", os.getcwd())
 # === FORM SERVER (operazioni senza rerun) ===
 @st.cache_resource
 def _start_form_server():
-    from form_server import start_form_server
+    from ui.form_server import start_form_server
     start_form_server()
     return True
 _start_form_server()
