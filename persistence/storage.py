@@ -384,7 +384,6 @@ def default_settings():
             "budget_preset": 900.0,
             "default_budget": 900.0,
             "include_watchlist": True,
-            "include_candidates": True,
             "include_portfolio": True,
             "allow_new_entries": True,
             "max_lines_per_scenario": 4,

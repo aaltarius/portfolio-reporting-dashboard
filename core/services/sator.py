@@ -36,7 +36,7 @@ from persistence.storage import load_sator_decisions, macro_cat
 # Costanti
 # --------------------------------------------------------------------------- #
 
-SATOR_STATE_VALUES = ("in_portafoglio", "watchlist", "candidato", "escluso", "fuori_piano")
+SATOR_STATE_VALUES = ("in_portafoglio", "watchlist", "escluso")
 SATOR_COMMISSION_VALUES = ("zero_commissioni", "standard", "non_definito")
 SATOR_ROLE_VALUES = (
     "core_globale", "core_regionale", "core_difensivo",
@@ -44,6 +44,29 @@ SATOR_ROLE_VALUES = (
     "liquidita", "oro", "bond", "altro",
 )
 SATOR_INVESTIBLE_CATEGORIES = ("ETF", "ETC")
+
+# Etichette leggibili in italiano per le chiavi tecniche (snake_case) sopra:
+# usate SOLO per la visualizzazione (es. format_func delle SelectboxColumn
+# nell'editor universo SATOR in Pianificazione) - le chiavi stesse restano
+# invariate perche' sono referenziate da punteggi/cap di concentrazione e da
+# decisioni SATOR gia' salvate su disco.
+SATOR_STATE_LABELS: dict[str, str] = {
+    "in_portafoglio": "In portafoglio",
+    "watchlist": "In osservazione",
+    "escluso": "Escluso",
+}
+SATOR_ROLE_LABELS: dict[str, str] = {
+    "core_globale": "Core globale",
+    "core_regionale": "Core regionale",
+    "core_difensivo": "Core difensivo",
+    "satellite_crescita": "Satellite crescita",
+    "satellite_difensivo": "Satellite difensivo",
+    "satellite_tematico": "Satellite tematico",
+    "liquidita": "Liquidità",
+    "oro": "Oro",
+    "bond": "Obbligazionario",
+    "altro": "Altro",
+}
 
 PESI_DIMENSIONI: dict[str, float] = {
     "strategic_fit": 0.30,
@@ -85,6 +108,28 @@ CAP_MORBIDO_DEFAULT = 0.08
 # Nature selezionabili nell'editor universo (le stesse usate per i cap morbidi).
 SATOR_NATURE_VALUES = tuple(CAP_MORBIDO_NATURA.keys()) + ("fondo_pac", "altro")
 
+# Etichette leggibili in italiano per SATOR_NATURE_VALUES - vedi nota su
+# SATOR_STATE_LABELS/SATOR_ROLE_LABELS: solo visualizzazione, le chiavi
+# restano invariate.
+SATOR_NATURE_LABELS: dict[str, str] = {
+    "azionario_globale_core": "Azionario globale core",
+    "azionario_emergenti": "Azionario emergenti",
+    "monetario": "Monetario",
+    "bond_governativo": "Obbligazionario governativo",
+    "bond_globale": "Obbligazionario globale",
+    "oro": "Oro",
+    "tecnologia_ai": "Tecnologia / AI",
+    "healthcare": "Salute",
+    "energia": "Energia",
+    "metalli_miniere": "Metalli e miniere",
+    "commodities": "Materie prime",
+    "italia": "Italia",
+    "quality_factor": "Fattore qualità",
+    "real_estate": "Immobiliare",
+    "fondo_pac": "Fondo PAC",
+    "altro": "Altro",
+}
+
 FINESTRE = {"ret_1m": 21, "ret_3m": 63, "ret_6m": 126, "ret_12m": 252}
 PESI_MOMENTUM = {"ret_1m": 0.10, "ret_3m": 0.35, "ret_6m": 0.35, "ret_12m": 0.20}
 MIN_PUNTI_STORICO = 30
@@ -95,7 +140,6 @@ DEFAULT_SATOR_SETTINGS: dict[str, Any] = {
     "budget_preset": 900.0,
     "default_budget": 900.0,
     "include_watchlist": True,
-    "include_candidates": True,
     "include_portfolio": True,
     "investible_categories": list(SATOR_INVESTIBLE_CATEGORIES),
     "max_share_per_line": 0.35,   # nessuna linea oltre il 35% del budget suggerito
@@ -245,7 +289,7 @@ def infer_sator_metadata(item: dict[str, Any], in_portfolio: bool) -> dict[str, 
 
     return {
         "active": True,
-        "state": "in_portafoglio" if in_portfolio else "candidato",
+        "state": "in_portafoglio" if in_portfolio else "watchlist",
         "nature": nature,
         "role": role,
         "comparison_group": _infer_comparison_group(nature, role, ticker, name),
@@ -283,7 +327,7 @@ def build_sator_universe_editor_frame(data: dict[str, Any]) -> pd.DataFrame:
             "Ticker": ticker,
             "Nome": item.get("nome", ticker),
             "Attivo SATOR": bool(sator.get("active", inf["active"])),
-            "Stato": str(sator.get("state") or inf["state"]),
+            "Stato": _resolve_sator_state(sator.get("state"), inf["state"]),
             "Natura": _meta_strutturale(sator, inf, "nature"),
             "Ruolo": _meta_strutturale(sator, inf, "role"),
             "Zero commissioni": zero,
@@ -311,7 +355,7 @@ def apply_sator_universe_editor_frame(data: dict[str, Any], editor_df: pd.DataFr
         # gruppo e funzione sono DERIVATI da natura/ruolo: non si chiedono all'utente
         payload = {
             "active": bool(row.get("Attivo SATOR", True)),
-            "state": _coerce_choice(row.get("Stato"), SATOR_STATE_VALUES, "candidato"),
+            "state": _resolve_sator_state(row.get("Stato"), "watchlist"),
             "nature": nature,
             "role": role,
             "comparison_group": _infer_comparison_group(nature, role, ticker, str(row.get("Nome") or "")),
@@ -495,7 +539,6 @@ def run_sator_analysis(
         "investible_categories": list(allowed),
         "universe_count": int(len(ranking)),
         "watchlist_count": int((ranking["state"] == "watchlist").sum()) if not ranking.empty else 0,
-        "candidate_count": int((ranking["state"] == "candidato").sum()) if not ranking.empty else 0,
         "storico_incompleto": int((~ranking["storico_sufficiente"]).sum()) if not ranking.empty else 0,
     }
     return {"summary": summary, "ranking": ranking, "alerts": alerts, "scenarios": {}, "sator_settings": cfg}
@@ -524,15 +567,13 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
         inf = infer_sator_metadata(item, ticker in positions_map)
         if not bool(sator.get("active", inf["active"])):
             continue
-        state = _coerce_choice(sator.get("state", inf["state"]), SATOR_STATE_VALUES, inf["state"])
-        if state in ("escluso", "fuori_piano"):
+        state = _resolve_sator_state(sator.get("state"), inf["state"])
+        if state == "escluso":
             continue
         category = macro_cat(str(item.get("tipo") or ""))
         if category not in ctx.selected_categories:
             continue
         if state == "watchlist" and not cfg.get("include_watchlist", True):
-            continue
-        if state == "candidato" and not cfg.get("include_candidates", True):
             continue
         in_ptf = _safe_float(positions_map.get(ticker, {}).get("Quote"), 0.0) > 1e-9
         if in_ptf and not cfg.get("include_portfolio", True):
@@ -599,8 +640,7 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
     df = df.sort_values("score_finale", ascending=False).reset_index(drop=True)
     df["rank_totale"] = df["score_finale"].rank(ascending=False, method="first").astype(int)
     df["rango_gruppo"] = df.groupby("comparison_group")["score_finale"].rank(ascending=False, method="first").astype(int)
-    df["challenger_flag"] = np.where(df["in_portfolio"], "Incumbent",
-                              np.where(df["state"] == "watchlist", "Watchlist", "Challenger"))
+    df["challenger_flag"] = np.where(df["in_portfolio"], "Incumbent", "In osservazione")
     df["selection_reason"] = _build_comparative_reasons(df)
     return df
 
@@ -925,7 +965,7 @@ def compute_watchlist_reminders(data: dict[str, Any], state_df: pd.DataFrame) ->
             continue
         sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
         inf = infer_sator_metadata(item, False)
-        state = _coerce_choice(sator.get("state", inf["state"]), SATOR_STATE_VALUES, inf["state"])
+        state = _resolve_sator_state(sator.get("state"), inf["state"])
         if state != "watchlist":
             continue
         role = _meta_strutturale(sator, inf, "role")
@@ -941,8 +981,6 @@ def compute_watchlist_reminders(data: dict[str, Any], state_df: pd.DataFrame) ->
     for bucket_key in reminders:
         reminders[bucket_key] = sorted(reminders[bucket_key])
     return reminders
-
-
 
 
 def latest_sator_decision(items: list[dict[str, Any]]) -> dict[str, Any] | None:
