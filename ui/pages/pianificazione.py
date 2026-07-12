@@ -29,8 +29,6 @@ from core.services.sator import (
     SATOR_NATURE_VALUES,
     build_portfolio_rings_frame,
     compute_watchlist_reminders,
-    build_coverage_matrix_frame,
-    sator_matrix_doppioni_scoperte,
     build_next_purchase_bubble_frame,
     latest_sator_decision,
 )
@@ -46,7 +44,6 @@ from ui.charts.pianificazione import (
     build_ante_post_bucket_chart,
     build_objective_mix_chart,
     build_allocation_rings_chart,
-    build_coverage_matrix_chart,
     build_next_purchase_bubble_chart,
 )
 from ui.sator_matrix import (
@@ -764,33 +761,6 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
         }
         watchlist_reminders = compute_watchlist_reminders(data, state_df)
         _render_bucket_allocation_table(rings_df, bucket_totals, current_mix, objective, objective_key, theme, watchlist_reminders)
-
-    matrix_df = build_coverage_matrix_frame(data, state_df)
-    if matrix_df.empty:
-        st.info("Nessuno strumento posseduto: la matrice di copertura comparira' dopo il primo acquisto.")
-    else:
-        render_section_title(
-            "Copertura e sovrapposizione",
-            comment="Righe: strumenti posseduti. Colonne: aree di mercato coperte dal portafoglio o apribili da un candidato SATOR. Punteggio 4 = l'area e' coperta per intero; se piu' strumenti condividono la stessa area, il 4 si divide equamente tra loro - ogni colonna posseduta somma sempre a 4, quindi il valore per riga indica quanto di quell'area e' 'tua' rispetto agli altri strumenti che la coprono gia'.",
-            gap_after="sm",
-        )
-        fig_matrix = build_coverage_matrix_chart(matrix_df, theme)
-        st.plotly_chart(fig_matrix, width="stretch", config={"displayModeBar": False})
-        doppioni, scoperte = sator_matrix_doppioni_scoperte(matrix_df)
-        note_matrix: list[tuple[str, object]] = []
-        if doppioni:
-            note_matrix.append((
-                "Doppioni",
-                [(col, ", ".join(matrix_df.index[matrix_df[col] > 0])) for col in doppioni],
-            ))
-        else:
-            note_matrix.append(("Doppioni", "Nessuna area coperta da piu' di uno strumento."))
-        note_matrix.append((
-            "Aree scoperte",
-            ", ".join(scoperte) if scoperte else "Nessuna: ogni area vista dai candidati e' gia' coperta da almeno uno strumento posseduto.",
-        ))
-        _render_sator_explain_box(note_matrix, title="Lettura della matrice")
-
     render_section_title(
         "Prossimo acquisto: mappa decisionale",
         comment="Dati dall'ultima fotografia SATOR salvata (Storico decisionale piu' sotto, o dalla pagina SATOR attiva in sidebar) — non da un'analisi dal vivo.",
