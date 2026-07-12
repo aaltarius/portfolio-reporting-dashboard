@@ -150,7 +150,7 @@ _STATIC_VISUALS: dict[str, tuple[str, str]] = {
     "Difesa / sicurezza": _DIFESA,
     "Bene rifugio": _BENE_RIFUGIO,
     "Metalli e miniere": _METALLI,
-    "Commodities": _COMMODITIES,
+    "Materie prime": _COMMODITIES,
     "Mercati emergenti": _EMERGENTI,
     "Immobiliare": _IMMOBILIARE,
     "Liquidità": _LIQUIDITA,

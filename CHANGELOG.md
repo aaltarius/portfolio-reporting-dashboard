@@ -61,8 +61,12 @@
 **Nuova tabella "Allocazione: bucket e strumenti" in Pianificazione, al posto del box "Lettura dell'allocazione":**
 - il vecchio box testuale (dettaglio per strumento) restava poco leggibile anche dopo l'allineamento a colonne della 4.9.30; sostituito con una tabella unica sotto il grafico ad anelli (`ui/pages/pianificazione.py::_render_bucket_allocation_table`), che assorbe sia il confronto obiettivo/attuale sia l'elenco strumenti — niente più due box separati
 - riga per bucket (Core/Difensivo/Satellite): nome colorato come l'anello, controvalore, e una barra obiettivo-vs-attuale (riempimento = quota attuale, tacca = obiettivo) con lo scostamento in % colorato su tolleranza di ribilanciamento (entro ±3% verde, entro ±8% ambra, oltre rosso)
-- righe strumento sotto ciascun bucket (ordinate per importo decrescente): ticker, icona e etichetta di natura/esposizione, importo, mini-barra col peso % dentro il bucket; riga TOTALE in fondo
+- righe sotto ciascun bucket aggregate per natura/esposizione (non più una riga per strumento): colonna Natura (icona + etichetta) prima, colonna Strumenti dopo con l'elenco ticker che condividono quella natura, importo sommato e mini-barra col peso % riferito al gruppo natura dentro il bucket; riga TOTALE in fondo
 - nuove classi CSS `bucket-alloc-*` in `ui/styles.py`, agganciate alle variabili tema dell'app (si adattano automaticamente a chiaro/scuro)
+
+**Traduzione "Commodities" → "Materie prime":**
+- l'etichetta di natura/esposizione era l'unico valore ancora in inglese nel sistema di classificazione automatica (`core/instrument_classification.py`, icona in `ui/charts/natura_icons.py`) — tradotta, insieme al dato già salvato per lo strumento XDBC.MI
+- tradotto anche il campo `categoria_etf` (dato di arricchimento justETF, mostrato come "Categoria" nella scheda strumento) per XDBC.MI e GOLD.MI, che riportava "Commodities - ..."; resta un campo esterno, quindi un futuro ri-arricchimento potrebbe rieportare il termine inglese
 
 ## 4.9.29 - Rifiniture Dashboard decisionale
 

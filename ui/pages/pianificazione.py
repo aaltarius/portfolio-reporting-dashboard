@@ -197,9 +197,11 @@ def _build_bucket_allocation_table_html(
 ) -> str:
     """Tabella unica Core/Difensivo/Satellite: una riga-bucket con barra
     obiettivo-vs-attuale (fill = attuale, tacca = obiettivo) seguita dalle
-    righe-strumento del bucket con peso e natura. Sostituisce sia il vecchio
-    box testuale "Lettura dell'allocazione" sia il box "Strumenti per
-    bucket": un solo oggetto visivo invece di grafico + due box di testo."""
+    righe-natura del bucket (strumenti aggregati per natura: importo sommato,
+    peso riferito al gruppo natura, non al singolo strumento). Sostituisce
+    sia il vecchio box testuale "Lettura dell'allocazione" sia il box
+    "Strumenti per bucket": un solo oggetto visivo invece di grafico + due
+    box di testo."""
     bucket_colors = {
         "Core": getattr(theme, "color_blue", "#5B8DEF"),
         "Difensivo": getattr(theme, "color_green", "#22c55e"),
@@ -221,8 +223,7 @@ def _build_bucket_allocation_table_html(
         target_pct = min(max(target * 100.0, 0.0), 100.0)
         body_rows.append(f'''
         <tr class="bucket-alloc-bucket-row" style="--tone:{tone}">
-          <td><span class="bucket-alloc-bucket-name"><span class="dot"></span>{b}</span></td>
-          <td></td>
+          <td colspan="2"><span class="bucket-alloc-bucket-name"><span class="dot"></span>{b}</span></td>
           <td class="num">{fmt_eur_it(bucket_value, 2)}</td>
           <td>
             <div class="bucket-alloc-bar-track">
@@ -235,17 +236,24 @@ def _build_bucket_allocation_table_html(
             </div>
           </td>
         </tr>''')
-        for _, r in sub.sort_values("value", ascending=False).iterrows():
-            ticker = str(r["ticker"])
-            natura_label = str(r["natura"]) if r.get("natura") else "Esposizione diversificata"
+        sub = sub.copy()
+        sub["natura"] = sub["natura"].apply(lambda v: str(v) if v else "Esposizione diversificata")
+        sub = sub.sort_values("value", ascending=False)
+        natura_groups = (
+            sub.groupby("natura", sort=False)
+            .agg(value=("value", "sum"), tickers=("ticker", lambda s: ", ".join(s.astype(str))))
+            .sort_values("value", ascending=False)
+        )
+        for natura_label, grp in natura_groups.iterrows():
             natura_color, natura_svg = get_natura_visual(natura_label)
-            value = float(r["value"])
-            pct_of_bucket = (value / bucket_value * 100.0) if bucket_value > 0 else 0.0
+            group_value = float(grp["value"])
+            pct_of_bucket = (group_value / bucket_value * 100.0) if bucket_value > 0 else 0.0
+            tickers_html = grp["tickers"]
             body_rows.append(f'''
             <tr class="bucket-alloc-instrument-row" style="--tone:{tone}">
-              <td class="bucket-alloc-ticker">{ticker}</td>
               <td><span class="bucket-alloc-natura" style="--natura-color:{natura_color}">{natura_svg}{natura_label}</span></td>
-              <td class="num">{fmt_eur_it(value, 2)}</td>
+              <td class="bucket-alloc-ticker">{tickers_html}</td>
+              <td class="num">{fmt_eur_it(group_value, 2)}</td>
               <td>
                 <div class="bucket-alloc-mini-track">
                   <div class="bucket-alloc-mini-fill" style="width:{pct_of_bucket:.2f}%"></div>
@@ -255,14 +263,13 @@ def _build_bucket_allocation_table_html(
             </tr>''')
     body_rows.append(f'''
     <tr class="bucket-alloc-total-row">
-      <td>TOTALE</td>
-      <td></td>
+      <td colspan="2">TOTALE</td>
       <td class="num">{fmt_eur_it(total_value, 2)}</td>
       <td>100%</td>
     </tr>''')
     return (
         '<div class="bucket-alloc-card"><table class="bucket-alloc-table">'
-        '<thead><tr><th>Strumento</th><th>Natura</th><th class="num">Importo</th><th>Peso</th></tr></thead>'
+        '<thead><tr><th>Natura</th><th>Strumenti</th><th class="num">Importo</th><th>Peso</th></tr></thead>'
         f'<tbody>{"".join(body_rows)}</tbody></table></div>'
     )
 

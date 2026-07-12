@@ -18,7 +18,7 @@ _RULES: list[tuple[tuple[str, ...], str]] = [
     (("defence", "defense", "military", "aerospace", "security"), "Difesa / sicurezza"),
     (("oro", "gold", "xau", "metallo"), "Bene rifugio"),
     (("metals", "miners", "mining", "mine", "silver miners", "uranium", "copper", "metal miners"), "Metalli e miniere"),
-    (("commodity", "commodities", "broad cmdty", "raw material", "materie prime", "barrel", "dbc", "cmod"), "Commodities"),
+    (("commodity", "commodities", "broad cmdty", "raw material", "materie prime", "barrel", "dbc", "cmod"), "Materie prime"),
     (("emerging", "emergenti", "em market", "emerging markets"), "Mercati emergenti"),
     (("immob", "casa", "reit", "real estate", "realty", "property"), "Immobiliare"),
     (("overnight", "liquid", "cash", "xeon", "monet", "treasury bill"), "Liquidità"),

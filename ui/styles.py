@@ -307,8 +307,8 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
   padding:7px 14px;border-top:1px solid color-mix(in srgb, var(--ptf-border) 55%, transparent);
 }
 .bucket-alloc-instrument-row:hover td{background:color-mix(in srgb, var(--tone) 6%, transparent)}
-.bucket-alloc-ticker{font-weight:700;padding-left:17px!important}
-.bucket-alloc-natura{display:inline-flex;align-items:center;gap:6px;color:var(--ptf-muted);font-size:0.78rem}
+.bucket-alloc-ticker{font-weight:700;color:var(--ptf-text)}
+.bucket-alloc-natura{display:inline-flex;align-items:center;gap:6px;color:var(--ptf-muted);font-size:0.78rem;padding-left:17px}
 .bucket-alloc-natura svg{width:14px;height:14px;color:var(--natura-color);flex:none}
 .bucket-alloc-mini-track{position:relative;height:6px;border-radius:4px;background:color-mix(in srgb, var(--ptf-text) 10%, var(--ptf-surface));min-width:70px}
 .bucket-alloc-mini-fill{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--tone);opacity:.8}
