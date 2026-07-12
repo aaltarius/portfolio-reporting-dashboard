@@ -38,6 +38,7 @@ from ui.formatting import fmt_eur_it, fmt_pct_it
 from ui.page_chrome import render_page_intro as render_page_intro_shared, render_section_line as render_section_line_shared
 from ui.components import render_section_title, kpi_card, back_to_top, legend_block, render_styled_table
 from ui.charts.tables import color_pl
+from ui.charts.natura_icons import get_natura_visual
 from core.instrument_classification import suggest_tipo_correction
 from ui.charts.pianificazione import (
     build_composition_donut_chart,
@@ -173,6 +174,111 @@ def _build_sator_explain_html(rows: list[tuple[str, object]], title: str | None 
 def _render_sator_explain_box(rows: list[tuple[str, object]], title: str | None = None) -> None:
     """Vedi _build_sator_explain_html per la logica di costruzione dell'HTML."""
     st.markdown(_build_sator_explain_html(rows, title), unsafe_allow_html=True)
+
+
+def _bucket_scost_severity(delta_pp: float) -> str:
+    """Tolleranza di ribilanciamento: entro 3pp = ok, entro 8pp = attenzione,
+    oltre = fuori target."""
+    d = abs(delta_pp)
+    if d <= 3.0:
+        return "ok"
+    if d <= 8.0:
+        return "warn"
+    return "bad"
+
+
+def _build_bucket_allocation_table_html(
+    rings_df: pd.DataFrame,
+    bucket_totals: "pd.Series",
+    current_mix: dict[str, float],
+    objective: dict,
+    objective_key: dict[str, str],
+    theme,
+) -> str:
+    """Tabella unica Core/Difensivo/Satellite: una riga-bucket con barra
+    obiettivo-vs-attuale (fill = attuale, tacca = obiettivo) seguita dalle
+    righe-strumento del bucket con peso e natura. Sostituisce sia il vecchio
+    box testuale "Lettura dell'allocazione" sia il box "Strumenti per
+    bucket": un solo oggetto visivo invece di grafico + due box di testo."""
+    bucket_colors = {
+        "Core": getattr(theme, "color_blue", "#5B8DEF"),
+        "Difensivo": getattr(theme, "color_green", "#22c55e"),
+        "Satellite": getattr(theme, "color_orange", "#E8B960"),
+    }
+    total_value = float(bucket_totals.sum())
+    body_rows: list[str] = []
+    for b in ("Core", "Difensivo", "Satellite"):
+        sub = rings_df[rings_df["bucket"] == b]
+        if sub.empty:
+            continue
+        tone = bucket_colors[b]
+        target = float(objective.get(objective_key[b], 0.0))
+        attuale = float(current_mix.get(b, 0.0))
+        scost = (attuale - target) * 100.0
+        severity = _bucket_scost_severity(scost)
+        bucket_value = float(bucket_totals.get(b, 0.0))
+        fill_pct = min(max(attuale * 100.0, 0.0), 100.0)
+        target_pct = min(max(target * 100.0, 0.0), 100.0)
+        body_rows.append(f'''
+        <tr class="bucket-alloc-bucket-row" style="--tone:{tone}">
+          <td><span class="bucket-alloc-bucket-name"><span class="dot"></span>{b}</span></td>
+          <td></td>
+          <td class="num">{fmt_eur_it(bucket_value, 2)}</td>
+          <td>
+            <div class="bucket-alloc-bar-track">
+              <div class="bucket-alloc-bar-fill" style="width:{fill_pct:.2f}%"></div>
+              <div class="bucket-alloc-bar-target" style="left:{target_pct:.2f}%"></div>
+            </div>
+            <div class="bucket-alloc-bar-caption">
+              <span>Attuale {fmt_pct_it(attuale, 1)} &middot; obiettivo {fmt_pct_it(target, 1)}</span>
+              <span class="bucket-alloc-scost {severity}">{scost:+.1f}%</span>
+            </div>
+          </td>
+        </tr>''')
+        for _, r in sub.sort_values("value", ascending=False).iterrows():
+            ticker = str(r["ticker"])
+            natura_label = str(r["natura"]) if r.get("natura") else "Esposizione diversificata"
+            natura_color, natura_svg = get_natura_visual(natura_label)
+            value = float(r["value"])
+            pct_of_bucket = (value / bucket_value * 100.0) if bucket_value > 0 else 0.0
+            body_rows.append(f'''
+            <tr class="bucket-alloc-instrument-row" style="--tone:{tone}">
+              <td class="bucket-alloc-ticker">{ticker}</td>
+              <td><span class="bucket-alloc-natura" style="--natura-color:{natura_color}">{natura_svg}{natura_label}</span></td>
+              <td class="num">{fmt_eur_it(value, 2)}</td>
+              <td>
+                <div class="bucket-alloc-mini-track">
+                  <div class="bucket-alloc-mini-fill" style="width:{pct_of_bucket:.2f}%"></div>
+                </div>
+                <span class="bucket-alloc-mini-caption">{pct_of_bucket:.0f}% del bucket</span>
+              </td>
+            </tr>''')
+    body_rows.append(f'''
+    <tr class="bucket-alloc-total-row">
+      <td>TOTALE</td>
+      <td></td>
+      <td class="num">{fmt_eur_it(total_value, 2)}</td>
+      <td>100%</td>
+    </tr>''')
+    return (
+        '<div class="bucket-alloc-card"><table class="bucket-alloc-table">'
+        '<thead><tr><th>Strumento</th><th>Natura</th><th class="num">Importo</th><th>Peso</th></tr></thead>'
+        f'<tbody>{"".join(body_rows)}</tbody></table></div>'
+    )
+
+
+def _render_bucket_allocation_table(
+    rings_df: pd.DataFrame,
+    bucket_totals: "pd.Series",
+    current_mix: dict[str, float],
+    objective: dict,
+    objective_key: dict[str, str],
+    theme,
+) -> None:
+    st.markdown(
+        _build_bucket_allocation_table_html(rings_df, bucket_totals, current_mix, objective, objective_key, theme),
+        unsafe_allow_html=True,
+    )
 
 
 def _build_combo_kpis(combo_df: pd.DataFrame, budget: float) -> dict[str, float]:
@@ -635,20 +741,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
             b: (float(bucket_totals.get(b, 0.0)) / total_value if total_value > 0 else 0.0)
             for b in ("Core", "Difensivo", "Satellite")
         }
-        letture = [
-            f"{b} &middot; attuale {fmt_pct_it(current_mix[b], 1)} vs obiettivo {fmt_pct_it(float(objective.get(objective_key[b], 0.0)), 1)}"
-            for b in ("Core", "Difensivo", "Satellite")
-        ]
-        composizione_rows: list[tuple[str, object]] = [("Coerenza col target", letture)]
-        for b in ("Core", "Difensivo", "Satellite"):
-            sub = rings_df[rings_df["bucket"] == b]
-            if sub.empty:
-                continue
-            composizione_rows.append((
-                b,
-                [(str(r["ticker"]), str(r["natura"]), fmt_eur_it(float(r["value"]), 2)) for _, r in sub.iterrows()],
-            ))
-        _render_sator_explain_box(composizione_rows, title="Lettura dell'allocazione")
+        _render_bucket_allocation_table(rings_df, bucket_totals, current_mix, objective, objective_key, theme)
 
     matrix_df = build_coverage_matrix_frame(data, state_df)
     if matrix_df.empty:

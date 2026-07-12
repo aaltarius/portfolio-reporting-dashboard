@@ -58,6 +58,12 @@
 - i marker MAX/MIN di "Rendimento dello strumento" (Quotazioni) e "Rendimento Omogeneizzato per Tipologia" (Cruscotti) formattavano il valore con `extrema_value_format` di default ("eur0", es. "€ 118") anche se l'asse è un indice Base 100 dal 1° investimento, non un controvalore in euro
 - aggiunto un formato dedicato `pct1_base100` (`ui/charts/extrema.py`) che converte l'indice in percentuale di rendimento rispetto a 100 (es. 118,3 → "+18,3%", 82,7 → "-17,3%") e impostato sui 4 chart_id con quella semantica (`ui/charts/settings.py`)
 
+**Nuova tabella "Allocazione: bucket e strumenti" in Pianificazione, al posto del box "Lettura dell'allocazione":**
+- il vecchio box testuale (dettaglio per strumento) restava poco leggibile anche dopo l'allineamento a colonne della 4.9.30; sostituito con una tabella unica sotto il grafico ad anelli (`ui/pages/pianificazione.py::_render_bucket_allocation_table`), che assorbe sia il confronto obiettivo/attuale sia l'elenco strumenti — niente più due box separati
+- riga per bucket (Core/Difensivo/Satellite): nome colorato come l'anello, controvalore, e una barra obiettivo-vs-attuale (riempimento = quota attuale, tacca = obiettivo) con lo scostamento in % colorato su tolleranza di ribilanciamento (entro ±3% verde, entro ±8% ambra, oltre rosso)
+- righe strumento sotto ciascun bucket (ordinate per importo decrescente): ticker, icona e etichetta di natura/esposizione, importo, mini-barra col peso % dentro il bucket; riga TOTALE in fondo
+- nuove classi CSS `bucket-alloc-*` in `ui/styles.py`, agganciate alle variabili tema dell'app (si adattano automaticamente a chiaro/scuro)
+
 ## 4.9.29 - Rifiniture Dashboard decisionale
 
 **Allocazione: bucket e strumenti:**

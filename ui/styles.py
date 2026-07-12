@@ -249,6 +249,74 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
   font-size:0.86rem;
   line-height:1.60;
 }
+.bucket-alloc-card{
+  width:100%;box-sizing:border-box;margin:8px 0 14px 0;
+  background:var(--ptf-surface);
+  border:1px solid var(--ptf-border);
+  border-radius:16px;
+  box-shadow:var(--ptf-shadow);
+  overflow:hidden;
+}
+.bucket-alloc-table{width:100%;border-collapse:collapse;font-size:0.86rem}
+.bucket-alloc-table thead th{
+  text-align:left;padding:10px 14px;font-weight:800;font-size:0.72rem;
+  letter-spacing:.04em;text-transform:uppercase;color:var(--ptf-muted);
+  border-bottom:1px solid var(--ptf-border);
+}
+.bucket-alloc-table thead th.num{text-align:right}
+.bucket-alloc-table td{color:var(--ptf-text)}
+.bucket-alloc-table td.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.bucket-alloc-bucket-row td{
+  padding:12px 14px 8px 14px;
+  border-top:1px solid var(--ptf-border);
+  background:color-mix(in srgb, var(--tone) 7%, var(--ptf-surface));
+}
+.bucket-alloc-bucket-row:first-child td{border-top:0}
+.bucket-alloc-bucket-name{
+  font-weight:850;font-size:0.95rem;color:var(--tone);
+  display:inline-flex;align-items:center;gap:8px;
+}
+.bucket-alloc-bucket-name .dot{width:9px;height:9px;border-radius:50%;background:var(--tone);display:inline-block;flex:none}
+.bucket-alloc-bar-track{
+  position:relative;height:10px;border-radius:6px;
+  background:color-mix(in srgb, var(--ptf-text) 10%, var(--ptf-surface));
+}
+.bucket-alloc-bar-fill{
+  position:absolute;left:0;top:0;bottom:0;border-radius:6px;
+  background:var(--tone);
+  transition:width .25s ease;
+}
+.bucket-alloc-bar-target{
+  position:absolute;top:-3px;bottom:-3px;width:2px;
+  background:var(--ptf-text);opacity:.6;
+}
+.bucket-alloc-bar-target::before{
+  content:"";position:absolute;top:-5px;left:50%;transform:translateX(-50%);
+  border-left:4px solid transparent;border-right:4px solid transparent;
+  border-top:5px solid var(--ptf-text);opacity:.6;
+}
+.bucket-alloc-bar-caption{
+  display:flex;justify-content:space-between;gap:8px;margin-top:5px;
+  font-size:0.74rem;color:var(--ptf-muted);
+}
+.bucket-alloc-scost{font-weight:800;white-space:nowrap}
+.bucket-alloc-scost.ok{color:var(--ptf-success)}
+.bucket-alloc-scost.warn{color:var(--ptf-warning)}
+.bucket-alloc-scost.bad{color:var(--ptf-danger)}
+.bucket-alloc-instrument-row td{
+  padding:7px 14px;border-top:1px solid color-mix(in srgb, var(--ptf-border) 55%, transparent);
+}
+.bucket-alloc-instrument-row:hover td{background:color-mix(in srgb, var(--tone) 6%, transparent)}
+.bucket-alloc-ticker{font-weight:700;padding-left:17px!important}
+.bucket-alloc-natura{display:inline-flex;align-items:center;gap:6px;color:var(--ptf-muted);font-size:0.78rem}
+.bucket-alloc-natura svg{width:14px;height:14px;color:var(--natura-color);flex:none}
+.bucket-alloc-mini-track{position:relative;height:6px;border-radius:4px;background:color-mix(in srgb, var(--ptf-text) 10%, var(--ptf-surface));min-width:70px}
+.bucket-alloc-mini-fill{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--tone);opacity:.8}
+.bucket-alloc-mini-caption{display:block;margin-top:3px;font-size:0.72rem;color:var(--ptf-muted)}
+.bucket-alloc-total-row td{
+  padding:10px 14px;border-top:2px solid var(--ptf-border);
+  font-weight:850;
+}
 [data-testid="stMetric"]{
   background:var(--ptf-surface);
   border:1px solid var(--ptf-border);
