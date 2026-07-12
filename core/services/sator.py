@@ -897,6 +897,54 @@ def build_portfolio_rings_frame(data: dict[str, Any], state_df: pd.DataFrame) ->
     return pd.DataFrame(rows, columns=columns) if rows else pd.DataFrame(columns=columns)
 
 
+def compute_watchlist_reminders(data: dict[str, Any], state_df: pd.DataFrame) -> dict[str, list[str]]:
+    """Bucket -> nature in stato SATOR 'watchlist' non gia' coperte da uno
+    strumento posseduto nello stesso bucket. Promemoria puro (nessun ticker
+    o importo): segnala un'area seguita ma non ancora presidiata, per la
+    tabella "Allocazione: bucket e strumenti" in Pianificazione."""
+    held = _tickers_posseduti(state_df)
+    master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
+
+    held_natura_by_bucket: dict[str, set[str]] = {"Core": set(), "Difensivo": set(), "Satellite": set()}
+    for item in data.get("strumenti", []) or []:
+        ticker = str(item.get("ticker") or "").strip().upper()
+        if not ticker or ticker not in held:
+            continue
+        sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
+        inf = infer_sator_metadata(item, True)
+        role = _meta_strutturale(sator, inf, "role")
+        bucket = _role_bucket(role)
+        natura = str(item.get("natura") or "Esposizione diversificata")
+        held_natura_by_bucket.setdefault(bucket, set()).add(natura)
+
+    reminders: dict[str, list[str]] = {"Core": [], "Difensivo": [], "Satellite": []}
+    seen_by_bucket: dict[str, set[str]] = {"Core": set(), "Difensivo": set(), "Satellite": set()}
+    for item in data.get("strumenti", []) or []:
+        ticker = str(item.get("ticker") or "").strip().upper()
+        if not ticker or ticker in held:
+            continue
+        sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
+        inf = infer_sator_metadata(item, False)
+        state = _coerce_choice(sator.get("state", inf["state"]), SATOR_STATE_VALUES, inf["state"])
+        if state != "watchlist":
+            continue
+        role = _meta_strutturale(sator, inf, "role")
+        bucket = _role_bucket(role)
+        natura = str(item.get("natura") or "Esposizione diversificata")
+        if natura in held_natura_by_bucket.get(bucket, set()):
+            continue
+        if natura in seen_by_bucket.setdefault(bucket, set()):
+            continue
+        seen_by_bucket[bucket].add(natura)
+        reminders.setdefault(bucket, []).append(natura)
+
+    for bucket_key in reminders:
+        reminders[bucket_key] = sorted(reminders[bucket_key])
+    return reminders
+
+
+
+
 def build_coverage_matrix_frame(data: dict[str, Any], state_df: pd.DataFrame) -> pd.DataFrame:
     """Righe = strumenti posseduti, colonne = unione delle natura tra posseduti
     e candidati SATOR (stato watchlist/candidato). Punteggio 4 = area coperta
