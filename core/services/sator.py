@@ -1454,6 +1454,22 @@ def _parse_it_pct(value: Any) -> float:
         return 0.0
 
 
+_SATOR_STATE_LEGACY_ALIASES: dict[str, str] = {
+    "candidato": "watchlist",
+    "fuori_piano": "escluso",
+}
+
+
+def _resolve_sator_state(raw_value: Any, default: str) -> str:
+    """Risolve lo stato SATOR salvato. I valori storici 'candidato' e
+    'fuori_piano' (rimossi da SATOR_STATE_VALUES nell'unificazione a 3
+    stati) vengono interpretati come 'watchlist' ed 'escluso' senza
+    riscrivere il dato salvato su disco - solo in lettura, qui."""
+    text = str(raw_value or "").strip()
+    text = _SATOR_STATE_LEGACY_ALIASES.get(text, text)
+    return _coerce_choice(text, SATOR_STATE_VALUES, default)
+
+
 def _coerce_choice(value: Any, allowed: tuple[str, ...], default: str) -> str:
     text = str(value or "").strip()
     return text if text in allowed else default
