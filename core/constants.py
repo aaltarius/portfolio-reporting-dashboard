@@ -81,7 +81,7 @@ COLORI_CATEGORIA = {
     "OBB": "#7E57C2",
     "AZI": "#EF6C9A",
     "ETF": COLORS["category_etf"],
-    "ETC": "#FFA726",
+    "ETC": COLORS["category_etc"],
     "FND": COLORS["category_fnd"],
     "DER": "#8E44AD",
     "default": COLORS["category_default"],

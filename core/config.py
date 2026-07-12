@@ -26,6 +26,7 @@ COLORS: dict[str, str] = {
     "category_gov": "#E8B960",
     "category_etf": "#5B8DEF",
     "category_fnd": "#B07CC6",
+    "category_etc": "#C2410C",
     "category_default": "#6EC6C6",
     "instrument_1": "#5B8DEF",
     "instrument_2": "#00D4AA",

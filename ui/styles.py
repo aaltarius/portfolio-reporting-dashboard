@@ -286,6 +286,10 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
 .kpi-triplet-tag-etf{color:#5B8DEF}
 .kpi-triplet-tag-fnd{color:#B07CC6}
 .kpi-triplet-tag-obb{color:#7E57C2}
+.kpi-triplet-tag-etc{color:#C2410C}
+.kpi-triplet-tag-liq{color:#26A69A}
+.kpi-triplet-tag-der{color:#8E44AD}
+.kpi-triplet-tag-altro{color:#6EC6C6}
 .kpi-triplet-value{font-weight:800;color:var(--ptf-text);font-size:0.88rem;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .kpi-triplet-pl{font-size:0.72rem;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .kpi-triplet-pl.is-neg{color:#c0392b}
@@ -386,6 +390,7 @@ hr{border-color:color-mix(in srgb, var(--ptf-text) 12%, transparent)}
     style_css = style_css.replace(".kpi-triplet-tag-gov{color:#E8B960}", f".kpi-triplet-tag-gov{{color:{theme.colors['category_gov']}}}")
     style_css = style_css.replace(".kpi-triplet-tag-etf{color:#5B8DEF}", f".kpi-triplet-tag-etf{{color:{theme.colors['category_etf']}}}")
     style_css = style_css.replace(".kpi-triplet-tag-fnd{color:#B07CC6}", f".kpi-triplet-tag-fnd{{color:{theme.colors['category_fnd']}}}")
+    style_css = style_css.replace(".kpi-triplet-tag-etc{color:#C2410C}", f".kpi-triplet-tag-etc{{color:{theme.colors['category_etc']}}}")
     style_css = style_css.replace(".kpi-triplet-pl.is-neg{color:#c0392b}", f".kpi-triplet-pl.is-neg{{color:{theme.colors['danger']}}}")
     style_css = style_css.replace(".kpi-triplet-pl.is-pos{color:#1E8449}", f".kpi-triplet-pl.is-pos{{color:{theme.colors['success']}}}")
     st.markdown(style_css, unsafe_allow_html=True)

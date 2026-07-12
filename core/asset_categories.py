@@ -51,7 +51,7 @@ ASSET_CATEGORY_REGISTRY: dict[str, dict[str, str]] = {
         "label": "ETC",
         "name": "Exchange Traded Commodity",
         "description": "ETC ed eventuali ETN.",
-        "color": "#FFA726",
+        "color": COLORS["category_etc"],
     },
     "FND": {
         "label": "FND",

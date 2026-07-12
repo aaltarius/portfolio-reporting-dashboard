@@ -31,6 +31,7 @@ from ui.components import (
     legend_block, kpi_card, build_price_direction_map,
     render_styled_table, back_to_top, vertical_gap, should_render_section, render_section_title,
 )
+from ui.charts.axes import zero_aligned_ranges
 from ui.charts.home import (
     build_category_allocation_pie_chart,
     build_category_bar_chart,
@@ -730,38 +731,46 @@ def _render_category_analysis(
                 cat_agg = get_category_allocation_breakdown(da, settings)
             cat_agg = cat_agg[cat_agg["Categoria"].isin(visible_categories)].copy()
 
+            # Allinea la linea dello zero tra i 3 grafici affiancati: se una
+            # categoria ha P/L €/% negativo, senza questo i 3 assi Y (unità
+            # diverse, autorange indipendente) mostrerebbero lo zero ad altezze
+            # diverse. Restituisce None per ciascuno se non ci sono negativi
+            # (nessuna modifica al comportamento nel caso comune).
+            value_range, pl_range, perf_range = zero_aligned_ranges([
+                cat_agg["Controvalore"].tolist(),
+                cat_agg["P/L €"].tolist(),
+                cat_agg["P/L %"].tolist(),
+            ])
+
             gc1, gc2, gc3 = st.columns(3)
             with gc1:
                 if chart_loader is None:
-                    fig = build_category_bar_chart(cat_agg, "Controvalore", "Controvalore", fmt_eur_it, ",", settings)
-                    apply_settings(fig, 'home_category_bar_value')
+                    fig = build_category_bar_chart(cat_agg, "Controvalore", "Controvalore", fmt_eur_it, ",", settings, y_range=value_range)
                 else:
                     fig = chart_loader(
                         "home_category_bar_value",
-                        lambda: apply_settings(build_category_bar_chart(cat_agg, "Controvalore", "Controvalore", fmt_eur_it, ",", settings), 'home_category_bar_value'),
-                        extra_params={"items": len(cat_agg)},
+                        lambda: build_category_bar_chart(cat_agg, "Controvalore", "Controvalore", fmt_eur_it, ",", settings, y_range=value_range),
+                        extra_params={"items": len(cat_agg), "y_range": value_range},
                     )
                 st.plotly_chart(fig, width="stretch")
             with gc2:
                 if chart_loader is None:
-                    fig = build_category_bar_chart(cat_agg, "P/L €", "P/L per Categoria", fmt_eur_it, ",", settings)
-                    apply_settings(fig, 'home_category_bar_pl')
+                    fig = build_category_bar_chart(cat_agg, "P/L €", "P/L per Categoria", fmt_eur_it, ",", settings, y_range=pl_range)
                 else:
                     fig = chart_loader(
                         "home_category_bar_pl",
-                        lambda: apply_settings(build_category_bar_chart(cat_agg, "P/L €", "P/L per Categoria", fmt_eur_it, ",", settings), 'home_category_bar_pl'),
-                        extra_params={"items": len(cat_agg)},
+                        lambda: build_category_bar_chart(cat_agg, "P/L €", "P/L per Categoria", fmt_eur_it, ",", settings, y_range=pl_range),
+                        extra_params={"items": len(cat_agg), "y_range": pl_range},
                     )
                 st.plotly_chart(fig, width="stretch")
             with gc3:
                 if chart_loader is None:
-                    fig = build_category_bar_chart(cat_agg, "P/L %", "Performance % per Categoria", fmt_pct_it, ".1%", settings)
-                    apply_settings(fig, 'home_category_bar_perf')
+                    fig = build_category_bar_chart(cat_agg, "P/L %", "Performance % per Categoria", fmt_pct_it, ".1%", settings, y_range=perf_range)
                 else:
                     fig = chart_loader(
                         "home_category_bar_perf",
-                        lambda: apply_settings(build_category_bar_chart(cat_agg, "P/L %", "Performance % per Categoria", fmt_pct_it, ".1%", settings), 'home_category_bar_perf'),
-                        extra_params={"items": len(cat_agg)},
+                        lambda: build_category_bar_chart(cat_agg, "P/L %", "Performance % per Categoria", fmt_pct_it, ".1%", settings, y_range=perf_range),
+                        extra_params={"items": len(cat_agg), "y_range": perf_range},
                     )
                 st.plotly_chart(fig, width="stretch")
 

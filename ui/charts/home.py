@@ -357,10 +357,16 @@ def build_category_bar_chart(
     text_formatter,
     yaxis_tickformat,
     settings: dict[str, Any] | None = None,
+    y_range: list[float] | None = None,
 ):
     """Build vertical bar chart by macro category for Home.
 
     chart_id runtime: home_category_bar_value / home_category_bar_pl / home_category_bar_perf
+
+    ``y_range``, se passato, sovrascrive il range Y calcolato da apply_settings:
+    usato da ui/pages/home.py per allineare la linea dello zero tra i 3 grafici
+    affiancati (vedi ui.charts.axes.zero_aligned_ranges) quando una categoria ha
+    valori negativi.
     chiamato da: ui/pages/home.py
     """
     _ = yaxis_tickformat
@@ -384,7 +390,10 @@ def build_category_bar_chart(
         chart_id = "home_category_bar_perf"
     else:
         chart_id = "home_category_bar_pl"
-    return apply_settings(fig, chart_id)
+    fig = apply_settings(fig, chart_id)
+    if y_range is not None:
+        fig.update_yaxes(range=y_range)
+    return fig
 
 # build_asset_allocation_radar/build_quality_profile_radar (e il loro helper
 # _build_radar_figure) sono state rimosse il 2026-07-07: duplicate di

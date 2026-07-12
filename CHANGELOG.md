@@ -25,6 +25,16 @@
 - nessun comportamento applicativo cambiato: stesse route, stessi form, stessa logica di dominio — verificato ricostruendo l'app FastAPI e interrogando ogni route (incluse le sotto-pagine di Strumenti e i rami di errore) con dati reali
 - la duplicazione di alcune funzioni di gestione eventi tra `ui/form_server/gestione.py` e `ui/pages/operazioni.py` (Centro Operativo) resta intenzionale: riflette la scelta ancora aperta se tenere quelle funzionalità solo su sidebar, solo nell'app principale, o entrambe (Impostazioni → `operativo_mode`/`sator_mode`/`export_pp_mode`)
 
+**Allineamento zero tra i 3 grafici a barre "Analisi per Macro-Categoria" (Portafoglio):**
+- Controvalore, P/L per Categoria e Performance % per Categoria auto-scalavano l'asse Y in modo indipendente: quando una categoria (es. ETC) va in perdita, la linea dello zero finiva ad altezze diverse nei 3 grafici affiancati
+- nuovo `ui/charts/axes.py::zero_aligned_ranges()`: calcola, tra i grafici passati, la frazione verticale in cui deve stare lo zero (quella richiesta dal grafico più sbilanciato in negativo) e applica lo stesso range proporzionale a tutti — anche al grafico Controvalore, che non ha mai valori negativi, riservandogli lo stesso spazio sotto lo zero solo per allineamento
+- nessun cambiamento quando nessuna categoria è in perdita: i grafici restano ad autorange come prima
+
+**Colore della categoria ETC:**
+- l'arancio `#FFA726` era troppo simile al mostarda/oro di GOV (`#E8B960`) in molti grafici e badge; nuovo colore terracotta `#C2410C`, verificato per separazione cromatica (CVD/deuteranopia) rispetto alle altre categorie
+- fix di un'incoerenza architetturale: a differenza di GOV/ETF/FND, il colore ETC era scritto due volte come hex letterale (`core/asset_categories.py` e `core/constants.py`) invece di passare dalla palette centrale `COLORS` in `core/config.py` — ora è indiretto come le altre, e reagirebbe correttamente a un eventuale tema scuro futuro
+- fix di un bug distinto: la card KPI "Valore Attuale per Categoria" (overview) coloritava l'etichetta di categoria tramite una classe CSS dedicata in `ui/styles.py`, non tramite la palette centrale — mancava la regola per ETC (ricadeva sul grigio muted di default) e, per lo stesso motivo, anche per LIQ/DER/ALTRO; aggiunte tutte e quattro
+
 ## 4.9.29 - Rifiniture Dashboard decisionale
 
 **Allocazione: bucket e strumenti:**

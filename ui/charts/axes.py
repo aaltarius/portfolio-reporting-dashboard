@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 
 def data_range_for_axis(fig, data_axis: str, *, numeric_values: Callable[[Any], list[float]]) -> list[float] | None:
@@ -34,6 +34,50 @@ def range_from_min_max(
     except Exception:
         pass
     return [lo, hi]
+
+
+def zero_aligned_ranges(
+    value_lists: Sequence[Sequence[float]],
+    *,
+    padding: float = 0.12,
+    max_negative_fraction: float = 0.85,
+) -> list[list[float] | None]:
+    """Calcola range Y espliciti che allineano la linea dello zero alla stessa
+    altezza percentuale in più grafici a barre indipendenti (unità diverse).
+
+    Ogni lista di valori genera un range [y_min, y_max] tale per cui lo zero
+    cade sempre alla stessa frazione verticale in tutti i grafici — la
+    frazione usata è quella richiesta dal grafico più "sbilanciato" in
+    negativo. Se nessuna lista contiene valori negativi, restituisce ``None``
+    per ciascuna voce: i grafici restano ad autorange (nessuna modifica al
+    comportamento quando tutti i valori sono positivi).
+    """
+    data_ranges: list[tuple[float, float]] = []
+    for values in value_lists:
+        nums = [float(v) for v in values if v is not None]
+        lo = min([0.0, *nums])
+        hi = max([0.0, *nums])
+        data_ranges.append((lo, hi))
+
+    if all(lo >= 0.0 for lo, _ in data_ranges):
+        return [None for _ in data_ranges]
+
+    fractions = []
+    for lo, hi in data_ranges:
+        span = hi - lo
+        fractions.append((-lo) / span if span > 0 else 0.0)
+    target_fraction = min(max(fractions), max_negative_fraction)
+    k = target_fraction / (1.0 - target_fraction)
+
+    ranges: list[list[float] | None] = []
+    for lo, hi in data_ranges:
+        y_max = hi if k <= 0 else max(hi, (-lo) / k)
+        if y_max <= 0:
+            y_max = 1.0
+        y_max *= (1.0 + padding)
+        y_min = -k * y_max
+        ranges.append([y_min, y_max])
+    return ranges
 
 
 def apply_axis_settings(
