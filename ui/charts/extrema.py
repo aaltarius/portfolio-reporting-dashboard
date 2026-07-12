@@ -53,6 +53,10 @@ def _format_extrema_value(value, chart_id: str, value_formatter=None) -> str:
         return fmt_num_it(float(value), 0, signed=False)
     if fmt == "num2":
         return fmt_num_it(float(value), 2, signed=False)
+    if fmt == "pct1_base100":
+        return fmt_pct_it((float(value) - 100.0) / 100.0, 1, signed=True)
+    if fmt == "pct2_base100":
+        return fmt_pct_it((float(value) - 100.0) / 100.0, 2, signed=True)
     return str(value)
 
 

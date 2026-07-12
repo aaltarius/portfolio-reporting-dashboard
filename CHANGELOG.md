@@ -54,6 +54,10 @@
 - `build_correlation_heatmap` (`ui/charts/analisi.py`) usava un font fisso a 12px per i valori dentro le celle, mentre la matrice ha dimensione fissa 540×540px (`ui/charts/settings.py`); con molti strumenti la cella si restringe (nel portafoglio reale, 16 strumenti → celle da ~34px) e numeri come "-0.85" traboccavano dal riquadro
 - il font ora si adatta al numero di etichette (lato cella stimato × 0.3, minimo 8px, massimo 12px) — 16 strumenti → 10px, matrici più dense scendono fino a 8px, poche etichette restano a 12px come prima
 
+**Fix: MAX/MIN in € invece che in % sui grafici "Rendimento" a indice Base 100:**
+- i marker MAX/MIN di "Rendimento dello strumento" (Quotazioni) e "Rendimento Omogeneizzato per Tipologia" (Cruscotti) formattavano il valore con `extrema_value_format` di default ("eur0", es. "€ 118") anche se l'asse è un indice Base 100 dal 1° investimento, non un controvalore in euro
+- aggiunto un formato dedicato `pct1_base100` (`ui/charts/extrema.py`) che converte l'indice in percentuale di rendimento rispetto a 100 (es. 118,3 → "+18,3%", 82,7 → "-17,3%") e impostato sui 4 chart_id con quella semantica (`ui/charts/settings.py`)
+
 ## 4.9.29 - Rifiniture Dashboard decisionale
 
 **Allocazione: bucket e strumenti:**

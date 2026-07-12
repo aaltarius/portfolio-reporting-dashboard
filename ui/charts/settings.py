@@ -629,7 +629,8 @@ CHARTS: dict[str, dict[str, Any]] = {
      'x_nticks': 15,
      'quarter_mode': None,
      'title': '<b>Rendimento dello strumento</b>',
-     'show_extrema': True},
+     'show_extrema': True,
+     'extrema_value_format': 'pct1_base100'},
 
     # ------------------------------------------------------------------
     # PORTAFOGLIO
@@ -1073,7 +1074,8 @@ CHARTS: dict[str, dict[str, Any]] = {
      'x_nticks': 15,
      'quarter_mode': None,
      'title': '<b>Rendimento Omogeneizzato per Tipologia</b>',
-     'show_extrema': True},
+     'show_extrema': True,
+     'extrema_value_format': 'pct1_base100'},
 
     'quotazioni_instrument_drawdown': {'type': 'time',
      'height': 400,
@@ -1564,7 +1566,8 @@ CHARTS: dict[str, dict[str, Any]] = {
      'x_nticks': 15,
      'quarter_mode': None,
      'title': '<b>Rendimento dello strumento</b>',
-     'show_extrema': True},
+     'show_extrema': True,
+     'extrema_value_format': 'pct1_base100'},
 
     'analisi_category_performance': {'type': 'time',
      'height': 420,
@@ -1579,7 +1582,8 @@ CHARTS: dict[str, dict[str, Any]] = {
      'y_nticks': 8,
      'x_nticks': 15,
      'title': '<b>Rendimento Omogeneizzato per Tipologia</b>',
-     'show_extrema': True},
+     'show_extrema': True,
+     'extrema_value_format': 'pct1_base100'},
 
     'analisi_correlation_heatmap': {'type': 'heatmap',
      'height': 540,
