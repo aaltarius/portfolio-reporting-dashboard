@@ -44,6 +44,11 @@
 - i report AI salvati (tab "🤖 AI") sono testo libero generato in precedenza da Gemini e possono citare per nome uno strumento oggi nascosto — non redigibile in modo affidabile a posteriori (l'AI può riferirsi a uno strumento senza scriverne il ticker); i report salvati restano nascosti finché la privacy è attiva, tornano visibili disattivandola
 - `apply_privacy_filter` è stato centralizzato in `persistence/storage.py` (prima viveva solo dentro `app.py`, duplicato per ogni pagina che ne aveva bisogno) — fonte unica usata sia dall'app principale che da tutte le pagine form-server
 
+**Fix: data del weekend mostrata come giorno di trading nei grafici temporali:**
+- `build_portfolio_history_df` (`core/finance.py`) aggiungeva una riga sintetica "oggi" anche di sabato/domenica quando `last_quotes_update` risultava più recente dell'ultima data reale in `storico_prezzi` — condizione che si verifica anche per un semplice refresh benchmark, non solo per nuovi prezzi. Risultato: tutti i grafici temporali di Cruscotti/Overview mostravano sabato o domenica come se il mercato avesse aperto, con lo stesso identico valore di venerdì solo rietichettato
+- la riga era ridondante fin dalla 4.9.17: un refresh nel weekend scrive già i prezzi nell'ultimo giorno di borsa reale (`_apply_price_date_entries_to_storico` in `ui/sidebar.py`), quindi l'ultima riga vera del grafico è già allineata ai KPI — verificato che il valore della riga fantasma coincideva esattamente con quello di venerdì
+- ora la riga sintetica "oggi" si aggiunge solo nei giorni feriali (snapshot infragiornaliero legittimo prima che arrivi la chiusura reale); verificato che questo caso continua a funzionare
+
 ## 4.9.29 - Rifiniture Dashboard decisionale
 
 **Allocazione: bucket e strumenti:**

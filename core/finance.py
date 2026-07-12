@@ -594,17 +594,17 @@ def build_portfolio_history_df(data: dict[str, Any]) -> pd.DataFrame:
         row["P/L Realizzato Lordo"] = realized_gross_total
         row["Imposte"] = taxes_total
         hp.append(row)
-    # Punto sintetico "oggi" con i prezzi correnti (s["prezzo"]).
-    # Su weekday: sempre aggiunto se storico non è aggiornato a oggi.
-    # Su weekend: aggiunto solo se last_quotes_update > ultimo storico (prezzi freschi disponibili).
+    # Punto sintetico "oggi" con i prezzi correnti (s["prezzo"]): solo su
+    # weekday, se lo storico non è ancora aggiornato a oggi (snapshot
+    # infragiornaliero prima che arrivi la chiusura). Nel weekend niente:
+    # un refresh sabato/domenica scrive già i prezzi nell'ultimo giorno di
+    # borsa reale (_apply_price_date_entries_to_storico in ui/sidebar.py),
+    # quindi l'ultima riga del loop sopra è già allineata — aggiungere qui
+    # un'altra riga etichettata con la data odierna duplicava lo stesso
+    # valore sotto una data di mercato chiuso, facendo sembrare sabato/
+    # domenica un giorno di trading reale.
     is_weekday = today_date.weekday() < 5  # 0-4 = lunedì-venerdì, 5-6 = sabato-domenica
-    has_fresh_weekend_prices = (
-        not is_weekday
-        and bool(last_upd_date)
-        and bool(ds)
-        and last_upd_date > ds[-1]
-    )
-    if ds and ds[-1] < today_str and (is_weekday or has_fresh_weekend_prices):
+    if ds and ds[-1] < today_str and is_weekday:
         while idx < len(eventi_ordinati):
             ev = eventi_ordinati[idx]
             _tipo = ev.get("tipo_evento")
