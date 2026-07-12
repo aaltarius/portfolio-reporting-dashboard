@@ -212,50 +212,6 @@ def build_allocation_rings_chart(rings_df: pd.DataFrame, objective: dict, theme)
     return fig
 
 
-def _format_matrix_cell(value: float) -> str:
-    """Formatta il punteggio della matrice di copertura: interi senza
-    decimali (es. 4, 2), frazioni arrotondate a 2 decimali senza zeri
-    superflui (es. 1.33, 0.5) - il punteggio si divide tra gli strumenti
-    che condividono la stessa area (vedi build_coverage_matrix_frame)."""
-    if value == 0:
-        return "0"
-    if abs(value - round(value)) < 1e-9:
-        return str(int(round(value)))
-    return f"{value:.2f}".rstrip("0").rstrip(".")
-
-
-def build_coverage_matrix_chart(matrix_df: pd.DataFrame, theme) -> go.Figure:
-    """Heatmap: copertura e sovrapposizione per natura/area di mercato tra
-    gli strumenti posseduti (righe) e le natura di posseduti + candidati SATOR
-    (colonne). Il punteggio 4 di un'area si divide equamente tra gli
-    strumenti posseduti che la condividono (vedi build_coverage_matrix_frame
-    in core/services/sator.py)."""
-    fig = go.Figure()
-    if matrix_df is None or matrix_df.empty:
-        return finalize_chart(fig, "pianificazione_coverage_matrix")
-    z = matrix_df.to_numpy(dtype=float)
-    text = [[_format_matrix_cell(v) for v in row] for row in z]
-    accent = getattr(theme, "color_blue", "#5B8DEF")
-    fig.add_trace(go.Heatmap(
-        z=z,
-        x=list(matrix_df.columns),
-        y=list(matrix_df.index),
-        zmin=0,
-        zmax=4,
-        colorscale=[[0.0, "rgba(91,141,239,0.06)"], [1.0, accent]],
-        text=text,
-        texttemplate="%{text}",
-        textfont=dict(size=11),
-        hovertemplate="%{y} · %{x}<br>Punteggio: %{text}<extra></extra>",
-        showscale=False,
-        xgap=2,
-        ygap=2,
-    ))
-    rows = len(matrix_df.index)
-    fig.update_layout(height=max(320, min(760, 170 + rows * 30)))
-    return finalize_chart(fig, "pianificazione_coverage_matrix")
-
-
 _BUBBLE_QUADRANT_LABELS = (
     (0.29, 0.08, "Poco utile / non prioritario", "rgba(100,116,139,0.9)"),
     (0.79, 0.08, "Buon contributo difensivo", "rgba(21,128,61,0.9)"),

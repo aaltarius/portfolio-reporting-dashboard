@@ -945,58 +945,6 @@ def compute_watchlist_reminders(data: dict[str, Any], state_df: pd.DataFrame) ->
 
 
 
-def build_coverage_matrix_frame(data: dict[str, Any], state_df: pd.DataFrame) -> pd.DataFrame:
-    """Righe = strumenti posseduti, colonne = unione delle natura tra posseduti
-    e candidati SATOR (stato watchlist/candidato). Punteggio 4 = area coperta
-    per intero; se N strumenti posseduti condividono la stessa natura, il 4 si
-    divide equamente tra loro (4/N a testa), cosi' ogni colonna posseduta
-    somma sempre a 4 - un doppione reale emerge quando una colonna ha almeno
-    2 celle diverse da zero (vedi sator_matrix_doppioni_scoperte); una colonna
-    tutta a 0 e' un'area scoperta (aperta solo da un candidato se comunque
-    presente come colonna)."""
-    held = _tickers_posseduti(state_df)
-    if not held:
-        return pd.DataFrame()
-    master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
-    held_natura: dict[str, str] = {}
-    candidate_natura: set[str] = set()
-    for item in data.get("strumenti", []) or []:
-        ticker = str(item.get("ticker") or "").strip().upper()
-        if not ticker:
-            continue
-        natura = str(item.get("natura") or "Esposizione diversificata")
-        if ticker in held:
-            held_natura[ticker] = natura
-            continue
-        inf = infer_sator_metadata(item, False)
-        sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
-        state = _coerce_choice(sator.get("state", inf["state"]), SATOR_STATE_VALUES, inf["state"])
-        if state in ("watchlist", "candidato"):
-            candidate_natura.add(natura)
-    if not held_natura:
-        return pd.DataFrame()
-    columns = sorted(set(held_natura.values()) | candidate_natura)
-    matrix = pd.DataFrame(0.0, index=sorted(held_natura.keys()), columns=columns, dtype=float)
-    natura_counts: dict[str, int] = {}
-    for natura in held_natura.values():
-        natura_counts[natura] = natura_counts.get(natura, 0) + 1
-    for ticker, natura in held_natura.items():
-        matrix.loc[ticker, natura] = 4.0 / natura_counts[natura]
-    return matrix
-
-
-def sator_matrix_doppioni_scoperte(matrix_df: pd.DataFrame) -> tuple[list[str], list[str]]:
-    """Colonne 'doppione' (almeno 2 strumenti posseduti condividono l'area,
-    punteggio diviso tra loro) e colonne 'scoperte' (nessuno strumento
-    posseduto la copre). Non dipende dal valore esatto diviso: conta le
-    celle diverse da zero, non il loro valore."""
-    if matrix_df is None or matrix_df.empty:
-        return [], []
-    doppioni = [col for col in matrix_df.columns if (matrix_df[col] > 0).sum() >= 2]
-    scoperte = [col for col in matrix_df.columns if (matrix_df[col] > 0).sum() == 0]
-    return doppioni, scoperte
-
-
 def latest_sator_decision(items: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Fotografia SATOR piu' recente per created_at, o None se items e' vuoto."""
     if not items:
