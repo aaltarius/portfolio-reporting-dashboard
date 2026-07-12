@@ -226,7 +226,13 @@ def _build_ticker_series(ticker: str, ops: pd.DataFrame, prices: pd.DataFrame, c
             px = _safe_float(op.get("price"), np.nan)
             price_series.loc[dt] = px if px > 0 else np.nan
     price_series = price_series.sort_index().ffill()
-    if current_price > 0:
+    # Punto sintetico "oggi" con il prezzo corrente: solo nei giorni feriali,
+    # come in build_portfolio_history_df (core/finance.py). Nel weekend un
+    # refresh scrive gia' i prezzi nell'ultimo giorno di borsa reale
+    # (_apply_price_date_entries_to_storico in ui/sidebar.py), quindi
+    # aggiungere qui sabato/domenica un altro punto duplicava lo stesso
+    # valore sotto una data di mercato chiuso.
+    if current_price > 0 and pd.Timestamp.today().weekday() < 5:
         today = pd.Timestamp.today().normalize()
         if today not in price_series.index:
             price_series.loc[today] = current_price

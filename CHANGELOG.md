@@ -48,6 +48,7 @@
 - `build_portfolio_history_df` (`core/finance.py`) aggiungeva una riga sintetica "oggi" anche di sabato/domenica quando `last_quotes_update` risultava più recente dell'ultima data reale in `storico_prezzi` — condizione che si verifica anche per un semplice refresh benchmark, non solo per nuovi prezzi. Risultato: tutti i grafici temporali di Cruscotti/Overview mostravano sabato o domenica come se il mercato avesse aperto, con lo stesso identico valore di venerdì solo rietichettato
 - la riga era ridondante fin dalla 4.9.17: un refresh nel weekend scrive già i prezzi nell'ultimo giorno di borsa reale (`_apply_price_date_entries_to_storico` in `ui/sidebar.py`), quindi l'ultima riga vera del grafico è già allineata ai KPI — verificato che il valore della riga fantasma coincideva esattamente con quello di venerdì
 - ora la riga sintetica "oggi" si aggiunge solo nei giorni feriali (snapshot infragiornaliero legittimo prima che arrivi la chiusura reale); verificato che questo caso continua a funzionare
+- stesso identico problema, implementazione indipendente, trovato anche in `core/services/accumuli.py::_build_ticker_series` (i grafici "Prezzo vs PMC" e "Capitale vs Valore" di Cruscotti → Accumuli): aggiungeva un punto "oggi" col prezzo corrente senza nessun controllo sul giorno della settimana, sabato e domenica compresi — stesso fix, punto sintetico solo nei giorni feriali
 
 ## 4.9.29 - Rifiniture Dashboard decisionale
 
