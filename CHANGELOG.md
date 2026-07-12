@@ -50,6 +50,10 @@
 - ora la riga sintetica "oggi" si aggiunge solo nei giorni feriali (snapshot infragiornaliero legittimo prima che arrivi la chiusura reale); verificato che questo caso continua a funzionare
 - stesso identico problema, implementazione indipendente, trovato anche in `core/services/accumuli.py::_build_ticker_series` (i grafici "Prezzo vs PMC" e "Capitale vs Valore" di Cruscotti → Accumuli): aggiungeva un punto "oggi" col prezzo corrente senza nessun controllo sul giorno della settimana, sabato e domenica compresi — stesso fix, punto sintetico solo nei giorni feriali
 
+**Font dei numeri troppo grande nella heatmap "Correlazione per strumento" (Cruscotti → Analitica):**
+- `build_correlation_heatmap` (`ui/charts/analisi.py`) usava un font fisso a 12px per i valori dentro le celle, mentre la matrice ha dimensione fissa 540×540px (`ui/charts/settings.py`); con molti strumenti la cella si restringe (nel portafoglio reale, 16 strumenti → celle da ~34px) e numeri come "-0.85" traboccavano dal riquadro
+- il font ora si adatta al numero di etichette (lato cella stimato × 0.3, minimo 8px, massimo 12px) — 16 strumenti → 10px, matrici più dense scendono fino a 8px, poche etichette restano a 12px come prima
+
 ## 4.9.29 - Rifiniture Dashboard decisionale
 
 **Allocazione: bucket e strumenti:**
