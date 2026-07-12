@@ -68,6 +68,16 @@
 - l'etichetta di natura/esposizione era l'unico valore ancora in inglese nel sistema di classificazione automatica (`core/instrument_classification.py`, icona in `ui/charts/natura_icons.py`) — tradotta, insieme al dato già salvato per lo strumento XDBC.MI
 - tradotto anche il campo `categoria_etf` (dato di arricchimento justETF, mostrato come "Categoria" nella scheda strumento) per XDBC.MI e GOLD.MI, che riportava "Commodities - ..."; resta un campo esterno, quindi un futuro ri-arricchimento potrebbe rieportare il termine inglese
 
+**Rimozione sezione "Copertura e sovrapposizione" + promemoria nature in watchlist (Pianificazione):**
+- la sezione (heatmap di copertura per natura/area di mercato, sotto la tabella "Allocazione: bucket e strumenti") era diventata ridondante con quella tabella, introdotta nella stessa sessione: rimossa, insieme alle funzioni backend/chart ormai inutilizzate (`build_coverage_matrix_frame`, `sator_matrix_doppioni_scoperte` in `core/services/sator.py`; `build_coverage_matrix_chart`, `_format_matrix_cell` in `ui/charts/pianificazione.py`) e alla config chart orfana rimasta in `ui/charts/settings.py`
+- l'unica informazione utile che portava — le nature in watchlist non ancora presidiate da un possesso — resta come riga promemoria attenuata ("In osservazione", nessun ticker/importo) dentro la tabella "Allocazione: bucket e strumenti" esistente, nel bucket corretto: nuova `compute_watchlist_reminders` in `core/services/sator.py` (`ui/pages/pianificazione.py::_build_bucket_allocation_table_html`, nuova classe CSS `bucket-alloc-watchlist-row`)
+- fix di un bug scoperto per l'occasione nel rendering esistente della tabella: un bucket senza strumenti posseduti veniva saltato per intero (`if sub.empty: continue`), il che avrebbe fatto sparire silenziosamente anche il promemoria — corretto per mostrare comunque l'intestazione del bucket quando c'è almeno un promemoria da mostrare
+
+**Unificazione stati SATOR a 3 (in portafoglio / in osservazione / escluso):**
+- gli stati SATOR erano 5 (`in_portafoglio`, `watchlist`, `candidato`, `escluso`, `fuori_piano`): la distinzione `watchlist`/`candidato` era artificiosa (uno strumento osservato per mesi può diventare candidato d'acquisto in qualsiasi momento senza bisogno di un'etichetta manuale diversa) e `escluso`/`fuori_piano` erano già identici in ogni comportamento nel codice — ridotti a 3, `watchlist` rietichettato "In osservazione" nell'editor universo SATOR
+- nessuna riscrittura dei dati salvati: nuovo `_resolve_sator_state` (`core/services/sator.py`) interpreta in lettura i vecchi valori `candidato`/`fuori_piano` come `watchlist`/`escluso`, senza toccare `portafoglio_data.json` — usato nei 4 punti dove lo stato viene letto (editor universo, salvataggio editor, motore di ranking, promemoria watchlist)
+- motore di ranking SATOR semplificato di conseguenza: un solo toggle `include_watchlist` nelle impostazioni (rimosso `include_candidates`, mai esposto in UI, da `core/services/sator.py` e `persistence/storage.py`), rimossi il conteggio e il ramo ormai morti (`candidate_count`, ramo "Challenger" di `challenger_flag`)
+
 ## 4.9.29 - Rifiniture Dashboard decisionale
 
 **Allocazione: bucket e strumenti:**
