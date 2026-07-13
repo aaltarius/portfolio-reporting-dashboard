@@ -11,7 +11,7 @@ import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
 
 from core.cache import invalidate_portfolio_cache
-from core.finance import build_bucket_rebalancing_suggestions, compute_portfolio_state
+from core.finance import compute_portfolio_state
 from core.services.sator import (
     build_sator_matrix_frame,
     build_sator_decision_record,
@@ -20,7 +20,6 @@ from core.services.sator import (
     fetch_sator_costs_from_web,
     compare_decision_to_actual,
     compute_current_bucket_mix,
-    compute_instrument_buckets,
     ensure_sator_metadata,
     ensure_sator_settings,
     run_sator_analysis,
@@ -537,39 +536,126 @@ def _render_bucket_detail_box(combo_df: pd.DataFrame, importi: pd.Series) -> Non
     _render_sator_explain_box(rows, title="Dettaglio composizione ordine")
 
 
-def _sator_reference_summary_rows(latest: dict) -> list[tuple[str, object]]:
-    """Righe per il riquadro 'Fotografia di riferimento' sotto la mappa a
-    bolle dei prossimi acquisti: stessi campi gia' salvati da
-    build_sator_decision_record (core/services/sator.py), nessuna nuova
-    lettura di dati."""
+_REF_SNAPSHOT_BUCKET_COLORS = {"Core": "color_blue", "Difensivo": "color_green", "Satellite": "color_orange"}
+
+
+def _build_sator_reference_summary_html(latest: dict, theme, data: dict) -> str:
+    """Card per 'Fotografia di riferimento' sotto la mappa a bolle dei
+    prossimi acquisti: stessi campi gia' salvati da build_sator_decision_record
+    (core/services/sator.py), nessuna nuova lettura di dati (solo lookup natura
+    per ticker da data['strumenti'], stessa fonte del donut ad anelli). Sostituisce
+    il vecchio box testuale con una card in stile bucket-alloc (barra con tacca
+    budget + lista righe ordine con nome/icona natura) per una lettura piu' immediata."""
     data_label = str(latest.get("month_id") or latest.get("created_at") or "n/d")
     note = str(latest.get("note") or "").strip()
-    rows: list[tuple[str, object]] = [
-        ("Fotografia", data_label + (f" &middot; {note}" if note else "")),
-        ("Importo", f"{fmt_eur_it(float(latest.get('importo_ordine', 0.0)), 2)} su budget {fmt_eur_it(float(latest.get('budget', 0.0)), 2)}"),
-    ]
+    importo = float(latest.get("importo_ordine", 0.0))
+    budget = float(latest.get("budget", 0.0))
+    over_budget = budget > 0 and importo > budget
+    total_scale = max(importo, budget, 1e-9)
+    fill_pct = min(max((importo / total_scale) * 100.0, 0.0), 100.0)
+    target_pct = min(max((budget / total_scale) * 100.0, 0.0), 100.0) if budget > 0 else 0.0
+    over_pct = ((importo / budget) - 1.0) * 100.0 if over_budget else 0.0
+    bar_tone = "var(--ptf-danger)" if over_budget else "var(--ptf-primary)"
+    over_html = f'<span class="ref-snapshot-over bad">+{over_pct:.1f}% oltre budget</span>' if over_budget else ''
+    target_html = f'<div class="ref-snapshot-bar-target" style="left:{target_pct:.2f}%"></div>' if budget > 0 else ''
+
+    mix_rows_html = ""
     ripartizione = latest.get("ripartizione") or {}
-    mix_parts = [
-        f"{b} {fmt_pct_it(float((ripartizione.get(b) or {}).get('pct', 0.0)) / 100.0, 1)}"
-        for b in ("Core", "Difensivo", "Satellite")
-        if ripartizione.get(b)
-    ]
-    if mix_parts:
-        rows.append(("Mix bucket", " / ".join(mix_parts)))
+    for b in ("Core", "Difensivo", "Satellite"):
+        entry = ripartizione.get(b) or {}
+        pct = float(entry.get("pct", 0.0))
+        if not entry:
+            continue
+        tone = getattr(theme, _REF_SNAPSHOT_BUCKET_COLORS[b], "#5B8DEF")
+        mix_rows_html += (
+            f'<div class="ref-snapshot-mix-row" style="--tone:{tone}">'
+            f'<span class="ref-snapshot-mix-label"><span class="dot"></span>{b}</span>'
+            f'<div class="ref-snapshot-mix-track"><div class="ref-snapshot-mix-fill" style="width:{min(max(pct, 0.0), 100.0):.2f}%"></div></div>'
+            f'<span class="ref-snapshot-mix-pct">{fmt_pct_it(pct / 100.0, 1)}</span>'
+            f'</div>'
+        )
+
+    natura_by_ticker = {
+        str(item.get("ticker") or "").strip().upper(): str(item.get("natura") or "").strip() or "Esposizione diversificata"
+        for item in (data.get("strumenti") or [])
+    }
+
+    bucket_totals = {b: float((ripartizione.get(b) or {}).get("amount", 0.0)) for b in ("Core", "Difensivo", "Satellite")}
+
+    lines_html = ""
     order_lines = latest.get("order_lines") or []
     if order_lines:
-        rows.append((
-            "Righe ordine",
-            [
-                (str(line.get("ticker", "")), f"{int(line.get('shares', 0))}q", fmt_eur_it(float(line.get("amount", 0.0)), 2))
-                for line in order_lines
-            ],
-        ))
-    return rows
+        bucket_order = {"Core": 0, "Difensivo": 1, "Satellite": 2}
+        order_lines = sorted(order_lines, key=lambda l: bucket_order.get(str(l.get("bucket") or "Satellite"), 2))
+        bucket_row_counts: dict[str, int] = {}
+        for line in order_lines:
+            b = str(line.get("bucket") or "Satellite")
+            bucket_row_counts[b] = bucket_row_counts.get(b, 0) + 1
+        buckets_rendered: set[str] = set()
+        line_rows = ""
+        for line in order_lines:
+            ticker = str(line.get("ticker", ""))
+            name = str(line.get("name") or "").strip() or ticker
+            natura_label = natura_by_ticker.get(ticker.strip().upper(), "Esposizione diversificata")
+            natura_color, natura_svg = get_natura_visual(natura_label)
+            bucket = str(line.get("bucket") or "Satellite")
+            bucket_tone = getattr(theme, _REF_SNAPSHOT_BUCKET_COLORS.get(bucket, "color_orange"), "#E8B960")
+            if bucket in buckets_rendered:
+                bucket_total_cell = ""
+            else:
+                buckets_rendered.add(bucket)
+                bucket_total_cell = (
+                    f'<td class="num ref-snapshot-bucket-total" rowspan="{bucket_row_counts[bucket]}">'
+                    f'{fmt_eur_it(bucket_totals.get(bucket, 0.0), 2)}</td>'
+                )
+            line_rows += (
+                '<tr>'
+                '<td><span class="ref-snapshot-instrument">'
+                f'<span class="ref-snapshot-bucket-dot" style="--tone:{bucket_tone}" title="{bucket}"></span>'
+                f'<span class="ref-snapshot-natura" style="--natura-color:{natura_color}" title="{natura_label}">{natura_svg}</span>'
+                f'<span class="ref-snapshot-instrument-text"><span class="ticker">{ticker}</span><span class="name">{name}</span></span>'
+                '</span></td>'
+                f'<td class="num">{int(line.get("shares", 0))}q</td>'
+                f'<td class="num">{fmt_eur_it(float(line.get("price", 0.0)), 2)}</td>'
+                f'<td class="num">{fmt_eur_it(float(line.get("amount", 0.0)), 2)}</td>'
+                f'{bucket_total_cell}'
+                '</tr>'
+            )
+        lines_html = (
+            f'<div class="ref-snapshot-lines-label">Righe ordine ({len(order_lines)})</div>'
+            '<div class="ref-snapshot-lines"><table>'
+            '<thead><tr><th>Strumento</th><th class="num">Quote</th><th class="num">Prezzo*</th>'
+            '<th class="num">Importo</th><th class="num">Totale bucket</th></tr></thead>'
+            f'<tbody>{line_rows}</tbody></table></div>'
+            '<div class="ref-snapshot-footnote">* Prezzo rilevato al momento del salvataggio della fotografia, non il prezzo attuale.</div>'
+        )
+
+    note_html = f'<span class="ref-snapshot-note">{note}</span>' if note else ''
+    mix_html = f'<div class="ref-snapshot-mix">{mix_rows_html}</div>' if mix_rows_html else ''
+    return (
+        '<div class="ref-snapshot-card">'
+        '<div class="ref-snapshot-head">'
+        f'<span class="ref-snapshot-title">Fotografia di riferimento &middot; {data_label}</span>'
+        f'{note_html}'
+        '</div>'
+        '<div class="ref-snapshot-body">'
+        '<div class="ref-snapshot-amount-row">'
+        '<span>Importo ordine</span>'
+        f'<span class="val">{fmt_eur_it(importo, 2)} <span class="cap">su budget {fmt_eur_it(budget, 2)}</span>{over_html}</span>'
+        '</div>'
+        f'<div class="ref-snapshot-bar-track" style="--tone:{bar_tone}">'
+        f'<div class="ref-snapshot-bar-fill" style="width:{fill_pct:.2f}%"></div>'
+        f'{target_html}'
+        '</div>'
+        f'{mix_html}'
+        f'{lines_html}'
+        '</div>'
+        '</div>'
+    )
 
 
-def _render_sator_reference_summary(latest: dict) -> None:
-    _render_sator_explain_box(_sator_reference_summary_rows(latest), title="Fotografia di riferimento")
+def _render_sator_reference_summary(latest: dict, theme, data: dict) -> None:
+    st.markdown(_build_sator_reference_summary_html(latest, theme, data), unsafe_allow_html=True)
 
 
 def _render_composition_chart(per_funzione: pd.Series, theme) -> None:
@@ -788,7 +874,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
         )
     latest_decision = latest_sator_decision(decisions_state.get("items") or [])
     if latest_decision:
-        _render_sator_reference_summary(latest_decision)
+        _render_sator_reference_summary(latest_decision, theme, data)
 
 
 def _render_sator_ante_post(combo_df: pd.DataFrame, master_df: pd.DataFrame, budget: float, theme) -> None:
@@ -1271,13 +1357,11 @@ def _render_sator_module(ctx: SimpleNamespace, theme) -> None:
 
 def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
     """
-    Scheda Pianificazione: obiettivo di portafoglio, SATOR e liquidita' da investire.
+    Scheda Pianificazione: obiettivo di portafoglio e SATOR.
     """
     theme = get_theme_context()
     settings = ctx.settings
     data = ctx.data
-    da = ctx.da.copy() if getattr(ctx, "da", None) is not None else pd.DataFrame()
-    liquidita = float(getattr(ctx, "liquidita_attuale", 0.0) or 0.0)
 
     with tab:
 
@@ -1296,28 +1380,5 @@ def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
 
         with st.container():
             _render_sator_module(ctx, theme)
-
-        _section_line()
-        with st.container():
-            render_section_title(
-                "Liquidita da investire",
-                comment="Lettura semplice del gap verso l'obiettivo di portafoglio Core/Difensivo/Satellite impostato in cima a questa pagina. E un supporto descrittivo, non un consiglio di investimento.",
-                gap_after="sm"
-            )
-            objective = settings.get("portfolio_objective", {"core": 0.55, "difensivo": 0.25, "satellite": 0.20})
-            target_weights = {"Core": objective["core"], "Difensivo": objective["difensivo"], "Satellite": objective["satellite"]}
-            bucket_of_ticker = compute_instrument_buckets(data)
-            suggestions = build_bucket_rebalancing_suggestions(da, bucket_of_ticker, target_weights)
-            if suggestions.empty:
-                st.info("Dati insufficienti per costruire un riepilogo di riallineamento.")
-            else:
-                styled_sugg = suggestions.style.format({
-                    "Peso Attuale %": lambda v: fmt_pct_it(v, 2),
-                    "Peso Target %": lambda v: fmt_pct_it(v, 2),
-                    "Delta %": lambda v: fmt_pct_it(v, 2, signed=True),
-                    "Importo €": lambda v: fmt_eur_it(v, 2, signed=True),
-                }).map(color_pl, subset=["Delta %", "Importo €"])
-                render_styled_table(styled_sugg, height="content")
-                st.caption(f"Obiettivo: Core {fmt_pct_it(objective['core'], 0)} / Difensivo {fmt_pct_it(objective['difensivo'], 0)} / Satellite {fmt_pct_it(objective['satellite'], 0)}. Liquidita corrente: {fmt_eur_it(liquidita, 2)}.")
 
         back_to_top()

@@ -1,5 +1,20 @@
 # Changelog
 
+## 4.9.31 - Card "Fotografia di riferimento" in Pianificazione
+
+**Traduzione "Quality factor" → "Fattore qualità":**
+- ultima etichetta di natura/esposizione rimasta in inglese nella tabella Strumenti e nel sistema di classificazione automatica (`core/instrument_classification.py`, icona in `ui/charts/natura_icons.py`, placeholder in `ui/form_server/strumenti.py`) — tradotta
+
+**Il box "Fotografia di riferimento" (sotto la mappa a bolle "Prossimo acquisto") diventa una card, come già fatto per "Allocazione: bucket e strumenti":**
+- barra Importo ordine/Budget: si scala su `max(importo, budget)` invece di appiattirsi al 100% quando l'ordine supera il budget, con una tacca che segna dove sta il budget lungo la barra, colore rosso e scritta "+X% oltre budget" quando l'importo supera il budget
+- tre mini-barre colorate per il mix Core/Difensivo/Satellite (stessi colori bucket usati altrove)
+- tabella "Righe ordine": pallino colorato per bucket + icona natura + ticker e nome strumento sulla stessa riga (una sola riga per strumento, niente scroll verticale — tutte le righe restano visibili), righe ordinate Core → Difensivo → Satellite; due colonne aggiuntive, Prezzo (con nota a piè tabella che chiarisce che è il prezzo alla data della fotografia, non quello attuale) e Totale bucket (una sola cella per gruppo, unita con `rowspan` invece di ripetuta su ogni riga)
+- nuove classi CSS `ref-snapshot-*` in `ui/styles.py`, stesso pattern delle `bucket-alloc-*` (agganciate alle variabili tema, chiaro/scuro)
+- fix di un bug di rendering scoperto durante l'implementazione: negli f-string HTML multilinea, un placeholder che inizia con un proprio `\n` inserito subito dopo testo indentato produce una riga fatta di soli spazi, che Streamlit/markdown-it interpreta come fine del blocco HTML — il contenuto successivo veniva mostrato come blocco di codice indentato invece che renderizzato; le funzioni coinvolte ora costruiscono l'HTML per concatenazione di stringhe senza indentazione incidentale
+
+**Rimozione sezione "Liquidità da investire" (Pianificazione):**
+- ridondante con la nuova card "Fotografia di riferimento" (bucket, importo, scostamento da budget sono già lì) e con la card "Allocazione: bucket e strumenti" più sopra nella stessa pagina — rimossa insieme alla funzione ormai orfana `build_bucket_rebalancing_suggestions` (`core/finance.py`), rimasta senza altri chiamanti in tutto il repo
+
 ## 4.9.30 - Tabella "Andamento dell'ultima settimana" in Portafoglio
 
 **Nuova tabella P/L settimanale per strumento:**

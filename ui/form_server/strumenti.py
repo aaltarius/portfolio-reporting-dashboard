@@ -102,7 +102,7 @@ def _fs_category_field_specs(cat: str) -> list:
             ("Prezzo Emissione", "prezzo_emissione", ""), ("Prezzo Rimborso", "prezzo_rimborso", ""),
             ("Rateo Interessi", "rateo_interessi", ""), ("Rateo Disagio", "rateo_disaggio", ""),
             ("Ritenute Totali", "ritenute_totali", ""),
-            ("Natura", "natura", "es. Quality factor"),
+            ("Natura", "natura", "es. Fattore qualità"),
         ]
     if cat in ("etf", "etc"):
         return [
@@ -117,7 +117,7 @@ def _fs_category_field_specs(cat: str) -> list:
             ("Indice di Sharpe", "sharpe", "es. 2,00"), ("VaR", "var", "es. 35,61"),
             ("Distribuzione", "distribuzione", "es. Distribuzione"), ("Fiscalità", "fiscalita", "es. Armonizzato"),
             ("Data Lancio", "data_lancio", "es. 03/11/2003"),
-            ("Natura", "natura", "es. Quality factor"),
+            ("Natura", "natura", "es. Fattore qualità"),
         ]
     return [
         ("TER / Commissione Gestione", "ter", "es. 1,84%"),
@@ -131,7 +131,7 @@ def _fs_category_field_specs(cat: str) -> list:
         ("Valuta NAV", "valuta", "es. EUR"), ("Max 52 Settimane", "max_52w", "es. 145,26"),
         ("Min 52 Settimane", "min_52w", "es. 130,51"), ("Data Lancio", "data_lancio", "es. 27/11/2018"),
         ("Patrimonio", "patrimonio", "es. 422,73 Mln. EUR"),
-        ("Natura", "natura", "es. Quality factor"),
+        ("Natura", "natura", "es. Fattore qualità"),
     ]
 
 

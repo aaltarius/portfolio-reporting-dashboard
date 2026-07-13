@@ -14,7 +14,7 @@ _SINGLE_COUNTRY_TOKENS: dict[str, tuple[str, ...]] = {
 
 _RULES: list[tuple[tuple[str, ...], str]] = [
     (("bitcoin", "crypto", "criptovalut", "btc"), "Criptovalute"),
-    (("quality", "qualit"), "Quality factor"),
+    (("quality", "qualit"), "Fattore qualità"),
     (("defence", "defense", "military", "aerospace", "security"), "Difesa / sicurezza"),
     (("oro", "gold", "xau", "metallo"), "Bene rifugio"),
     (("metals", "miners", "mining", "mine", "silver miners", "uranium", "copper", "metal miners"), "Metalli e miniere"),

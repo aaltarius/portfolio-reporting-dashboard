@@ -321,6 +321,82 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
   padding:10px 14px;border-top:2px solid var(--ptf-border);
   font-weight:850;
 }
+.ref-snapshot-card{
+  width:100%;box-sizing:border-box;margin:8px 0 14px 0;
+  background:var(--ptf-surface);
+  border:1px solid var(--ptf-border);
+  border-radius:16px;
+  box-shadow:var(--ptf-shadow);
+  overflow:hidden;
+}
+.ref-snapshot-head{
+  display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;
+  padding:12px 14px 10px 14px;
+  border-bottom:1px solid var(--ptf-border);
+  background:color-mix(in srgb, var(--ptf-primary) 7%, var(--ptf-surface));
+}
+.ref-snapshot-title{font-weight:850;font-size:0.9rem;color:var(--ptf-text)}
+.ref-snapshot-note{font-size:0.78rem;color:var(--ptf-muted)}
+.ref-snapshot-body{padding:12px 14px 14px 14px}
+.ref-snapshot-amount-row{
+  display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+  font-size:0.86rem;color:var(--ptf-text);margin-bottom:5px;
+}
+.ref-snapshot-amount-row .val{font-weight:850}
+.ref-snapshot-amount-row .cap{font-size:0.74rem;color:var(--ptf-muted)}
+.ref-snapshot-over{font-weight:800;white-space:nowrap;margin-left:6px}
+.ref-snapshot-over.ok{color:var(--ptf-success)}
+.ref-snapshot-over.bad{color:var(--ptf-danger)}
+.ref-snapshot-bar-track{
+  --tone:var(--ptf-primary);
+  position:relative;height:8px;border-radius:6px;margin-bottom:14px;
+  background:color-mix(in srgb, var(--ptf-text) 10%, var(--ptf-surface));
+}
+.ref-snapshot-bar-fill{
+  position:absolute;left:0;top:0;bottom:0;border-radius:6px;
+  background:var(--tone);transition:width .25s ease;
+}
+.ref-snapshot-bar-target{
+  position:absolute;top:-3px;bottom:-3px;width:2px;
+  background:var(--ptf-text);opacity:.6;
+}
+.ref-snapshot-bar-target::before{
+  content:"";position:absolute;top:-5px;left:50%;transform:translateX(-50%);
+  border-left:4px solid transparent;border-right:4px solid transparent;
+  border-top:5px solid var(--ptf-text);opacity:.6;
+}
+.ref-snapshot-mix{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+.ref-snapshot-mix-row{display:grid;grid-template-columns:90px 1fr 46px;align-items:center;gap:8px}
+.ref-snapshot-mix-label{
+  font-size:0.78rem;font-weight:700;color:var(--tone);
+  display:inline-flex;align-items:center;gap:6px;
+}
+.ref-snapshot-mix-label .dot{width:8px;height:8px;border-radius:50%;background:var(--tone);display:inline-block;flex:none}
+.ref-snapshot-mix-track{position:relative;height:6px;border-radius:4px;background:color-mix(in srgb, var(--ptf-text) 10%, var(--ptf-surface))}
+.ref-snapshot-mix-fill{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--tone);opacity:.85}
+.ref-snapshot-mix-pct{font-size:0.78rem;text-align:right;color:var(--ptf-muted);font-variant-numeric:tabular-nums}
+.ref-snapshot-lines-label{font-size:0.72rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ptf-muted);margin-bottom:6px}
+.ref-snapshot-lines{width:100%;overflow-x:auto}
+.ref-snapshot-lines table{width:100%;border-collapse:collapse;font-size:0.84rem}
+.ref-snapshot-lines thead th{
+  text-align:left;padding:4px 8px 6px 8px;font-weight:800;font-size:0.66rem;
+  letter-spacing:.04em;text-transform:uppercase;color:var(--ptf-muted);
+  border-bottom:1px solid var(--ptf-border);
+}
+.ref-snapshot-lines thead th.num{text-align:right}
+.ref-snapshot-lines td{padding:4px 8px;border-top:1px solid color-mix(in srgb, var(--ptf-border) 55%, transparent);vertical-align:middle}
+.ref-snapshot-lines tr:first-child td{border-top:0}
+.ref-snapshot-lines td.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--ptf-muted)}
+.ref-snapshot-bucket-dot{width:7px;height:7px;border-radius:50%;background:var(--tone);display:inline-block;flex:none}
+.ref-snapshot-natura{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;flex:none}
+.ref-snapshot-natura svg{width:14px;height:14px;color:var(--natura-color)}
+.ref-snapshot-instrument{display:flex;align-items:center;gap:7px;min-width:0}
+.ref-snapshot-instrument-text{display:flex;align-items:baseline;gap:6px;min-width:0;white-space:nowrap;overflow:hidden}
+.ref-snapshot-instrument-text .ticker{font-weight:700;color:var(--ptf-text);flex:none}
+.ref-snapshot-instrument-text .name{
+  font-size:0.74rem;color:var(--ptf-muted);overflow:hidden;text-overflow:ellipsis;
+}
+.ref-snapshot-footnote{font-size:0.72rem;color:var(--ptf-muted);margin-top:8px;font-style:italic}
 [data-testid="stMetric"]{
   background:var(--ptf-surface);
   border:1px solid var(--ptf-border);
