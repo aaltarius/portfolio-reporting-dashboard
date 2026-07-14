@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.9.32 - Unifica il grafico P/L per Categoria in Portafoglio, sfondo riga in "Andamento dell'ultima settimana"
+
+**Rimozione del selettore doppio grafico in Overview:**
+- il radio "Vista grafico" (P/L del portafoglio / P/L per Categoria) sopra le tab veniva quasi sempre lasciato su "P/L del portafoglio": la vista "P/L per Categoria" era generata solo su richiesta ma restava di fatto inutilizzata — rimosso il selettore, Overview mostra sempre e solo "P/L del portafoglio"
+- il grafico "P/L per Categoria" (storico impilato per categoria) si è spostato in modo definitivo nella tab Portafoglio, subito dopo "Andamento dell'ultima settimana", come nuova sezione sempre visibile (gestibile on/off dalle impostazioni di visibilità come le altre sezioni della tab)
+
+**Sfondo riga nella tabella "Andamento dell'ultima settimana":**
+- le righe con tutti e 7 i giorni disponibili e concordi (tutti in guadagno o tutti in perdita) ricevono uno sfondo verde o rosso leggero e trasparente, come segnale visivo immediato dell'andamento della settimana per lo strumento — righe con giorni mancanti (strumenti acquistati di recente) o con un giorno a zero non vengono evidenziate
+
 ## 4.9.31 - Card "Fotografia di riferimento" in Pianificazione
 
 **Traduzione "Quality factor" → "Fattore qualità":**

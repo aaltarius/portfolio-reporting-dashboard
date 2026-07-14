@@ -1,5 +1,5 @@
 """
-ui/pages/overview.py — Above-tabs section: graph selector + KPI cards
+ui/pages/overview.py — Above-tabs section: P/L chart + KPI cards
 Pure rendering. Receives pre-computed ctx from orchestrator.
 """
 from types import SimpleNamespace
@@ -8,7 +8,6 @@ import pandas as pd
 import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
 
-from core.asset_categories import get_selected_category_codes
 from core.settings_profiles import get_alerts_settings
 from ui.formatting import fmt_eur_it, fmt_pct_it
 from ui.components import kpi_card, kpi_triplet_card
@@ -20,7 +19,7 @@ from ui.charts.settings import apply_settings
 def render_overview(container: DeltaGenerator, ctx: SimpleNamespace) -> None:
     """Render above-tabs section (constant during tab navigation).
 
-    Contains: graph selector (3 modes) + dynamic plotly graphs + KPI cards (2 rows).
+    Contains: P/L del portafoglio chart + KPI cards (2 rows).
     """
     with container:
         dfh_top = ctx.dfh_top
@@ -44,28 +43,9 @@ def render_overview(container: DeltaGenerator, ctx: SimpleNamespace) -> None:
         portfolio_alerts = getattr(ctx, "portfolio_alerts", [])
         settings = getattr(ctx, "settings", {}) if hasattr(ctx, "settings") else {}
         alerts_settings = get_alerts_settings(settings)
-        visible_categories = list(get_selected_category_codes(settings))
-        categories_text = ", ".join(visible_categories)
-        overview_default_chart = "P/L del portafoglio"
 
         if not dfh_top.empty and len(dfh_top) > 1:
-            if "home_chart_vista" not in st.session_state or st.session_state.get("home_chart_vista") not in ["P/L del portafoglio", "P/L per Categoria"]:
-                st.session_state["home_chart_vista"] = overview_default_chart if overview_default_chart in ["P/L del portafoglio", "P/L per Categoria"] else "P/L del portafoglio"
-            _c_radio, _c_help = st.columns([12, 1])
-            with _c_radio:
-                _home_vista = st.radio(
-                    "Vista grafico",
-                    ["P/L del portafoglio", "P/L per Categoria"],
-                    horizontal=True,
-                    key="home_chart_vista",
-                    label_visibility="collapsed",
-                )
-            with _c_help:
-                st.markdown(
-                    f'<div style="padding-top:6px"><span title="P/L del portafoglio: guadagno/perdita complessivo nel tempo. P/L per Categoria: andamento P/L delle categorie visibili ({categories_text}) separatamente." style="cursor:help;font-size:0.9rem;color:#9CA3AF;border:1px solid #9CA3AF;border-radius:50%;padding:0 3px;display:inline-block;line-height:1.3;">?</span></div>',
-                    unsafe_allow_html=True,
-                )
-            fig = build_overview_time_chart(dfh_top, da, _home_vista, pl_color, pl_totale, CHART_BG, dfmt, get_theme_context(), settings=settings, total_return=total_return)
+            fig = build_overview_time_chart(dfh_top, da, "P/L del portafoglio", pl_color, pl_totale, CHART_BG, dfmt, get_theme_context(), settings=settings, total_return=total_return)
             latest_chart_date = ""
             latest_chart_value = 0.0
             if getattr(fig, "data", None):
@@ -80,13 +60,8 @@ def render_overview(container: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     except Exception:
                         latest_chart_value = 0.0
 
-            # Mappa la view_mode al chart_id corrispondente
-            _overview_chart_ids = {
-                "P/L del portafoglio": "overview_pl_portafoglio",
-                "P/L per Categoria":   "overview_pl_categoria",
-            }
-            apply_settings(fig, _overview_chart_ids.get(_home_vista, "overview_pl_portafoglio"))
-            overview_chart_key = f"overview-chart|{_home_vista}|{latest_chart_date}|{round(latest_chart_value, 2)}"
+            apply_settings(fig, "overview_pl_portafoglio")
+            overview_chart_key = f"overview-chart|{latest_chart_date}|{round(latest_chart_value, 2)}"
             st.plotly_chart(fig, width="stretch", key=overview_chart_key)
         else:
             st.info("📌 Aggiorna le quotazioni per visualizzare l'andamento storico del P/L in home page.")

@@ -531,8 +531,11 @@ def render_weekly_pl_table(result, da, data):
         tot_col = "#1E8449" if totale >= 0 else "#FF4B4B"
         arrow_char = "↗" if totale >= 0 else "↘"
         strumento = str(row["strumento"])
+        row_all_up = n_days == 7 and all(d is not None and d > 0 for d in row["deltas"])
+        row_all_down = n_days == 7 and all(d is not None and d < 0 for d in row["deltas"])
+        row_bg = "background-color:rgba(30,132,73,0.10);" if row_all_up else ("background-color:rgba(255,75,75,0.10);" if row_all_down else "")
         rows_html += (
-            '<tr>\n'
+            f'<tr style="{row_bg}">\n'
             f'<td data-sort="{tk}"><a class="tk-link" style="color:{col}" href="#" onclick="showModal(\'{tk}\');return false;">{tk}</a></td>\n'
             f'<td data-sort="{strumento}" style="color:{col};max-width:130px;" title="{strumento}">{strumento[:24]}</td>\n'
             f'<td data-sort="{tipo_code}" style="color:{col};">{tipo_code}</td>\n'

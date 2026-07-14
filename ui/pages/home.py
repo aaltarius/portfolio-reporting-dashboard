@@ -32,6 +32,7 @@ from ui.components import (
     render_styled_table, back_to_top, vertical_gap, should_render_section, render_section_title,
 )
 from ui.charts.axes import zero_aligned_ranges
+from ui.charts.overview import build_overview_time_chart
 from ui.charts.home import (
     build_category_allocation_pie_chart,
     build_category_bar_chart,
@@ -575,6 +576,31 @@ def _render_portfolio_table_section(
                         "variazione del risultato non realizzato (quantità × prezzo − costo) rispetto al giorno "
                         "precedente. La colonna P/L totale è la somma dei giorni mostrati in tabella, non il P/L "
                         "complessivo dello strumento. Celle vuote: strumento non ancora in portafoglio in quella data."
+                    )
+
+        if should_render_section("Portafoglio", "P/L per Categoria", settings):
+            if not dfh_top.empty and len(dfh_top) > 1:
+                with profile_step("Portafoglio", "render P/L per categoria", count=len(dfh_top)):
+                    render_section_title(
+                        "P/L per Categoria",
+                        icon="chart",
+                        gap_after="xs",
+                    )
+                    if chart_loader is None:
+                        fig_cat_history = build_overview_time_chart(
+                            dfh_top, da, "P/L per Categoria", None, 0.0, None, None, theme, settings=settings, total_return=None
+                        )
+                    else:
+                        fig_cat_history = chart_loader(
+                            "overview_pl_categoria",
+                            lambda: build_overview_time_chart(
+                                dfh_top, da, "P/L per Categoria", None, 0.0, None, None, theme, settings=settings, total_return=None
+                            ),
+                            extra_params={"rows": len(dfh_top), "cats": "|".join(get_selected_category_codes(settings))},
+                        )
+                    st.plotly_chart(fig_cat_history, width="stretch")
+                    legend_block(
+                        "Andamento storico del P/L delle categorie visibili, sovrapposte (area impilata)."
                     )
 
         if should_render_section("Portafoglio", "Proventi per strumento", settings):
