@@ -1,5 +1,19 @@
 # Changelog
 
+## 4.9.33 - Revisione delle metriche di Analisi Accumuli, fix messaggio di stato Accumuli/Benchmark
+
+**Riscrittura delle metriche di "Analisi accumuli" (Cruscotti > Accumuli):**
+- "Margine su PMC" e "Elasticità PMC" avevano nomi che inducevano a conclusioni sbagliate: il primo divideva per il prezzo corrente invece che per il PMC (non era un rendimento, ma la distanza dal pareggio), il secondo simulava sempre una rata fissa di €300 uguale per tutti gli strumenti invece della rata realmente tipica di ciascun PAC — corretti e rinominati: **Cuscinetto pareggio / Recupero necessario** (`distanza_pareggio_pct`, denominatore corretto) e **Impatto rata tipica sul PMC** (`impatto_pmc_rata_pct`, calcolato sulla mediana delle rate storiche realmente pagate)
+- separati PMC all-in (comprensivo di commissioni) e prezzo medio di esecuzione (escluse commissioni), con percentile calcolato per entrambi rispetto ai prezzi storici — il calcolo escludeva erroneamente il punto sintetico "oggi" dalla serie prezzi solo in un secondo momento: ora il periodo statistico si ferma sempre all'ultima quotazione reale, non a un prezzo odierno duplicato
+- nuova **Aderenza alle scadenze PAC**, dedotta dal calendario (cadenza mensile/trimestrale, primo acquisto trattato come versamento iniziale se anomalo) invece che dalla sola distanza grezza fra acquisti consecutivi, che resta disponibile come metrica secondaria
+- Stato e Priorità riclassificati su due assi chiari (sopra/sotto il PMC × quanto una rata tipica lo sposterebbe ancora), eliminando il bucket residuale "Da monitorare" in cui finivano posizioni mature e in utile senza un motivo comprensibile; nuova legenda a tabella sotto la sintesi che spiega cosa significano i singoli Stati e la Priorità
+- grafico a quadranti, box di lettura sotto le KPI (ora una tabella, non un paragrafo) e KPI di dettaglio (16 invece di 17, raggruppate per tema) aggiornati di conseguenza; aggiunta la linea del PMC attuale nel grafico "Prezzo vs PMC" per capire a colpo d'occhio la posizione del percentile
+- riferimento: `specifica_revisione_analisi_accumuli_FAM-FLEX.md` (non versionato, analisi di supporto)
+
+**Fix: il box di stato di Accumuli/Benchmark restava con la data vecchia dopo il primo click su "Rigenera/Aggiorna analisi":**
+- `_render_accumuli_freeze_header`/`_render_benchmark_freeze_header` disegnavano il messaggio con data e provenienza dell'ultima analisi *prima* di sapere se in quello stesso click l'utente avesse chiesto un refresh — quindi anche quando il refresh veniva eseguito correttamente (la cache si aggiornava), il messaggio a schermo restava quello di prima, dando l'impressione che il primo click non avesse fatto nulla; serviva un secondo click per vedere il messaggio corretto (quello del refresh precedente)
+- il messaggio ora vive in uno slot dedicato (`st.empty`) ridisegnato subito dopo un eventuale refresh nello stesso rerun, così riflette sempre lo stato reale
+
 ## 4.9.32 - Unifica il grafico P/L per Categoria in Portafoglio, sfondo riga in "Andamento dell'ultima settimana"
 
 **Rimozione del selettore doppio grafico in Overview:**
