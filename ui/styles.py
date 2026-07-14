@@ -477,6 +477,14 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
 .leg b{color:var(--ptf-text)}
 .leg-top{display:flex;align-items:flex-start;margin:6px 0 12px 0;width:100%;box-sizing:border-box}
 .leg-bottom{display:flex;align-items:flex-start;margin:10px 0 16px 0;width:100%;box-sizing:border-box}
+.read-table{flex-direction:column;padding:6px 8px}
+.read-table table{width:100%;border-collapse:collapse}
+.read-table tr{border-bottom:1px solid color-mix(in srgb, var(--ptf-text) 9%, transparent)}
+.read-table tr:last-child{border-bottom:none}
+.read-table th,.read-table td{padding:8px 10px;text-align:left;vertical-align:top;font-size:0.86rem;line-height:1.5}
+.read-table th{font-weight:800;white-space:nowrap;width:1%;color:var(--ptf-text)}
+.read-table td.val{font-weight:800;white-space:nowrap;text-align:right;width:1%}
+.read-table td.note{color:color-mix(in srgb, var(--ptf-text) 82%, transparent)}
 .exit-link{
   display:block;
   text-align:center;

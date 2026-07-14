@@ -17,7 +17,11 @@ import streamlit as st
 from core.cache_signatures import build_portfolio_data_signature, resolve_analysis_render_sig
 from core.render_profiler import profile_step
 from core.analytics_payload_cache import load_entry as load_persistent_analytics_entry, store_entry as store_persistent_analytics_entry
-from core.services.accumuli import AccumuliResult, build_accumuli_analysis
+from core.services.accumuli import (
+    build_accumuli_analysis,
+    IMPATTO_RATA_ALTO_PCT,
+    IMPATTO_RATA_BASSO_PCT,
+)
 from ui.charts.accumuli import (
     build_accumuli_overview_chart,
     build_accumulo_price_pmc_chart,
@@ -28,8 +32,9 @@ from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it, fmt_qty_it
 from ui.theme import P, macro_color
 
 
-ACCUMULI_ANALYSIS_CACHE_KEY = "_cruscotti_accumuli_analysis_cache_v1"
-ACCUMULI_RENDER_CACHE_KEY = "_cruscotti_accumuli_render_cache_v2"
+ACCUMULI_ANALYSIS_CACHE_KEY = "_cruscotti_accumuli_analysis_cache_v2"
+ACCUMULI_RENDER_CACHE_KEY = "_cruscotti_accumuli_render_cache_v4"
+ACCUMULI_PAYLOAD_TYPE = "accumuli_v2"
 
 
 def _prune_cache_items(items: dict[str, Any], max_items: int = 24) -> None:
@@ -136,7 +141,7 @@ def _get_accumuli_analysis_cache(signature: str) -> tuple[dict[str, Any] | None,
         items[signature].setdefault("cache_source", "session")
         return items[signature], False
 
-    disk_entry, disk_stale, disk_source = load_persistent_analytics_entry("accumuli", signature)
+    disk_entry, disk_stale, disk_source = load_persistent_analytics_entry(ACCUMULI_PAYLOAD_TYPE, signature)
     if isinstance(disk_entry, dict):
         disk_signature = str(disk_entry.get("signature") or signature)
         disk_entry.setdefault("cache_source", disk_source)
@@ -163,15 +168,47 @@ def _store_accumuli_analysis_cache(signature: str, result: Any) -> dict[str, Any
     }
     items[signature] = entry
     cache["latest_key"] = signature
-    store_persistent_analytics_entry("accumuli", signature, entry, max_entries=6)
+    store_persistent_analytics_entry(ACCUMULI_PAYLOAD_TYPE, signature, entry, max_entries=6)
     if len(items) > 4:
         for old_key in list(items.keys())[:-4]:
             items.pop(old_key, None)
     return entry
 
 
-def _render_accumuli_freeze_header(entry: dict[str, Any] | None, stale: bool, signature: str, show_explanations: bool = True) -> bool:
-    """Header operativo: non rigenera Accumuli se l'utente non lo chiede."""
+def _render_accumuli_status_text(slot, entry: dict[str, Any] | None, stale: bool) -> None:
+    """Testo di stato (info/warning/caption) nel suo slot dedicato.
+
+    Va richiamato di nuovo con l'entry aggiornata subito dopo un eventuale
+    refresh, nello stesso rerun: altrimenti il messaggio mostra ancora la data
+    di prima del click anche quando l'analisi è già stata rigenerata, dando
+    l'impressione che il primo click non abbia fatto nulla.
+    """
+    with slot.container():
+        if entry is None:
+            st.info(
+                "Nessuna analisi accumuli disponibile nella cache persistente. "
+                "La prima analisi va generata una sola volta; poi verrà recuperata anche dopo il riavvio dell'app."
+            )
+            return
+        created_at = str(entry.get("created_at") or "n/d")
+        if stale:
+            st.warning(
+                f"Sto mostrando l'ultima analisi accumuli disponibile in cache, generata il {created_at}. "
+                "I dati del portafoglio sono cambiati: rigenera solo se vuoi aggiornare questa lettura."
+            )
+            return
+        source = str(entry.get("cache_source") or "cache")
+        st.caption(f"Analisi accumuli in cache — generata il {created_at} — origine: {source}. Non viene rigenerata automaticamente nei rerun.")
+
+
+def _render_accumuli_freeze_header(entry: dict[str, Any] | None, stale: bool, signature: str, show_explanations: bool = True):
+    """Header operativo: non rigenera Accumuli se l'utente non lo chiede.
+
+    Ritorna (refresh_requested, status_slot). Il chiamante deve richiamare
+    _render_accumuli_status_text(status_slot, ...) con l'entry aggiornata dopo
+    un eventuale refresh, per evitare che il messaggio resti di un giro
+    indietro rispetto ai dati che descrive.
+    """
     render_section_title(
         "Accumuli e PAC",
         comment=(
@@ -182,56 +219,14 @@ def _render_accumuli_freeze_header(entry: dict[str, Any] | None, stale: bool, si
         ),
         icon="analysis",
     )
+    status_slot = st.empty()
+    _render_accumuli_status_text(status_slot, entry, stale)
+
     if entry is None:
-        st.info(
-            "Nessuna analisi accumuli disponibile nella cache persistente. "
-            "La prima analisi va generata una sola volta; poi verrà recuperata anche dopo il riavvio dell'app."
-        )
-        return st.button("Analizza accumuli", type="primary", key=f"accumuli_analyze_{signature}")
-
-    created_at = str(entry.get("created_at") or "n/d")
+        return st.button("Analizza accumuli", type="primary", key=f"accumuli_analyze_{signature}"), status_slot
     if stale:
-        st.warning(
-            f"Sto mostrando l'ultima analisi accumuli disponibile in cache, generata il {created_at}. "
-            "I dati del portafoglio sono cambiati: rigenera solo se vuoi aggiornare questa lettura."
-        )
-        return st.button("Aggiorna analisi accumuli", type="primary", key=f"accumuli_refresh_{signature}")
-
-    source = str(entry.get("cache_source") or "cache")
-    st.caption(f"Analisi accumuli in cache — generata il {created_at} — origine: {source}. Non viene rigenerata automaticamente nei rerun.")
-    return st.button("Rigenera analisi accumuli", type="secondary", key=f"accumuli_regen_{signature}")
-
-
-_FIELD_RENAMES = {
-    "elasticita_prossima_rata": "elasticita_prossimo_acquisto",
-    "rata_tipica": "importo_tipico_acquisto",
-}
-
-
-def _migrate_result(result: Any) -> Any:
-    """Rinomina i vecchi nomi di campo nei risultati cached per compatibilità con il codice corrente."""
-    if result is None or not hasattr(result, "summary"):
-        return result
-    summary = result.summary
-    if isinstance(summary, pd.DataFrame) and not summary.empty:
-        old_cols = {old: new for old, new in _FIELD_RENAMES.items() if old in summary.columns and new not in summary.columns}
-        if old_cols:
-            summary = summary.rename(columns=old_cols)
-    by_ticker: dict[str, Any] = {}
-    for tk, v in (result.by_ticker or {}).items():
-        row = v.get("summary", {})
-        if isinstance(row, dict):
-            updated = False
-            for old, new in _FIELD_RENAMES.items():
-                if old in row and new not in row:
-                    row = dict(row)
-                    row[new] = row.pop(old)
-                    updated = True
-            if updated:
-                v = dict(v)
-                v["summary"] = row
-        by_ticker[tk] = v
-    return AccumuliResult(summary, by_ticker)
+        return st.button("Aggiorna analisi accumuli", type="primary", key=f"accumuli_refresh_{signature}"), status_slot
+    return st.button("Rigenera analisi accumuli", type="secondary", key=f"accumuli_regen_{signature}"), status_slot
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -250,11 +245,10 @@ def _priority_color(value: str) -> str:
 def _state_color(value: str) -> str:
     return {
         "Maturo": P["green"],
-        "Efficiente": P["green"],
+        "Consolidato": P["green"],
         "Rafforzabile": P["blue"],
         "Reattivo": P["red"],
-        "Sotto pressione": P["red"],
-        "Da monitorare": P["muted"],
+        "Sotto pressione": P["orange"],
         "Non significativo": P["muted"],
     }.get(str(value), P["blue"])
 
@@ -302,9 +296,9 @@ def _format_summary(summary: pd.DataFrame) -> pd.DataFrame:
             "Capitale": pd.to_numeric(summary["capitale"], errors="coerce"),
             "Valore": pd.to_numeric(summary["controvalore"], errors="coerce"),
             "P/L": pd.to_numeric(summary["pl_pct"], errors="coerce"),
-            "PMC": pd.to_numeric(summary["pmc"], errors="coerce"),
+            "PMC": pd.to_numeric(summary["pmc_allin"], errors="coerce"),
             "Prezzo": pd.to_numeric(summary["prezzo_attuale"], errors="coerce"),
-            "Elast. PMC": pd.to_numeric(summary["elasticita_prossimo_acquisto"], errors="coerce"),
+            "Impatto rata": pd.to_numeric(summary["impatto_pmc_rata_pct"], errors="coerce"),
             "Stato": summary["stato"].astype(str),
             "Priorità": summary["priorita"].astype(str),
         }
@@ -317,8 +311,8 @@ def _render_overview_kpis(summary: pd.DataFrame) -> None:
     total_value = float(pd.to_numeric(summary.get("controvalore"), errors="coerce").fillna(0.0).sum())
     total_pl = total_value - total_invested
     total_pl_pct = total_pl / total_invested if total_invested > 0 else 0.0
-    below_pmc = int((pd.to_numeric(summary.get("margine_pmc"), errors="coerce") < 0).sum())
-    high_elasticity = int((pd.to_numeric(summary.get("elasticita_prossimo_acquisto"), errors="coerce") >= 0.08).sum())
+    below_pmc = int((pd.to_numeric(summary.get("distanza_pareggio_pct"), errors="coerce") < 0).sum())
+    high_impact = int((pd.to_numeric(summary.get("impatto_pmc_rata_pct"), errors="coerce") >= IMPATTO_RATA_ALTO_PCT).sum())
     cols = st.columns(6)
     with cols[0]:
         kpi_card("Strumenti in accumulo", fmt_num_it(len(summary), 0), "PAC espliciti e progressivi", accent=P["blue"])
@@ -331,7 +325,7 @@ def _render_overview_kpis(summary: pd.DataFrame) -> None:
     with cols[4]:
         kpi_card("Sotto PMC", fmt_num_it(below_pmc, 0), "Prezzo sotto carico", accent=P["orange"], value_color=P["orange"] if below_pmc else P["green"])
     with cols[5]:
-        kpi_card("Alta elasticità", fmt_num_it(high_elasticity, 0), "Prossimo acquisto ≥ 8%", accent=P["red" if high_elasticity else "green"], value_color=P["red"] if high_elasticity else P["green"])
+        kpi_card("Impatto rata alto", fmt_num_it(high_impact, 0), f"Rata tipica ≥ {fmt_pct_it(IMPATTO_RATA_ALTO_PCT, 1)} sul PMC", accent=P["red" if high_impact else "green"], value_color=P["red"] if high_impact else P["green"])
 
 
 def _filter_summary(summary: pd.DataFrame) -> pd.DataFrame:
@@ -356,33 +350,68 @@ def _filter_summary(summary: pd.DataFrame) -> pd.DataFrame:
     return filtered.reset_index(drop=True)
 
 
-def _fmt_elasticity_table(value: Any) -> str:
-    """Formato leggibile dell'elasticità PMC in tabella.
-
-    La metrica resta quella originaria, quindi può superare il 100% su
-    posizioni embrionali; in sintesi evitiamo numeri estremi tipo 412,1%.
-    """
+def _fmt_impact_table(value: Any) -> str:
+    """Formato leggibile dell'impatto simulato di una rata tipica sul PMC in tabella."""
     v = _safe_float(value, default=float("nan"))
     if pd.isna(v):
         return "—"
-    if v >= 1.0:
-        return ">100%"
-    return fmt_pct_it(v, 1)
+    if v >= 0.50:
+        return ">50%"
+    return fmt_pct_it(v, 2, signed=True)
 
 
-def _elasticity_judgment(value: Any) -> str:
+def _impact_judgment(value: Any) -> str:
+    """Etichetta breve (per card/tabella) secondo le soglie dichiarate in
+    core.services.accumuli (§5.6 della spec)."""
     v = _safe_float(value, default=float("nan"))
     if pd.isna(v):
         return "Non calcolabile"
-    if v < 0.02:
-        return "Bassa: PMC quasi blindato"
-    if v < 0.08:
-        return "Media: PMC ancora sensibile"
-    if v < 0.25:
-        return "Alta: acquisto incisivo"
-    if v < 1.0:
-        return "Molto alta: posizione giovane"
-    return "Anomala: acquisto oltre il capitale"
+    if v < IMPATTO_RATA_BASSO_PCT:
+        return "Molto basso"
+    if v < IMPATTO_RATA_BASSO_PCT * 3:  # 0.75%
+        return "Basso"
+    if v < IMPATTO_RATA_ALTO_PCT:
+        return "Medio"
+    if v < 0.03:
+        return "Alto"
+    return "Molto alto"
+
+
+def _impact_note(value: Any, importo_tipico: Any) -> str:
+    """Frase estesa (per il box di lettura): spiega cosa significa il numero,
+    non solo un'etichetta come "Basso"."""
+    v = _safe_float(value, default=float("nan"))
+    if pd.isna(v):
+        return "Impatto non calcolabile."
+    if v < IMPATTO_RATA_BASSO_PCT:
+        effetto = "quasi nullo: il PMC è ormai stabile"
+    elif v < IMPATTO_RATA_BASSO_PCT * 3:
+        effetto = "contenuto: il PMC si muove poco"
+    elif v < IMPATTO_RATA_ALTO_PCT:
+        effetto = "medio: il PMC è ancora manovrabile"
+    elif v < 0.03:
+        effetto = "rilevante: la posizione è ancora giovane"
+    else:
+        effetto = "molto rilevante: la posizione è appena avviata"
+    rata = _safe_float(importo_tipico, default=float("nan"))
+    rata_txt = f"da {fmt_eur_it(rata, 0)} " if pd.notna(rata) and rata > 0 else ""
+    return f"Una rata tipica {rata_txt}sposterebbe oggi il PMC di circa {fmt_pct_it(abs(v), 2)}: effetto {effetto}."
+
+
+def _percentile_note(value: Any, riferimento: str) -> str:
+    """Frase estesa che spiega cosa significa il percentile, invece di un
+    aggettivo isolato ("Intermedio") senza contesto."""
+    v = _safe_float(value, default=float("nan"))
+    if pd.isna(v):
+        return "Percentile non calcolabile."
+    pct_txt = fmt_pct_it(v, 0)
+    if v <= 0.33:
+        posizione = "tra i più bassi osservati nel periodo: posizionamento favorevole"
+    elif v <= 0.66:
+        posizione = "vicino alla mediana dei prezzi osservati nel periodo"
+    else:
+        posizione = "tra i più alti osservati nel periodo: posizionamento sfavorevole"
+    return f"Il {pct_txt} dei prezzi giornalieri osservati è stato pari o inferiore {riferimento}: {posizione}."
 
 
 def _render_summary_table(summary: pd.DataFrame) -> None:
@@ -391,7 +420,7 @@ def _render_summary_table(summary: pd.DataFrame) -> None:
     if display.empty:
         st.info("Nessuno strumento soddisfa i filtri selezionati.")
         return
-    numeric_cols = ["N. acquisti", "Quote", "Capitale", "Valore", "P/L", "PMC", "Prezzo", "Elast. PMC"]
+    numeric_cols = ["N. acquisti", "Quote", "Capitale", "Valore", "P/L", "PMC", "Prezzo", "Impatto rata"]
     center_cols = ["Stato", "Priorità"]
     with profile_step("Cruscotti/Accumuli", "summary table: build styler", count=len(display)):
         styled = (
@@ -405,7 +434,7 @@ def _render_summary_table(summary: pd.DataFrame) -> None:
                 "P/L": lambda v: fmt_pct_it(v, 1, signed=True),
                 "PMC": lambda v: fmt_eur_it(v, 2),
                 "Prezzo": lambda v: fmt_eur_it(v, 2),
-                "Elast. PMC": _fmt_elasticity_table,
+                "Impatto rata": _fmt_impact_table,
             }
         )
         .apply(_style_summary_table, axis=1)
@@ -439,7 +468,7 @@ def _render_summary_table(summary: pd.DataFrame) -> None:
     with profile_step("Cruscotti/Accumuli", "summary table: render dataframe", count=len(display)):
         render_styled_table(
             styled,
-        height=min(420, 72 + len(display) * 36),
+        height="content",
         column_config={
             "Strumento": st.column_config.TextColumn("Strumento", width=118),
             "Categoria": st.column_config.TextColumn("Categoria", width=56),
@@ -450,15 +479,43 @@ def _render_summary_table(summary: pd.DataFrame) -> None:
             "P/L": st.column_config.NumberColumn("P/L", width=64),
             "PMC": st.column_config.NumberColumn("PMC", width=72),
             "Prezzo": st.column_config.NumberColumn("Prezzo", width=72),
-            "Elast. PMC": st.column_config.NumberColumn("Elast. PMC", width=78),
+            "Impatto rata": st.column_config.NumberColumn("Impatto rata", width=90),
             "Stato": st.column_config.TextColumn("Stato", width=92),
             "Priorità": st.column_config.TextColumn("Priorità", width=76),
         },
     )
+    _render_stato_legend()
+
+
+def _render_stato_legend() -> None:
+    """Legenda Stato/Priorità come tabella di chip colorati, non un paragrafo:
+    ogni riga è uno stato possibile, con la stessa lettura usata da _state_and_priority."""
+    stati = [
+        ("Reattivo", "Alta", "Sotto il PMC e PMC ancora manovrabile: un acquisto ora ha un effetto reale sul prezzo medio."),
+        ("Sotto pressione", "Media", "Sotto il PMC ma il PMC è ormai rigido: comprare ancora lo sposta poco."),
+        ("Rafforzabile", "Media", "Sopra il PMC, posizione ancora giovane: il PMC si muove ancora in modo percepibile."),
+        ("Consolidato", "Bassa", "Sopra il PMC, sensibilità intermedia: nessun segnale operativo forte."),
+        ("Maturo", "Bassa", "Sopra il PMC, PMC ormai stabile: posizione consolidata, nessuna azione richiesta."),
+        ("Non significativo", "Bassa", "Meno di tre acquisti: dato ancora insufficiente per una lettura affidabile."),
+    ]
+    rows_html = "".join(
+        f'<tr><th><span style="color:{_state_color(stato)};">● {stato}</span></th>'
+        f'<td class="val" style="color:{_priority_color(priorita)};">{priorita}</td>'
+        f'<td class="note">{nota}</td></tr>'
+        for stato, priorita, nota in stati
+    )
+    st.markdown(
+        f'<div class="leg leg-bottom read-table"><table><tbody>{rows_html}</tbody></table>'
+        '<div style="margin-top:8px;font-size:0.8rem;opacity:.75;">'
+        "La Priorità indica quanto ha senso agire tramite il PAC (comprare ancora sposterebbe il PMC?), "
+        "non un giudizio di rischio o di qualità della posizione."
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _render_diagnosis(row: pd.Series) -> None:
-    state = str(row.get("stato") or "Da monitorare")
+    state = str(row.get("stato") or "Consolidato")
     priority = str(row.get("priorita") or "Media")
     diagnosis = str(row.get("diagnosi") or "Analisi disponibile ma senza un segnale operativo netto.")
     color = _state_color(state)
@@ -476,24 +533,68 @@ def _render_diagnosis(row: pd.Series) -> None:
 
 
 def _render_metric_comment(row: pd.Series) -> None:
-    state = str(row.get("stato") or "Da monitorare")
-    margin = _safe_float(row.get("margine_pmc"))
-    elasticity = _safe_float(row.get("elasticita_prossimo_acquisto"))
-    efficiency = row.get("efficienza_accumulo")
-    percentile = row.get("percentile_pmc")
-    regularity = row.get("regolarita")
+    """Tabella di lettura sotto le KPI card: una riga per metrica, non un
+    paragrafo unico — più scansionabile del blocco di frasi precedente."""
+    state = str(row.get("stato") or "Consolidato")
+
+    distanza_val = _safe_float(row.get("distanza_pareggio_pct"), default=float("nan"))
+    if pd.isna(distanza_val):
+        distanza_label, distanza_value, distanza_note = "Cuscinetto/Recupero", "n/d", "Non calcolabile."
+    elif distanza_val >= 0:
+        distanza_label = "Cuscinetto pareggio"
+        distanza_value = fmt_pct_it(distanza_val, 1)
+        distanza_note = f"Il prezzo potrebbe scendere del {fmt_pct_it(distanza_val, 1)} rispetto a oggi prima di raggiungere il PMC all-in (il pareggio)."
+    else:
+        distanza_label = "Recupero necessario"
+        distanza_value = fmt_pct_it(-distanza_val, 1)
+        distanza_note = f"Il prezzo dovrebbe salire del {fmt_pct_it(-distanza_val, 1)} rispetto a oggi per tornare al PMC all-in (il pareggio)."
+    distanza_color = P["muted"] if pd.isna(distanza_val) else (P["green"] if distanza_val >= 0 else P["red"])
+
+    impatto = row.get("impatto_pmc_rata_pct")
+    perc_allin = row.get("percentile_pmc_allin")
+    perc_exec = row.get("percentile_pmc_esecuzione")
     drawdown = row.get("drawdown_da_massimo")
-    parts = [
-        f"<b>{state}</b>: il grafico legge l'accumulo sull'intera vita operativa dello strumento, anche quando usi i bottoni temporali del grafico.",
-        f"Margine su PMC {fmt_pct_it(margin, 1, signed=True)}: indica la distanza tra prezzo attuale e prezzo medio di carico.",
-        f"Elasticità PMC {_fmt_elasticity_table(elasticity)}: {_elasticity_judgment(elasticity)}.",
-        f"Percentile PMC {fmt_pct_it(percentile, 0)}: {_percentile_judgment(percentile)} rispetto ai prezzi osservati nel periodo PAC.",
-        f"Regolarità acquisti {fmt_pct_it(regularity, 0)}: {_regularity_judgment(regularity)}.",
-        f"Drawdown dal massimo {fmt_pct_it(drawdown, 1, signed=True)}: {_drawdown_judgment(drawdown)}.",
+    drawdown_val = _safe_float(drawdown, default=float("nan"))
+
+    aderenza_val = _safe_float(row.get("aderenza_pac_pct"), default=float("nan"))
+    regolarita = row.get("regolarita_intervalli")
+    if pd.isna(aderenza_val):
+        aderenza_value = "n/d"
+        aderenza_note = f"Cadenza non riconoscibile dagli intervalli fra acquisti — la regolarità grezza degli intervalli è {fmt_pct_it(regolarita, 0)}."
+        aderenza_color = P["muted"]
+    else:
+        n_attesi = int(_safe_float(row.get("cicli_pac_attesi"), 0.0))
+        n_coperti = int(_safe_float(row.get("cicli_pac_coperti"), 0.0))
+        aderenza_value = fmt_pct_it(aderenza_val, 0)
+        aderenza_note = f"{n_coperti} scadenze mensili coperte su {n_attesi} stimate (regolarità grezza degli intervalli fra acquisti: {fmt_pct_it(regolarita, 0)})."
+        aderenza_color = P["green"]
+
+    rows = [
+        (distanza_label, distanza_value, distanza_color, distanza_note),
+        ("Impatto rata tipica", _fmt_impact_table(impatto), P["blue"], _impact_note(impatto, row.get("importo_tipico_acquisto"))),
+        ("Percentile PMC all-in", fmt_pct_it(perc_allin, 0), P["orange"], _percentile_note(perc_allin, "al PMC all-in")),
+        ("Percentile PMC esecuzione", fmt_pct_it(perc_exec, 0), P["orange"], _percentile_note(perc_exec, "al prezzo medio di esecuzione (escluse le commissioni)")),
+        ("Aderenza PAC", aderenza_value, aderenza_color, aderenza_note),
+        ("Drawdown dal massimo", fmt_pct_it(drawdown, 1, signed=True), P["green"] if drawdown_val >= -0.02 else P["red"], _drawdown_judgment(drawdown) + "."),
     ]
-    if efficiency is not None and pd.notna(efficiency):
-        parts.append(f"Efficienza accumulo {fmt_num_it(efficiency, 2)}: confronto descrittivo tra media prezzi e PMC effettivo.")
-    legend_block("<br>".join(parts), variant="bottom")
+    rows_html = "".join(
+        f'<tr><th>{label}</th><td class="val" style="color:{color};">{value}</td><td class="note">{note}</td></tr>'
+        for label, value, color, note in rows
+    )
+
+    quote_date = row.get("data_ultima_quotazione")
+    footer = f"Lettura riferita allo stato <b>{state}</b>, sull'intera vita operativa dello strumento."
+    try:
+        if quote_date is not None and pd.notna(quote_date):
+            footer += f" Prezzo di riferimento: quotazione del {pd.Timestamp(quote_date).strftime('%d/%m/%Y')}."
+    except Exception:
+        pass
+
+    st.markdown(
+        f'<div class="leg leg-bottom read-table"><table><tbody>{rows_html}</tbody></table>'
+        f'<div style="margin-top:8px;font-size:0.8rem;opacity:.75;">{footer}</div></div>',
+        unsafe_allow_html=True,
+    )
 
 
 def _render_recent_operations(ops: pd.DataFrame) -> None:
@@ -512,17 +613,6 @@ def _render_recent_operations(ops: pd.DataFrame) -> None:
 
 
 
-def _efficiency_judgment(value: Any) -> str:
-    v = _safe_float(value, default=float("nan"))
-    if pd.isna(v):
-        return "Non calcolabile"
-    if v >= 1.00:
-        return "Ottima: PMC migliore della media"
-    if v >= 0.98:
-        return "Neutra: vicino alla media"
-    return "Debole: PMC sopra la media"
-
-
 def _volatility_judgment(value: Any) -> str:
     v = _safe_float(value, default=float("nan"))
     if pd.isna(v):
@@ -534,15 +624,15 @@ def _volatility_judgment(value: Any) -> str:
     return "Alta: acquisti su forte volatilità"
 
 
-def _margin_judgment(value: Any) -> str:
+def _distanza_judgment(value: Any) -> str:
     v = _safe_float(value, default=float("nan"))
     if pd.isna(v):
         return "Non calcolabile"
     if v >= 0.08:
         return "Cuscinetto ampio"
     if v >= 0.00:
-        return "Margine positivo"
-    return "Sotto PMC"
+        return "Cuscinetto positivo"
+    return "Recupero necessario"
 
 
 def _pl_judgment(value: Any) -> str:
@@ -559,15 +649,15 @@ def _pl_judgment(value: Any) -> str:
 
 def _market_mean_judgment(row: pd.Series) -> str:
     mean_px = _safe_float(row.get("prezzo_medio_periodo"), default=float("nan"))
-    pmc = _safe_float(row.get("pmc"), default=float("nan"))
+    pmc = _safe_float(row.get("pmc_allin"), default=float("nan"))
     if pd.isna(mean_px) or pd.isna(pmc) or mean_px <= 0 or pmc <= 0:
         return "Non calcolabile"
     diff = (pmc / mean_px) - 1.0
     if diff <= -0.02:
-        return "PMC migliore della media"
+        return "PMC all-in migliore della media"
     if diff <= 0.02:
-        return "PMC allineato alla media"
-    return "PMC sopra la media"
+        return "PMC all-in allineato alla media"
+    return "PMC all-in sopra la media"
 
 
 def _percentile_judgment(value: Any) -> str:
@@ -596,6 +686,8 @@ def _drawdown_judgment(value: Any) -> str:
     v = _safe_float(value, default=float("nan"))
     if pd.isna(v):
         return "Non calcolabile"
+    if v >= -1e-6:
+        return "Coincide con il massimo osservato nel periodo"
     if v >= -0.02:
         return "Vicino ai massimi"
     if v >= -0.10:
@@ -608,24 +700,62 @@ def _render_detail(row: pd.Series, detail: dict[str, Any], cache_signature: str)
     ticker = str(row.get("ticker") or "")
     with profile_step("Cruscotti/Accumuli", f"detail {ticker}: title"):
         render_section_title(f"Dettaglio accumulo – {ticker}", icon="analysis")
-    items = [
-        ("Quote totali", fmt_qty_it(row.get("quote"), 4), "quote detenute attualmente", P["blue"], P["blue"]),
-        ("Capitale", fmt_eur_it(row.get("capitale"), 0), "Costo aperto", P["muted"], None),
-        ("Controvalore", fmt_eur_it(row.get("controvalore"), 0), "Valore corrente", P["green"], P["green"] if _safe_float(row.get("pl_abs")) >= 0 else P["red"]),
-        ("P/L", fmt_pct_it(row.get("pl_pct"), 1, signed=True), _pl_judgment(row.get("pl_pct")), P["green"], P["green"] if _safe_float(row.get("pl_pct")) >= 0 else P["red"]),
-        ("PMC", fmt_eur_it(row.get("pmc"), 2), "Prezzo medio di carico", P["orange"], None),
-        ("Prezzo", fmt_eur_it(row.get("prezzo_attuale"), 2), "Ultimo prezzo disponibile", P["blue"], None),
-        ("Margine PMC", fmt_pct_it(row.get("margine_pmc"), 1, signed=True), _margin_judgment(row.get("margine_pmc")), P["green"], P["green"] if _safe_float(row.get("margine_pmc")) >= 0 else P["red"]),
-        ("Volatilità", fmt_pct_it(row.get("volatilita_acquisti"), 1), _volatility_judgment(row.get("volatilita_acquisti")), P["red"], None),
-        ("Media mercato", fmt_eur_it(row.get("prezzo_medio_periodo"), 2), _market_mean_judgment(row), P["blue"], None),
-        ("Percentile PMC", fmt_pct_it(row.get("percentile_pmc"), 0), _percentile_judgment(row.get("percentile_pmc")), P["orange"], None),
-        ("Regolarità", fmt_pct_it(row.get("regolarita"), 0), _regularity_judgment(row.get("regolarita")), P["green"], None),
-        ("Drawdown max", fmt_pct_it(row.get("drawdown_da_massimo"), 1, signed=True), _drawdown_judgment(row.get("drawdown_da_massimo")), P["red"], P["green"] if _safe_float(row.get("drawdown_da_massimo"), 0.0) >= -0.02 else P["red"]),
+
+    quote_date = row.get("data_ultima_quotazione")
+    try:
+        prezzo_subtitle = f"Quotazione del {pd.Timestamp(quote_date).strftime('%d/%m/%Y')}" if quote_date is not None and pd.notna(quote_date) else "Ultimo prezzo disponibile"
+    except Exception:
+        prezzo_subtitle = "Ultimo prezzo disponibile"
+
+    distanza_val = _safe_float(row.get("distanza_pareggio_pct"), default=float("nan"))
+    if pd.isna(distanza_val):
+        distanza_label, distanza_display = "Cuscinetto/Recupero", "n/d"
+    elif distanza_val >= 0:
+        distanza_label, distanza_display = "Cuscinetto pareggio", fmt_pct_it(distanza_val, 1)
+    else:
+        distanza_label, distanza_display = "Recupero necessario", fmt_pct_it(-distanza_val, 1)
+
+    aderenza_val = _safe_float(row.get("aderenza_pac_pct"), default=float("nan"))
+    if pd.isna(aderenza_val):
+        aderenza_display, aderenza_subtitle = "n/d", "Cadenza non riconoscibile"
+    else:
+        aderenza_display = fmt_pct_it(aderenza_val, 0)
+        aderenza_subtitle = f"{int(_safe_float(row.get('cicli_pac_coperti'), 0))}/{int(_safe_float(row.get('cicli_pac_attesi'), 0))} cicli coperti (stimato)"
+
+    # 4 gruppi da 4 KPI: posizione -> costo/pareggio -> sensibilità e
+    # posizionamento storico -> rischio e disciplina PAC. "Peso rata/capitale"
+    # non ha una card propria: è già rappresentato meglio da "Impatto rata
+    # tipica" (vedi specifica_revisione_analisi_accumuli_FAM-FLEX.md §5.5), e
+    # resta nel dettaglio testuale sotto le card.
+    groups: list[tuple[str, list[tuple[str, str, str, str, str | None]]]] = [
+        ("Posizione", [
+            ("Quote totali", fmt_qty_it(row.get("quote"), 4), "quote detenute attualmente", P["blue"], P["blue"]),
+            ("Capitale", fmt_eur_it(row.get("capitale"), 0), "Costo storico all-in", P["muted"], None),
+            ("Controvalore", fmt_eur_it(row.get("controvalore"), 0), "Valore corrente", P["green"], P["green"] if _safe_float(row.get("pl_abs")) >= 0 else P["red"]),
+            ("P/L", fmt_pct_it(row.get("pl_pct"), 1, signed=True), _pl_judgment(row.get("pl_pct")), P["green"], P["green"] if _safe_float(row.get("pl_pct")) >= 0 else P["red"]),
+        ]),
+        ("Costo e pareggio", [
+            ("PMC all-in", fmt_eur_it(row.get("pmc_allin"), 2), "Costo medio, comprese commissioni", P["orange"], None),
+            ("PMC esecuzione", fmt_eur_it(row.get("pmc_esecuzione"), 2), "Prezzo medio pagato, escluse commissioni", P["orange"], None),
+            ("Prezzo", fmt_eur_it(row.get("prezzo_attuale"), 2), prezzo_subtitle, P["blue"], None),
+            (distanza_label, distanza_display, _distanza_judgment(row.get("distanza_pareggio_pct")), P["green"] if distanza_val >= 0 or pd.isna(distanza_val) else P["red"], P["green"] if distanza_val >= 0 or pd.isna(distanza_val) else P["red"]),
+        ]),
+        ("Sensibilità e posizionamento storico", [
+            ("Impatto rata tipica", _fmt_impact_table(row.get("impatto_pmc_rata_pct")), _impact_judgment(row.get("impatto_pmc_rata_pct")), P["blue"], None),
+            ("Media mercato", fmt_eur_it(row.get("prezzo_medio_periodo"), 2), _market_mean_judgment(row), P["blue"], None),
+            ("Percentile PMC all-in", fmt_pct_it(row.get("percentile_pmc_allin"), 0), _percentile_judgment(row.get("percentile_pmc_allin")), P["orange"], None),
+            ("Percentile PMC esecuzione", fmt_pct_it(row.get("percentile_pmc_esecuzione"), 0), _percentile_judgment(row.get("percentile_pmc_esecuzione")), P["orange"], None),
+        ]),
+        ("Rischio e disciplina PAC", [
+            ("Volatilità", fmt_pct_it(row.get("volatilita_acquisti"), 1), _volatility_judgment(row.get("volatilita_acquisti")), P["red"], None),
+            ("Drawdown max", fmt_pct_it(row.get("drawdown_da_massimo"), 1, signed=True), _drawdown_judgment(row.get("drawdown_da_massimo")), P["red"], P["green"] if _safe_float(row.get("drawdown_da_massimo"), 0.0) >= -0.02 else P["red"]),
+            ("Aderenza PAC", aderenza_display, aderenza_subtitle, P["green"], None),
+            ("Regolarità intervalli", fmt_pct_it(row.get("regolarita_intervalli"), 0), _regularity_judgment(row.get("regolarita_intervalli")), P["muted"], None),
+        ]),
     ]
     with profile_step("Cruscotti/Accumuli", f"detail {ticker}: render KPI cards"):
-        for chunk in [items[i:i+4] for i in range(0, len(items), 4)]:
-            if not chunk:
-                continue
+        for group_label, chunk in groups:
+            st.caption(group_label)
             cols = st.columns(4)
             for col, (label, value, subtitle, accent, value_color) in zip(cols, chunk):
                 with col:
@@ -672,7 +802,7 @@ def render_accumuli(ctx: SimpleNamespace, show_explanations: bool = True) -> Non
     with profile_step("Cruscotti/Accumuli", "signature/cache/header"):
         signature = _accumuli_analysis_signature(ctx)
         entry, stale = _get_accumuli_analysis_cache(signature)
-        refresh_requested = _render_accumuli_freeze_header(entry, stale, signature, show_explanations=show_explanations)
+        refresh_requested, status_slot = _render_accumuli_freeze_header(entry, stale, signature, show_explanations=show_explanations)
 
     if refresh_requested:
         with st.status("Analisi accumuli in corso…", expanded=True) as status:
@@ -682,6 +812,7 @@ def render_accumuli(ctx: SimpleNamespace, show_explanations: bool = True) -> Non
             entry = _store_accumuli_analysis_cache(signature, result)
             stale = False
             status.update(label="Analisi accumuli aggiornata", state="complete", expanded=False)
+        _render_accumuli_status_text(status_slot, entry, stale)
     elif entry is None:
         legend_block(
             "Questa sezione è intenzionalmente congelata: Accumuli è una lettura operativa non quotidiana e non viene "
@@ -693,8 +824,6 @@ def render_accumuli(ctx: SimpleNamespace, show_explanations: bool = True) -> Non
         result = entry.get("result") if isinstance(entry, dict) else None
         with profile_step("Cruscotti/Accumuli", "reuse cached analysis"):
             pass
-
-    result = _migrate_result(result)
 
     # Usa la firma memorizzata nell'entry (versione dell'analisi) anziché quella
     # corrente del portfolio: così un refresh prezzi non invalida le figure

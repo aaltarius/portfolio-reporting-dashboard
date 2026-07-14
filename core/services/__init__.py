@@ -31,6 +31,9 @@ from core.services.quotes import (
 from core.services.accumuli import (
     build_accumuli_analysis,
     simulate_next_installment,
+    IMPATTO_RATA_ALTO_PCT,
+    IMPATTO_RATA_BASSO_PCT,
+    DISTANZA_PAREGGIO_SOGLIA_PCT,
 )
 from core.services.benchmark import (
     build_benchmark_transparency_payload,
@@ -81,6 +84,9 @@ __all__ = [
     "category_value_pl_items",
     "build_accumuli_analysis",
     "simulate_next_installment",
+    "IMPATTO_RATA_ALTO_PCT",
+    "IMPATTO_RATA_BASSO_PCT",
+    "DISTANZA_PAREGGIO_SOGLIA_PCT",
     "build_benchmark_transparency_payload",
     "build_instrument_benchmark_matrix",
     "benchmark_explanation",
