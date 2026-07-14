@@ -168,31 +168,53 @@ def _store_benchmark_payload_cache(signature: str, payload: dict[str, Any]) -> d
     return entry
 
 
-def _render_benchmark_freeze_header(entry: dict[str, Any] | None, stale: bool, signature: str) -> bool:
-    """Header operativo: non rigenera il benchmark se l'utente non lo chiede."""
+def _render_benchmark_status_text(slot, entry: dict[str, Any] | None, stale: bool) -> None:
+    """Testo di stato (info/warning/caption) nel suo slot dedicato.
+
+    Va richiamato di nuovo con l'entry aggiornata subito dopo un eventuale
+    refresh, nello stesso rerun: altrimenti il messaggio mostra ancora la data
+    di prima del click anche quando l'analisi è già stata rigenerata, dando
+    l'impressione che il primo click non abbia fatto nulla.
+    """
+    with slot.container():
+        if entry is None:
+            st.info(
+                "Nessuna analisi benchmark disponibile nella cache persistente. "
+                "La prima analisi va generata una sola volta; poi verrà recuperata anche dopo il riavvio dell'app."
+            )
+            return
+        created_at = str(entry.get("created_at") or "n/d")
+        if stale:
+            st.warning(
+                f"Sto mostrando l'ultima analisi benchmark disponibile in cache, generata il {created_at}. "
+                "I dati del portafoglio sono cambiati: rigenera solo se vuoi aggiornare questa lettura."
+            )
+            return
+        source = str(entry.get("cache_source") or "cache")
+        st.caption(f"Analisi benchmark in cache — generata il {created_at} — origine: {source}. Non viene rigenerata automaticamente nei rerun.")
+
+
+def _render_benchmark_freeze_header(entry: dict[str, Any] | None, stale: bool, signature: str):
+    """Header operativo: non rigenera il benchmark se l'utente non lo chiede.
+
+    Ritorna (refresh_requested, status_slot). Il chiamante deve richiamare
+    _render_benchmark_status_text(status_slot, ...) con l'entry aggiornata dopo
+    un eventuale refresh, per evitare che il messaggio resti di un giro
+    indietro rispetto ai dati che descrive.
+    """
     render_section_title(
         "Benchmark",
         comment="Analisi congelata: i calcoli benchmark vengono rigenerati solo su richiesta, per non appesantire i rerun dei Cruscotti.",
         icon="analysis",
     )
+    status_slot = st.empty()
+    _render_benchmark_status_text(status_slot, entry, stale)
+
     if entry is None:
-        st.info(
-            "Nessuna analisi benchmark disponibile nella cache persistente. "
-            "La prima analisi va generata una sola volta; poi verrà recuperata anche dopo il riavvio dell'app."
-        )
-        return st.button("Analizza benchmark", type="primary", key=f"benchmark_analyze_{signature}")
-
-    created_at = str(entry.get("created_at") or "n/d")
+        return st.button("Analizza benchmark", type="primary", key=f"benchmark_analyze_{signature}"), status_slot
     if stale:
-        st.warning(
-            f"Sto mostrando l'ultima analisi benchmark disponibile in cache, generata il {created_at}. "
-            "I dati del portafoglio sono cambiati: rigenera solo se vuoi aggiornare questa lettura."
-        )
-        return st.button("Aggiorna analisi benchmark", type="primary", key=f"benchmark_refresh_{signature}")
-
-    source = str(entry.get("cache_source") or "cache")
-    st.caption(f"Analisi benchmark in cache — generata il {created_at} — origine: {source}. Non viene rigenerata automaticamente nei rerun.")
-    return st.button("Rigenera analisi benchmark", type="secondary", key=f"benchmark_regen_{signature}")
+        return st.button("Aggiorna analisi benchmark", type="primary", key=f"benchmark_refresh_{signature}"), status_slot
+    return st.button("Rigenera analisi benchmark", type="secondary", key=f"benchmark_regen_{signature}"), status_slot
 
 
 def _safe_float(value: Any, default: float | None = None) -> float | None:
@@ -635,7 +657,7 @@ def render_benchmark(ctx: SimpleNamespace, summary_bundle: Any | None = None) ->
     with profile_step("Cruscotti/Benchmark", "signature/cache/header"):
         signature = _benchmark_payload_signature(ctx, settings, summary_payload)
         entry, stale = _get_benchmark_payload_cache(signature)
-        refresh_requested = _render_benchmark_freeze_header(entry, stale, signature)
+        refresh_requested, status_slot = _render_benchmark_freeze_header(entry, stale, signature)
 
     if refresh_requested:
         with st.status("Analisi benchmark in corso…", expanded=True) as status:
@@ -650,6 +672,7 @@ def render_benchmark(ctx: SimpleNamespace, summary_bundle: Any | None = None) ->
             entry = _store_benchmark_payload_cache(signature, payload)
             stale = False
             status.update(label="Analisi benchmark aggiornata", state="complete", expanded=False)
+        _render_benchmark_status_text(status_slot, entry, stale)
     elif entry is None:
         legend_block(
             "Questa sezione è intenzionalmente congelata: Benchmark è una lettura pesante e non viene ricalcolata durante i normali rerun di Cruscotti. "
