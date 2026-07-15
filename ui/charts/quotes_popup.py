@@ -9,6 +9,7 @@ import pandas as pd
 from persistence.storage import macro_cat
 from core.finance import build_ptf_df
 from core.instrument_classification import is_nav_fund
+from ui.charts.instrument_badges import commission_badge
 from ui.charts.natura_icons import get_natura_visual
 from ui.streamlit_compat import iframe_height_for_rows, iframe_scroll_for_rows, render_html_iframe
 from ui.theme import macro_color
@@ -96,6 +97,10 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
         row_background = "" if in_portfolio else "background:#f3f4f6;"
         nature_label = str(info.get("natura") or "Esposizione diversificata")
         nature_color, icon_svg = get_natura_visual(nature_label)
+        # "Zero commissioni" esiste solo come campo per ETF/ETC (vedi
+        # ui/form_server/strumenti.py): per le altre categorie il badge non è
+        # applicabile, non va mostrato di default solo perché il campo manca.
+        comm_badge = commission_badge(info.get("zero_commissioni")) if macro_cat(tipo) in ("ETF", "ETC") else ""
         try:
             delta_val = float(delta) if delta is not None else 0.0
         except Exception:
@@ -159,7 +164,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
             f'<tr style="{row_background}">'
             f'<td data-sort="{sym_sort}" style="text-align:center;padding:9px 6px;color:{sym_col};font-weight:800;">{sym}</td>'
             f'<td class="num" data-sort="{_sort_num(delta_val)}" style="color:{sym_col};font-weight:700;">{_fmt_pct(delta, 2, signed=True)}</td>'
-            f'<td data-sort="{ticker}"><a class="tk-link" style="color:{color}" href="#" onclick="showQuoteModal(\'{ticker}\');return false;">{ticker}</a></td>'
+            f'<td data-sort="{ticker}"><a class="tk-link" style="color:{color}" href="#" onclick="showQuoteModal(\'{ticker}\');return false;">{ticker}</a>{comm_badge}</td>'
             f'<td data-sort="{name}" style="color:{color};max-width:115px;" title="{name}">{name[:21]}</td>'
             f'<td data-sort="{nature_label}" style="text-align:center;width:36px;min-width:36px;max-width:36px;padding-left:4px;padding-right:4px;">'
             f'<span class="type-icon" title="{nature_label}" aria-label="{nature_label}" style="color:{nature_color};">{icon_svg}</span></td>'

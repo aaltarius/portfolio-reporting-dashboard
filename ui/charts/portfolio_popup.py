@@ -4,6 +4,7 @@ import json
 
 import pandas as pd
 from persistence.storage import macro_cat
+from ui.charts.instrument_badges import commission_badge
 from ui.charts.natura_icons import get_natura_visual
 from ui.streamlit_compat import iframe_height_for_rows, render_html_iframe
 from ui.theme import CATEGORY_COLORS, macro_color
@@ -276,6 +277,9 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
         info = info_map.get(tk, {})
         natura_label = str(info.get("natura") or "Esposizione diversificata")
         natura_color, natura_svg = get_natura_visual(natura_label)
+        # "Zero commissioni" esiste solo come campo per ETF/ETC: per le altre
+        # categorie il badge non e' applicabile, non va mostrato di default.
+        comm_badge = commission_badge(info.get("zero_commissioni")) if macro_cat(tipo) in ("ETF", "ETC") else ""
         col = _cat_col(tipo)
         sym, sym_col = _trend_sym(tk)
         try:
@@ -289,7 +293,7 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
         sym_sort = "1" if sym == "▲" else "2" if sym == "—" else "3"
         rows_html += (
             f'''<tr>\n          <td data-sort="{sym_sort}" style="color:{sym_col};font-weight:800;">{sym}</td>\n'''
-            f'''          <td data-sort="{tk}"><a class="tk-link" style="color:{col}" href="#" onclick="showModal('{tk}');return false;">{tk}</a></td>\n'''
+            f'''          <td data-sort="{tk}"><a class="tk-link" style="color:{col}" href="#" onclick="showModal('{tk}');return false;">{tk}</a>{comm_badge}</td>\n'''
             f'''          <td data-sort="{nome}" style="color:{col};max-width:140px;" title="{nome}">{nome[:24]}</td>\n'''
             f'''          <td data-sort="{tipo}" style="color:{col};max-width:80px;" title="{tipo}">{tipo[:16]}</td>\n'''
             f'''          <td class="natura-cell" title="{natura_label}" style="color:{natura_color};width:20px;text-align:center;">{natura_svg}</td>\n'''
@@ -519,6 +523,9 @@ def render_weekly_pl_table(result, da, data):
         tipo_code = macro_cat(row["tipo"])
         natura_label = str(info_map.get(tk, {}).get("natura") or "Esposizione diversificata")
         natura_color, natura_svg = get_natura_visual(natura_label)
+        # "Zero commissioni" esiste solo come campo per ETF/ETC: per le altre
+        # categorie il badge non e' applicabile, non va mostrato di default.
+        comm_badge = commission_badge(info_map.get(tk, {}).get("zero_commissioni")) if tipo_code in ("ETF", "ETC") else ""
         cells = ""
         for i, v in enumerate(row["deltas"]):
             cell_col = "#1E8449" if (v is not None and v >= 0) else ("#FF4B4B" if v is not None else "#9CA3AF")
@@ -536,7 +543,7 @@ def render_weekly_pl_table(result, da, data):
         row_bg = "background-color:rgba(30,132,73,0.10);" if row_all_up else ("background-color:rgba(255,75,75,0.10);" if row_all_down else "")
         rows_html += (
             f'<tr style="{row_bg}">\n'
-            f'<td data-sort="{tk}"><a class="tk-link" style="color:{col}" href="#" onclick="showModal(\'{tk}\');return false;">{tk}</a></td>\n'
+            f'<td data-sort="{tk}"><a class="tk-link" style="color:{col}" href="#" onclick="showModal(\'{tk}\');return false;">{tk}</a>{comm_badge}</td>\n'
             f'<td data-sort="{strumento}" style="color:{col};max-width:130px;" title="{strumento}">{strumento[:24]}</td>\n'
             f'<td data-sort="{tipo_code}" style="color:{col};">{tipo_code}</td>\n'
             f'<td class="natura-cell" title="{natura_label}" style="color:{natura_color};width:20px;text-align:center;">{natura_svg}</td>\n'

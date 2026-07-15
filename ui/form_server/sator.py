@@ -12,6 +12,7 @@ from html import escape
 from fastapi import APIRouter, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from ui.charts.instrument_badges import commission_badge
 from ui.form_server.shell import STREAMLIT_URL
 
 logger = logging.getLogger("portafoglio.form_server.sator")
@@ -168,10 +169,7 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
             "<span title='Storico troppo corto (<30 giorni di quotazioni): Momentum e Rischio sono indicativi' "
             "style='color:#c2410c;font-size:.7rem;margin-left:2px'>&#9888;</span>"
         )
-        comm_badge = "" if r["zero_commission"] else (
-            "<span class='sc-badge sc-m' title='Non a zero commissioni: l'acquisto comporta un costo di negoziazione' "
-            "style='margin-left:3px;padding:1px 4px'>€</span>"
-        )
+        comm_badge = commission_badge(r["zero_commission"])
         table_rows += (
             f"<tr>"
             f"<td style='font-size:1.05rem;padding-left:4px;width:22px'>{sem}</td>"
