@@ -101,9 +101,9 @@ header[data-testid="stHeader"]{background:var(--ptf-bg)!important;backdrop-filte
 }
 .stButton > button:hover{border-color:color-mix(in srgb, var(--ptf-primary) 56%, transparent);transform:translateY(-1px)}
 .stButton > button:focus,.stButton > button:active,.stButton > button:focus-visible{outline:none!important;box-shadow:0 0 0 3px color-mix(in srgb, var(--ptf-primary) 30%, transparent)!important}
-.stTabs [data-baseweb="tab-list"]{gap:6px;border-bottom:1px solid color-mix(in srgb, var(--ptf-text) 12%, transparent);padding-bottom:4px;flex-wrap:nowrap}
-.stTabs [data-baseweb="tab"]{border-radius:14px 14px 0 0;padding:8px 10px;background:color-mix(in srgb, var(--ptf-surface-2) 75%, var(--ptf-surface));color:var(--ptf-text);border:1px solid color-mix(in srgb, var(--ptf-text) 12%, transparent);border-bottom:none;box-shadow:0 4px 14px rgba(0,0,0,0.05);min-width:auto;font-size:0.86rem}
-.stTabs [data-baseweb="tab"] *{font-size:0.86rem!important}
+[data-testid="stTabs"] [role="tablist"]{gap:6px;border-bottom:1px solid color-mix(in srgb, var(--ptf-text) 12%, transparent);padding-bottom:4px;flex-wrap:nowrap}
+[data-testid="stTabs"] [data-testid="stTab"]{border-radius:14px 14px 0 0;padding:8px 10px;background:color-mix(in srgb, var(--ptf-surface-2) 75%, var(--ptf-surface));color:var(--ptf-text);border:1px solid color-mix(in srgb, var(--ptf-text) 12%, transparent);border-bottom:none;box-shadow:0 4px 14px rgba(0,0,0,0.05);min-width:auto;font-size:0.86rem}
+[data-testid="stTabs"] [data-testid="stTab"] *{font-size:0.86rem!important}
 .stTabs [aria-selected="true"]{background:color-mix(in srgb, var(--ptf-primary) 18%, var(--ptf-surface));border:1px solid color-mix(in srgb, var(--ptf-primary) 36%, transparent);border-bottom:3px solid var(--ptf-primary)}
 div[data-testid="stExpander"]{border:1px solid var(--ptf-border);border-radius:16px;overflow:hidden;box-shadow:var(--ptf-shadow);background:var(--ptf-surface)!important}
 div[data-testid="stPlotlyChart"]{
@@ -523,7 +523,7 @@ hr{border-color:color-mix(in srgb, var(--ptf-text) 12%, transparent)}
 [data-testid="stTextArea"] textarea{
   color:var(--ptf-text)!important;
 }
-[data-testid="stSelectbox"] [data-baseweb="select"],
+[data-testid="stSelectbox"] [role="group"],
 [data-testid="stNumberInput"] input,
 [data-testid="stTextInput"] input,
 [data-testid="stTextArea"] textarea{

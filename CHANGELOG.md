@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.9.34 - Aggiornamento a Streamlit 1.59.2
+
+**Bump `streamlit` da 1.58.0 a 1.59.2:**
+- nessuna delle funzionalità rimosse nel percorso 1.58→1.59 (`st.bokeh_chart`, connector Snowpark deprecato, `add_rows`, integrazione LangChain) è usata nel codice — verificato con ricerca su tutto il repo
+- nessun uso di API `st.experimental_*`/`st.beta_*` da migrare
+- avvio dell'app e rendering delle pagine (inclusi i grafici Plotly con legenda dinamica appena corretti e il fragment in Operazioni) verificati senza errori/traceback dopo l'aggiornamento
+
+**Fix: le linguette del menu principale e il riquadro dei selectbox erano visivamente spariti (nessun bordo/sfondo/pillola) dopo il bump a 1.59.2:**
+- la 1.59 ha sostituito il componente interno di `st.tabs` e `st.selectbox` (da BaseWeb a React Aria Components), che non emette più l'attributo `data-baseweb` su cui erano ancorate le regole CSS custom in `ui/styles.py` — le regole restavano nel foglio di stile ma non trovavano più nulla da selezionare, quindi tab e selectbox tornavano al rendering piatto di default
+- selettori aggiornati per puntare agli attributi ancora presenti nel nuovo markup: `.stTabs [data-baseweb="tab-list"]`/`"tab"` → `[data-testid="stTabs"] [role="tablist"]`/`[data-testid="stTab"]`, `[data-baseweb="select"]` → `[data-testid="stSelectbox"] [role="group"]`
+
 ## 4.9.33 - Revisione delle metriche di Analisi Accumuli, fix messaggio di stato Accumuli/Benchmark
 
 **Riscrittura delle metriche di "Analisi accumuli" (Cruscotti > Accumuli):**
