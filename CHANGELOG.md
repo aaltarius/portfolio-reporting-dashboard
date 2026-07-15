@@ -14,6 +14,14 @@
 - `_render_accumuli_freeze_header`/`_render_benchmark_freeze_header` disegnavano il messaggio con data e provenienza dell'ultima analisi *prima* di sapere se in quello stesso click l'utente avesse chiesto un refresh — quindi anche quando il refresh veniva eseguito correttamente (la cache si aggiornava), il messaggio a schermo restava quello di prima, dando l'impressione che il primo click non avesse fatto nulla; serviva un secondo click per vedere il messaggio corretto (quello del refresh precedente)
 - il messaggio ora vive in uno slot dedicato (`st.empty`) ridisegnato subito dopo un eventuale refresh nello stesso rerun, così riflette sempre lo stato reale
 
+**Badge "non a zero commissioni" esteso da SATOR a Quotazioni e Portafoglio:**
+- lo stesso badge "€" già usato in SATOR per gli ETF/ETC non a zero commissioni ora compare anche accanto al ticker nella tabella principale di Quotazioni e nelle tabelle Controvalore e "Andamento dell'ultima settimana" del Portafoglio — limitato a ETF/ETC, le uniche categorie per cui il campo "Zero commissioni" è impostabile in Strumenti
+- la logica (lettura del campo `zero_commissioni` e badge HTML) era duplicata inline in SATOR: estratta in `ui/charts/instrument_badges.py`, ora riusata da tutti e 4 i punti invece di avere due implementazioni dello stesso indicatore
+
+**Fix: la legenda dei grafici "Contributo al P/L (Area Stacked)" e "Rendimento dello strumento" si sovrapponeva ai numeri dell'asse X:**
+- entrambi i grafici hanno una voce di legenda per strumento (dinamica, cresce con il numero di posizioni), ma il margine inferiore riservato era fisso e pensato per una legenda a riga singola — con molti strumenti la legenda andava a capo su più righe e quelle in eccesso finivano sotto il margine, sovrapponendosi ai tick dell'asse X (si "sistemava" solo ridimensionando la finestra, perché forzava Plotly a ricalcolare il layout alla larghezza reale)
+- `computed_margin` (`ui/charts/layout.py`) ora stima il numero di righe dal conteggio reale delle voci di legenda e allarga il margine inferiore solo per le righe oltre la prima; la posizione della legenda scende in proporzione, così lo spazio riservato in più viene usato dalla legenda stessa invece di restare vuoto sotto di essa
+
 ## 4.9.32 - Unifica il grafico P/L per Categoria in Portafoglio, sfondo riga in "Andamento dell'ultima settimana"
 
 **Rimozione del selettore doppio grafico in Overview:**
