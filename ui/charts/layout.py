@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import math
 from typing import Any
+
+from ui.charts.streamlit_runtime import count_legend_items
 
 
 def layout_has_xaxis_title(fig) -> bool:
@@ -61,7 +64,27 @@ def show_buttons(settings: dict[str, Any], global_style: dict[str, Any]) -> bool
     return bool(global_style.get("show_buttons", True)) and bool(settings.get("show_buttons", True)) and settings.get("type") == "time"
 
 
-def legend_layout(where: str, global_style: dict[str, Any]) -> dict[str, Any] | None:
+def _estimate_extra_legend_rows(fig, global_style: dict[str, Any]) -> int:
+    """Righe di legenda oltre la prima, stimate dal numero reale di voci
+    (una per strumento su grafici come "Contributo al P/L" o "Rendimento
+    dello strumento", quindi non fisso). Condivisa da margine e posizione
+    della legenda, per non stimare due volte con numeri diversi."""
+    if fig is None:
+        return 0
+    try:
+        n_items = count_legend_items(fig)
+        items_per_row = max(1, int(global_style.get("legend_items_per_row_estimate", 9)))
+        return max(0, math.ceil(n_items / items_per_row) - 1)
+    except Exception:
+        return 0
+
+
+def legend_layout(
+    where: str,
+    global_style: dict[str, Any],
+    fig=None,
+    chart_height: int | None = None,
+) -> dict[str, Any] | None:
     if where == "off":
         return None
     font = dict(size=int(global_style["legend_font_size"]), family=global_style["font_family"])
@@ -71,10 +94,22 @@ def legend_layout(where: str, global_style: dict[str, Any]) -> dict[str, Any] | 
         return dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02, font=font)
     if where == "left":
         return dict(orientation="v", yanchor="middle", y=0.5, xanchor="right", x=-0.12, font=font)
+
+    # Con una legenda dinamica su più righe, la legenda deve scendere insieme
+    # al margine extra riservato (vedi _extra_bottom_legend_margin), altrimenti
+    # resta ancorata alla posizione pensata per una riga sola e lascia uno
+    # spazio vuoto tra sé e il bordo del margine, invece di usarlo.
+    y = float(global_style["bottom_legend_y"])
+    extra_rows = _estimate_extra_legend_rows(fig, global_style)
+    if extra_rows > 0:
+        height = int(chart_height or 400)
+        row_height = int(global_style.get("legend_row_height_px", 20))
+        y -= (extra_rows * row_height) / max(height, 1)
+
     return dict(
         orientation="h",
         yanchor="top",
-        y=float(global_style["bottom_legend_y"]),
+        y=y,
         xanchor="center",
         x=0.5,
         font=font,
@@ -92,6 +127,13 @@ def apply_margin_delta(base: dict[str, int], delta: dict[str, Any] | None) -> di
         l=int(base.get("l", 0)) + int(delta.get("l", 0)),
         r=int(base.get("r", 0)) + int(delta.get("r", 0)),
     )
+
+
+def _extra_bottom_legend_margin(fig, global_style: dict[str, Any]) -> int:
+    """Margine extra per una legenda orizzontale in basso con molte voci
+    (vedi _estimate_extra_legend_rows)."""
+    extra_rows = _estimate_extra_legend_rows(fig, global_style)
+    return extra_rows * int(global_style.get("legend_row_height_px", 20))
 
 
 def computed_margin(fig, settings: dict[str, Any], global_style: dict[str, Any]) -> dict[str, int]:
@@ -113,6 +155,7 @@ def computed_margin(fig, settings: dict[str, Any], global_style: dict[str, Any])
         bottom = max(bottom, int(global_style["margin_bottom_with_x_title"]))
     if legend and legend_where == "bottom":
         bottom = max(bottom, int(global_style["margin_bottom_with_bottom_legend"]))
+        bottom += _extra_bottom_legend_margin(fig, global_style)
 
     left = int(settings.get("left", global_style["margin_left_base"]))
     right_default = global_style["temporal_right_margin"] if typ == "time" else global_style["margin_right_base"]

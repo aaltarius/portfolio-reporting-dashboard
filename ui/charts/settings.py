@@ -251,11 +251,20 @@ GLOBAL_STYLE: dict[str, Any] = {
     # legend_font_size = grandezza testo legenda.
     # bottom_legend_y: più negativo = legenda più in basso; meno negativo = legenda più vicina al grafico.
     # bottom_legend_tracegroupgap aumenta lo spazio tra gruppi di tracce.
+    # legend_items_per_row_estimate / legend_row_height_px: usati da
+    # computed_margin (ui/charts/layout.py) per stimare quante righe occuperà
+    # una legenda orizzontale con voci dinamiche (una per strumento, come in
+    # "Contributo al P/L" o "Rendimento dello strumento") e allargare il
+    # margine inferiore solo per le righe oltre la prima — invece di un
+    # margine fisso che è o troppo stretto (si sovrappone ai tick dell'asse X
+    # con molti strumenti) o troppo largo (spazio bianco inutile con pochi).
 
     'legend_font_size': 10,
     'bottom_legend_y': -0.15,
     'bottom_legend_tracegroupgap': 8,
     'legend_itemwidth': 30,
+    'legend_items_per_row_estimate': 9,
+    'legend_row_height_px': 20,
 
     # ────────────────────────────────────────────────────────────────────────
     # BOTTONI TEMPORALI
@@ -623,7 +632,10 @@ CHARTS: dict[str, dict[str, Any]] = {
      'dynamic_y_to_initial_range': True,
      'dynamic_y_by_button': True,
      'dynamic_y_padding': 0.08,
-     'margin_delta': {'t': 0, 'b': -50, 'l': 0, 'r': -20},
+     # la legenda ha una voce per strumento (dinamica): il margine per le
+     # righe extra oltre la prima è calcolato automaticamente in
+     # computed_margin (ui/charts/layout.py) dal numero reale di voci.
+     'margin_delta': {'t': 0, 'b': -20, 'l': 0, 'r': -20},
      'y_title': 'Indice dal 1° investimento (Base 100)',
      'y_nticks': 8,
      'x_nticks': 15,
@@ -935,7 +947,10 @@ CHARTS: dict[str, dict[str, Any]] = {
      'legend': 'bottom',
      'show_buttons': True,
      'default_button': '3M',
-     'margin_delta': {'t': 0, 'b': -50, 'l': 0, 'r': -20},
+     # la legenda ha una voce per strumento (dinamica): il margine per le
+     # righe extra oltre la prima è calcolato automaticamente in
+     # computed_margin (ui/charts/layout.py) dal numero reale di voci.
+     'margin_delta': {'t': 0, 'b': -20, 'l': 0, 'r': -20},
      'money_axis': 'auto',
      'y_nticks': 15,
      'title': '<b>Contributo al P/L (Area Stacked)</b>',
@@ -1721,8 +1736,8 @@ def _show_legend(settings: dict[str, Any]) -> bool:
 def _show_buttons(settings: dict[str, Any]) -> bool:
     return _show_buttons_layout(settings, GLOBAL_STYLE)
 
-def _legend_layout(where: str) -> dict[str, Any] | None:
-    return _legend_layout_layout(where, GLOBAL_STYLE)
+def _legend_layout(where: str, fig=None, chart_height: int | None = None) -> dict[str, Any] | None:
+    return _legend_layout_layout(where, GLOBAL_STYLE, fig=fig, chart_height=chart_height)
 
 def _apply_margin_delta(base: dict[str, int], delta: dict[str, Any] | None) -> dict[str, int]:
     return _apply_margin_delta_layout(base, delta)
@@ -1975,7 +1990,7 @@ def _apply_chart_chrome(fig, settings: dict[str, Any], margin: dict[str, int]) -
         show_title=_show_title(settings, fig),
         show_legend=_show_legend(settings),
         effective_title=_effective_title(settings, fig),
-        legend_layout=_legend_layout(str(settings.get("legend", "bottom"))),
+        legend_layout=_legend_layout(str(settings.get("legend", "bottom")), fig=fig, chart_height=settings.get("height")),
     )
 
 def apply_settings(fig, chart_id: str):
