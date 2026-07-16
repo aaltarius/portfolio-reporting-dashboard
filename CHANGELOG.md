@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.9.36 - L'app si chiama "Sestante"
+
+**Rinominata l'app da "Portafoglio Titoli" a "Sestante":**
+- il vecchio nome era descrittivo ma anonimo (indistinguibile da qualunque altra app dello stesso genere); "Sestante" richiama lo strumento di navigazione, coerente con l'icona 📊 già in uso, tono professionale/elegante
+- aggiornato in tutti i punti live: titolo scheda browser (`st.set_page_config`), intestazione in cima all'app, footer della pagina Setup, metadati del pacchetto di reporting esportabile (`core/services/reporting.py`) e chiave di traduzione inglese (nome proprio, non tradotto)
+- non toccato `legacy/ui/charts/reporting.py`: nessun chiamante nel repo, fuori scope
+
 ## 4.9.35 - Audit completo di Setup, refresh SATOR e doppia legenda donut
 
 **Tasto "Aggiorna" per la fotografia SATOR (Pianificazione):**
