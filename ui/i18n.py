@@ -6,7 +6,6 @@ from __future__ import annotations
 TRANSLATIONS = {
     "en": {
         "app.title": "Sestante",
-        "app.badge": "Premium dashboard",
         "app.no_instruments": "Add your first instrument from the sidebar or import your data.",
         "tab.portfolio": "Portfolio",
         "tab.quotes": "Quotes",

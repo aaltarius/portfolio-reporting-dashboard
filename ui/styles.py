@@ -427,15 +427,15 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
 .header-title{font-size:1.85rem;font-weight:800;color:var(--ptf-text);line-height:1.05}
 .header-sub{font-size:0.92rem;color:var(--ptf-muted);line-height:1.5}
 .header-side{
-  flex:0 0 230px;
-  padding:18px 20px;
-  display:flex;flex-direction:column;gap:12px;justify-content:center;
+  flex:0 0 168px;
+  padding:16px 18px;
+  display:flex;flex-direction:column;gap:10px;justify-content:center;
   background:linear-gradient(160deg, color-mix(in srgb, var(--ptf-primary) 28%, #0b0f1a), color-mix(in srgb, var(--ptf-primary) 42%, #0b0f1a));
   color:#fff;
 }
-.header-side-row{display:flex;flex-direction:column;gap:2px}
-.header-side-label{font-size:0.68rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;opacity:.55}
-.header-side-val{font-size:0.88rem;font-weight:700;display:flex;align-items:center;gap:6px}
+.header-side-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.header-side-label{font-size:0.68rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;opacity:.55;white-space:nowrap}
+.header-side-val{font-size:0.85rem;font-weight:700;display:flex;align-items:center;gap:6px;white-space:nowrap}
 .header-side-val.accent{color:color-mix(in srgb, var(--ptf-primary) 55%, #fff)}
 .header-side-div{height:1px;background:rgba(255,255,255,.14)}
 .stMarkdown h3{margin-top:1rem;margin-bottom:0.5rem;padding:0;color:var(--ptf-text)}

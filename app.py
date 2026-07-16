@@ -605,18 +605,13 @@ st.markdown(f"""<div class="header-panel">
     </div>
     <div class="header-side">
         <div class="header-side-row">
-            <div class="header-side-label">Piano</div>
-            <div class="header-side-val accent">{t(settings, "app.badge", "Dashboard premium")}</div>
+            <span class="header-side-label">Versione</span>
+            <span class="header-side-val accent">v{APP_VERSION}{_debug_badge}</span>
         </div>
         <div class="header-side-div"></div>
         <div class="header-side-row">
-            <div class="header-side-label">Versione</div>
-            <div class="header-side-val accent">v{APP_VERSION}{_debug_badge}</div>
-        </div>
-        <div class="header-side-div"></div>
-        <div class="header-side-row">
-            <div class="header-side-label">Stato</div>
-            <div class="header-side-val">{_scenario_badge}</div>
+            <span class="header-side-label">Stato</span>
+            <span class="header-side-val">{_scenario_badge}</span>
         </div>
     </div>
 </div>""", unsafe_allow_html=True)
