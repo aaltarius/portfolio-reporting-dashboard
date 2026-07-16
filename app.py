@@ -1,5 +1,5 @@
 """
-Portafoglio Titoli — Dashboard Professionale v4.5
+Sestante — Dashboard Professionale v4.5
 Entry point: Clean orchestrator (~200 lines)
 - Load data from storage
 - Call services to pre-compute all page data
@@ -153,7 +153,7 @@ def _inject_typography_css(settings: dict) -> None:
 
 
 # === SETUP ===
-st.set_page_config(page_title="Portafoglio Titoli", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Sestante", page_icon="📊", layout="wide")
 
 # Load settings and inject typography CSS
 settings = load_settings()
@@ -597,7 +597,7 @@ _debug_badge = " • DEBUG" if _RENDER_DEBUG_ENABLED else ""
 _scenario_badge = _scenario_cache_badge_display(_CURRENT_PROFILING_SCENARIO)
 st.markdown(f"""<div class="header-panel">
     <div class="header-top">
-        <div class="header-title">📊 {t(settings, "app.title", "Portafoglio Titoli")}</div>
+        <div class="header-title">📊 {t(settings, "app.title", "Sestante")}</div>
         <div class="header-badge">{t(settings, "app.badge", "Dashboard premium")} • v{APP_VERSION}{_debug_badge} • {_scenario_badge}</div>
     </div>
     <div class="header-sub">{ctx.header_date}</div>

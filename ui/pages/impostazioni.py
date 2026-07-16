@@ -792,4 +792,4 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         back_to_top(show_prev=True, show_next=False, nav_key="impostazioni")
 
     st.divider()
-    st.caption(f"Portafoglio Titoli v{APP_VERSION} — {fmtd(date.today())}")
+    st.caption(f"Sestante v{APP_VERSION} — {fmtd(date.today())}")

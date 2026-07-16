@@ -49,7 +49,7 @@ def build_reporting_compliance_pack(
         "generated_at": generated_at.strftime("%Y-%m-%d %H:%M:%S"),
         "payload_digest": payload_digest,
         "app": {
-            "name": "Portafoglio Titoli",
+            "name": "Sestante",
             "version": app_version,
             "schema_version": schema_version,
         },
