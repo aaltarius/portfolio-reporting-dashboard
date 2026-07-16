@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.9.37 - Nuovo box iniziale a pannello diviso
+
+**Restyling del box in cima all'app:**
+- stesso contenuto di prima (titolo, badge piano/versione/stato, data ultimo aggiornamento) ma riorganizzato in un pannello diviso: icona con gradiente + titolo + data a sinistra, pannello blu notte a destra con Piano/Versione/Stato separati da linee sottili
+- il pannello laterale è intonato al colore primario della palette scelta in Setup (`color-mix` su `--ptf-primary`), quindi cambia tono automaticamente se l'utente cambia palette colori
+- direzione scelta tra 3 alternative tramite mockup comparativi nella scheda di brainstorming visivo (icona in badge con gradiente, pannello diviso, minimale con chip separate), poi rifinita in 2 varianti di tono per il pannello laterale (nero neutro vs blu notte)
+
 ## 4.9.36 - L'app si chiama "Sestante"
 
 **Rinominata l'app da "Portafoglio Titoli" a "Sestante":**
