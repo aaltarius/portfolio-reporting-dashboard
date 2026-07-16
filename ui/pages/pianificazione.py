@@ -874,6 +874,10 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
         )
     latest_decision = latest_sator_decision(decisions_state.get("items") or [])
     if latest_decision:
+        _col_spacer, _col_refresh = st.columns([5, 1])
+        with _col_refresh:
+            if st.button("🔄 Aggiorna", key="sator_refresh_snapshot", width="stretch"):
+                st.rerun()
         _render_sator_reference_summary(latest_decision, theme, data)
 
 
