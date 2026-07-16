@@ -405,30 +405,13 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     key="appearance_color_palette",
                 )
 
-                # --- TYPOGRAPHY ---
-                st.markdown("**Tipografia**")
-                typo = appearance_settings.get("typography", {})
-                typo_options = ["Compatto", "Standard", "Grande"]
-                typo_sizes = {"Compatto": ("1.2rem", "1.0rem", "0.9rem", "0.78rem"),
-                              "Standard": ("1.4rem", "1.1rem", "0.95rem", "0.85rem"),
-                              "Grande": ("1.6rem", "1.2rem", "1.0rem", "0.92rem")}
-
-                t1, t2, t3, t4 = st.columns(4)
-                current_titles = typo.get("titles", "1.4rem")
-                titles_display = next((k for k, v in typo_sizes.items() if v[0] == current_titles), "Standard")
-                ui_typo_titles = t1.selectbox("Titoli", typo_options, index=typo_options.index(titles_display), key="appearance_titles")
-
-                current_subtitles = typo.get("subtitles", "1.1rem")
-                subtitles_display = next((k for k, v in typo_sizes.items() if v[1] == current_subtitles), "Standard")
-                ui_typo_subtitles = t2.selectbox("Sottotitoli", typo_options, index=typo_options.index(subtitles_display), key="appearance_subtitles")
-
-                current_body = typo.get("body", "0.95rem")
-                body_display = next((k for k, v in typo_sizes.items() if v[2] == current_body), "Standard")
-                ui_typo_body = t3.selectbox("Body", typo_options, index=typo_options.index(body_display), key="appearance_body")
-
-                current_caption = typo.get("caption", "0.85rem")
-                caption_display = next((k for k, v in typo_sizes.items() if v[3] == current_caption), "Standard")
-                ui_typo_caption = t4.selectbox("Commenti", typo_options, index=typo_options.index(caption_display), key="appearance_caption")
+                # Dimensioni tipografiche (titoli/sottotitoli/body/commenti) rimosse
+                # dalla UI il 2026-07-16: nessuna variabile CSS le applicava da
+                # nessuna parte (verificato: solo typography.family alimenta
+                # --ptf-font-family in ui/theme.py, mai titles/subtitles/body/
+                # caption). Restano fisse a "Standard" finche' non si costruisce
+                # la propagazione CSS necessaria a ogni intestazione dell'app.
+                _TYPO_STANDARD_SIZES = {"titles": "1.4rem", "subtitles": "1.1rem", "body": "0.95rem", "caption": "0.85rem"}
 
                 # --- FONT FAMILY ---
                 st.markdown("**Famiglia font**")
@@ -697,14 +680,6 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     "scope": str(pre_render_settings.get("scope", "core_charts_v1")),
                 }
                 # Appearance
-                typo_sizes_map = {"Compatto": ("1.2rem", "1.0rem", "0.9rem", "0.78rem"),
-                                  "Standard": ("1.4rem", "1.1rem", "0.95rem", "0.85rem"),
-                                  "Grande": ("1.6rem", "1.2rem", "1.0rem", "0.92rem")}
-                ui_typo_titles_size = typo_sizes_map[ui_typo_titles][0]
-                ui_typo_subtitles_size = typo_sizes_map[ui_typo_subtitles][1]
-                ui_typo_body_size = typo_sizes_map[ui_typo_body][2]
-                ui_typo_caption_size = typo_sizes_map[ui_typo_caption][3]
-
                 settings["operativo_mode"] = _op_vals[_op_opts.index(ui_operativo_mode)]
                 settings["sator_mode"] = _sator_vals[_sator_opts.index(ui_sator_mode)]
                 settings["export_pp_mode"] = _export_vals[_export_opts.index(ui_export_pp_mode)]
@@ -712,10 +687,7 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     **settings.get("appearance", {}),
                     "color_palette": ui_color_palette,
                     "typography": {
-                        "titles": ui_typo_titles_size,
-                        "subtitles": ui_typo_subtitles_size,
-                        "body": ui_typo_body_size,
-                        "caption": ui_typo_caption_size,
+                        **_TYPO_STANDARD_SIZES,
                         "family": ui_font_family,
                     },
                     "visibility_mode": ui_visibility_mode,
