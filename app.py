@@ -596,11 +596,29 @@ st.markdown('<div id="page-top"></div>', unsafe_allow_html=True)
 _debug_badge = " • DEBUG" if _RENDER_DEBUG_ENABLED else ""
 _scenario_badge = _scenario_cache_badge_display(_CURRENT_PROFILING_SCENARIO)
 st.markdown(f"""<div class="header-panel">
-    <div class="header-top">
-        <div class="header-title">📊 {t(settings, "app.title", "Sestante")}</div>
-        <div class="header-badge">{t(settings, "app.badge", "Dashboard premium")} • v{APP_VERSION}{_debug_badge} • {_scenario_badge}</div>
+    <div class="header-main">
+        <div class="header-top">
+            <div class="header-icon">📊</div>
+            <div class="header-title">{t(settings, "app.title", "Sestante")}</div>
+        </div>
+        <div class="header-sub">{ctx.header_date}</div>
     </div>
-    <div class="header-sub">{ctx.header_date}</div>
+    <div class="header-side">
+        <div class="header-side-row">
+            <div class="header-side-label">Piano</div>
+            <div class="header-side-val accent">{t(settings, "app.badge", "Dashboard premium")}</div>
+        </div>
+        <div class="header-side-div"></div>
+        <div class="header-side-row">
+            <div class="header-side-label">Versione</div>
+            <div class="header-side-val accent">v{APP_VERSION}{_debug_badge}</div>
+        </div>
+        <div class="header-side-div"></div>
+        <div class="header-side-row">
+            <div class="header-side-label">Stato</div>
+            <div class="header-side-val">{_scenario_badge}</div>
+        </div>
+    </div>
 </div>""", unsafe_allow_html=True)
 _header_progress_host = st.empty()
 
