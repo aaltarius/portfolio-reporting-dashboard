@@ -515,6 +515,7 @@ def _cover(payload: dict[str, Any], options: dict[str, Any], generated_at: datet
       <div>
         <div class="eyebrow">Report portafoglio</div>
         <h1>{html.escape(str(payload.get('portfolio_name') or 'Portafoglio Principale'))}</h1>
+        {f'<p>{html.escape(str(payload.get("portfolio_description")))}</p>' if str(payload.get('portfolio_description') or '').strip() else ''}
         <p>Documento completo costruito dai dati reali del portafoglio e filtrato sul periodo richiesto.</p>
       </div>
       <div class="hero-meta">
