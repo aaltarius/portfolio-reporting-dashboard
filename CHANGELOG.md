@@ -1,5 +1,22 @@
 # Changelog
 
+## 4.9.35 - Audit completo di Setup, refresh SATOR e doppia legenda donut
+
+**Tasto "Aggiorna" per la fotografia SATOR (Pianificazione):**
+- la fotografia SATOR può essere registrata dalla pagina standalone `/sator` (processo separato dall'app principale); tornando su Pianificazione senza interagire con nulla, la card "Fotografia di riferimento" restava con la versione precedente finché non partiva un rerun qualsiasi — nuovo tasto `🔄 Aggiorna` sopra la card che forza il rerun esplicito
+
+**Doppia legenda con percentuale nel donut "Allocazione: bucket e strumenti":**
+- solo l'anello esterno (natura/esposizione) aveva una legenda; l'anello interno (Core/Difensivo/Satellite) mostrava le etichette solo dentro le fette — aggiunta una seconda legenda (natura a sinistra, bucket a destra, via `legend`/`legend2` di Plotly) e le percentuali sul totale portafoglio accanto a ogni voce di entrambe
+
+**Audit a 360° della pagina Setup: ogni impostazione ora ha un effetto reale, completo, o è dichiarata esplicitamente come non ancora implementata — nessuna via di mezzo silenziosa:**
+- **Valuta base/reporting e Locale/Formato data/numerico** disabilitati con nota "funzionalità futura": non esiste alcuna conversione valuta né formattazione locale-aware nell'app (ogni importo resta sempre in EUR, ogni data/numero sempre in formato italiano) — i selettori restavano cliccabili senza fare nulla, ora è dichiarato onestamente
+- **Rimossi `table_density`** (mai avuto un controllo UI, mai letto da nessuna parte) **e i 4 selettori di dimensione tipografica** Titoli/Sottotitoli/Body/Commenti (nessuna variabile CSS li applicava, a differenza di "Famiglia font" che invece funziona ed è stata mantenuta)
+- **Descrizione portafoglio**: veniva salvata ma non era mai mostrata da nessuna parte — ora compare nell'intestazione dei report HTML esportati
+- **Due nuovi controlli** per impostazioni già realmente attive ma prive di qualunque interfaccia: **colore accento** (`ui/theme.py`, 4 varianti) e **mostra spiegazioni** (box esplicativi in Cruscotti e Confronto)
+- **CAGR reale al netto inflazione**: il campo "Inflazione annua %" veniva raccolto ma mai usato in alcun calcolo — ora un "CAGR reale" compare accanto al CAGR nominale nei report Executive/Extended, visibile solo quando l'inflazione configurata è maggiore di zero
+- **Alert di rischio/peso, drawdown e volatilità collegati ai dati reali**: erano configurabili e validati in Setup, ma la funzione che li calcola (`core/services/alerts.py`) non riceveva mai i dati necessari dall'unico punto di chiamata — non potevano mai scattare qualunque soglia si impostasse; ora collegati al bundle di analisi già calcolato per i Cruscotti (cache condivisa), con calcolo limitato ai soli casi in cui almeno una delle tre soglie è davvero configurata, per non appesantire il primo caricamento della Home quando servono solo gli alert di perdita/concentrazione
+- **Traduzione inglese** di titolo e commento introduttivo delle 10 pagine principali dell'app (prima tradotto solo un sottoinsieme parziale di stringhe) — perimetro limitato all'intestazione di pagina, le sezioni interne restano in italiano
+
 ## 4.9.34 - Aggiornamento a Streamlit 1.59.2
 
 **Bump `streamlit` da 1.58.0 a 1.59.2:**
