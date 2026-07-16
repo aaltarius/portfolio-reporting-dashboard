@@ -144,7 +144,12 @@ def build_runtime_context_data(
         strumenti=data.get("strumenti", []),
     )
     _alerts_settings = (settings or {}).get("alerts", {}) if isinstance(settings, dict) else {}
-    if bool(_alerts_settings.get("enabled", False)) and not da.empty:
+    _needs_risk_bundle = (
+        bool(_alerts_settings.get("risk_weight_monitoring", True))
+        or bool(_alerts_settings.get("drawdown_threshold_pct") or 0)
+        or bool(_alerts_settings.get("volatility_threshold_pct") or 0)
+    )
+    if bool(_alerts_settings.get("enabled", False)) and not da.empty and _needs_risk_bundle:
         _analysis_bundle = get_advanced_analysis_dataset_bundle(
             data=data,
             da=da,
