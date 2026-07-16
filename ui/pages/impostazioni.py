@@ -405,6 +405,23 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     key="appearance_color_palette",
                 )
 
+                # --- ACCENT VARIANT ---
+                from ui.theme import ACCENT_VARIANTS
+                accent_options = list(ACCENT_VARIANTS.keys())
+                current_accent = str(ui_preferences.get("accent_variant", "Default"))
+                ui_accent_variant = st.selectbox("Colore accento", accent_options,
+                    index=accent_options.index(current_accent) if current_accent in accent_options else 0,
+                    help="Colore usato per bottoni ed elementi in evidenza in tutta l'interfaccia.",
+                    key="appearance_accent_variant",
+                )
+
+                # --- SHOW EXPLANATIONS ---
+                ui_show_explanations = st.checkbox("Mostra spiegazioni nei Cruscotti e in Confronto",
+                    value=bool(ui_preferences.get("show_explanations", True)),
+                    help="Disattiva per nascondere i box esplicativi e i commenti introduttivi nelle pagine Cruscotti e Confronto.",
+                    key="appearance_show_explanations",
+                )
+
                 # Dimensioni tipografiche (titoli/sottotitoli/body/commenti) rimosse
                 # dalla UI il 2026-07-16: nessuna variabile CSS le applicava da
                 # nessuna parte (verificato: solo typography.family alimenta
@@ -655,8 +672,8 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 }
                 settings["ui_preferences"] = {
                     **settings.get("ui_preferences", {}),
-                    "show_explanations": bool(ui_preferences.get("show_explanations", True)),
-                    "accent_variant": str(ui_preferences.get("accent_variant", "Default")),
+                    "show_explanations": ui_show_explanations,
+                    "accent_variant": ui_accent_variant,
                     "font_scale": str(runtime_ui_settings.get("font_scale", "Grande")),
                     "log_level": str(log_level).upper(),
                     "debug_render_monitor": bool(debug_render_progress or debug_render_log),
