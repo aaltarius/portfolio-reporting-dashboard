@@ -1625,7 +1625,7 @@ def build_portfolio_summary_payload(
             }, axis=1
         ).tolist())
     top_holdings = full_holdings[:15]
-    xirr = twr_simple = cagr = vol_ann = max_dd = benchmark_return = excess_vs_benchmark = None
+    xirr = twr_simple = cagr = cagr_real = vol_ann = max_dd = benchmark_return = excess_vs_benchmark = None
     sortino_ratio = calmar_ratio = information_ratio = tracking_error_ann = None
     quarterly_returns = []
     monthly_returns = []
@@ -1666,6 +1666,11 @@ def build_portfolio_summary_payload(
                 cagr = float((1.0 + twr_simple) ** (365.25 / elapsed_days) - 1.0)
             else:
                 cagr = None
+            cagr_real = (
+                float((1.0 + cagr) / (1.0 + inflation_rate) - 1.0)
+                if cagr is not None and inflation_rate
+                else None
+            )
 
             if len(ret_series) >= 3:
                 vol_ann = float(ret_series.iloc[1:].std(ddof=1) * np.sqrt(252))
@@ -1784,6 +1789,7 @@ def build_portfolio_summary_payload(
         "xirr": xirr,
         "twr": twr_simple,
         "cagr": cagr,
+        "cagr_real": cagr_real,
         "volatility_ann": vol_ann,
         "max_drawdown": max_dd,
         "benchmark_return": benchmark_return,

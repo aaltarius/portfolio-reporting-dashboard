@@ -545,6 +545,7 @@ def build_portfolio_summary_html(payload, settings=None, figures=None):
     {_kpi('Extra-rendimento (a)', fmt_pct_it(payload.get('excess_vs_benchmark'), 2, signed=True), 'TWR - Benchmark')}
     {_kpi('Proventi netti', fmt_eur_it(payload.get('net_proventi'), 2), f"Lordi {fmt_eur_it(payload.get('gross_proventi'), 2)}")}
     {_kpi('CAGR', fmt_pct_it(payload.get('cagr'), 2, signed=True), 'Tasso comp. annuo medio')}
+    {_kpi('CAGR reale', fmt_pct_it(payload.get('cagr_real'), 2, signed=True), 'Al netto inflazione') if payload.get('inflation_rate') else ''}
   </div>
   <div class="grid4" style="margin-top:12px">
     {_kpi('Sortino ratio', sortino_val, 'Rendimento/rischio al ribasso')}

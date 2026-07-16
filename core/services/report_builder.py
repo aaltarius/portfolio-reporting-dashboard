@@ -327,7 +327,7 @@ def _recompute_period_metrics(payload: dict[str, Any]) -> None:
     hist = _history_frame(payload.get("summary_history", []))
     bench = _history_frame(payload.get("benchmark_history", []))
     if hist.empty or len(hist) < 2:
-        for key in ("xirr", "twr", "cagr", "volatility_ann", "max_drawdown", "benchmark_return", "excess_vs_benchmark", "sortino", "calmar", "information_ratio", "tracking_error"):
+        for key in ("xirr", "twr", "cagr", "cagr_real", "volatility_ann", "max_drawdown", "benchmark_return", "excess_vs_benchmark", "sortino", "calmar", "information_ratio", "tracking_error"):
             payload[key] = None
         return
 
@@ -336,6 +336,11 @@ def _recompute_period_metrics(payload: dict[str, Any]) -> None:
     twr = float(idx.iloc[-1] / idx.iloc[0] - 1.0) if len(idx) >= 2 and abs(float(idx.iloc[0])) > 1e-12 else None
     elapsed_days = max(int((hist["date_dt"].iloc[-1] - hist["date_dt"].iloc[0]).days), 1)
     cagr = float((1.0 + twr) ** (365.25 / elapsed_days) - 1.0) if twr is not None and twr > -1.0 else None
+    cagr_real = (
+        float((1.0 + cagr) / (1.0 + payload.get("inflation_rate")) - 1.0)
+        if cagr is not None and payload.get("inflation_rate")
+        else None
+    )
     vol = float(rets.std(ddof=1) * np.sqrt(252)) if len(rets) >= 3 else None
     running_max = idx.cummax()
     max_dd = float((idx / running_max - 1.0).min()) if len(idx) >= 2 else None
@@ -369,6 +374,7 @@ def _recompute_period_metrics(payload: dict[str, Any]) -> None:
     payload["xirr"] = _period_xirr_from_values_and_known_flows(hist)
     payload["twr"] = twr
     payload["cagr"] = cagr
+    payload["cagr_real"] = cagr_real
     payload["volatility_ann"] = vol
     payload["max_drawdown"] = max_dd
     payload["benchmark_return"] = bench_return
@@ -580,6 +586,7 @@ def _performance_section(
         risk_grid = f"""
         <div class="grid" style="margin-top:12px">
           {_kpi("CAGR", fmt_pct_it(payload.get('cagr'), 2, signed=True), "Tasso composto annuo")}
+          {_kpi("CAGR reale", fmt_pct_it(payload.get('cagr_real'), 2, signed=True), "Al netto inflazione") if payload.get('inflation_rate') else ""}
           {_kpi("Sortino", fmt_num_it(payload.get('sortino'), 2), "Rapporto rendimento / downside")}
           {_kpi("Calmar", fmt_num_it(payload.get('calmar'), 2), "CAGR / drawdown")}
           {_kpi("Tracking error", fmt_pct_it(payload.get('tracking_error'), 2), "vs benchmark")}
@@ -601,6 +608,7 @@ def _performance_section(
         {_kpi("Benchmark", fmt_pct_it(payload.get("benchmark_return"), 2, signed=True), str(payload.get("portfolio_benchmark") or "n/d")) if include_benchmark else ""}
         {_kpi("Extra-rendimento", fmt_pct_it(payload.get("excess_vs_benchmark"), 2, signed=True), "Portafoglio meno benchmark") if include_benchmark else ""}
         {_kpi("CAGR", fmt_pct_it(payload.get('cagr'), 2, signed=True), "Tasso composto annuo")}
+        {_kpi("CAGR reale", fmt_pct_it(payload.get('cagr_real'), 2, signed=True), "Al netto inflazione") if payload.get('inflation_rate') else ""}
         {_kpi("Sortino", fmt_num_it(payload.get('sortino'), 2), "Rendimento / downside")}
         {_kpi("Calmar", fmt_num_it(payload.get('calmar'), 2), "CAGR / drawdown")}
         {_kpi("Tracking error", fmt_pct_it(payload.get('tracking_error'), 2), "Scarto dal benchmark")}
