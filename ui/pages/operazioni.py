@@ -1758,8 +1758,8 @@ def render_operazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
 
     with tab:
         render_page_intro_shared(
-            "Operazioni",
-            "Centro operativo per inserire, correggere e consultare eventi di portafoglio, movimenti di cassa e anagrafica strumenti.",
+            t(settings, "tab.operations", "Operazioni"),
+            t(settings, "page_intro.operazioni.comment", "Centro operativo per inserire, correggere e consultare eventi di portafoglio, movimenti di cassa e anagrafica strumenti."),
             "operations",
             theme,
         )

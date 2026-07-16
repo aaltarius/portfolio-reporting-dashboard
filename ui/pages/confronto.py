@@ -367,7 +367,7 @@ def render_confronto(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
 
     with tab:
 
-        _render_page_intro("Confronto", t(settings, "comparison.note", "Scheda dedicata al confronto tra snapshot del portafoglio. Consente di leggere differenze di valore, P/L e allocazione e di esportare i dati in CSV o JSON."), "confronto", theme)
+        _render_page_intro(t(settings, "tab.comparison", "Confronto"), t(settings, "comparison.note", "Scheda dedicata al confronto tra snapshot del portafoglio. Consente di leggere differenze di valore, P/L e allocazione e di esportare i dati in CSV o JSON."), "confronto", theme)
         st.markdown(
             f"""<style>
             .confronto-caption-chip {{

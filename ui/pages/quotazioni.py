@@ -154,8 +154,8 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
 
     with tab:
         render_page_intro_shared(
-            "Quotazioni",
-            "Controllo operativo di refresh, storico prezzi e stato delle quotazioni disponibili sugli strumenti censiti.",
+            t(settings, "tab.quotes", "Quotazioni"),
+            t(settings, "page_intro.quotazioni.comment", "Controllo operativo di refresh, storico prezzi e stato delle quotazioni disponibili sugli strumenti censiti."),
             "default",
             theme,
         )

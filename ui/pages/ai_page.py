@@ -9,6 +9,7 @@ from streamlit.delta_generator import DeltaGenerator
 
 from core.ai_analysis import AI_CALL_COUNT_KEY, GEMINI_MODELS, load_ai_config
 from ui.components import back_to_top, render_section_title, vertical_gap
+from ui.i18n import t
 from ui.page_chrome import render_page_intro as render_page_intro_shared
 from ui.pages.ai_analysis import render_ai_analysis
 from ui.pages.ai_chat import render_ai_chat
@@ -35,9 +36,10 @@ def _get_api_key() -> str:
 def render_ai_page(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
     """Entry point della pagina AI."""
     with tab:
+        settings = getattr(ctx, "settings", {}) or {}
         render_page_intro_shared(
-            title="Analisi AI portafoglio",
-            comment="Analisi, chat e report via Google Gemini.",
+            title=t(settings, "page_intro.ai.title", "Analisi AI portafoglio"),
+            comment=t(settings, "page_intro.ai.comment", "Analisi, chat e report via Google Gemini."),
             icon="analysis",
         )
 

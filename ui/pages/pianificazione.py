@@ -36,6 +36,7 @@ from core.services.sator import (
 )
 from persistence.storage import load_data, load_sator_decisions, save_data, save_sator_decisions, save_settings
 from ui.formatting import fmt_eur_it, fmt_pct_it
+from ui.i18n import t
 from ui.page_chrome import render_page_intro as render_page_intro_shared, render_section_line as render_section_line_shared
 from ui.components import render_section_title, kpi_card, back_to_top, legend_block, render_styled_table
 from ui.charts.tables import color_pl
@@ -1370,8 +1371,8 @@ def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
     with tab:
 
         _render_page_intro(
-            "Pianificazione",
-            "Simula acquisti, vendite e strumenti ipotetici prima di toccare il portafoglio reale. Le stime sono scenari, non previsioni.",
+            t(settings, "page_intro.pianificazione.title", "Pianificazione"),
+            t(settings, "page_intro.pianificazione.comment", "Simula acquisti, vendite e strumenti ipotetici prima di toccare il portafoglio reale. Le stime sono scenari, non previsioni."),
             "pianificazione",
             theme,
         )

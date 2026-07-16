@@ -274,7 +274,7 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
     )
     with tab:
 
-        _render_page_intro("Impostazioni", "Profilo, visualizzazione, calcoli, benchmark, lingua e formato dati.", "impostazioni", theme)
+        _render_page_intro(t(settings, "tab.settings", "Impostazioni"), t(settings, "page_intro.impostazioni.comment", "Profilo, visualizzazione, calcoli, benchmark, lingua e formato dati."), "impostazioni", theme)
         settings = load_settings()
         calculations_settings = get_calculations_settings(settings)
         alerts_settings = get_alerts_settings(settings)

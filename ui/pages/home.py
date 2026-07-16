@@ -25,6 +25,7 @@ from core.services import (
 from persistence.storage import macro_cat
 from core.finance import build_proventi_summary
 from ui.formatting import fmt_eur_it, fmt_pct_it, fmt_num_it, fmtds
+from ui.i18n import t
 from ui.theme import CATEGORY_COLORS, get_theme_context, instrument_color, macro_color
 from ui.components import (
     macro_legend_html,
@@ -1029,8 +1030,8 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
 
     with tab:
         render_page_intro_shared(
-            "Home",
-            "Vista rapida del portafoglio: posizioni attive, andamento recente, allocazione per macro-categoria e proventi gia' incassati.",
+            t(settings, "page_intro.portafoglio.title", "Home"),
+            t(settings, "page_intro.portafoglio.comment", "Vista rapida del portafoglio: posizioni attive, andamento recente, allocazione per macro-categoria e proventi gia' incassati."),
             "portfolio",
             theme,
         )

@@ -20,6 +20,7 @@ from core.render_profiler import profile_step
 from ui.components import back_to_top, kpi_card, legend_block, vertical_gap, render_styled_table, render_section_title, should_render_section, macro_legend_html
 from ui.dashboard_bundles import get_analysis_category_dashboard_bundles, get_analitica_bundle, get_summary_dataset_bundle, get_advanced_analysis_dataset_bundle
 from ui.formatting import fmt_dt_it, fmt_date_only_it, fmt_eur_it, fmt_num_it, fmt_pct_it
+from ui.i18n import t
 from ui.theme import P, get_theme_context, macro_color
 from ui.charts.analisi import build_risk_contribution_chart
 from ui.charts.home import build_category_allocation_pie_chart, build_category_bar_chart
@@ -1026,8 +1027,8 @@ def render_cruscotti(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         settings = getattr(ctx, "settings", {}) if hasattr(ctx, "settings") else {}
         theme = getattr(ctx, "theme", None) or get_theme_context()
         render_page_intro_shared(
-            "Cruscotti",
-            "Hub analitico del portafoglio: cruscotti per categoria, letture trasversali, reddito GOV/BTP, flussi di acquisto e accumuli PAC.",
+            t(settings, "tab.dashboards", "Cruscotti"),
+            t(settings, "page_intro.cruscotti.comment", "Hub analitico del portafoglio: cruscotti per categoria, letture trasversali, reddito GOV/BTP, flussi di acquisto e accumuli PAC."),
             "analysis",
             theme,
         )

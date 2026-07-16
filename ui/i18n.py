@@ -134,6 +134,18 @@ TRANSLATIONS = {
         "operations.cash_empty": "No cash movements recorded.",
         "analysis.title": "Advanced Analytics",
         "analysis.note": "Advanced view of portfolio returns, risk, allocation gaps, alerts, correlations and drawdowns.",
+        "page_intro.portafoglio.title": "Home",
+        "page_intro.portafoglio.comment": "Quick portfolio overview: active positions, recent performance, allocation by macro category and income already received.",
+        "page_intro.quotazioni.comment": "Operational control for refreshing, price history and the status of available quotes for tracked instruments.",
+        "page_intro.operazioni.comment": "Operations hub to enter, correct and review portfolio events, cash movements and instrument records.",
+        "page_intro.cruscotti.comment": "Portfolio analytics hub: dashboards by category, cross-cutting views, GOV/BTP income, purchase flows and recurring-investment tracking.",
+        "page_intro.summary.comment": "Generate a complete portfolio HTML report, ready to download and print to PDF from the browser. Here you only choose the period and the actual contents.",
+        "page_intro.pianificazione.title": "Planning",
+        "page_intro.pianificazione.comment": "Simulate purchases, sales and hypothetical instruments before touching the real portfolio. These are scenarios, not forecasts.",
+        "page_intro.gestione_dati.comment": "Data control, backup, chart cache, quote import and application log.",
+        "page_intro.impostazioni.comment": "Profile, display, calculations, benchmark, language and data format.",
+        "page_intro.ai.title": "AI Portfolio Analysis",
+        "page_intro.ai.comment": "Analysis, chat and reports via Google Gemini.",
     }
 }
 

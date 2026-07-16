@@ -55,6 +55,7 @@ from persistence.storage import (
 )
 from ui.components import back_to_top, kpi_card, legend_block, render_styled_table, vertical_gap, render_section_title
 from ui.formatting import fmt_dt_it, fmt_date_only_it, fmt_num_it
+from ui.i18n import t
 from ui.page_chrome import render_page_intro as render_page_intro_shared, render_section_line as render_section_line_shared
 from ui.theme import get_theme_context
 from ui.notifications import queue_info, queue_success, update_status
@@ -617,7 +618,7 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
 
     with tab:
 
-        _render_page_intro("Gestione Dati", "Controllo dati, backup, cache grafici, import quotazioni e log applicativo.", "gestione", theme)
+        _render_page_intro(t(settings, "tab.data_management", "Gestione Dati"), t(settings, "page_intro.gestione_dati.comment", "Controllo dati, backup, cache grafici, import quotazioni e log applicativo."), "gestione", theme)
 
         # ─────────────────────────────────────────────
         # 1. Stato sintetico

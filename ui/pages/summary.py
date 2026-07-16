@@ -183,8 +183,8 @@ def render_summary(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             st.session_state.pop("summary_report_output", None)
 
         _render_page_intro(
-            "Summary",
-            "Genera un report HTML completo del portafoglio, pronto da scaricare e da stampare in PDF dal browser. Qui scegli solo periodo e contenuti effettivi.",
+            t(settings, "tab.summary", "Summary"),
+            t(settings, "page_intro.summary.comment", "Genera un report HTML completo del portafoglio, pronto da scaricare e da stampare in PDF dal browser. Qui scegli solo periodo e contenuti effettivi."),
             "summary",
             theme,
         )
