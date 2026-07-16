@@ -258,7 +258,6 @@ def default_settings():
         "category_view": {
             "selected_categories": list(DEFAULT_VISIBLE_CATEGORY_CODES),
         },
-        "ui_table_density": "Standard",
         "ui_show_explanations": True,
         "ui_summary_detail_level": "Completa",
         "ui_accent_variant": "Default",
@@ -318,7 +317,6 @@ def default_settings():
             "volatility_threshold_pct": None,
         },
         "ui_preferences": {
-            "table_density": "Standard",
             "show_explanations": True,
             "summary_detail_level": "Completa",
             "accent_variant": "Default",
@@ -541,9 +539,6 @@ def _normalize_settings_payload(settings):
             reporting.get("default_format", "csv"),
         )
     )
-    ui_preferences["table_density"] = str(
-        _prefer_nested_value("ui_preferences", "table_density", "ui_table_density", ui_preferences.get("table_density", "Standard"))
-    )
     ui_preferences["show_explanations"] = bool(
         _prefer_nested_value("ui_preferences", "show_explanations", "ui_show_explanations", ui_preferences.get("show_explanations", True))
     )
@@ -637,7 +632,6 @@ def _normalize_settings_payload(settings):
     merged["include_proventi_in_total_return"] = calculations["include_proventi_in_total_return"]
     merged["classification_mode"] = calculations["classification_mode"]
     merged["comparison_export_format_default"] = reporting["default_format"]
-    merged["ui_table_density"] = ui_preferences["table_density"]
     merged["ui_show_explanations"] = ui_preferences["show_explanations"]
     merged["ui_summary_detail_level"] = ui_preferences["summary_detail_level"]
     merged["ui_accent_variant"] = ui_preferences["accent_variant"]
@@ -653,6 +647,10 @@ def _normalize_settings_payload(settings):
     merged["ui_summary_include_benchmark"] = reporting["include_benchmark"]
     merged["category_view"] = _deep_merge_defaults(defaults["category_view"], category_view)
     merged["backup"] = _deep_merge_defaults(defaults["backup"], backup)
+
+    # Remove deprecated keys
+    ui_preferences.pop("table_density", None)
+    merged.pop("ui_table_density", None)
 
     return merged
 

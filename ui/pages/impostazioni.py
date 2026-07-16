@@ -672,7 +672,6 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 }
                 settings["ui_preferences"] = {
                     **settings.get("ui_preferences", {}),
-                    "table_density": str(ui_preferences.get("table_density", "Standard")),
                     "show_explanations": bool(ui_preferences.get("show_explanations", True)),
                     "accent_variant": str(ui_preferences.get("accent_variant", "Default")),
                     "font_scale": str(runtime_ui_settings.get("font_scale", "Grande")),
