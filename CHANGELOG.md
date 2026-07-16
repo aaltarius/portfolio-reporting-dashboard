@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.9.38 - Pannello laterale del box iniziale più stretto
+
+**Rifinitura del box iniziale (v4.9.37):**
+- rimossa la riga "Piano" ("Dashboard premium"), poco informativa — restano solo Versione e Stato
+- Versione e Stato ora su una riga sola ciascuna (etichetta a sinistra, valore allineato a destra) invece di etichetta sopra/valore sotto
+- pannello laterale scuro ristretto da 230px a 168px, coerente con il contenuto ridotto
+- rimossa la chiave di traduzione `app.badge`, rimasta orfana dopo la rimozione della riga "Piano"
+
 ## 4.9.37 - Nuovo box iniziale a pannello diviso
 
 **Restyling del box in cima all'app:**
