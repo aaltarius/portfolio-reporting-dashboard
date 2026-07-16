@@ -136,6 +136,7 @@ def build_allocation_rings_chart(rings_df: pd.DataFrame, objective: dict, theme)
     outer_values: list[float] = []
     outer_colors: list[str] = []
     outer_hover: list[str] = []
+    natura_totals: dict[str, float] = {}
     for bucket in ("Core", "Difensivo", "Satellite"):
         sub = rings_df[rings_df["bucket"] == bucket]
         if sub.empty:
@@ -161,7 +162,9 @@ def build_allocation_rings_chart(rings_df: pd.DataFrame, objective: dict, theme)
                     [f"<b>{natura}</b>"] + [f"{tk}: {fmt_eur_it(v, 2)}" for tk, v in group["items"]]
                 )
             )
+            natura_totals[natura] = natura_totals.get(natura, 0.0) + float(group["value"])
 
+    grand_total = sum(inner_values) or 1.0
     fig.add_trace(go.Pie(
         labels=_pie_clockwise_order(inner_labels),
         values=_pie_clockwise_order(inner_values),
@@ -201,12 +204,25 @@ def build_allocation_rings_chart(rings_df: pd.DataFrame, objective: dict, theme)
         if natura in legend_seen:
             continue
         legend_seen.add(natura)
+        pct = fmt_pct_it(natura_totals.get(natura, 0.0) / grand_total, 1)
         fig.add_trace(go.Scatter(
             x=[None], y=[None], mode="markers",
             marker=dict(size=10, color=color, symbol="square"),
-            name=natura, showlegend=True, hoverinfo="skip",
+            name=f"{natura} ({pct})", showlegend=True, hoverinfo="skip",
+        ))
+    for bucket, total, color in zip(inner_labels, inner_values, inner_colors):
+        pct = fmt_pct_it(total / grand_total, 1)
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers",
+            marker=dict(size=10, color=color, symbol="square"),
+            name=f"{bucket} ({pct})", showlegend=True, hoverinfo="skip",
+            legend="legend2",
         ))
     fig = finalize_chart(fig, "pianificazione_allocation_rings")
+    fig.update_layout(
+        legend=dict(x=-0.35, y=0.5, xanchor="left", yanchor="middle"),
+        legend2=dict(x=1.05, y=0.5, xanchor="left", yanchor="middle"),
+    )
     fig.update_xaxes(visible=False, showgrid=False, showline=False, zeroline=False)
     fig.update_yaxes(visible=False, showgrid=False, showline=False, zeroline=False)
     return fig

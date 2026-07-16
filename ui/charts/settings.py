@@ -1516,7 +1516,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'height': 420,
      'legend': 'right',
      'show_buttons': False,
-     'margin_delta': {'t': 0, 'b': 0, 'l': -20, 'r': 110},
+     'margin_delta': {'t': 0, 'b': 0, 'l': 110, 'r': 110},
      'title': '<b>Allocazione: bucket e strumenti</b>'},
 
     'pianificazione_next_purchase_bubble': {'type': 'scatter',
