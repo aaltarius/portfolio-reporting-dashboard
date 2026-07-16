@@ -29,7 +29,9 @@ from core.services import (
     get_quotazioni_stats,
 )
 from core.services.sator import ensure_sator_settings
+from core.cache_signatures import build_portfolio_data_signature
 from persistence.storage import macro_cat
+from ui.dashboard_bundles import get_advanced_analysis_dataset_bundle
 from ui.formatting import fmt_dt_it, fmtd, fmtds
 
 
@@ -141,7 +143,24 @@ def build_runtime_context_data(
         concentration_caps=ensure_sator_settings(settings).get("concentration_caps", {}),
         strumenti=data.get("strumenti", []),
     )
-    portfolio_alerts = build_portfolio_alerts(da, settings)
+    _alerts_settings = (settings or {}).get("alerts", {}) if isinstance(settings, dict) else {}
+    if bool(_alerts_settings.get("enabled", False)) and not da.empty:
+        _analysis_bundle = get_advanced_analysis_dataset_bundle(
+            data=data,
+            da=da,
+            dh=dh_hist,
+            dh_flow=dh_flow,
+            proventi=proventi,
+            data_sig=build_portfolio_data_signature(data, app_version=app_version, schema_version=schema_version),
+            recent_window=252,
+            settings=settings,
+        )
+        _risk_df = _analysis_bundle.risk_df
+        _dfstats = _analysis_bundle.dfstats
+    else:
+        _risk_df = None
+        _dfstats = None
+    portfolio_alerts = build_portfolio_alerts(da, settings, risk_df=_risk_df, dfstats=_dfstats)
 
     _t = time.perf_counter()
     ops = build_operations_report(data)
