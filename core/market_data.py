@@ -323,20 +323,6 @@ _MESI_IT = {"gennaio":"01","febbraio":"02","marzo":"03","aprile":"04","maggio":"
             "novembre":"11","dicembre":"12"}
 
 
-def _parse_s24ore_datetime(txt: str) -> str | None:
-    """Estrae 'YYYY-MM-DD HH:MM' dal testo del widget Il Sole 24 Ore se mercato aperto."""
-    if "mercato chiuso" in txt.lower():
-        return None
-    m = re.search(r'(\d{1,2})\s+(\w+)\s+(\d{4})\s+ore\s+(\d{2}):(\d{2})', txt, re.I)
-    if not m:
-        return None
-    dd, mese, yyyy, hh, mn = m.group(1).zfill(2), m.group(2).lower(), m.group(3), m.group(4), m.group(5)
-    mm = _MESI_IT.get(mese)
-    if not mm:
-        return None
-    return f"{yyyy}-{mm}-{dd} {hh}:{mn}"
-
-
 def get_btp_price_details(isin: str) -> dict[str, Any]:
     """Recupera prezzo e data+ora ultimo contratto BTP.
 
@@ -541,13 +527,6 @@ def _get_cached_price_record(key: str, timeout_seconds: int) -> dict[str, Any] |
     return None
 
 
-def _get_cached_price(key: str, timeout_seconds: int) -> tuple[float | None, str] | None:
-    cached = _get_cached_price_record(key, timeout_seconds)
-    if cached is not None:
-        return cached.get("price"), cached.get("source", "Cache")
-    return None
-
-
 def _set_cached_price(key: str, price: float | None, source: str, price_date: str | None = None, recent_history: dict | None = None) -> None:
     _LOOKUP_CACHE_RUNTIME[key] = {
         "price": price,
@@ -556,12 +535,6 @@ def _set_cached_price(key: str, price: float | None, source: str, price_date: st
         "recent_history": recent_history or {},
         "ts": time.time(),
     }
-
-
-def clear_runtime_price_cache() -> None:
-    """Svuota la cache runtime dei lookup prezzo."""
-    _LOOKUP_CACHE_RUNTIME.clear()
-    logger.info("Cache runtime prezzi svuotata")
 
 
 def prime_isin_ticker_cache(cache_dict: dict) -> None:

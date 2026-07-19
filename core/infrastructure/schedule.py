@@ -39,12 +39,6 @@ def _write_benchmark_refresh_state(state: dict[str, Any]) -> None:
         logger.warning("Errore durante salvataggio benchmark refresh state: %s", exc)
 
 
-def get_benchmark_last_refresh(ticker: str) -> Optional[float]:
-    """Ritorna timestamp ultimo refresh per ticker (None se mai fatto)."""
-    state = _read_benchmark_refresh_state()
-    return state.get(ticker)
-
-
 def set_benchmark_last_refresh(ticker: str, ts: Optional[float] = None) -> None:
     """Setta timestamp ultimo refresh per ticker (None = adesso)."""
     state = _read_benchmark_refresh_state()
@@ -131,15 +125,3 @@ def start_benchmark_scheduler(data: dict[str, Any]) -> bool:
         _benchmark_scheduler_thread.start()
         logger.info("Benchmark scheduler thread avviato")
     return True
-
-
-def get_benchmark_scheduler_status() -> dict[str, Any]:
-    """Ritorna stato dello scheduler benchmark."""
-    global _benchmark_scheduler_thread
-    running = _benchmark_scheduler_thread is not None and _benchmark_scheduler_thread.is_alive()
-    seconds_until = _seconds_until_next_refresh() if running else 0
-    return {
-        "running": running,
-        "seconds_until_next_refresh": seconds_until,
-        "next_refresh_time": _BENCHMARK_REFRESH_TIME.strftime("%H:%M") if running else "—",
-    }

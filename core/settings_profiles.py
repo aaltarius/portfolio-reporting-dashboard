@@ -84,10 +84,6 @@ def get_category_view_settings(settings: dict[str, Any] | None) -> dict[str, Any
     return dict(_normalized_settings(settings).get("category_view", {}))
 
 
-def get_newsletter_settings(settings: dict[str, Any] | None) -> dict[str, Any]:
-    return dict(_normalized_settings(settings).get("newsletter", {}))
-
-
 def get_i18n_settings(settings: dict[str, Any] | None) -> dict[str, Any]:
     return dict(_normalized_settings(settings).get("i18n", {}))
 
