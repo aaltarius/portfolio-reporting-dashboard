@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import plotly.graph_objects as go
 
+from core.series_resample import downsample_for_display
 from core.series_utils import slice_recent
 from ui.charts.base100 import apply_settings_base100, base100_hline_kwargs
 from ui.charts.extrema import add_global_extrema_markers
@@ -15,19 +16,29 @@ from ui.theme import instrument_color, macro_color
 #   analisi_category_performance
 
 
-def build_quote_history_time_chart(ticker, instrument, normalized_series, benchmark_series, chart_style, dfmt, theme, in_portfolio: bool = True, purchase_date=None):
+def build_quote_history_time_chart(ticker, instrument, normalized_series, benchmark_series, chart_style, dfmt, theme, in_portfolio: bool = True, purchase_date=None, full_resolution: bool = False):
     """Build quote history chart for a single ticker.
 
     chart_id: quotazioni_quote_history
     chiamato da: ui/pages/quotazioni.py
+
+    full_resolution: se False (default), i dati oltre gli ultimi 90 giorni
+    vengono mostrati a risoluzione settimanale invece che giornaliera (vedi
+    core/series_resample.py). Riduce il numero di punti processati dalla
+    pipeline di rendering senza alterare i valori mostrati (usa l'ultimo
+    valore della settimana, non una media). Tocca solo questo grafico: i
+    dati sorgente (normalized_series, benchmark_series) non vengono
+    modificati, e nessun calcolo finanziario a monte usa questa funzione.
     """
+    display_series = normalized_series if full_resolution else downsample_for_display(normalized_series)
+
     fig = go.Figure()
     fill_setting = "tozeroy" if chart_style == "Area" else None
     fillcolor_setting = hex_to_rgba(instrument_color(ticker), 0.15) if chart_style == "Area" else None
     fig.add_trace(
         go.Scatter(
-            x=normalized_series.index,
-            y=normalized_series.values,
+            x=display_series.index,
+            y=display_series.values,
             name=ticker,
             mode="lines",
             line=dict(color=instrument_color(ticker), width=2.5),
@@ -37,6 +48,10 @@ def build_quote_history_time_chart(ticker, instrument, normalized_series, benchm
     )
     if benchmark_series:
         bench_label, bench_dates, bench_values = benchmark_series
+        if not full_resolution:
+            bench_series_for_display = downsample_for_display(pd.Series(bench_values, index=pd.to_datetime(bench_dates)))
+            bench_dates = bench_series_for_display.index
+            bench_values = bench_series_for_display.values
         fig.add_trace(
             go.Scatter(
                 x=bench_dates,
