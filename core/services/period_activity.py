@@ -42,36 +42,6 @@ def build_period_activity(
     }
 
 
-def build_period_activity_summary(
-    data: dict[str, Any] | None,
-    start: date | None,
-    end: date | None,
-    *,
-    include_start: bool = True,
-) -> dict[str, Any]:
-    return build_period_activity(data, start, end, include_start=include_start)["summary"]
-
-
-def build_period_activity_by_instrument(
-    data: dict[str, Any] | None,
-    start: date | None,
-    end: date | None,
-    *,
-    include_start: bool = True,
-) -> pd.DataFrame:
-    return build_period_activity(data, start, end, include_start=include_start)["by_instrument"]
-
-
-def build_period_event_log(
-    data: dict[str, Any] | None,
-    start: date | None,
-    end: date | None,
-    *,
-    include_start: bool = True,
-) -> pd.DataFrame:
-    return build_period_activity(data, start, end, include_start=include_start)["event_log"]
-
-
 def _events_in_period(
     data: dict[str, Any] | None,
     start: date | None,

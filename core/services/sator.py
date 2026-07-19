@@ -439,11 +439,6 @@ def _fetch_costs_for_symbol(symbol: str) -> dict[str, float | None]:
     return out
 
 
-def _fetch_ter_for_symbol(symbol: str) -> float | None:
-    """Compatibilita': restituisce solo il TER (frazione) o None."""
-    return _fetch_costs_for_symbol(symbol).get("ter")
-
-
 def fetch_sator_costs_from_web(data: dict[str, Any], *, only_missing: bool = True) -> dict[str, list[str]]:
     """Scarica da Yahoo TER e (a mercato aperto) spread, salvandoli nei metadati.
 

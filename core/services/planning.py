@@ -23,112 +23,6 @@ def _resolve_planning_categories(settings: dict[str, Any] | None = None) -> tupl
     return tuple(get_selected_category_codes(settings))
 
 
-def simulate_trade_impact(
-    positions_df: pd.DataFrame,
-    *,
-    cash_balance: float,
-    operation: str,
-    ticker: str,
-    name: str,
-    category: str,
-    quantity: float,
-    price: float,
-    commissions: float = 0.0,
-) -> dict[str, Any]:
-    operation = str(operation or "Acquisto")
-    ticker = str(ticker or "").strip().upper()
-    name = str(name or ticker or "Strumento ipotetico")
-    category = macro_cat(category)
-    quantity = max(0.0, _float(quantity))
-    price = max(0.0, _float(price))
-    commissions = max(0.0, _float(commissions))
-    amount = quantity * price
-
-    before = _prepare_positions(positions_df)
-    after = before.copy()
-    warnings: list[str] = []
-
-    if not ticker:
-        warnings.append("Ticker mancante: la simulazione usa una riga descrittiva generica.")
-        ticker = "IPOTETICO"
-    if amount <= 0:
-        warnings.append("Importo nullo: inserisci quantita e prezzo maggiori di zero.")
-
-    existing_mask = after["Ticker"].astype(str).str.upper() == ticker
-    cash_after = float(cash_balance or 0.0)
-
-    if operation == "Vendita":
-        if not existing_mask.any():
-            warnings.append("Vendita non simulabile su uno strumento non presente: nessuna posizione ridotta.")
-        else:
-            idx = after[existing_mask].index[0]
-            current_qty = _float(after.at[idx, "Quote"])
-            if quantity > current_qty:
-                warnings.append("Quantita in vendita superiore alla posizione: viene limitata alla quantita disponibile.")
-                quantity = current_qty
-                amount = quantity * price
-            ratio = quantity / current_qty if current_qty > 1e-12 else 0.0
-            for col in ("Quote", "Controvalore", "Costo", "P/L €"):
-                after.at[idx, col] = _float(after.at[idx, col]) * max(0.0, 1.0 - ratio)
-            cash_after += max(0.0, amount - commissions)
-            warnings.append("La vendita e simulata in modo statico: non registra fiscalita o P/L realizzato.")
-    else:
-        cash_after -= amount + commissions
-        if existing_mask.any():
-            idx = after[existing_mask].index[0]
-            after.at[idx, "Quote"] = _float(after.at[idx, "Quote"]) + quantity
-            after.at[idx, "Controvalore"] = _float(after.at[idx, "Controvalore"]) + amount
-            after.at[idx, "Costo"] = _float(after.at[idx, "Costo"]) + amount + commissions
-            after.at[idx, "P/L €"] = _float(after.at[idx, "Controvalore"]) - _float(after.at[idx, "Costo"])
-        else:
-            after = pd.concat(
-                [
-                    after,
-                    pd.DataFrame(
-                        [
-                            {
-                                "Ticker": ticker,
-                                "Strumento": name,
-                                "Tipo": category,
-                                "Categoria": category,
-                                "Quote": quantity,
-                                "Prezzo": price,
-                                "PMC": price,
-                                "Controvalore": amount,
-                                "Costo": amount + commissions,
-                                "P/L €": -commissions,
-                            }
-                        ]
-                    ),
-                ],
-                ignore_index=True,
-            )
-    after = after[pd.to_numeric(after["Controvalore"], errors="coerce").fillna(0) > 0.0001].copy()
-    before_alloc = build_allocation_table(before, cash_balance)
-    after_alloc = build_allocation_table(after, cash_after)
-    before_conc = build_concentration_table(before, cash_balance)
-    after_conc = build_concentration_table(after, cash_after)
-    metrics = build_simulation_metrics(before, after, cash_balance, cash_after)
-    suggestions = build_simulation_notes(metrics, before_alloc, after_alloc, before_conc, after_conc, warnings)
-    return {
-        "operation": operation,
-        "ticker": ticker,
-        "amount": amount,
-        "commissions": commissions,
-        "cash_before": float(cash_balance or 0.0),
-        "cash_after": cash_after,
-        "positions_before": before,
-        "positions_after": after,
-        "allocation_before": before_alloc,
-        "allocation_after": after_alloc,
-        "concentration_before": before_conc,
-        "concentration_after": after_conc,
-        "metrics": metrics,
-        "notes": suggestions,
-        "warnings": warnings,
-    }
-
-
 def build_allocation_table(
     positions_df: pd.DataFrame,
     cash_balance: float = 0.0,
@@ -172,25 +66,6 @@ def build_simulation_metrics(
         ("Peso liquidita", _safe_ratio(max(0.0, cash_before), before_assets), _safe_ratio(max(0.0, cash_after), after_assets), "pct"),
     ]
     return pd.DataFrame([{"Voce": label, "Prima": a, "Dopo": b, "Delta": b - a, "Tipo": kind} for label, a, b, kind in rows])
-
-
-def build_static_return_scenarios(total_after: float, annual_returns: dict[str, float]) -> pd.DataFrame:
-    horizons = [("3 mesi", 0.25), ("6 mesi", 0.50), ("1 anno", 1.0)]
-    rows = []
-    for scenario, annual_return in (annual_returns or {}).items():
-        annual_return = _float(annual_return)
-        for label, years in horizons:
-            projected = float(total_after or 0.0) * ((1.0 + annual_return) ** years)
-            rows.append(
-                {
-                    "Scenario": str(scenario),
-                    "Orizzonte": label,
-                    "Rendimento annuo ipotetico": annual_return,
-                    "Valore simulato": projected,
-                    "Delta": projected - float(total_after or 0.0),
-                }
-            )
-    return pd.DataFrame(rows)
 
 
 def build_simulation_notes(
