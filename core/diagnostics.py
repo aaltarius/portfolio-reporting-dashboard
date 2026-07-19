@@ -67,24 +67,6 @@ def make_arrow_safe_dataframe(rows: Any) -> pd.DataFrame:
             safe[col] = series.map(lambda value: "—" if pd.isna(value) else str(value))
     return safe
 
-def safe_file_info(path: str | Path) -> dict[str, Any]:
-    """Restituisce presenza, dimensione e timestamp di un file senza sollevare eccezioni."""
-    p = Path(path)
-    try:
-        if not p.exists() or not p.is_file():
-            return {"path": str(p), "exists": False, "size_bytes": 0, "size_mb": 0.0, "modified": "n/d"}
-        stat = p.stat()
-        return {
-            "path": str(p),
-            "exists": True,
-            "size_bytes": int(stat.st_size),
-            "size_mb": _mb(stat.st_size),
-            "modified": datetime.fromtimestamp(stat.st_mtime).strftime("%d/%m/%Y %H:%M"),
-        }
-    except Exception:
-        return {"path": str(p), "exists": False, "size_bytes": 0, "size_mb": 0.0, "modified": "n/d"}
-
-
 def build_cache_health_rows(
     *,
     cache_settings: dict[str, Any] | None,

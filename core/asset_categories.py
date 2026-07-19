@@ -126,19 +126,9 @@ def infer_category_code(value: Any, default: str = "ALTRO") -> str:
     return default
 
 
-def category_label(code: Any) -> str:
-    normalized = normalize_category_code(code)
-    return ASSET_CATEGORY_REGISTRY.get(normalized, ASSET_CATEGORY_REGISTRY["ALTRO"])["label"]
-
-
 def category_name(code: Any) -> str:
     normalized = normalize_category_code(code)
     return ASSET_CATEGORY_REGISTRY.get(normalized, ASSET_CATEGORY_REGISTRY["ALTRO"])["name"]
-
-
-def category_description(code: Any) -> str:
-    normalized = normalize_category_code(code)
-    return ASSET_CATEGORY_REGISTRY.get(normalized, ASSET_CATEGORY_REGISTRY["ALTRO"])["description"]
 
 
 def category_color(code: Any) -> str:

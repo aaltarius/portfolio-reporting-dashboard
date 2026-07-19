@@ -188,14 +188,6 @@ def record_cache_decision(
     return decision
 
 
-def get_last_cache_decision() -> dict[str, Any]:
-    try:
-        plan = st.session_state.get(_CACHE_DECISION_KEY, {})
-        return plan if isinstance(plan, dict) else {}
-    except Exception:
-        return {}
-
-
 def _infer_dirty_for_quote_refresh(details: dict[str, Any]) -> dict[str, bool]:
     """Dirty flags granulari per refresh quotazioni.
 
@@ -404,14 +396,6 @@ def invalidate_portfolio_cache(reason: str = "", *, force_reload: bool = True) -
         ",".join(str(x) for x in (decision.get("changed_tickers") or [])) or "none",
     )
     return token
-
-
-def _invalidate_figure_cache_session() -> None:
-    """Clear figure cache from session_state (disk cache handled by signatures)."""
-    keys_to_delete = [k for k in st.session_state.keys() if k.startswith("_fig_cache_")]
-    for key in keys_to_delete:
-        del st.session_state[key]
-    logger.debug("Cleared %d figure cache entries from session", len(keys_to_delete))
 
 
 def get_portfolio_cache_bust() -> int:

@@ -166,8 +166,3 @@ class ChartOrchestrator:
             progress_container.progress(100, text=final_text)
 
         return self.completed
-
-
-def create_orchestrator() -> ChartOrchestrator:
-    """Create a new ChartOrchestrator instance."""
-    return ChartOrchestrator()
