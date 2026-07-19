@@ -310,6 +310,34 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     if abs(_qty) > 0 or abs(_ctv) > 0:
                         _portfolio_tickers.add(str(_prow.get("Ticker", "")))
 
+            @st.fragment
+            def _render_single_ticker_chart(item, chart_style, dfmt, theme, data, ctx, _theme_sig, _settings_sig, _cache_strategy, _portfolio_tickers, fcache):
+                tk = item.ticker
+                si = item.instrument_info
+                in_portfolio = tk in _portfolio_tickers
+                _pd = item.purchase_date
+                full_res = st.toggle(
+                    "Dettaglio giornaliero completo",
+                    key=f"quotazioni_full_res_{tk}",
+                    help="Di default i dati oltre i 90 giorni sono mostrati a risoluzione settimanale. Attiva per vedere ogni giorno.",
+                )
+                _tk_data_sig = build_ticker_data_signature(
+                    data, tk,
+                    app_version=str(getattr(ctx, "app_version", "n/d")),
+                    schema_version=str(getattr(ctx, "schema_version", "n/d")),
+                )
+                fig = fcache.get_or_build(
+                    chart_id="quotazioni_quote_history",
+                    data_sig=_tk_data_sig,
+                    theme_sig=_theme_sig,
+                    charts_settings_sig=_settings_sig,
+                    builder=lambda t=tk, cs=chart_style, s_i=si, n=item.normalized_series, bs=item.benchmark_series, ip=in_portfolio, pd_=_pd, fr=full_res: build_quote_history_time_chart(t, s_i, n, bs, cs, dfmt, theme, in_portfolio=ip, purchase_date=pd_, full_resolution=fr),
+                    page_mode="Rapida",
+                    extra_params={"ticker": tk, "chart_style": chart_style, "in_portfolio": "1" if in_portfolio else "0", "purchase_date": str(_pd.date()) if _pd is not None else "", "full_resolution": "1" if full_res else "0"},
+                    strategy=_cache_strategy,
+                )
+                st.plotly_chart(fig, width="stretch")
+
             if quotazioni_bundle.ticker_bundles:
                 for category in visible_categories:
                     bundles_in_category = [item for item in quotazioni_bundle.ticker_bundles if item.category == category]
@@ -326,29 +354,9 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                                 if i + j >= len(bundles_in_category):
                                     break
                                 item = bundles_in_category[i + j]
-                                tk = item.ticker
-                                si = item.instrument_info
                                 with col:
-                                    with profile_step("Quotazioni", "build/render grafico singolo strumento", detail=str(tk)):
-                                        _tk_data_sig = build_ticker_data_signature(
-                                            data, tk,
-                                            app_version=str(getattr(ctx, "app_version", "n/d")),
-                                            schema_version=str(getattr(ctx, "schema_version", "n/d")),
-                                        )
-                                        in_portfolio = tk in _portfolio_tickers
-                                        _pd = item.purchase_date
-                                        fig = fcache.get_or_build(
-                                            chart_id="quotazioni_quote_history",
-                                            data_sig=_tk_data_sig,
-                                            theme_sig=_theme_sig,
-                                            charts_settings_sig=_settings_sig,
-                                            # FIX: Capture all loop variables as default params to avoid late-binding closure trap
-                                            builder=lambda t=tk, cs=chart_style, s_i=si, n=item.normalized_series, bs=item.benchmark_series, ip=in_portfolio, pd_=_pd: build_quote_history_time_chart(t, s_i, n, bs, cs, dfmt, theme, in_portfolio=ip, purchase_date=pd_),
-                                            page_mode="Rapida",
-                                            extra_params={"ticker": tk, "chart_style": chart_style, "in_portfolio": "1" if in_portfolio else "0", "purchase_date": str(_pd.date()) if _pd is not None else ""},
-                                            strategy=_cache_strategy,
-                                        )
-                                        st.plotly_chart(fig, width="stretch")
+                                    with profile_step("Quotazioni", "build/render grafico singolo strumento", detail=str(item.ticker)):
+                                        _render_single_ticker_chart(item, chart_style, dfmt, theme, data, ctx, _theme_sig, _settings_sig, _cache_strategy, _portfolio_tickers, fcache)
 
                                     st.markdown("<div style='height: 24px;'></div>", unsafe_allow_html=True)
 
