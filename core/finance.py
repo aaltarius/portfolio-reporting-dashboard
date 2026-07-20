@@ -1079,20 +1079,6 @@ def build_portfolio_benchmark_series(
 # Snapshot comparison e summary
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_snapshot_summary_df(snapshots: list[dict[str, Any]] | None) -> pd.DataFrame:
-    rows = []
-    for s in snapshots or []:
-        rows.append({
-            "ID": s.get("snapshot_id", ""),
-            "Etichetta": s.get("label", ""),
-            "Data": _fmt_dt(s.get("created_at")),
-            "Valore": s.get("total_value", 0.0),
-            "Costo": s.get("total_cost", 0.0),
-            "P/L": s.get("total_pl", 0.0),
-        })
-    return pd.DataFrame(rows)
-
-
 def _format_portfolio_objective_label(portfolio_objective: dict[str, float] | None) -> str:
     obj = portfolio_objective or {}
     core = round(float(obj.get("core", 0.0)) * 100)
