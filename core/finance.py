@@ -617,24 +617,13 @@ BENCHMARK_TICKER_FALLBACKS = {
 
 
 def get_effective_portfolio_benchmark_label(settings: dict[str, Any] | None) -> str:
-    """Restituisce l'etichetta benchmark effettivamente attiva."""
-    if not isinstance(settings, dict):
-        return "Blend automatico"
-    benchmarking = settings.get("benchmarking", {}) if isinstance(settings.get("benchmarking", {}), dict) else {}
-    custom_enabled = bool(benchmarking.get("custom_enabled", False))
-    custom_components = benchmarking.get("custom_components", [])
-    valid_custom = isinstance(custom_components, list) and any(
-        str(item.get("ticker", "")).strip() and float(item.get("weight", 0) or 0) > 0
-        for item in custom_components
-        if isinstance(item, dict)
-    )
-    if custom_enabled and valid_custom:
-        return str(benchmarking.get("custom_name") or CUSTOM_BENCHMARK_LABEL)
-    return str(
-        settings.get("portfolio_benchmark_default")
-        or benchmarking.get("default_portfolio_benchmark")
-        or "Blend automatico"
-    )
+    """Restituisce l'etichetta benchmark effettivamente attiva.
+
+    Delega a core.services.benchmark (implementazione canonica). Import
+    locale per evitare cicli: core.services.* a volte importa core.finance
+    con import locale per lo stesso motivo (vedi Global Constraints)."""
+    from core.services.benchmark import get_effective_portfolio_benchmark_label as _canonical
+    return _canonical(settings)
 
 
 def _resolve_custom_benchmark_components(settings: dict[str, Any] | None) -> list[tuple[str, float]]:
