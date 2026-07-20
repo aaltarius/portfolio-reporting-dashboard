@@ -407,20 +407,6 @@ def _fmt_corr(value: Any) -> str:
     return fmt_num_it(v, 2) if v is not None else "n/d"
 
 
-def _assignment_label(value: Any) -> str:
-    raw = str(value or "").strip().lower()
-    if not raw:
-        return "Non assegnato"
-    if "ticker" in raw or "manual" in raw or "mappa" in raw:
-        return "Mappa diretta"
-    if "macro" in raw:
-        return "Macro-categoria"
-    if "categoria" in raw:
-        return "Categoria"
-    if "fallback" in raw or "tipo" in raw:
-        return "Fallback"
-    return str(value or "n/d")
-
 
 def _render_assignment_explanation() -> None:
     legend_block(
