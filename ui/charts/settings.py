@@ -45,15 +45,12 @@ from typing import Any
 
 from ui.charts.axis_refs import (
     trace_xaxis_layout_name as _trace_xaxis_layout_name,
-    trace_yaxis_layout_name as _trace_yaxis_layout_name,
 )
 from ui.charts.annotations import (
     add_quarter_gridlines as _add_quarter_gridlines_runtime,
-    is_baseline_annotation as _is_baseline_annotation,
     normalise_annotations as _apply_annotation_normalisation,
     normalise_baseline_axis_titles as _apply_baseline_axis_title_normalisation,
     normalise_baseline_lines as _apply_baseline_line_normalisation,
-    plotly_obj_to_dict as _plotly_obj_to_dict,
 )
 from ui.charts.bars import (
     apply_bar_protection as _apply_bar_protection_runtime,
@@ -91,10 +88,7 @@ from ui.charts.layout import (
     title_text as _title_text_layout,
 )
 from ui.charts.money_axes import (
-    axis_has_large_values as _axis_has_large_values,
-    axis_title as _axis_title,
     compact_money_axes as _apply_compact_money_axes,
-    looks_money as _looks_money,
 )
 from ui.charts.pipeline import (
     apply_settings_pipeline as _apply_settings_pipeline_runtime,
@@ -115,14 +109,12 @@ from ui.charts.time_buttons import (
 )
 from ui.charts.time_runtime import (
     apply_initial_visible_y_range as _apply_initial_visible_y_range_runtime,
-    current_x_range_for_axis as _current_x_range_for_axis,
     force_time_default_range as _force_time_default_range_runtime,
 )
 from ui.charts.ranges import (
     numeric_values as _numeric_values,
     range_from_visible_values as _compute_range_from_visible_values,
     range_with_padding as _range_with_padding,
-    trace_visible_y_values_for_x_range as _trace_visible_y_values_for_x_range,
     update_axis_range as _update_axis_range,
     visible_y_ranges_for_x_range as _compute_visible_y_ranges_for_x_range,
 )
@@ -1701,22 +1693,11 @@ def get_chart_setting(chart_id: str, key: str, default=None):
     """
     return _get_chart_setting_value_runtime(CHARTS, GLOBAL_STYLE, chart_id, key, default)
 
-def _layout_has_xaxis_title(fig) -> bool:
-    from ui.charts.layout import layout_has_xaxis_title as _layout_has_xaxis_title_layout
-
-    return _layout_has_xaxis_title_layout(fig)
-
 def _coerce_axis_range(value):
     return _coerce_axis_range_layout(value)
 
-def _title_text(fig) -> str:
-    return _title_text_layout(fig)
-
 def _is_undefined(text: str) -> bool:
     return _is_undefined_layout(text)
-
-def _setting_title(settings: dict[str, Any]) -> str:
-    return _setting_title_layout(settings)
 
 def _effective_title(settings: dict[str, Any], fig) -> str:
     """
@@ -1739,9 +1720,6 @@ def _show_buttons(settings: dict[str, Any]) -> bool:
 def _legend_layout(where: str, fig=None, chart_height: int | None = None) -> dict[str, Any] | None:
     return _legend_layout_layout(where, GLOBAL_STYLE, fig=fig, chart_height=chart_height)
 
-def _apply_margin_delta(base: dict[str, int], delta: dict[str, Any] | None) -> dict[str, int]:
-    return _apply_margin_delta_layout(base, delta)
-
 def _computed_margin(fig, settings: dict[str, Any]) -> dict[str, int]:
     return _computed_margin_layout(fig, settings, GLOBAL_STYLE)
 
@@ -1763,22 +1741,8 @@ def _button_range(min_date, max_date, key: str, left_pad=None, right_pad=None):
         use_calendar=bool(GLOBAL_STYLE.get("time_use_calendar_offsets", True)),
     )
 
-def _has_temporal_bar_trace(fig) -> bool:
-    return _has_temporal_bar_trace_runtime(fig)
-
 def _time_edge_padding(fig, settings: dict[str, Any]):
     return _time_edge_padding_runtime(fig, settings, GLOBAL_STYLE)
-
-def _range_from_visible_values(values, settings: dict[str, Any]) -> list[float] | None:
-    """Calcola il range Y sui soli valori visibili nella finestra temporale.
-
-    È usata dai bottoni 1M/3M/6M/YTD/1Y/ALL quando dynamic_y_by_button=True
-    e all'apertura iniziale quando dynamic_y_to_initial_range=True.
-    A differenza della protezione barre, qui NON si forza lo zero: nei grafici
-    temporali il range deve seguire min/max reali della porzione visibile.
-    """
-    pad = float(settings.get("dynamic_y_padding", GLOBAL_STYLE.get("dynamic_y_padding", 0.08)))
-    return _compute_range_from_visible_values(values, pad)
 
 def _visible_y_ranges_for_x_range(fig, x_range, settings: dict[str, Any]) -> dict[str, list[float]]:
     """Restituisce i range Y dinamici per ogni asse Y della figura.
@@ -1829,9 +1793,6 @@ def _apply_buttons(fig, settings: dict[str, Any]) -> None:
         plotly_range_fn=_plotly_range,
         plotly_date_fn=_plotly_date,
     )
-
-def _data_range_for_axis(fig, data_axis: str) -> list[float] | None:
-    return _data_range_for_axis_runtime(fig, data_axis, numeric_values=_numeric_values)
 
 def _range_from_min_max(fig, data_axis: str, min_value, max_value) -> list[float] | None:
     return _range_from_min_max_runtime(
