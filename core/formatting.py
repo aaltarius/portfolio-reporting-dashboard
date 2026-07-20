@@ -75,8 +75,6 @@ def fmt_qty_it(value, decimals=4):
     return fmt_num_it(value, decimals=decimals, signed=False)
 
 
-
-
 def hex_to_rgba(value, alpha):
     try:
         if not value:
@@ -127,7 +125,4 @@ def fmtds(d):
     if hasattr(d, "day"):
         return f"{d.day:02d}/{d.month:02d}/{d.year}"
     return str(d)
-
-
-
 
