@@ -12,6 +12,7 @@ from persistence.storage import (
     _restore_df_from_cache,
     _portfolio_state_signature,
     _normalize_event_record,
+    _rebuild_cash_ledger_from_events,
 )
 from core.validation import validate_evento_portafoglio
 from core.domain._utils import _EPS
@@ -34,9 +35,9 @@ def _fmt_dt(value: Any) -> str:
 
 
 def get_cash_balance(data: dict[str, Any]) -> float:
-    """Liquidity balance from portfolio state."""
-    state = compute_portfolio_state(data, include_closed=True)
-    return state.get("liquidita", 0.0)
+    """Liquidity balance dal registro liquidita' (o ricostruito dagli eventi)."""
+    ledger = data.get("registro_liquidita", []) or _rebuild_cash_ledger_from_events(get_registro_eventi(data))
+    return float(sum(_safe_float(x.get("importo", 0)) for x in ledger))
 
 
 def compute_portfolio_state(
@@ -173,15 +174,30 @@ def compute_portfolio_state(
 
 
 def calc_positions(data: dict[str, Any]) -> dict[str, dict[str, float]]:
-    """Legacy: returns position dict from data."""
-    result = compute_portfolio_state(data, include_closed=True)
-    return {row["Ticker"]: row for _, row in result["df"].iterrows()} if not result["df"].empty else {}
+    """Posizioni per ticker, forma slim (qty/cost/comm/realized_net/realized_gross/tax)."""
+    state = compute_portfolio_state(data, include_closed=True)
+    if state["df"].empty:
+        return {}
+    return state["df"].set_index("Ticker").apply(lambda row: {
+        "qty": _safe_float(row.get("Quote", 0)),
+        "cost": _safe_float(row.get("Costo", 0)),
+        "comm": _safe_float(row.get("Comm.", 0)),
+        "realized_net": _safe_float(row.get("P/L Realizzato Netto", 0)),
+        "realized_gross": _safe_float(row.get("P/L Realizzato Lordo", 0)),
+        "tax": _safe_float(row.get("Imposte €", 0)),
+    }, axis=1).to_dict()
 
 
 def build_ptf_df(data: dict[str, Any]) -> pd.DataFrame:
-    """Build portfolio positions dataframe."""
-    result = compute_portfolio_state(data, include_closed=True)
-    return result.get("df", pd.DataFrame())
+    """Build portfolio positions dataframe, con prezzo piu' recente dallo storico se disponibile."""
+    storico = data.get("storico_prezzi", {})
+    last_known = {}
+    for d in sorted(storico.keys()):
+        for tk, p in storico[d].items():
+            if p:
+                last_known[tk] = p
+    state = compute_portfolio_state(data, price_map=last_known, include_closed=True)
+    return state["df"] if isinstance(state.get("df"), pd.DataFrame) else pd.DataFrame()
 
 
 def held_tickers(data: dict[str, Any]) -> frozenset[str]:

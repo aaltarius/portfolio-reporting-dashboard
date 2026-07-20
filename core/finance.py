@@ -152,10 +152,6 @@ def _fmt_dt(value: Any) -> str:
 # Stato portafoglio
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_cash_balance(data: dict[str, Any]) -> float:
-    ledger = data.get("registro_liquidita", []) or _rebuild_cash_ledger_from_events(get_registro_eventi(data))
-    return float(sum(_safe_float(x.get("importo", 0)) for x in ledger))
-
 
 def append_evento_portafoglio(data: dict[str, Any], evento: EventDict) -> EventDict:
     data.setdefault("registro_eventi", [])
@@ -196,30 +192,6 @@ def append_evento_portafoglio(data: dict[str, Any], evento: EventDict) -> EventD
 # ══════════════════════════════════════════════════════════════════════════════
 # Build DataFrame portafoglio (privati) e storico prezzi (pubblico)
 # ══════════════════════════════════════════════════════════════════════════════
-
-def calc_positions(data: dict[str, Any]) -> dict[str, dict[str, float]]:
-    state = compute_portfolio_state(data, include_closed=True)
-    if state["df"].empty:
-        return {}
-    return state["df"].set_index("Ticker").apply(lambda row: {
-        "qty": _safe_float(row.get("Quote", 0)),
-        "cost": _safe_float(row.get("Costo", 0)),
-        "comm": _safe_float(row.get("Comm.", 0)),
-        "realized_net": _safe_float(row.get("P/L Realizzato Netto", 0)),
-        "realized_gross": _safe_float(row.get("P/L Realizzato Lordo", 0)),
-        "tax": _safe_float(row.get("Imposte €", 0)),
-    }, axis=1).to_dict()
-
-
-def build_ptf_df(data: dict[str, Any]) -> pd.DataFrame:
-    storico = data.get("storico_prezzi", {})
-    last_known = {}
-    for d in sorted(storico.keys()):
-        for tk, p in storico[d].items():
-            if p:
-                last_known[tk] = p
-    state = compute_portfolio_state(data, price_map=last_known, include_closed=True)
-    return state["df"] if isinstance(state.get("df"), pd.DataFrame) else pd.DataFrame()
 
 
 def build_hist_df(data: dict[str, Any]) -> pd.DataFrame:
