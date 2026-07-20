@@ -3,7 +3,7 @@ ui/theme.py — Centralizza colori, tema, palette e configurazioni di stile.
 Fornisce ThemeConfig e funzioni helper per tema coerente in tutta l'app.
 """
 import hashlib
-from typing import Any, Literal
+from typing import Any
 
 import plotly.io as pio
 import streamlit as st
