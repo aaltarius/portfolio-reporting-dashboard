@@ -75,25 +75,6 @@ def fmt_qty_it(value, decimals=4):
     return fmt_num_it(value, decimals=decimals, signed=False)
 
 
-def fmt_num_hover_it(value, decimals=2):
-    try:
-        if value is None or (isinstance(value, float) and np.isnan(value)):
-            return "—"
-        return f"{float(value):,.{decimals}f}".replace(",", "§").replace(".", ",").replace("§", ".")
-    except Exception:
-        return "—"
-
-
-def signed_text_class(value):
-    try:
-        v = float(value)
-    except Exception:
-        return "is-neutral"
-    if v > 0:
-        return "is-pos"
-    if v < 0:
-        return "is-neg"
-    return "is-neutral"
 
 
 def hex_to_rgba(value, alpha):
@@ -148,57 +129,5 @@ def fmtds(d):
     return str(d)
 
 
-def build_i18n_profile(settings):
-    i18n = settings.get("i18n", {}) if isinstance(settings, dict) else {}
-    return {
-        "language": str(i18n.get("language", "it")).lower(),
-        "locale": str(i18n.get("locale", "it-IT")),
-        "date_format": str(i18n.get("date_format", "DD/MM/YYYY")),
-        "number_format": str(i18n.get("number_format", i18n.get("locale", "it-IT"))),
-    }
 
 
-def fmt_num_locale(value, decimals=2, signed=False, profile=None):
-    profile = profile or {}
-    number_format = str(profile.get("number_format", "it-IT"))
-    try:
-        if value is None or (isinstance(value, float) and np.isnan(value)):
-            return "—"
-        v = float(value)
-    except Exception:
-        return "—"
-    sign = ""
-    if signed:
-        sign = "+" if v > 0 else ("-" if v < 0 else "")
-    elif v < 0:
-        sign = "-"
-    av = abs(v)
-    if number_format == "en-US":
-        s = f"{av:,.{decimals}f}"
-    else:
-        s = f"{av:,.{decimals}f}".replace(",", "§").replace(".", ",").replace("§", ".")
-    return f"{sign}{s}"
-
-
-def fmt_dt_locale(value, profile=None, include_time=True):
-    profile = profile or {}
-    date_format = str(profile.get("date_format", "DD/MM/YYYY"))
-    if not value:
-        return "n/d"
-    parsed = value
-    if isinstance(value, str):
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
-            try:
-                parsed = datetime.strptime(value[:19], fmt)
-                break
-            except Exception:
-                continue
-    if hasattr(parsed, "day"):
-        if date_format == "MM/DD/YYYY":
-            date_part = f"{parsed.month:02d}/{parsed.day:02d}/{parsed.year}"
-        else:
-            date_part = f"{parsed.day:02d}/{parsed.month:02d}/{parsed.year}"
-        if include_time:
-            return f"{date_part} {getattr(parsed, 'hour', 0):02d}:{getattr(parsed, 'minute', 0):02d}"
-        return date_part
-    return str(value)
