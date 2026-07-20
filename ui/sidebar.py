@@ -99,18 +99,6 @@ def _apply_price_date_entries_to_storico(
         storico.setdefault(price_dt, {}).update(prices)
 
 
-def _price_changed(previous: object, current: object, *, tolerance: float = 5e-4) -> bool:
-    """True se il prezzo effettivo è cambiato davvero, ignorando micro-variazioni sotto il millesimo."""
-    try:
-        if previous in (None, "") and current in (None, ""):
-            return False
-        if previous in (None, "") or current in (None, ""):
-            return True
-        return abs(float(previous) - float(current)) > tolerance
-    except Exception:
-        return str(previous) != str(current)
-
-
 def _quote_value_materially_changed(previous: object, current: object, *, decimals: int = 3) -> bool:
     """True solo se cambia il prezzo finanziariamente/visivamente significativo.
 

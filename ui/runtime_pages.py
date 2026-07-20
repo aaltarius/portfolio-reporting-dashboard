@@ -126,21 +126,6 @@ def _render_page_step(
             )
 
 
-def _render_active_page(page_defs: list[PageDef], ctx: Any) -> tuple[PageDef, float]:
-    active_index = _clamp_active_tab_index(page_defs)
-    selected_index = _render_page_selector(page_defs, active_index=active_index)
-    if selected_index != active_index:
-        st.session_state["active_tab"] = selected_index
-        active_index = selected_index
-    active_page = page_defs[active_index]
-    st.session_state["current_page_index"] = active_index
-    st.session_state["current_page_total"] = len(page_defs)
-    st.session_state["current_page_id"] = active_page.page_id
-    t0 = time.perf_counter()
-    active_page.renderer(st.container(), ctx)
-    return active_page, time.perf_counter() - t0
-
-
 def _render_standard_tabs(page_defs: list[PageDef], ctx: Any) -> None:
     tab_targets = st.tabs([page.label for page in page_defs])
     for idx, (page, target) in enumerate(zip(page_defs, tab_targets)):

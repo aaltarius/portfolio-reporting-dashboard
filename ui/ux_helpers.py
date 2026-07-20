@@ -9,25 +9,6 @@ from __future__ import annotations
 import streamlit as st
 
 
-def render_help_popover(label: str, body: str, *, key: str | None = None) -> None:
-    """Mostra un piccolo contenuto informativo in st.popover, con fallback sicuro.
-
-    Streamlit calcola comunque il contenuto del popover nel run corrente: questo
-    helper va usato per testo/JSON leggero o diagnostica gia' disponibile, non per
-    elaborazioni pesanti da rendere lazy.
-    """
-    text = str(body or "").strip()
-    if not text:
-        return
-    try:
-        with st.popover(label):
-            st.markdown(text)
-    except Exception:
-        # Fallback per ambienti di test o versioni Streamlit senza popover.
-        with st.expander(label, expanded=False):
-            st.markdown(text)
-
-
 def render_json_popover(label: str, payload: object) -> None:
     """Mostra JSON tecnico in un contenitore richiudibile, senza appesantire la UI."""
     try:

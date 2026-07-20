@@ -302,10 +302,6 @@ def _fs_is_btp_like(s: dict) -> bool:
     return tipo in {"btp", "titolo di stato"} or ticker.startswith("BTP-")
 
 
-def _fs_fmt_val(v: float, decimals: int = 2) -> str:
-    return f"{v:,.{decimals}f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-
 # ─── Render ────────────────────────────────────────────────────────────────
 
 def _fs_render_add_form() -> str:
