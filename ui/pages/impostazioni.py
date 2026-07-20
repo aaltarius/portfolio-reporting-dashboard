@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pandas as pd
 import streamlit as st
 
-from core.cache import invalidate_portfolio_cache, request_full_streamlit_cache_clear
+from core.cache import invalidate_portfolio_cache
 from core.ai_analysis import (
     GEMINI_MODELS,
     load_ai_config,
@@ -65,7 +65,6 @@ from core.validators import (
     validate_date,
     validate_number_input,
     validate_quote_import,
-    validate_risk_thresholds,
     validate_selection,
 )
 from ui.formatting import (
@@ -140,80 +139,6 @@ def _page_icon_svg(kind: str = "default") -> str:
 
 def _render_page_intro(title: str, comment: str, icon: str = "default", theme=None) -> None:
     return render_page_intro_shared(title, comment, icon, theme)
-    theme = theme or get_theme_context()
-    accent = getattr(theme, "color_blue", "#3b82f6")
-    accent_2 = getattr(theme, "color_green", "#22c55e")
-    font = getattr(theme, "font_color", "#111827")
-    panel_bg = getattr(theme, "panel_bg", "#f8fafc")
-    border = getattr(theme, "border_color", "rgba(148,163,184,.32)")
-    muted = getattr(theme, "muted_color", "#64748b")
-    st.markdown(
-        f"""
-        <style>
-        .page-intro {{
-            --page-accent:{accent};
-            --page-accent-2:{accent_2};
-            margin:0;
-            padding:0;
-        }}
-        .page-intro-title {{
-            display:flex;
-            align-items:center;
-            gap:10px;
-            margin:0 0 8px 0;
-            color:{font};
-            font-size:1.28rem;
-            font-weight:850;
-            line-height:1.18;
-            letter-spacing:-0.01em;
-        }}
-        .page-intro-icon {{
-            width:27px;
-            height:27px;
-            display:inline-flex;
-            align-items:center;
-            justify-content:center;
-            flex:0 0 27px;
-        }}
-        .page-intro-icon svg {{
-            width:27px;
-            height:27px;
-            display:block;
-        }}
-        .page-intro-comment {{
-            margin:0;
-            padding:10px 14px;
-            color:{font};
-            background:{panel_bg};
-            border:1px solid {border};
-            border-left:4px solid {accent};
-            border-radius:14px;
-            font-size:0.92rem;
-            line-height:1.42;
-            font-weight:500;
-            box-shadow:0 8px 18px rgba(15,23,42,.04);
-        }}
-        .section-line {{
-            margin:14px 0 14px 0;
-            border:0;
-            border-top:1px solid rgba(148,163,184,.30);
-        }}
-        .page-intro + .section-line {{
-            margin-top:28px !important;
-            margin-bottom:14px !important;
-        }}
-        </style>
-        <div class="page-intro">
-          <div class="page-intro-title">
-            <span class="page-intro-icon">{_page_icon_svg(icon)}</span>
-            <span>{title}</span>
-          </div>
-          <div class="page-intro-comment">{comment}</div>
-        </div>
-        <hr class="section-line" />
-        """,
-        unsafe_allow_html=True,
-    )
 
 
 def _section_line() -> None:
