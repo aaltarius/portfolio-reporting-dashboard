@@ -28,8 +28,6 @@ logger = logging.getLogger("portafoglio.parquet_utils")
 
 # Try to import pyarrow (optional dependency)
 try:
-    import pyarrow as pa
-    import pyarrow.parquet as pq
     PARQUET_AVAILABLE = True
 except ImportError:
     PARQUET_AVAILABLE = False
@@ -232,51 +230,3 @@ def save_storico_prezzi_hybrid(storico: dict[str, dict[str, float]], json_path: 
     except Exception as e:
         logger.error(f"Save storico_prezzi failed: {e}")
         return False
-
-
-def get_storage_stats(json_path: str | Path) -> dict[str, Any]:
-    """Get comprehensive storage stats: JSON, gzip, Parquet, backups."""
-    json_path = Path(json_path)
-    parquet_path = json_path.with_suffix(".parquet")
-    gzip_path = json_path.with_suffix(".json.gz")
-    backup_dir = json_path.parent / ".backups"
-
-    stats = {
-        "json_size_bytes": 0,
-        "json_exists": False,
-        "gzip_size_bytes": 0,
-        "gzip_exists": False,
-        "gzip_reduction_percent": 0,
-        "parquet_size_bytes": 0,
-        "parquet_exists": False,
-        "parquet_reduction_percent": 0,
-        "backup_count": 0,
-        "total_backup_size_bytes": 0,
-    }
-
-    # JSON (primary)
-    if json_path.exists():
-        stats["json_size_bytes"] = json_path.stat().st_size
-        stats["json_exists"] = True
-
-    # Gzip (compressed)
-    if gzip_path.exists():
-        stats["gzip_size_bytes"] = gzip_path.stat().st_size
-        stats["gzip_exists"] = True
-        if stats["json_size_bytes"] > 0:
-            stats["gzip_reduction_percent"] = (1 - stats["gzip_size_bytes"] / stats["json_size_bytes"]) * 100
-
-    # Parquet (optional, fastest)
-    if parquet_path.exists():
-        stats["parquet_size_bytes"] = parquet_path.stat().st_size
-        stats["parquet_exists"] = True
-        if stats["json_size_bytes"] > 0:
-            stats["parquet_reduction_percent"] = (1 - stats["parquet_size_bytes"] / stats["json_size_bytes"]) * 100
-
-    # Backups
-    if backup_dir.exists():
-        backup_files = list(backup_dir.glob("storico_prezzi_*.json.gz"))
-        stats["backup_count"] = len(backup_files)
-        stats["total_backup_size_bytes"] = sum(f.stat().st_size for f in backup_files)
-
-    return stats
