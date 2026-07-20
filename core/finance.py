@@ -1075,52 +1075,9 @@ def build_portfolio_benchmark_series(
     return blended
 
 
-def build_macro_benchmark_index(
-    data: dict[str, Any],
-    info_map: dict[str, dict[str, Any]],
-    tickers: list[str],
-) -> pd.DataFrame:
-    macro_bench = {}
-    for cat in ACTIVE_CATEGORY_CODES:
-        cat_series = []
-        cat_tickers = [tk for tk in tickers if macro_cat(info_map.get(tk, {}).get("tipo", "")) == cat]
-        for tk in cat_tickers:
-            info = info_map.get(tk, {})
-            bench_assignment = resolve_instrument_benchmark(info, prefer_master=False)
-            bench_tk = bench_assignment.ticker
-            if not bench_tk:
-                continue
-            ser = get_cached_benchmark_series(data, bench_tk)
-            if ser.empty:
-                continue
-            base = float(ser.iloc[0])
-            if base <= 0:
-                continue
-            cat_series.append((ser / base) * 100)
-        if cat_series:
-            macro_bench[cat] = pd.concat(cat_series, axis=1).mean(axis=1, skipna=True)
-    return pd.DataFrame(macro_bench).sort_index() if macro_bench else pd.DataFrame()
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # Snapshot comparison e summary
 # ══════════════════════════════════════════════════════════════════════════════
-
-def build_snapshot_comparison_df(snap_a: dict[str, Any] | None, snap_b: dict[str, Any] | None) -> pd.DataFrame:
-    rows = []
-    weights_a = (snap_a or {}).get("macro_weights", {})
-    weights_b = (snap_b or {}).get("macro_weights", {})
-    for cat in ACTIVE_CATEGORY_CODES:
-        a = float(weights_a.get(cat, 0.0) or 0.0)
-        b = float(weights_b.get(cat, 0.0) or 0.0)
-        rows.append({
-            "Categoria": cat,
-            "Peso A": a,
-            "Peso B": b,
-            "Delta": b - a,
-        })
-    return pd.DataFrame(rows)
-
 
 def build_snapshot_summary_df(snapshots: list[dict[str, Any]] | None) -> pd.DataFrame:
     rows = []
@@ -1142,24 +1099,6 @@ def _format_portfolio_objective_label(portfolio_objective: dict[str, float] | No
     difensivo = round(float(obj.get("difensivo", 0.0)) * 100)
     satellite = round(float(obj.get("satellite", 0.0)) * 100)
     return f"Core {core}% / Difensivo {difensivo}% / Satellite {satellite}%"
-
-
-def build_instrument_target_gap_table(da_frame: pd.DataFrame) -> pd.DataFrame:
-    if da_frame is None or da_frame.empty:
-        return pd.DataFrame()
-    work = da_frame.copy()
-    work = work[pd.to_numeric(work["Controvalore"], errors="coerce").fillna(0) > 0].copy()
-    if work.empty:
-        return pd.DataFrame()
-    total_value = float(pd.to_numeric(work["Controvalore"], errors="coerce").fillna(0).sum())
-    if total_value <= 0:
-        return pd.DataFrame()
-    n = len(work)
-    work["Peso attuale"] = pd.to_numeric(work["Controvalore"], errors="coerce").fillna(0) / total_value
-    work["Peso target"] = 1.0 / n
-    work["Scostamento"] = work["Peso attuale"] - work["Peso target"]
-    work["Importo per target"] = (work["Peso target"] * total_value) - pd.to_numeric(work["Controvalore"], errors="coerce").fillna(0)
-    return work[["Ticker", "Strumento", "Tipo", "Peso attuale", "Peso target", "Scostamento", "Importo per target"]].sort_values("Scostamento", ascending=False)
 
 
 def build_risk_contribution_table(da_frame: pd.DataFrame, returns_df: pd.DataFrame) -> pd.DataFrame:
@@ -1371,13 +1310,6 @@ def extract_gov_maturity_date(name: Any) -> date | None:
         except Exception:
             return pd.NaT
     return pd.NaT
-
-
-def extract_gov_maturity_year(name: Any) -> int | None:
-    dt = extract_gov_maturity_date(name)
-    if pd.isna(dt):
-        return np.nan
-    return int(pd.Timestamp(dt).year)
 
 
 def build_gov_dashboard_data(da_frame: pd.DataFrame, data: dict[str, Any]) -> tuple[pd.DataFrame, dict[str, Any]]:
@@ -1827,44 +1759,6 @@ def build_portfolio_summary_payload(
     }
 
 
-def build_scenario_impact(da_frame: pd.DataFrame, scenarios: list[dict[str, Any]]) -> pd.DataFrame:
-    """
-    Calcola l'impatto di scenari di mercato sulla portafoglio.
-
-    Args:
-        da_frame: DataFrame con posizioni (colonne: Categoria/Tipo, Controvalore)
-        scenarios: list di dict {"nome": str, "GOV": shock%, "ETF": shock%, "FND": shock%}
-
-    Returns:
-        pd.DataFrame con colonne: Scenario, Impatto P/L €, Impatto P/L %
-    """
-    if da_frame is None or da_frame.empty:
-        return pd.DataFrame()
-
-    categories = list(ACTIVE_CATEGORY_CODES)
-    cat_col = "Categoria" if "Categoria" in da_frame.columns else None
-    rows = []
-    total_value = da_frame["Controvalore"].sum()
-
-    if cat_col:
-        da_cat = da_frame["Categoria"]
-    else:
-        da_cat = da_frame["Tipo"].apply(macro_cat)
-
-    controvalore = da_frame["Controvalore"].astype(float)
-
-    for sc in scenarios:
-        shocks = da_cat.map({k: sc.get(k, 0.0) for k in categories})
-        delta_tot = float((controvalore * shocks).sum())
-        delta_pct = delta_tot / total_value if total_value > 0 else 0
-        rows.append({
-            "Scenario": sc["nome"],
-            "Impatto P/L €": delta_tot,
-            "Impatto P/L %": delta_pct,
-        })
-    return pd.DataFrame(rows) if rows else pd.DataFrame()
-
-
 DEFAULT_SCENARIOS = [
     {"nome": "Rialzo tassi +1%", "GOV": -0.08, "ETF": 0.02, "FND": 0.01},
     {"nome": "Ribasso azionario", "GOV": 0.02, "ETF": -0.15, "FND": -0.12},
@@ -1872,80 +1766,3 @@ DEFAULT_SCENARIOS = [
     {"nome": "Crisi finanziaria", "GOV": -0.05, "ETF": -0.25, "FND": -0.20},
     {"nome": "Scenario personaliz.", "GOV": 0.0, "ETF": 0.0, "FND": 0.0},
 ]
-
-
-def compute_portfolio_alerts(
-    da_frame: pd.DataFrame,
-    dfh: pd.DataFrame,
-    cat_flow_returns: pd.DataFrame | None = None,
-) -> list[dict[str, str]]:
-    """
-    Calcola alert automatici sulla salute del portafoglio.
-
-    Args:
-        da_frame: DataFrame posizioni attuali
-        dfh: DataFrame storico con colonna 'Valore'
-        cat_flow_returns: DataFrame optional con ritorni per categoria
-
-    Returns:
-        list di dict {"tipo": str, "messaggio": str, "severity": "warning"|"error"|"info"}
-    """
-    alerts = []
-
-    # Alert 1: Drawdown corrente > 10%
-    if dfh is not None and not dfh.empty and "Valore" in dfh.columns:
-        val_series = pd.Series(dfh["Valore"]).dropna()
-        if len(val_series) > 1:
-            peak = val_series.max()
-            current = val_series.iloc[-1]
-            if peak > 0:
-                dd = (current - peak) / peak
-                if dd < -0.10:
-                    alerts.append({
-                        "tipo": "Drawdown",
-                        "severity": "error",
-                        "messaggio": f"Portafoglio in drawdown del {dd:.1%} dal massimo storico"
-                    })
-
-    # Alert 2: Concentrazione eccessiva > 35%
-    if da_frame is not None and not da_frame.empty:
-        total = da_frame["Controvalore"].sum()
-        if total > 0:
-            weights = da_frame["Controvalore"] / total
-            concentrated = weights[weights > 0.35]
-            for ticker, pct in concentrated.items():
-                row = da_frame.iloc[ticker] if isinstance(ticker, int) else da_frame.loc[ticker]
-                alerts.append({
-                    "tipo": "Concentrazione",
-                    "severity": "warning",
-                    "messaggio": f"{row.get('Ticker', 'Strumento')} pesa il {pct:.1%} del portafoglio"
-                })
-
-    # Alert 3: Correlazione alta GOV-ETF > 0.75
-    if cat_flow_returns is not None and not cat_flow_returns.empty:
-        if "GOV" in cat_flow_returns.columns and "ETF" in cat_flow_returns.columns:
-            corr = float(cat_flow_returns["GOV"].corr(cat_flow_returns["ETF"]))
-            if abs(corr) > 0.75:
-                alerts.append({
-                    "tipo": "Correlazione",
-                    "severity": "warning",
-                    "messaggio": f"Alta correlazione GOV-ETF ({corr:.2f}): diversificazione ridotta"
-                })
-
-    # Alert 4: P/L negativo per categoria < -500€
-    if da_frame is not None and not da_frame.empty:
-        cat_col = "Categoria" if "Categoria" in da_frame.columns else None
-        if cat_col:
-            group = da_frame.groupby("Categoria")["P/L €"].sum()
-        else:
-            group = da_frame.groupby(da_frame["Tipo"].apply(macro_cat))["P/L €"].sum()
-        for cat, pl in group.items():
-            if pl < -500:
-                alerts.append({
-                    "tipo": f"P/L {cat}",
-                    "severity": "info",
-                    "messaggio": f"La categoria {cat} ha un P/L negativo di {pl:,.0f}€"
-                })
-
-    return alerts
-
