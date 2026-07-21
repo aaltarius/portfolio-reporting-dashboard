@@ -671,3 +671,9 @@ render_dashboard_tabs(
     dirty_flags=dict(_CURRENT_RERUN_CONTEXT.get("dirty_flags") or {}),
     progress_host=_header_progress_host,
 )
+
+try:
+    from core.figure_cache import flush_figure_cache_manifest
+    flush_figure_cache_manifest()
+except Exception:
+    app_logger.exception("Errore durante il flush del manifest figure cache")

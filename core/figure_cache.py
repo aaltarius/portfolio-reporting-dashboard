@@ -37,6 +37,13 @@ class FigureCache:
     _MANIFEST_LOCK = threading.RLock()
     _BUILD_LOCKS_GUARD = threading.RLock()
     _BUILD_LOCKS: Dict[str, threading.Lock] = {}
+    # Manifest tenuto in memoria per tutta la durata del processo: evita di
+    # fare un read-modify-write(+fsync) del file su ogni singolo cache miss
+    # (con manifest grandi, es. migliaia di entry, questo costava decine di ms
+    # per figura, moltiplicati per le decine di miss di un run con molte
+    # invalidazioni). Viene scritto su disco solo da flush_manifest().
+    _MANIFEST_CACHE: Optional[Dict[str, Any]] = None
+    _MANIFEST_DIRTY: bool = False
     # Registro diagnostico in-memory: log_label -> parti firma dell'ultima build/hit.
     # Persiste per tutta la durata del processo Streamlit (sopravvive ai rerun).
     _DIAG_PARTS: Dict[str, Dict[str, Any]] = {}
@@ -499,7 +506,21 @@ class FigureCache:
             logger.warning(f"Manifest sanitize skipped: {e}")
 
     def _load_manifest(self, *, repair_on_corruption: bool = False) -> Dict[str, Any]:
-        """Load manifest safely, recovering gracefully from malformed JSON."""
+        """Restituisce il manifest in memoria, caricandolo da disco una sola volta.
+
+        Le mutazioni successive (_update_manifest) restano in questo stesso
+        dict finche' non arriva un flush_manifest() esplicito.
+        """
+        cls = type(self)
+        with self._MANIFEST_LOCK:
+            if cls._MANIFEST_CACHE is not None:
+                return cls._MANIFEST_CACHE
+            manifest = self._read_manifest_from_disk(repair_on_corruption=repair_on_corruption)
+            cls._MANIFEST_CACHE = manifest
+            return manifest
+
+    def _read_manifest_from_disk(self, *, repair_on_corruption: bool = False) -> Dict[str, Any]:
+        """Load manifest safely from disk, recovering gracefully from malformed JSON."""
         if not self.MANIFEST_FILE.exists():
             return {}
         try:
@@ -559,7 +580,7 @@ class FigureCache:
 
     def _update_manifest(self, chart_id: str, fig_sig: str, file_size: int) -> None:
         """
-        Update cache manifest with new entry.
+        Update cache manifest with new entry (in memory only; vedi flush_manifest()).
 
         Args:
             chart_id: Chart identifier
@@ -577,11 +598,36 @@ class FigureCache:
                     "file_size": file_size,
                     "timestamp": datetime.now().isoformat()
                 }
-                self._write_manifest(manifest)
-                logger.debug(f"Manifest updated: {key}")
+                type(self)._MANIFEST_DIRTY = True
+                logger.debug(f"Manifest updated (in memory, pending flush): {key}")
 
         except Exception as e:
             logger.error(f"Error updating manifest: {e}")
+
+    def flush_manifest(self) -> bool:
+        """Scrive su disco il manifest in-memory, se sporco.
+
+        Va chiamata una volta per run (es. a fine rendering pagina), non ad
+        ogni singolo cache miss: batchare qui il read-modify-write(+fsync)
+        evita che un refresh con molti grafici invalidati paghi N volte il
+        costo di I/O sull'intero file manifest.
+
+        Returns:
+            True se ha effettivamente scritto su disco, False se non c'era
+            nulla da scrivere.
+        """
+        try:
+            with self._MANIFEST_LOCK:
+                cls = type(self)
+                if not cls._MANIFEST_DIRTY or cls._MANIFEST_CACHE is None:
+                    return False
+                self._write_manifest(cls._MANIFEST_CACHE)
+                cls._MANIFEST_DIRTY = False
+                logger.debug("Manifest figure cache scritto su disco (flush)")
+                return True
+        except Exception as e:
+            logger.error(f"Error flushing manifest: {e}")
+            return False
 
     def maintain_cache(self, *, migrate_legacy: bool = True, remove_orphans: bool = True, enforce_limits: bool = True) -> Dict[str, Any]:
         """Manutenzione operativa della cache figure.
@@ -687,13 +733,17 @@ class FigureCache:
                     except Exception as e:
                         logger.warning(f"Failed to delete {file_path}: {e}")
 
-            # Delete manifest file
-            if self.MANIFEST_FILE.exists():
-                try:
-                    with self._MANIFEST_LOCK:
+            # Delete manifest file and reset the in-memory copy, altrimenti un
+            # flush_manifest() successivo riscriverebbe su disco le entry
+            # appena cancellate.
+            with self._MANIFEST_LOCK:
+                if self.MANIFEST_FILE.exists():
+                    try:
                         self.MANIFEST_FILE.unlink()
-                except Exception as e:
-                    logger.warning(f"Failed to delete manifest: {e}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete manifest: {e}")
+                type(self)._MANIFEST_CACHE = {}
+                type(self)._MANIFEST_DIRTY = False
 
             logger.info(f"Cache cleared: {deleted_count} files deleted")
             return deleted_count
@@ -913,3 +963,16 @@ def get_figure_cache() -> FigureCache:
             if _figure_cache_instance is None:
                 _figure_cache_instance = FigureCache()
     return _figure_cache_instance
+
+
+def flush_figure_cache_manifest() -> bool:
+    """Scrive su disco il manifest della figure cache, se ci sono modifiche in sospeso.
+
+    Da chiamare una volta a fine rendering pagina (non ad ogni figura), per
+    evitare N riscritture del manifest in un run con molti cache miss.
+    """
+    try:
+        return get_figure_cache().flush_manifest()
+    except Exception:
+        logger.exception("Errore durante il flush del manifest figure cache")
+        return False
