@@ -250,11 +250,6 @@ def delete_storico_prezzi_range(
     return removed
 
 
-def get_yahoo_price(tk: str) -> float | None:
-    """Compatibilità: restituisce solo il prezzo."""
-    price, _price_date, _recent_history = get_yahoo_price_details(tk)
-    return price
-
 def get_yahoo_ticker(isin: str) -> str | None:
     if isin in _ISIN_YAHOO_TICKER_CACHE:
         logger.debug("Ticker Yahoo da cache persistente: isin=%s ticker=%s", isin, _ISIN_YAHOO_TICKER_CACHE[isin])
@@ -438,10 +433,6 @@ def get_btp_price_details(isin: str) -> dict[str, Any]:
         return {"price": price, "price_date": price_datetime}
     return {"price": None, "price_date": None}
 
-
-def get_btp_price(isin: str) -> float | None:
-    """Compatibilità: restituisce solo il prezzo."""
-    return get_btp_price_details(isin).get("price")
 
 
 def find_ticker(isin: str) -> str:
