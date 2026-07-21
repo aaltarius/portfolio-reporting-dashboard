@@ -636,17 +636,6 @@ def _render_analitica(bundle: Any) -> None:
 
             return styles
 
-        def format_value(val, col, row_idx):
-            """Formatta il valore; se deve essere n.s., ritorna 'n.s.'."""
-            if (row_idx, col) in cell_is_ns:
-                return "n.s."
-            if col in format_dict:
-                try:
-                    return format_dict[col](val)
-                except:
-                    return str(val)
-            return str(val)
-
         # Mantieni le colonne numeriche come numeriche.
         # Nota: se le trasformiamo prima in stringhe/object, Streamlit le considera testo
         # e tende ad allinearle a sinistra anche se lo Styler prova a dire "right".

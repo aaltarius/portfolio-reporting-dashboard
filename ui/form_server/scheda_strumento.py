@@ -172,9 +172,6 @@ def _render_scheda_strumento(strumento: dict) -> str:
         return "</div></body></html>"
 
     if True:  # la Scheda completa e' sola lettura: modifica/PDF/arricchimento vivono in Strumenti
-        def _v(name: str):
-            return strumento.get(name)
-
         def _vs(name: str) -> str:
             v = strumento.get(name)
             return str(v) if v is not None else ""
