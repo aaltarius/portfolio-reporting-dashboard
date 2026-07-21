@@ -74,7 +74,7 @@ def _get_freshness_badge(last_refresh_dt: Any) -> str:
             return "🟡"  # Recente (5-60 min)
         else:
             return "🔴"  # Stale (> 60 min)
-    except:
+    except Exception:
         return "⚪"
 
 
