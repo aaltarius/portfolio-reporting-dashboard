@@ -97,7 +97,7 @@ def build_percentage_return_time_chart(dfh, pct_cap, pct_cost, pl_color, pl_tota
 	return finalize_chart(fig, "andamento_percentage_return", hovermode="x unified", uirevision="rend-capitale")
 
 
-def build_pl_decomposition_time_chart(dfh, pl_cols, viz_mode, dfmt, theme, ticker_category_map=None):
+def build_pl_decomposition_time_chart(dfh, pl_cols, viz_mode, dfmt, theme):
 	"""Build P/L contribution by instrument for Andamento.
 
 	chart_id runtime: andamento_pl_decomp_stacked oppure andamento_pl_decomp_grouped
