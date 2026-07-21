@@ -68,7 +68,24 @@ def range_from_visible_values(values, pad_ratio: float) -> list[float] | None:
 
 
 def trace_visible_y_values_for_x_range(trace, x_range) -> list[float]:
-    """Estrae i valori Y della traccia compresi nel range X indicato."""
+    """Estrae i valori Y della traccia compresi nel range X indicato.
+
+    La conversione a datetime dei punti X e' vettorizzata: la versione
+    precedente chiamava pandas.to_datetime() punto per punto dentro un loop
+    Python, il che con bottoni temporali dinamici (fino a 6 chiamate per
+    grafico) arrivava a migliaia di conversioni scalari per una singola
+    figura (profilato: ~2.7s su 3.25s totali di apply_buttons per un
+    grafico da 819 punti). Qui la stessa conversione avviene in un'unica
+    chiamata vettoriale.
+
+    Nota comportamentale preservata di proposito: un valore X None/NaN
+    diventa NaT e NON viene escluso dal confronto di range (NaT < start e
+    NaT > end sono entrambi False, esattamente come nel loop scalare
+    originale), mentre un valore X non parsabile (es. stringa non valida)
+    viene escluso — nell'originale perche' pd.to_datetime() sollevava
+    un'eccezione catturata dal try/except; qui distinguendo esplicitamente
+    "valore grezzo gia' nullo" da "conversione fallita su valore non nullo".
+    """
     try:
         import pandas as pd
 
@@ -91,11 +108,19 @@ def trace_visible_y_values_for_x_range(trace, x_range) -> list[float]:
         if len(x_vals) == 0 or len(y_vals) == 0:
             return []
 
+        try:
+            x_index = pd.Index(x_vals)
+            raw_is_null = pd.isna(x_index)
+            dx_vec = pd.to_datetime(x_index, errors="coerce")
+            parse_failed = dx_vec.isna() & ~raw_is_null
+            outside = ((dx_vec < start) | (dx_vec > end)) | parse_failed
+        except Exception:
+            return []
+
         out: list[float] = []
-        for x, y in zip(x_vals, y_vals):
+        for is_outside, y in zip(outside, y_vals):
             try:
-                dx = pd.to_datetime(x)
-                if dx < start or dx > end:
+                if is_outside:
                     continue
                 if y is None or isinstance(y, str):
                     continue

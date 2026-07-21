@@ -24,6 +24,14 @@ def clear_all_range_controls(fig) -> None:
 
 
 def time_extent(fig):
+    """Estremi temporali (min, max) su tutte le tracce della figura.
+
+    Conversione a datetime vettorizzata per traccia (era uno dei punti
+    profilati come costosi in apply_buttons: pd.to_datetime chiamato punto
+    per punto in loop Python). errors="coerce" + dropna riproduce esattamente
+    il filtro originale "if d == d" (che escludeva i NaT, cioè i valori non
+    parsabili o None/NaN).
+    """
     try:
         import pandas as pd
 
@@ -32,13 +40,14 @@ def time_extent(fig):
             x = getattr(trace, "x", None)
             if x is None:
                 continue
-            for v in list(x):
-                try:
-                    d = pd.to_datetime(v)
-                    if d == d:
-                        dates.append(d)
-                except Exception:
+            try:
+                x_list = list(x)
+                if not x_list:
                     continue
+                parsed = pd.to_datetime(pd.Index(x_list), errors="coerce").dropna()
+                dates.extend(parsed.tolist())
+            except Exception:
+                continue
         if not dates:
             return None, None
         return min(dates), max(dates)
