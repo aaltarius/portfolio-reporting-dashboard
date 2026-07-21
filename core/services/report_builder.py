@@ -482,12 +482,6 @@ class _ChartEmbedder:
                     axis.rangeslider = dict(visible=False)
                 except Exception:
                     pass
-            try:
-                from ui.charts.time_buttons import clear_all_range_controls
-
-                clear_all_range_controls(fig_for_report)
-            except Exception:
-                pass
             _force_figure_full_x_range(fig_for_report)
             return pio.to_html(fig_for_report, include_plotlyjs=include_js, full_html=False, config={"displayModeBar": False, "responsive": True})
         except Exception:
