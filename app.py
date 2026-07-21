@@ -640,11 +640,11 @@ st.session_state["total_pages"] = _PAGE_COUNT
 # Handle navigation to Quotazioni requested from sidebar/actions.
 if st.session_state.pop("goto_tab_quotazioni", False):
     st.session_state.active_tab = 0
-    trigger_tab_navigation("Quotazioni")
+    trigger_tab_navigation()
 
 if st.session_state.pop("goto_tab_operazioni", False):
     st.session_state.active_tab = 2
-    trigger_tab_navigation("Operazioni")
+    trigger_tab_navigation()
 
 render_dashboard_tabs(
     page_defs=_PAGE_DEFS,

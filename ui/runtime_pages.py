@@ -24,7 +24,7 @@ class PageDef:
     renderer: Callable[[Any, Any], None]
 
 
-def trigger_tab_navigation(page_label: str) -> None:
+def trigger_tab_navigation() -> None:
     html = f"""<script>
 (function(){{
   function scrollTop(){{
