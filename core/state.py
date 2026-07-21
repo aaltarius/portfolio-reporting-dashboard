@@ -358,4 +358,3 @@ class StateManager:
             strumento_events = [e for e in registro if e.get("ticker") == ticker]
             self._instrument_cache[cache_key] = strumento_events
         return self._instrument_cache[cache_key]
-
