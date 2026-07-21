@@ -66,10 +66,6 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def _percent(value: Any) -> float:
-    return _safe_float(value, 0.0)
-
-
 def _normalize_components(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Accorpa ticker duplicati e normalizza i pesi a 1."""
     by_ticker: dict[str, dict[str, Any]] = {}

@@ -404,14 +404,3 @@ def get_portfolio_cache_bust() -> int:
         return int(st.session_state.get("_portfolio_cache_bust", 0) or 0)
     except Exception:
         return 0
-
-
-def request_full_streamlit_cache_clear(reason: str = "") -> None:
-    """
-    Richiede un reset completo al prossimo rerun.
-
-    Da usare solo per manutenzione/debug, non per normali salvataggi dati.
-    app.py intercetta _clear_streamlit_cache e chiama st.cache_data.clear().
-    """
-    st.session_state["_clear_streamlit_cache"] = True
-    st.session_state["_portfolio_cache_reason"] = str(reason or "reset cache completo richiesto")

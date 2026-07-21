@@ -1233,29 +1233,6 @@ def compare_decision_to_actual(decision: dict[str, Any]) -> pd.DataFrame:
 # Metriche, serie, correlazioni, pesi
 # --------------------------------------------------------------------------- #
 
-def _compute_metrics(ticker: str, price_frame: pd.DataFrame) -> dict[str, float]:
-    metrics = {k: np.nan for k in ("ret_1m", "ret_3m", "ret_6m", "ret_12m", "vol", "drawdown", "rend_vol")}
-    metrics["n_punti"] = 0.0
-    if price_frame is None or price_frame.empty or ticker not in price_frame.columns:
-        return metrics
-    serie = pd.to_numeric(price_frame[ticker], errors="coerce").dropna().astype(float)
-    serie = serie[serie > 0]
-    metrics["n_punti"] = float(len(serie))
-    if len(serie) < 3:
-        return metrics
-    for k, w in FINESTRE.items():
-        metrics[k] = _rolling_return(serie, w)
-    rendimenti = serie.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
-    if len(rendimenti) >= 10:
-        fin = rendimenti.tail(126) if len(rendimenti) >= 126 else rendimenti
-        metrics["vol"] = float(fin.std(ddof=1) * math.sqrt(252))
-    metrics["drawdown"] = float(((serie / serie.cummax()) - 1.0).min())
-    if pd.notna(metrics["ret_6m"]) and pd.notna(metrics["vol"]) and metrics["vol"] > 1e-9:
-        rend_annuo = (1.0 + metrics["ret_6m"]) ** 2 - 1.0
-        metrics["rend_vol"] = float(rend_annuo / metrics["vol"])
-    return metrics
-
-
 def _rolling_return(serie: pd.Series, finestra: int) -> float:
     if len(serie) <= finestra or finestra <= 0:
         return np.nan

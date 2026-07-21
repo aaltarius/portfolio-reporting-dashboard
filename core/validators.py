@@ -73,14 +73,6 @@ def validate_selection(values: list[str], allowed_values: list[str], label: str 
         raise ValueError(f"{label} non valida: {', '.join(invalid)}.")
 
 
-def validate_risk_thresholds(green_max: float, yellow_max: float) -> None:
-    """Valida la coerenza delle soglie rischio/peso."""
-    validate_number_input(green_max, 0.0, 100.0)
-    validate_number_input(yellow_max, 0.0, 100.0)
-    if yellow_max < green_max:
-        raise ValueError("La soglia gialla deve essere maggiore o uguale alla soglia verde.")
-
-
 def validate_alert_thresholds(
     loss_threshold_pct: float,
     concentration_threshold_pct: float,
