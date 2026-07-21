@@ -125,4 +125,3 @@ def fmtds(d):
     if hasattr(d, "day"):
         return f"{d.day:02d}/{d.month:02d}/{d.year}"
     return str(d)
-
