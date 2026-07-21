@@ -434,7 +434,6 @@ def get_btp_price_details(isin: str) -> dict[str, Any]:
     return {"price": None, "price_date": None}
 
 
-
 def find_ticker(isin: str) -> str:
     if isin.startswith("IT"):
         return f"BTP-{isin[-4:]}"
