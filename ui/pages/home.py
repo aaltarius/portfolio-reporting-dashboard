@@ -14,7 +14,7 @@ from core.asset_categories import get_selected_category_codes
 from core.cache_signatures import build_portfolio_data_signature, charts_settings_signature, theme_signature
 from core.data_models import ThemeConfig
 from core.figure_cache import CachingStrategy, get_figure_cache
-from core.models import get_proventi_normalizzati
+from persistence.storage import get_proventi_normalizzati
 from core.render_profiler import profile_step
 from core.settings_profiles import resolve_figure_cache_strategy
 

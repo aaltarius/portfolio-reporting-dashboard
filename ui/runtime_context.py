@@ -7,7 +7,7 @@ from typing import Any
 import pandas as pd
 
 from core.domain.calendar import build_btp_calendar
-from core.models import get_registro_eventi, get_proventi_normalizzati
+from persistence.storage import get_registro_eventi, get_proventi_normalizzati
 from core.asset_categories import filter_data_by_selected_categories
 from core.finance import build_hist_df, build_portfolio_history_df, compute_portfolio_state
 from core.price_frames import build_expanded_price_frame

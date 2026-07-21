@@ -42,7 +42,7 @@ from ui.charts.summary import build_summary_figures
 from ui.charts.runtime import empty_chart
 from core.services.sator import compute_instrument_buckets
 from core.services import build_percentage_return_series
-from core.models import get_proventi_normalizzati
+from persistence.storage import get_proventi_normalizzati
 from ui.theme import macro_color
 
 
