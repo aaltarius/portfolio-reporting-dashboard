@@ -910,6 +910,7 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         try:
             from core.figure_cache import get_figure_cache
             from core.cache_prewarmer import get_prewarm_status, trigger_background_prewarm
+            from ui.prewarm_bundle import run_prewarm_bundle
 
             fcache = get_figure_cache()
             fstats = fcache.get_stats()
@@ -982,7 +983,7 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 if status["running"]:
                     st.info("Pre-warming in esecuzione...")
                 elif st.button("⚡ Pre-warming", width="stretch", type="secondary", key="datahub_prewarm_now"):
-                    started = trigger_background_prewarm(ctx, theme, settings)
+                    started = trigger_background_prewarm(ctx, theme, settings, prewarm_fn=run_prewarm_bundle)
                     if started:
                         _record_cache_action("prewarm_started")
                         queue_success("Pre-warming avviato. I grafici verranno preparati in background se il pre-warmer trova chart supportati.")

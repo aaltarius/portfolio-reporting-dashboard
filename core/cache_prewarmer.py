@@ -8,7 +8,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from persistence.storage import DATA_DIR
 from core.settings_profiles import get_pre_render_settings
@@ -127,7 +127,7 @@ def get_prewarm_status(settings: dict | None = None) -> dict[str, Any]:
     }
 
 
-def trigger_background_prewarm(ctx: Any, theme: Any, settings: dict) -> bool:
+def trigger_background_prewarm(ctx: Any, theme: Any, settings: dict, prewarm_fn: "Callable[..., Any]") -> bool:
     """
     Avvia il pre-warming in background se non già in esecuzione.
     Ritorna True se il thread è stato avviato, False se già in esecuzione.
@@ -138,7 +138,7 @@ def trigger_background_prewarm(ctx: Any, theme: Any, settings: dict) -> bool:
             return False
         _prewarm_thread = threading.Thread(
             target=_do_prewarm,
-            args=(ctx, theme, settings),
+            args=(ctx, theme, settings, prewarm_fn),
             daemon=True,
             name="CachePrewarmer",
         )
@@ -146,23 +146,26 @@ def trigger_background_prewarm(ctx: Any, theme: Any, settings: dict) -> bool:
     return True
 
 
-def run_initial_prewarm(ctx: Any, theme: Any, settings: dict) -> bool:
+def run_initial_prewarm(ctx: Any, theme: Any, settings: dict, prewarm_fn: "Callable[..., Any]") -> bool:
     """Esegue il pre-render iniziale in modo sincrono, evitando doppie run concorrenti."""
     with _prewarm_lock:
         if _prewarm_thread is not None and _prewarm_thread.is_alive():
             return False
-        _do_prewarm(ctx, theme, settings)
+        _do_prewarm(ctx, theme, settings, prewarm_fn)
     return True
 
 
-def _do_prewarm(ctx: Any, theme: Any, settings: dict) -> None:
+def _do_prewarm(ctx: Any, theme: Any, settings: dict, prewarm_fn: "Callable[..., Any]") -> None:
     """
     Esegue il pre-warming: build e salva su disco le figure principali.
     Usa DISK_ONLY strategy per non inquinare session_state.
+
+    prewarm_fn e' iniettata dal chiamante (app.py) invece di essere importata
+    qui: core/ non deve dipendere da ui/ (violazione di layering corretta
+    nel Master Plan v5.0, Fase 1 Task 1.5).
     """
     from core.figure_cache import get_figure_cache, CachingStrategy
     from core.cache_signatures import build_portfolio_data_signature, theme_signature, charts_settings_signature
-    from ui.prewarm_bundle import run_prewarm_bundle
 
     started_at = time.perf_counter()
     fcache = get_figure_cache()
@@ -181,7 +184,7 @@ def _do_prewarm(ctx: Any, theme: Any, settings: dict) -> None:
     _record_prewarm_event("start", 0.0, detail=f"scope={scope}")
     _persist_prewarm_event(prewarm_signature, "start", 0.0, detail=f"scope={scope}")
     try:
-        stats = run_prewarm_bundle(
+        stats = prewarm_fn(
             ctx=ctx,
             theme=theme,
             settings=settings,

@@ -458,6 +458,7 @@ if os.getenv("PORTFOLIO_TESTING") == "1":
 else:
     try:
         from core.cache_prewarmer import should_prewarm, trigger_background_prewarm, compute_prewarm_signature, run_initial_prewarm, mark_prewarm_deferred
+        from ui.prewarm_bundle import run_prewarm_bundle
         from core.render_profiler import persist_pre_render_event
         _cfg_strategy = resolve_figure_cache_strategy(settings, st.session_state)
         _pre_render_settings = get_pre_render_settings(settings)
@@ -521,9 +522,9 @@ else:
                     detail="mode=initial_complete",
                     reset_cycle=True,
                 )
-                run_initial_prewarm(ctx, _prewarm_theme, settings)
+                run_initial_prewarm(ctx, _prewarm_theme, settings, prewarm_fn=run_prewarm_bundle)
             elif _should_prewarm and bool(_pre_render_settings.get("background_enabled", True)):
-                _started = trigger_background_prewarm(ctx, _prewarm_theme, settings)
+                _started = trigger_background_prewarm(ctx, _prewarm_theme, settings, prewarm_fn=run_prewarm_bundle)
                 persist_pre_render_event(
                     _prewarm_signature,
                     "PreRender",
