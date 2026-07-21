@@ -23,6 +23,7 @@ from core.cache_signatures import (
 from core.dashboard_datasets import get_quotazioni_dataset_bundle
 from core.quotes_runtime import build_quotes_refresh_df
 from core.settings_profiles import (
+    get_effective_quotazioni_full_resolution,
     resolve_figure_cache_strategy,
     resolve_page_render_mode,
 )
@@ -310,17 +311,11 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     if abs(_qty) > 0 or abs(_ctv) > 0:
                         _portfolio_tickers.add(str(_prow.get("Ticker", "")))
 
-            @st.fragment
-            def _render_single_ticker_chart(item, chart_style, dfmt, theme, data, ctx, _theme_sig, _settings_sig, _cache_strategy, _portfolio_tickers, fcache):
+            def _render_single_ticker_chart(item, chart_style, dfmt, theme, data, ctx, _theme_sig, _settings_sig, _cache_strategy, _portfolio_tickers, fcache, full_res):
                 tk = item.ticker
                 si = item.instrument_info
                 in_portfolio = tk in _portfolio_tickers
                 _pd = item.purchase_date
-                full_res = st.toggle(
-                    "Dettaglio giornaliero completo",
-                    key=f"quotazioni_full_res_{tk}",
-                    help="Di default i dati oltre i 90 giorni sono mostrati a risoluzione settimanale. Attiva per vedere ogni giorno.",
-                )
                 _tk_data_sig = build_ticker_data_signature(
                     data, tk,
                     app_version=str(getattr(ctx, "app_version", "n/d")),
@@ -337,6 +332,8 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     strategy=_cache_strategy,
                 )
                 st.plotly_chart(fig, width="stretch")
+
+            _quotazioni_full_res = get_effective_quotazioni_full_resolution(settings)
 
             if quotazioni_bundle.ticker_bundles:
                 for category in visible_categories:
@@ -356,7 +353,7 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                                 item = bundles_in_category[i + j]
                                 with col:
                                     with profile_step("Quotazioni", "build/render grafico singolo strumento", detail=str(item.ticker)):
-                                        _render_single_ticker_chart(item, chart_style, dfmt, theme, data, ctx, _theme_sig, _settings_sig, _cache_strategy, _portfolio_tickers, fcache)
+                                        _render_single_ticker_chart(item, chart_style, dfmt, theme, data, ctx, _theme_sig, _settings_sig, _cache_strategy, _portfolio_tickers, fcache, _quotazioni_full_res)
 
                                     st.markdown("<div style='height: 24px;'></div>", unsafe_allow_html=True)
 

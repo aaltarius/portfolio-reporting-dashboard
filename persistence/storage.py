@@ -330,6 +330,7 @@ def default_settings():
             "debug_render_scope": "current_page",
             "show_page_mode_controls": True,
             "page_mode": "per_pagina",
+            "quotazioni_full_resolution": False,
         },
         "auditing": {
             "enabled": True,

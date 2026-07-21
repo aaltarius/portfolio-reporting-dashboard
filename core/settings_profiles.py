@@ -192,6 +192,16 @@ def get_effective_show_explanations(settings: dict[str, Any] | None) -> bool:
     return bool(get_ui_preferences(settings).get("show_explanations", True))
 
 
+def get_effective_quotazioni_full_resolution(settings: dict[str, Any] | None) -> bool:
+    """Se True, i grafici storico-quotazioni mostrano sempre il dettaglio
+    giornaliero completo invece della vista aggregata (settimanale oltre i
+    90 giorni recenti) usata per default. Impostazione unica e globale in
+    Setup, non un controllo per singolo grafico: cambiarla e' un'azione rara
+    e deliberata, quindi il ricalcolo di tutti i grafici che ne consegue e'
+    accettabile."""
+    return bool(get_ui_preferences(settings).get("quotazioni_full_resolution", False))
+
+
 def resolve_page_render_mode(
     settings: dict[str, Any] | None,
     *,

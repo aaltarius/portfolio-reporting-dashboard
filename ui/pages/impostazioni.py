@@ -347,6 +347,13 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     key="appearance_show_explanations",
                 )
 
+                # --- QUOTAZIONI FULL RESOLUTION ---
+                ui_quotazioni_full_resolution = st.checkbox("Quotazioni: dettaglio giornaliero completo",
+                    value=bool(ui_preferences.get("quotazioni_full_resolution", False)),
+                    help="Di default i grafici storico-quotazioni mostrano un punto a settimana per i dati oltre gli ultimi 90 giorni (i valori restano esatti, solo meno punti a schermo). Attiva per vedere sempre ogni singolo giorno su tutti i grafici.",
+                    key="appearance_quotazioni_full_resolution",
+                )
+
                 # Dimensioni tipografiche (titoli/sottotitoli/body/commenti) rimosse
                 # dalla UI il 2026-07-16: nessuna variabile CSS le applicava da
                 # nessuna parte (verificato: solo typography.family alimenta
@@ -598,6 +605,7 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 settings["ui_preferences"] = {
                     **settings.get("ui_preferences", {}),
                     "show_explanations": ui_show_explanations,
+                    "quotazioni_full_resolution": ui_quotazioni_full_resolution,
                     "accent_variant": ui_accent_variant,
                     "font_scale": str(runtime_ui_settings.get("font_scale", "Grande")),
                     "log_level": str(log_level).upper(),
