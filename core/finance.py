@@ -504,7 +504,12 @@ def get_cached_benchmark_series(
                 )
         if ser is None:
             with profile_step("Core/Benchmark", "conversione benchmark JSON->Series", detail=f"ticker={bench_ticker}; punti={len(bd)}", count=len(bd)):
-                ser = pd.Series({pd.to_datetime(d): float(v) for d, v in bd.items()}).sort_index()
+                # Vettorizzato: pd.to_datetime() sull'intero elenco di chiavi in
+                # un colpo solo, invece che una volta per punto in una dict
+                # comprehension (stesso pattern gia' corretto in ranges.py e
+                # time_buttons.py: profilato a 0.3-0.5s per benchmark, fino a
+                # ~5s quando si aggiornano tutti i benchmark in un refresh).
+                ser = pd.Series(list(bd.values()), index=pd.to_datetime(list(bd.keys())), dtype=float).sort_index()
                 ser = ser[ser > 0]
             try:
                 pd.to_pickle({"cache_id": cache_id, "value": ser.copy()}, persist_path)
