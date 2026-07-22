@@ -29,7 +29,14 @@ BENCHMARK_RENDER_CACHE_KEY = "_cruscotti_benchmark_render_cache_v2"
 
 
 def _prune_cache_items(items: dict[str, Any], max_items: int = 16) -> None:
-    """Mantiene contenuta la cache sessione delle figure benchmark."""
+    """Mantiene contenuta la cache sessione delle figure benchmark.
+
+    max_items=16 (più basso del limite gemello in cruscotti_accumuli.py,
+    24): qui le chiavi non sono per-ticker, solo 2 figure a nome fisso
+    (confronto_benchmark, scatter_coerenza) per render_sig — il numero di
+    voci distinte non scala con la dimensione del portafoglio, quindi
+    serve meno spazio.
+    """
     if len(items) <= max_items:
         return
     for old_key in list(items.keys())[: max(0, len(items) - max_items)]:

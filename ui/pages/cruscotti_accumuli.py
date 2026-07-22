@@ -40,7 +40,14 @@ ACCUMULI_PAYLOAD_TYPE = "accumuli_v2"
 
 
 def _prune_cache_items(items: dict[str, Any], max_items: int = 24) -> None:
-    """Mantiene contenuta la cache sessione degli oggetti UI già costruiti."""
+    """Mantiene contenuta la cache sessione degli oggetti UI già costruiti.
+
+    max_items=24 (più alto del limite gemello in cruscotti_benchmark.py,
+    16): qui le chiavi sono per-ticker (price_pmc/capitale_vs_valore per
+    ogni strumento PAC aperto nel dettaglio, vedi _render_detail), quindi
+    il numero di voci distinte scala con quanti strumenti l'utente ha
+    visto nella sessione — non è un limite arbitrario diverso dal gemello.
+    """
     if len(items) <= max_items:
         return
     for old_key in list(items.keys())[: max(0, len(items) - max_items)]:
