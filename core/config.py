@@ -57,7 +57,6 @@ THRESHOLDS: dict[str, float] = {
     "risk_traffic_light_green": 1.0,
     "risk_traffic_light_yellow": 1.2,
     "concentration_warning": 0.35,
-    "drawdown_alert": -0.10,
     "negative_pl_alert_eur": -500.0,
     "rebalance_minimum_eur": 50.0,
 }

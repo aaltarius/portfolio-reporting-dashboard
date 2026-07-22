@@ -15,6 +15,7 @@ import pandas as pd
 import streamlit as st
 
 from core.cache_signatures import build_portfolio_data_signature, resolve_analysis_render_sig
+from core.constants import SOGLIA_DRAWDOWN_ALERT
 from core.render_profiler import profile_step
 from core.analytics_payload_cache import load_entry as load_persistent_analytics_entry, store_entry as store_persistent_analytics_entry
 from core.services.accumuli import (
@@ -690,7 +691,7 @@ def _drawdown_judgment(value: Any) -> str:
         return "Coincide con il massimo osservato nel periodo"
     if v >= -0.02:
         return "Vicino ai massimi"
-    if v >= -0.10:
+    if v >= SOGLIA_DRAWDOWN_ALERT:
         return "Correzione moderata"
     if v >= -0.20:
         return "Correzione rilevante"
