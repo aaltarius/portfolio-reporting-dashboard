@@ -13,6 +13,7 @@ from html import escape
 from fastapi import APIRouter, Form
 from fastapi.responses import HTMLResponse
 
+from core.domain.calendar import TAX_RATE_GOV_PCT, TAX_RATE_OTHER_PCT
 from ui.form_server.shell import CSS, STREAMLIT_URL, safe_f as _safe_f
 
 logger = logging.getLogger("portafoglio.form_server.inserisci")
@@ -114,7 +115,7 @@ function refreshAliquota(){
   const tk=$('sel_ticker');
   const opt=tk?.options[tk.selectedIndex];
   const isGov=opt?.dataset.gov==='true';
-  if($('inp_aliq') && getEvento()==='CEDOLA') $('inp_aliq').value=isGov?12.5:26;
+  if($('inp_aliq') && getEvento()==='CEDOLA') $('inp_aliq').value=isGov?__TAX_RATE_GOV_PCT__:__TAX_RATE_OTHER_PCT__;
 }
 
 /* ── triplet con campo bloccato ─────────────────────────────── */
@@ -276,6 +277,16 @@ document.addEventListener('DOMContentLoaded',()=>{
 </script>
 """
 
+# L'aliquota GOV/altri strumenti è iniettata qui a partire dalla costante
+# server (core.domain.calendar), sostituendo i placeholder __TAX_RATE_*__
+# nel template con il valore reale: _JS resta un template statico (niente
+# f-string, il resto dello script usa `{}` per oggetti/funzioni JS), ma il
+# numero non è più scritto a mano nel JS — arriva da un solo posto Python.
+_JS = (
+    _JS.replace("__TAX_RATE_GOV_PCT__", f"{TAX_RATE_GOV_PCT:g}")
+    .replace("__TAX_RATE_OTHER_PCT__", f"{TAX_RATE_OTHER_PCT:g}")
+)
+
 
 def _render_form(tickers: list[dict], error: str = "") -> str:
     today = date.today().isoformat()
@@ -379,7 +390,7 @@ def _render_form(tickers: list[dict], error: str = "") -> str:
         <label class="lbl">Importo lordo €</label>
         <input type="number" id="inp_lordo" step="0.01" min="0" placeholder="0.00">
         <label class="lbl">Aliquota imposta %</label>
-        <input type="number" id="inp_aliq" step="0.5" min="0" max="100" value="26">
+        <input type="number" id="inp_aliq" step="0.5" min="0" max="100" value="{TAX_RATE_OTHER_PCT:g}">
         <div id="provento_info" class="hint" style="display:none;color:#4338ca;margin-top:6px"></div>
       </div>
 
@@ -559,7 +570,7 @@ async def post_form(cart_data: str = Form("[]")):
                 evento = str(item.get("evento", "")).upper()
                 ticker = str(item.get("ticker", "")).strip()
                 lordo_f = _safe_f(item.get("importo_lordo"))
-                aliq_f  = _safe_f(item.get("aliquota"), 26.0)
+                aliq_f  = _safe_f(item.get("aliquota"), TAX_RATE_OTHER_PCT)
                 if lordo_f <= 0:
                     raise ValueError("Importo lordo deve essere maggiore di zero.")
                 imposte_f = lordo_f * aliq_f / 100.0

@@ -20,6 +20,7 @@ from html import escape
 from fastapi import APIRouter, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from core.domain.calendar import TAX_RATE_OTHER_PCT
 from ui.form_server.shell import CSS, STREAMLIT_URL, TAB_JS, safe_f as _safe_f
 
 logger = logging.getLogger("portafoglio.form_server.gestione")
@@ -224,10 +225,10 @@ def _render_eventi_page(
       <div id="e_imp_wrap"><label class="lbl">Imposte €</label><input type="number" id="e_imp" name="imposte" step="0.01" min="0" placeholder="0.00"></div>
     </div>"""
 
-    edit_provento = """
+    edit_provento = f"""
     <div class="row2" style="margin-top:10px">
       <div><label class="lbl">Importo lordo €</label><input type="number" id="e_lordo" name="importo_lordo" step="0.01" min="0" placeholder="0.00"></div>
-      <div><label class="lbl">Aliquota %</label><input type="number" id="e_aliq" name="aliquota_perc" step="0.5" min="0" max="100" placeholder="26.0"></div>
+      <div><label class="lbl">Aliquota %</label><input type="number" id="e_aliq" name="aliquota_perc" step="0.5" min="0" max="100" placeholder="{TAX_RATE_OTHER_PCT}"></div>
     </div>"""
 
     edit_cash = """

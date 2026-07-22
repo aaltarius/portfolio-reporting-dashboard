@@ -17,6 +17,16 @@ CEDOLA_FREQ_PAYMENTS = {
     "annuale": 1,
 }
 
+# Aliquote fiscali italiane su cedole/plusvalenze, convenzione percento
+# (12.5, non 0.125). GOV = titoli di Stato italiani (BTP, CCT, ...); OTHER =
+# tutti gli altri strumenti (azioni, ETF, fondi, obbligazioni corporate...).
+# Costante unica: prima duplicata in modo indipendente in più punti del
+# codice (ui/charts/calendario_btp.py in convenzione frazione, ui/pages/
+# operazioni.py, ui/form_server/*.py). Chi ha bisogno della frazione (es.
+# 0.125) deve dividere per 100.0 qui, non ridefinire il letterale altrove.
+TAX_RATE_GOV_PCT = 12.5
+TAX_RATE_OTHER_PCT = 26.0
+
 
 _DATE_FORMATS = ("%Y-%m-%d", "%d/%m/%y", "%d/%m/%Y")
 
@@ -106,9 +116,9 @@ def build_btp_calendar(data: dict) -> pd.DataFrame:
         )
         prima_cedola = prima_cedola.normalize()
         try:
-            aliquota_cedola = float(strumento.get("aliquota_cedola", 12.5) or 12.5)
+            aliquota_cedola = float(strumento.get("aliquota_cedola", TAX_RATE_GOV_PCT) or TAX_RATE_GOV_PCT)
         except Exception:
-            aliquota_cedola = 12.5
+            aliquota_cedola = TAX_RATE_GOV_PCT
 
         rows.append(
             {

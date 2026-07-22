@@ -30,6 +30,7 @@ from core.validators import (
     validate_price,
     validate_quantity,
 )
+from core.domain.calendar import TAX_RATE_GOV_PCT, TAX_RATE_OTHER_PCT
 from core.finance import append_evento_portafoglio, compute_portfolio_state
 from core.market_data import deduce_type, find_name, find_ticker, get_price
 from core.services import (
@@ -78,9 +79,9 @@ def _compute_trade_triplet(mode: str, qty: float, price: float, gross: float) ->
 
 def _default_tax_rate_pct(evento: str, ticker: str, info_map: dict[str, dict[str, Any]]) -> float:
     if evento != "CEDOLA":
-        return 26.0
+        return TAX_RATE_OTHER_PCT
     instrument_type = info_map.get(ticker, {}).get("tipo", "")
-    return 12.5 if macro_cat(instrument_type) == "GOV" else 26.0
+    return TAX_RATE_GOV_PCT if macro_cat(instrument_type) == "GOV" else TAX_RATE_OTHER_PCT
 
 
 def _default_batch_rows(max_rows: int) -> pd.DataFrame:
@@ -809,7 +810,7 @@ def strumenti_dialog(data: dict[str, Any], ctx: SimpleNamespace) -> None:
                     "prima_cedola": "",
                     "cedola_perc": 0.0,
                     "cedola_frequenza": "annuale",
-                    "aliquota_cedola": 12.5,
+                    "aliquota_cedola": TAX_RATE_GOV_PCT,
                     "nominale": 100.0,
                 })
                 save_data(data)
@@ -853,7 +854,7 @@ def strumenti_dialog(data: dict[str, Any], ctx: SimpleNamespace) -> None:
                             if str(se.get("cedola_frequenza", "annuale") or "annuale").lower() in {"annuale", "semestrale", "trimestrale"}
                             else 0,
                         )
-                        aliquota_cedola = st.number_input("Aliquota cedola %", min_value=0.0, max_value=100.0, step=0.5, value=float(se.get("aliquota_cedola", 12.5) or 12.5))
+                        aliquota_cedola = st.number_input("Aliquota cedola %", min_value=0.0, max_value=100.0, step=0.5, value=float(se.get("aliquota_cedola", TAX_RATE_GOV_PCT) or TAX_RATE_GOV_PCT))
                         nominale = st.number_input("Nominale per quota", min_value=0.0, step=1.0, value=float(se.get("nominale", 100.0) or 100.0))
                 submitted = st.form_submit_button("💾 Salva modifiche", width="stretch", type="primary")
 

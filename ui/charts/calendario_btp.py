@@ -6,6 +6,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from core.domain.calendar import TAX_RATE_GOV_PCT
 from ui.charts.runtime import finalize_chart
 from ui.charts.settings import apply_settings, get_chart_setting
 from ui.components import render_styled_table
@@ -14,7 +15,7 @@ from ui.theme import ThemeConfig
 from ui.theme import macro_color
 
 
-_ALIQUOTA_BTP = 0.125
+_ALIQUOTA_BTP = TAX_RATE_GOV_PCT / 100.0
 
 
 def _stima_imposte_scadenza(lordo: float, pmc: float | None) -> float | None:

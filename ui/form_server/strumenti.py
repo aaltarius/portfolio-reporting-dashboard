@@ -15,6 +15,7 @@ from typing import Optional
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from core.domain.calendar import TAX_RATE_GOV_PCT
 from ui.form_server.shell import CSS, STREAMLIT_URL, TAB_JS
 
 logger = logging.getLogger("portafoglio.form_server.strumenti")
@@ -411,7 +412,7 @@ def _render_strumenti_page(
         "prima_cedola": _it_date_or_empty(s.get("prima_cedola") or s.get("data_origine")),
         "cedola_perc": float(s.get("cedola_perc", 0.0) or 0.0),
         "cedola_frequenza": str(s.get("cedola_frequenza", "annuale") or "annuale"),
-        "aliquota_cedola": float(s.get("aliquota_cedola", 12.5) or 12.5),
+        "aliquota_cedola": float(s.get("aliquota_cedola", TAX_RATE_GOV_PCT) or TAX_RATE_GOV_PCT),
         "nominale": float(s.get("nominale", 100.0) or 100.0),
         "linked": linked_counts.get(s.get("ticker", ""), 0),
         "has_prices": _fs_has_prices(data, s.get("ticker", "")),
@@ -526,7 +527,7 @@ def _render_strumenti_page(
               <option value="trimestrale">trimestrale</option>
             </select>
           </div>
-          <div><label class="lbl">Aliquota cedola %</label><input type="number" id="edit_aliq_ced" name="aliquota_cedola" step="0.5" min="0" max="100" placeholder="12.5"></div>
+          <div><label class="lbl">Aliquota cedola %</label><input type="number" id="edit_aliq_ced" name="aliquota_cedola" step="0.5" min="0" max="100" placeholder="{TAX_RATE_GOV_PCT}"></div>
           <div><label class="lbl">Nominale per quota</label><input type="number" id="edit_nominale" name="nominale" step="1" min="0" placeholder="100"></div>
         </div>
       </div>
@@ -734,7 +735,7 @@ async def post_strumenti(
     prima_cedola: str = Form(""),
     cedola_perc: str = Form("0"),
     cedola_frequenza: str = Form("annuale"),
-    aliquota_cedola: str = Form("12.5"),
+    aliquota_cedola: str = Form(str(TAX_RATE_GOV_PCT)),
     nominale: str = Form("100"),
     storico_data_da: str = Form(""),
     storico_data_a: str = Form(""),
@@ -806,7 +807,7 @@ async def post_strumenti(
             "nome": nm, "tipo": tp, "prezzo": pr, "fonte": src,
             "aggiornato": str(date.today()), "scadenza": "", "data_acquisto": "",
             "prima_cedola": "", "cedola_perc": 0.0, "cedola_frequenza": "annuale",
-            "aliquota_cedola": 12.5, "nominale": 100.0,
+            "aliquota_cedola": TAX_RATE_GOV_PCT, "nominale": 100.0,
         }
         strumento_record.update(enrichment_result)
         d.setdefault("strumenti", []).append(strumento_record)
