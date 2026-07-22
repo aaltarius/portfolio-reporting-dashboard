@@ -7,6 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 
+from core.domain.risk import build_drawdown_series
 from persistence.storage import APP_VERSION, default_settings
 from ui.charts.settings import apply_settings
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it, hex_to_rgba
@@ -281,15 +282,18 @@ def build_summary_figures(summary_payload, settings=None, include_advanced=True,
         figures["annual"] = _build_or_cache("summary_annual", _build_annual)
 
         def _build_drawdown():
-            dd_vals = hist["indice"].values
-            running_max = np.maximum.accumulate(dd_vals)
-            dd_series = dd_vals / np.where(running_max == 0, 1, running_max) - 1.0
+            # build_drawdown_series calcola equity=1+v/100: alimentata con
+            # v = indice-100 ottiene equity = indice/100, un puro riscalamento
+            # moltiplicativo di "indice" che lascia invariato il rapporto
+            # drawdown originale (indice/cummax(indice)-1), qualunque sia il
+            # valore di partenza di "indice". Risultato in percentuale (*100),
+            # riportato a frazione (/100) per restare compatibile con
+            # l'hovertemplate ":.2%" gia' in uso.
+            dd_series = [v / 100.0 for v in build_drawdown_series((hist["indice"] - 100.0).tolist())]
             fig_dd = go.Figure()
             fig_dd.add_trace(go.Scatter(x=hist["date_dt"], y=dd_series, mode="lines", fill="tozeroy", name="Drawdown portafoglio", line=dict(color=P["red"], width=1.8), fillcolor=hex_to_rgba(P["red"], 0.14), hovertemplate="%{x|%d/%m/%Y}<br>Drawdown: %{y:.2%}<extra></extra>"))
             if not bench.empty:
-                dd_b = bench["indice"].values
-                rm_b = np.maximum.accumulate(dd_b)
-                dd_b_series = dd_b / np.where(rm_b == 0, 1, rm_b) - 1.0
+                dd_b_series = [v / 100.0 for v in build_drawdown_series((bench["indice"] - 100.0).tolist())]
                 fig_dd.add_trace(go.Scatter(x=bench["date_dt"], y=dd_b_series, mode="lines", name=str(summary_payload.get("portfolio_benchmark") or "Benchmark"), line=dict(color=P["orange"], width=1.5, dash="dash"), hovertemplate="%{x|%d/%m/%Y}<br>Benchmark DD: %{y:.2%}<extra></extra>"))
             return _apply_summary_settings(fig_dd, "summary_drawdown")
 

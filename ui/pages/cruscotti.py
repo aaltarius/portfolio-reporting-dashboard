@@ -12,6 +12,7 @@ from streamlit.delta_generator import DeltaGenerator
 
 from core.asset_categories import get_selected_category_codes
 from core.cache_signatures import build_historical_data_signature, build_portfolio_data_signature, charts_settings_signature, theme_signature
+from core.domain.risk import build_drawdown_series
 from core.figure_cache import CachingStrategy, get_figure_cache
 from core.finance import calc_positions
 from core.settings_profiles import get_effective_show_explanations, resolve_figure_cache_strategy
@@ -812,8 +813,13 @@ def _render_analitica_market_structure(ctx: SimpleNamespace, settings: dict[str,
                 prices = prices.loc[prices.index >= start_date]
             if len(prices) < 2:
                 continue
-            drawdown = ((prices / prices.cummax()) - 1) * 100.0
-            drawdown_depths.append((ticker, float(drawdown.min())))
+            # Rendimento percentuale dal primo prezzo disponibile: build_drawdown_series
+            # converte in equity=1+v/100, un puro riscalamento moltiplicativo di prices
+            # (prices/prices.iloc[0]) che lascia invariato il rapporto drawdown originale
+            # (prices/prices.cummax()-1)*100, qualunque sia il livello assoluto dei prezzi.
+            pct_returns = ((prices / prices.iloc[0]) - 1) * 100.0
+            drawdown_min = min(build_drawdown_series(pct_returns.tolist()))
+            drawdown_depths.append((ticker, float(drawdown_min)))
         drawdown_depths.sort(key=lambda item: item[1])
         drawdown_mode = st.radio(
             "Strumenti drawdown",

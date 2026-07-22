@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
+from core.domain.risk import build_drawdown_series
 from ui.charts.settings import apply_settings
 from ui.formatting import fmt_pct_it, hex_to_rgba
 from ui.styles import get_common_colors
@@ -94,7 +96,12 @@ def build_instrument_drawdown_time_chart(dh, tickers, date_fmt):
         prices = dh[ticker].dropna()
         if len(prices) < 2:
             continue
-        drawdown = (prices / prices.cummax() - 1) * 100
+        # Rendimento percentuale dal primo prezzo disponibile: build_drawdown_series
+        # converte in equity=1+v/100, un puro riscalamento moltiplicativo di prices
+        # (prices/prices.iloc[0]) che lascia invariato il rapporto drawdown originale
+        # (prices/prices.cummax()-1)*100, qualunque sia il livello assoluto dei prezzi.
+        pct_returns = (prices / prices.iloc[0] - 1) * 100
+        drawdown = pd.Series(build_drawdown_series(pct_returns.tolist()), index=prices.index)
         fig.add_trace(
             go.Scatter(
                 x=drawdown.index,
