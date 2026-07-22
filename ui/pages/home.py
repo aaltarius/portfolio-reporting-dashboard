@@ -254,13 +254,9 @@ def _build_last_day_summary(
     last = dfh.iloc[-1]
     prev = dfh.iloc[-2]
     delta_valore = float(last["Valore"]) - float(prev["Valore"])
+    theme = get_theme_context()
     # Compute delta only from instruments open in BOTH rows (avoids closing-event spikes)
-    _pl_cols_all = [c for c in dfh.columns if c.startswith("PL_")]
-    raw_delta_pl = sum(
-        float(last[col]) - float(prev[col])
-        for col in _pl_cols_all
-        if pd.notna(last[col]) and pd.notna(prev[col])
-    ) if _pl_cols_all else float(last["P/L"]) - float(prev["P/L"])
+    raw_delta_pl = float(build_pl_delta_series(dfh, theme)["deltas"][-1])
     delta_capitale = float(last.get("Capitale", 0.0)) - float(prev.get("Capitale", 0.0))
     last_date = fmtds(last["Data"])
     prev_date = fmtds(prev["Data"])
@@ -271,7 +267,6 @@ def _build_last_day_summary(
     prev_pl_value = float(prev["P/L"]) if float(prev["P/L"]) != 0 else 0.0
     pct_var = (delta_pl / prev_pl_value) if abs(prev_pl_value) > 1e-9 else 0
 
-    theme = get_theme_context()
     col_green = theme.colors["success"]
     col_red = theme.colors["danger"]
     sign_color_v = col_green if delta_pl >= 0 else col_red
