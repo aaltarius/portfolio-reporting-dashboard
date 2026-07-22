@@ -1380,12 +1380,3 @@ def build_portfolio_summary_payload(
             "performance_fee_rate": performance_fee_rate,
         }
     }
-
-
-DEFAULT_SCENARIOS = [
-    {"nome": "Rialzo tassi +1%", "GOV": -0.08, "ETF": 0.02, "FND": 0.01},
-    {"nome": "Ribasso azionario", "GOV": 0.02, "ETF": -0.15, "FND": -0.12},
-    {"nome": "Ripresa mercati", "GOV": 0.01, "ETF": 0.12, "FND": 0.10},
-    {"nome": "Crisi finanziaria", "GOV": -0.05, "ETF": -0.25, "FND": -0.20},
-    {"nome": "Scenario personaliz.", "GOV": 0.0, "ETF": 0.0, "FND": 0.0},
-]

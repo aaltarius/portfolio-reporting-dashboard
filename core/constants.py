@@ -146,15 +146,3 @@ SOGLIA_DRAWDOWN_ALERT = -0.10
 SOGLIA_PL_NEGATIVO_ALERT = -500.0
 SOGLIA_RIBILANCIAMENTO_MINIMO = 50.0
 TOP_CONCENTRATION_POSITIONS_LIMIT = 5
-
-
-# ═════════════════════════════════════════════════════════════════════
-# Scenari di stress test
-# ═════════════════════════════════════════════════════════════════════
-SCENARI_STRESS = [
-    {"nome": "Rialzo tassi +1%", "GOV": -0.08, "ETF": 0.02, "FND": 0.01},
-    {"nome": "Ribasso azionario", "GOV": 0.02, "ETF": -0.15, "FND": -0.12},
-    {"nome": "Ripresa mercati", "GOV": 0.01, "ETF": 0.12, "FND": 0.10},
-    {"nome": "Crisi finanziaria", "GOV": -0.05, "ETF": -0.25, "FND": -0.20},
-    {"nome": "Scenario personaliz.", "GOV": 0.0, "ETF": 0.0, "FND": 0.0},
-]
