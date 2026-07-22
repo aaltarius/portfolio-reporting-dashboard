@@ -4,12 +4,15 @@ core/services/cruscotti.py — Cruscotti, operations, and core portfolio functio
 Functions for building category dashboards, operations reporting, and portfolio overview.
 Pure functions - no Streamlit dependencies, no side effects.
 """
+import logging
 from datetime import date
 from typing import Any, List
 import numpy as np
 import pandas as pd
 from core.asset_categories import ACTIVE_CATEGORY_CODES, get_selected_category_codes
 from persistence.storage import _safe_float
+
+logger = logging.getLogger("portafoglio.core.services.cruscotti")
 
 
 def calcola_proventi_netti(proventi: list[dict[str, Any]]) -> float:
@@ -701,6 +704,7 @@ def build_category_dashboard_metrics(
                 first_op_date = pd.to_datetime(op.get("data")).date()
                 break
             except Exception:
+                logger.warning("build_category_dashboard_metrics: data operazione non valida ignorata durante ricerca prima operazione: %r", op.get("data"), exc_info=True)
                 continue
     if first_op_date is None and "Ultimo evento" in work.columns:
         last_event_series = pd.to_datetime(work["Ultimo evento"], errors="coerce").dropna()
@@ -752,6 +756,7 @@ def build_category_dashboard_metrics(
                         total_weighted -= op_importo * giorni_i
 
                 except Exception:
+                    logger.warning("build_category_dashboard_metrics: operazione scartata nel calcolo giacenza media, ticker=%s data=%r", op.get("ticker"), op.get("data"), exc_info=True)
                     continue
 
             # Divide per giorni_totali

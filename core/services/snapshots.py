@@ -7,6 +7,7 @@ Designed to support both legacy snapshots and richer newly-created snapshots.
 from __future__ import annotations
 
 import copy
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -15,6 +16,8 @@ import pandas as pd
 from core.asset_categories import ACTIVE_CATEGORY_CODES
 from core.finance import build_ptf_df, compute_portfolio_state
 from persistence.storage import get_registro_eventi, macro_cat
+
+logger = logging.getLogger("portafoglio.core.services.snapshots")
 
 
 CATEGORIES = tuple(ACTIVE_CATEGORY_CODES)
@@ -163,6 +166,7 @@ def enrich_snapshot_with_portfolio_data(snapshot: dict[str, Any] | None, data: d
         state = compute_portfolio_state(asof_data, price_map=price_map, include_closed=True)
         state_df = state.get("df", pd.DataFrame())
     except Exception:
+        logger.warning("enrich_snapshot_with_portfolio_data: compute_portfolio_state fallito, snapshot mostrato senza posizioni arricchite", exc_info=True)
         state_df = pd.DataFrame()
     if state_df is None or state_df.empty:
         return snap

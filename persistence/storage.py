@@ -205,6 +205,7 @@ def _safe_float(value, default=0.0):
             return float(default)
         return float(value)
     except Exception:
+        logger.warning("_safe_float: valore non convertibile in float, uso default=%s: value=%r", default, value)
         return float(default)
 
 

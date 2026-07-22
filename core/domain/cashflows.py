@@ -5,8 +5,11 @@ from typing import Any
 from datetime import date
 import numpy as np
 import pandas as pd
+import logging
 
 from persistence.storage import _safe_float, get_registro_eventi
+
+logger = logging.getLogger("portafoglio.core.domain.cashflows")
 
 
 def compute_xirr(flows: list[float], dates: list[Any]) -> float | None:
@@ -74,6 +77,7 @@ def build_xirr_flows(
             p = float(op.get("price", 0))
             c = float(op.get("comm", 0))
         except Exception:
+            logger.warning("build_xirr_flows: operazione scartata per dati malformati, ticker=%s data=%r", tk, op.get("data"), exc_info=True)
             continue
         if op.get("tipo") == "ACQUISTO":
             flows.append(-(q * p + c))
@@ -88,6 +92,7 @@ def build_xirr_flows(
             d = pd.to_datetime(prov["data"]).date()
             netto = float(prov.get("importo_netto", 0))
         except Exception:
+            logger.warning("build_xirr_flows: provento scartato per dati malformati, ticker=%s data=%r", tk, prov.get("data"), exc_info=True)
             continue
         if netto > 0:
             flows.append(netto)

@@ -26,8 +26,8 @@ def _load_btp_trade_time_cache() -> dict[str, Any]:
     try:
         if _BTP_TRADE_TIME_CACHE_FILE.exists():
             return json.loads(_BTP_TRADE_TIME_CACHE_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_fallback_debug("load_btp_trade_time_cache", str(_BTP_TRADE_TIME_CACHE_FILE), exc)
     return {}
 
 
@@ -35,8 +35,8 @@ def _save_btp_trade_time_cache(cache: dict[str, Any]) -> None:
     try:
         _BTP_TRADE_TIME_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
         _BTP_TRADE_TIME_CACHE_FILE.write_text(json.dumps(cache, indent=2, ensure_ascii=False), encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_fallback_debug("save_btp_trade_time_cache", str(_BTP_TRADE_TIME_CACHE_FILE), exc)
 
 
 def _log_fallback_debug(step: str, identifier: str, exc: Exception) -> None:

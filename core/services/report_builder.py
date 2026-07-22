@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import html
 import json
+import logging
 from datetime import date, datetime
 from typing import Any
 
@@ -18,6 +19,8 @@ import plotly.graph_objects as go
 import numpy as np
 
 from core.formatting import fmt_dt_it, fmt_eur_it, fmt_num_it, fmt_pct_it, fmt_qty_it
+
+logger = logging.getLogger("portafoglio.core.services.report_builder")
 
 
 def default_report_options(settings: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -407,6 +410,7 @@ def _period_xirr_from_values_and_known_flows(hist: pd.DataFrame) -> float | None
         dates.append(hist["date_dt"].iloc[-1].date())
         return compute_xirr(flows, dates)
     except Exception:
+        logger.warning("_period_xirr_from_values_and_known_flows: calcolo XIRR periodo fallito, mostrato 'n/d'", exc_info=True)
         return None
 
 

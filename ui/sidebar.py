@@ -254,14 +254,14 @@ def render_sidebar(data: dict) -> None:
                         try:
                             candidate_today_prices[ticker] = float(pr)
                         except Exception:
-                            pass
+                            logger.warning("Prezzo aggiornato non convertibile in float, ticker ignorato: ticker=%s value=%r", ticker, pr, exc_info=True)
                     elif reference_changed and price_date:
                         # Fondi NAV su wd: scrivi sulla data effettiva del NAV, non su oggi
                         # Strumenti non-wd: comportamento invariato
                         try:
                             candidate_prices_by_date.setdefault(str(price_date)[:10], {})[ticker] = float(pr)
                         except Exception:
-                            pass
+                            logger.warning("Prezzo aggiornato (per data) non convertibile in float, ticker ignorato: ticker=%s value=%r", ticker, pr, exc_info=True)
                     if reference_changed or instrument_changed:
                         quotes_data_changed = True
                         try:
