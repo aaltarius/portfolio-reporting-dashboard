@@ -24,6 +24,7 @@ from core.services import get_valid_quote_tickers_by_category
 from core.finance import build_category_dashboard_data, build_gov_dashboard_data
 from core.finance import build_portfolio_summary_payload, get_cached_benchmark_series, calc_positions
 from core.series_utils import get_current_position_start_dates
+from core.series_resample import downsample_for_display
 from core.render_profiler import profile_step, record_render_event
 from persistence.storage import DATA_DIR, macro_cat, save_benchmark_data
 from core.benchmark_registry import resolve_instrument_benchmark
@@ -143,23 +144,6 @@ def _get_cached_benchmark_data(
     return existing
 
 
-def _downsample_plot_series(series: pd.Series, recent_days: int = 90) -> pd.Series:
-    if series is None or series.empty:
-        return series
-    clean = series.dropna().sort_index()
-    if len(clean) <= recent_days:
-        return clean
-    cutoff = clean.index.max() - pd.Timedelta(days=int(recent_days))
-    older = clean[clean.index < cutoff]
-    recent = clean[clean.index >= cutoff]
-    if older.empty:
-        return clean
-    older_weekly = older.resample("W-FRI").last().dropna()
-    combined = pd.concat([older_weekly, recent])
-    combined = combined[~combined.index.duplicated(keep="last")]
-    return combined.sort_index()
-
-
 def _get_runtime_normalized_benchmark_series(
     cache: dict[tuple[str, str], tuple[str, list[pd.Timestamp], list[float]] | None],
     data: dict[str, Any],
@@ -233,7 +217,7 @@ def _get_runtime_normalized_benchmark_series(
         _persist({"cache_key": cache_key, "value": None})
         return None
     normalized = sliced.divide(base_value).multiply(100.0)
-    chart_series = _downsample_plot_series(normalized)
+    chart_series = downsample_for_display(normalized)
     result = (benchmark_label, list(chart_series.index), list(chart_series.values))
     cache[cache_key] = result
     _persist({"cache_key": cache_key, "value": result})
