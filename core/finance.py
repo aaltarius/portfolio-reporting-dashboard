@@ -1,6 +1,7 @@
 """
 core/finance.py — Logica finanziaria centrale.
 """
+import copy
 import hashlib
 import json
 import logging
@@ -255,33 +256,18 @@ def _apply_event_to_pos(
     return cash, realized_gross_total, realized_net_total, taxes_total
 
 
-def build_portfolio_history_df(data: dict[str, Any]) -> pd.DataFrame:
-    sto = data.get("storico_prezzi", {})
-    if not sto:
-        return pd.DataFrame()
-    cache = data.get("cache_storico_portafoglio", {}) or {}
-    event_sig = hashlib.md5(json.dumps(get_registro_eventi(data), sort_keys=True, default=str).encode()).hexdigest()
-    cur_prices_sig = {s.get("ticker", ""): s.get("prezzo") for s in data.get("strumenti", [])}
-    last_upd_date = str(data.get("last_quotes_update") or "")[:10]
-    # today_str in firma: la cache è persistita su disco e deve invalidarsi ogni nuovo giorno
-    today_date = date.today()
-    today_str = today_date.strftime("%Y-%m-%d")
-    price_sig = hashlib.md5(json.dumps({"sto": sto, "cur": cur_prices_sig, "lqu": last_upd_date, "td": today_str}, sort_keys=True, default=str).encode()).hexdigest()
-    cache_sig = f"portfolio_history_v5|{event_sig}|{price_sig}"
-    if cache.get("signature") == cache_sig and cache.get("rows"):
-        try:
-            df_cached = pd.DataFrame(cache.get("rows", []))
-            if not df_cached.empty and "Data" in df_cached.columns:
-                df_cached["Data"] = pd.to_datetime(df_cached["Data"])
-                return df_cached
-        except Exception as e:
-            logger.debug("cache restore fallback: %s", e)
+def _build_portfolio_history_core(sto: dict, eventi: list) -> tuple[list[dict], dict]:
+    """Righe storiche reali (mai dipendenti da strumenti[].prezzo) + stato
+    finale (posizioni/cassa/capitale/realizzato/ultimo prezzo valido/
+    indice eventi) necessario per costruire, se serve, la riga sintetica
+    "oggi" con i prezzi correnti (Fase 2bis Parte A: la riga sintetica non
+    e' mai cache-ata da questa funzione, quindi lo stato finale va sempre
+    ricalcolato o riletto dalla cache insieme alle righe storiche)."""
     ds = sorted(sto.keys())
-    eventi = get_registro_eventi(data)
-    hp = []
-    pos = {}
+    hp: list[dict] = []
+    pos: dict[str, dict[str, float]] = {}
     cash = 0.0
-    capital_versato = 0.0  # capitale netto cumulato versato (al netto di prelievi)
+    capital_versato = 0.0
     realized_net_total = 0.0
     realized_gross_total = 0.0
     taxes_total = 0.0
@@ -291,7 +277,6 @@ def build_portfolio_history_df(data: dict[str, Any]) -> pd.DataFrame:
     for d in ds:
         while idx < len(eventi_ordinati) and str(eventi_ordinati[idx].get("data", "")) <= d:
             ev = eventi_ordinati[idx]
-            # Traccia il capitale netto versato (versamenti meno prelievi)
             _tipo = ev.get("tipo_evento")
             if _tipo == "VERSAMENTO":
                 _imp = _safe_float(ev.get("importo_netto", 0)) or _safe_float(ev.get("importo_lordo", 0))
@@ -320,9 +305,6 @@ def build_portfolio_history_df(data: dict[str, Any]) -> pd.DataFrame:
             costo_aperto += cost
             if qty > 0:
                 row[f"PL_{tk}"] = qty * prezzo - cost
-        # Valore = posizioni aperte a mercato + liquidità residua (cash)
-        # Capitale = versato netto cumulato (versamenti - prelievi)
-        # P/L totale = Valore - Capitale (include realizzato + non realizzato + cedole)
         row["Valore"] = valore_aperto + cash
         row["Costo"] = costo_aperto
         row["Capitale"] = capital_versato
@@ -332,61 +314,154 @@ def build_portfolio_history_df(data: dict[str, Any]) -> pd.DataFrame:
         row["P/L Realizzato Lordo"] = realized_gross_total
         row["Imposte"] = taxes_total
         hp.append(row)
-    # Punto sintetico "oggi" con i prezzi correnti (s["prezzo"]): solo su
-    # weekday, se lo storico non è ancora aggiornato a oggi (snapshot
-    # infragiornaliero prima che arrivi la chiusura). Nel weekend niente:
-    # un refresh sabato/domenica scrive già i prezzi nell'ultimo giorno di
-    # borsa reale (_apply_price_date_entries_to_storico in ui/sidebar.py),
-    # quindi l'ultima riga del loop sopra è già allineata — aggiungere qui
-    # un'altra riga etichettata con la data odierna duplicava lo stesso
-    # valore sotto una data di mercato chiuso, facendo sembrare sabato/
-    # domenica un giorno di trading reale.
-    is_weekday = today_date.weekday() < 5  # 0-4 = lunedì-venerdì, 5-6 = sabato-domenica
-    if ds and ds[-1] < today_str and is_weekday:
-        while idx < len(eventi_ordinati):
-            ev = eventi_ordinati[idx]
-            _tipo = ev.get("tipo_evento")
-            if _tipo == "VERSAMENTO":
-                _imp = _safe_float(ev.get("importo_netto", 0)) or _safe_float(ev.get("importo_lordo", 0))
-                capital_versato += abs(_imp)
-            elif _tipo == "PRELIEVO":
-                _imp = _safe_float(ev.get("importo_netto", 0)) or _safe_float(ev.get("importo_lordo", 0))
-                capital_versato -= abs(_imp)
-            cash, realized_gross_total, realized_net_total, taxes_total = _apply_event_to_pos(
-                ev, pos, cash, realized_gross_total, realized_net_total, taxes_total
-            )
-            idx += 1
-        cur_prices = {s["ticker"]: _safe_float(s.get("prezzo", 0)) for s in data.get("strumenti", [])}
-        valore_aperto_t = 0.0
-        costo_aperto_t = 0.0
-        row_today = {"Data": pd.to_datetime(today_str)}
-        for tk, stp in pos.items():
-            prezzo_raw = cur_prices.get(tk, 0.0)
-            if pd.notna(prezzo_raw) and prezzo_raw > 0:
-                last_valid_prices[tk] = float(prezzo_raw)
-                pr = float(prezzo_raw)
-            else:
-                pr = float(last_valid_prices.get(tk, 0.0))
-            q = _safe_float(stp.get("qty", 0))
-            c = _safe_float(stp.get("cost", 0))
-            valore_aperto_t += q * pr
-            costo_aperto_t += c
-            if q > 0:
-                row_today[f"PL_{tk}"] = q * pr - c
-        row_today["Valore"] = valore_aperto_t + cash
-        row_today["Costo"] = costo_aperto_t
-        row_today["Capitale"] = capital_versato
-        row_today["Liquidità"] = cash
-        row_today["P/L"] = row_today["Valore"] - capital_versato
-        row_today["P/L Realizzato Netto"] = realized_net_total
-        row_today["P/L Realizzato Lordo"] = realized_gross_total
-        row_today["Imposte"] = taxes_total
-        hp.append(row_today)
-    data["cache_storico_portafoglio"] = {
-        "signature": cache_sig,
-        "rows": [{k: (v.strftime("%Y-%m-%d") if isinstance(v, pd.Timestamp) else v) for k, v in r.items()} for r in hp]
+    final_state = {
+        "pos": pos,
+        "cash": cash,
+        "capital_versato": capital_versato,
+        "realized_net_total": realized_net_total,
+        "realized_gross_total": realized_gross_total,
+        "taxes_total": taxes_total,
+        "last_valid_prices": last_valid_prices,
+        "idx": idx,
     }
-    return pd.DataFrame(hp)
+    return hp, final_state
+
+
+def _build_synthetic_today_row(
+    data: dict[str, Any],
+    ds: list,
+    today_date,
+    today_str: str,
+    eventi_ordinati: list,
+    final_state: dict,
+) -> dict | None:
+    """Riga sintetica "oggi" con i prezzi correnti (Fase 2bis Parte A):
+    UNICO punto della pipeline che dipende da strumenti[].prezzo, per
+    questo non va mai cache-ata — ricalcolata fresca ad ogni chiamata,
+    economica (O(posizioni aperte), non O(giorni storico x strumenti)).
+
+    Punto sintetico "oggi" solo su weekday, se lo storico non e' ancora
+    aggiornato a oggi (snapshot infragiornaliero prima che arrivi la
+    chiusura). Nel weekend niente: un refresh sabato/domenica scrive gia'
+    i prezzi nell'ultimo giorno di borsa reale
+    (_apply_price_date_entries_to_storico in ui/sidebar.py), quindi
+    l'ultima riga storica e' gia' allineata - aggiungere qui un'altra riga
+    etichettata con la data odierna duplicava lo stesso valore sotto una
+    data di mercato chiuso, facendo sembrare sabato/domenica un giorno di
+    trading reale.
+    """
+    is_weekday = today_date.weekday() < 5  # 0-4 = lunedì-venerdì, 5-6 = sabato-domenica
+    if not (ds and ds[-1] < today_str and is_weekday):
+        return None
+    # ATTENZIONE - copia PROFONDA obbligatoria, non shallow: final_state
+    # puo' essere lo stesso oggetto salvato dentro
+    # data["cache_storico_portafoglio"]["final_state"] (riletto da cache
+    # invariata tra una chiamata e l'altra). Il while sotto muta pos[tk]
+    # IN PLACE (via _apply_event_to_pos, che fa pos[tk]["qty"] += ...,
+    # non pos[tk] = {...}) per applicare gli eventi datati dopo l'ultimo
+    # giorno di storico reale ma non oltre oggi. Senza deepcopy, una
+    # seconda chiamata con lo stesso final_state cache-ato riapplicherebbe
+    # quegli eventi una seconda volta sopra a uno stato gia' mutato dalla
+    # chiamata precedente - un doppio conteggio silenzioso. Una copia
+    # shallow (dict(...)) non basta: i dizionari interni per-ticker
+    # resterebbero comunque condivisi con l'originale.
+    pos = copy.deepcopy(final_state["pos"])
+    cash = final_state["cash"]
+    capital_versato = final_state["capital_versato"]
+    realized_net_total = final_state["realized_net_total"]
+    realized_gross_total = final_state["realized_gross_total"]
+    taxes_total = final_state["taxes_total"]
+    last_valid_prices = dict(final_state["last_valid_prices"])
+    idx = final_state["idx"]
+    while idx < len(eventi_ordinati):
+        ev = eventi_ordinati[idx]
+        _tipo = ev.get("tipo_evento")
+        if _tipo == "VERSAMENTO":
+            _imp = _safe_float(ev.get("importo_netto", 0)) or _safe_float(ev.get("importo_lordo", 0))
+            capital_versato += abs(_imp)
+        elif _tipo == "PRELIEVO":
+            _imp = _safe_float(ev.get("importo_netto", 0)) or _safe_float(ev.get("importo_lordo", 0))
+            capital_versato -= abs(_imp)
+        cash, realized_gross_total, realized_net_total, taxes_total = _apply_event_to_pos(
+            ev, pos, cash, realized_gross_total, realized_net_total, taxes_total
+        )
+        idx += 1
+    cur_prices = {s["ticker"]: _safe_float(s.get("prezzo", 0)) for s in data.get("strumenti", [])}
+    valore_aperto_t = 0.0
+    costo_aperto_t = 0.0
+    row_today = {"Data": pd.to_datetime(today_str)}
+    for tk, stp in pos.items():
+        prezzo_raw = cur_prices.get(tk, 0.0)
+        if pd.notna(prezzo_raw) and prezzo_raw > 0:
+            last_valid_prices[tk] = float(prezzo_raw)
+            pr = float(prezzo_raw)
+        else:
+            pr = float(last_valid_prices.get(tk, 0.0))
+        q = _safe_float(stp.get("qty", 0))
+        c = _safe_float(stp.get("cost", 0))
+        valore_aperto_t += q * pr
+        costo_aperto_t += c
+        if q > 0:
+            row_today[f"PL_{tk}"] = q * pr - c
+    row_today["Valore"] = valore_aperto_t + cash
+    row_today["Costo"] = costo_aperto_t
+    row_today["Capitale"] = capital_versato
+    row_today["Liquidità"] = cash
+    row_today["P/L"] = row_today["Valore"] - capital_versato
+    row_today["P/L Realizzato Netto"] = realized_net_total
+    row_today["P/L Realizzato Lordo"] = realized_gross_total
+    row_today["Imposte"] = taxes_total
+    return row_today
+
+
+def build_portfolio_history_df(data: dict[str, Any]) -> pd.DataFrame:
+    sto = data.get("storico_prezzi", {})
+    if not sto:
+        return pd.DataFrame()
+    eventi = get_registro_eventi(data)
+    eventi_ordinati = sorted(eventi, key=_event_sort_key)
+
+    event_sig = hashlib.md5(json.dumps(eventi, sort_keys=True, default=str).encode()).hexdigest()
+    # Fase 2bis Parte A: la firma della cache storica NON include piu' i
+    # prezzi correnti ne' la data odierna - dipende solo da storico_prezzi
+    # ed eventi, gli unici due input di cui le righe storiche sono
+    # davvero funzione. I prezzi correnti influenzano solo la riga
+    # sintetica "oggi" sotto, mai cache-ata.
+    hist_sig = hashlib.md5(json.dumps({"sto": sto}, sort_keys=True, default=str).encode()).hexdigest()
+    cache_sig = f"portfolio_history_v6|{event_sig}|{hist_sig}"
+
+    cache = data.get("cache_storico_portafoglio", {}) or {}
+    hp: list[dict] | None = None
+    final_state: dict | None = None
+    if cache.get("signature") == cache_sig and cache.get("rows") is not None and cache.get("final_state") is not None:
+        try:
+            cached_rows = cache.get("rows", [])
+            hp = [
+                {k: (pd.to_datetime(v) if k == "Data" else v) for k, v in r.items()}
+                for r in cached_rows
+            ]
+            final_state = cache["final_state"]
+        except Exception as e:
+            logger.debug("cache restore fallback: %s", e)
+            hp = None
+            final_state = None
+
+    if hp is None or final_state is None:
+        hp, final_state = _build_portfolio_history_core(sto, eventi)
+        data["cache_storico_portafoglio"] = {
+            "signature": cache_sig,
+            "rows": [{k: (v.strftime("%Y-%m-%d") if isinstance(v, pd.Timestamp) else v) for k, v in r.items()} for r in hp],
+            "final_state": final_state,
+        }
+
+    ds = sorted(sto.keys())
+    today_date = date.today()
+    today_str = today_date.strftime("%Y-%m-%d")
+    row_today = _build_synthetic_today_row(data, ds, today_date, today_str, eventi_ordinati, final_state)
+    result_rows = list(hp)
+    if row_today is not None:
+        result_rows.append(row_today)
+    return pd.DataFrame(result_rows)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
