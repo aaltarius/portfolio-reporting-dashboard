@@ -7,7 +7,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 
-from core.domain.risk import build_drawdown_series
+from core.domain.returns import simple_period_return, trailing_period_return
+from core.domain.risk import build_drawdown_series, rolling_sharpe, rolling_volatility_annualized
 from persistence.storage import APP_VERSION, default_settings
 from ui.charts.settings import apply_settings
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it, hex_to_rgba
@@ -268,14 +269,14 @@ def build_summary_figures(summary_payload, settings=None, include_advanced=True,
             annual = hist.copy()
             annual["year"] = annual["date_dt"].dt.year
             ann_rets = annual.groupby("year")["indice"].agg(["first", "last"]).reset_index()
-            ann_rets["port"] = ann_rets["last"] / ann_rets["first"] - 1.0
+            ann_rets["port"] = ann_rets.apply(lambda r: simple_period_return(r["first"], r["last"]), axis=1)
             fig_ann = go.Figure()
             fig_ann.add_trace(go.Bar(x=ann_rets["year"].astype(str), y=ann_rets["port"], name="Portafoglio", text=[fmt_pct_it(v, 1, signed=True) for v in ann_rets["port"]], textposition="outside", marker_color=[P["green"] if float(v) >= 0 else P["red"] for v in ann_rets["port"]], cliponaxis=False))
             if not bench.empty:
                 annual_b = bench.copy()
                 annual_b["year"] = annual_b["date_dt"].dt.year
                 ann_b = annual_b.groupby("year")["indice"].agg(["first", "last"]).reset_index()
-                ann_b["bench"] = ann_b["last"] / ann_b["first"] - 1.0
+                ann_b["bench"] = ann_b.apply(lambda r: simple_period_return(r["first"], r["last"]), axis=1)
                 fig_ann.add_trace(go.Scatter(x=ann_b["year"].astype(str), y=ann_b["bench"], mode="lines+markers", name=str(summary_payload.get("portfolio_benchmark") or "Benchmark"), line=dict(color=P["orange"], width=2), hovertemplate="Anno %{x}<br>Benchmark: %{y:.2%}<extra></extra>"))
             return _apply_summary_settings(fig_ann, "summary_annual")
 
@@ -334,7 +335,6 @@ def build_summary_figures(summary_payload, settings=None, include_advanced=True,
         figures["category_history"] = _build_or_cache("summary_category_history", _build_category_history)
 
     if include_advanced and not hist.empty and len(hist) >= 8:
-        rv_rets = hist["indice"].pct_change().fillna(0)
         half_window = max(21, rolling_window_days // 2)
         medium_window = max(42, int(round(rolling_window_days * 0.75)))
         full_window = max(63, rolling_window_days)
@@ -349,18 +349,15 @@ def build_summary_figures(summary_payload, settings=None, include_advanced=True,
             for window, label, color in windows:
                 if window < 2:
                     continue
-                rv = rv_rets.rolling(window).std() * np.sqrt(252)
+                rv = rolling_volatility_annualized(hist["indice"], window)
                 fig_rv.add_trace(go.Scatter(x=hist["date_dt"], y=rv, mode="lines", name=label, line=dict(color=color, width=2), hovertemplate="%{x|%d/%m/%Y}<br>Vol annua: %{y:.1%}<extra></extra>"))
             return _apply_summary_settings(fig_rv, "summary_rolling_vol")
 
         figures["rolling_vol"] = _build_or_cache("summary_rolling_vol", _build_rolling_vol)
 
     if include_advanced and not hist.empty and len(hist) >= 30:
-        rs_rets = hist["indice"].pct_change().fillna(0)
         w90 = min(max(30, rolling_window_days), max(2, len(hist) - 1))
-        roll_mean = rs_rets.rolling(w90).mean() * 252
-        roll_std = rs_rets.rolling(w90).std() * np.sqrt(252)
-        sharpe = (roll_mean / roll_std.replace(0, np.nan)).clip(-5, 5)
+        sharpe = rolling_sharpe(hist["indice"], w90)
 
         def _build_rolling_sharpe():
             fig_rs = go.Figure()
@@ -388,9 +385,7 @@ def build_summary_figures(summary_payload, settings=None, include_advanced=True,
             figures["pl_scatter"] = _build_or_cache("summary_pl_scatter", _build_pl_scatter)
 
     if include_advanced and not hist.empty and len(hist) >= 26:
-        rr_vals = hist["indice"].values
-        w52 = min(52, len(rr_vals) - 1)
-        rr_series = pd.Series([rr_vals[i] / rr_vals[max(0, i - w52)] - 1.0 if i >= w52 else np.nan for i in range(len(rr_vals))], index=hist.index)
+        rr_series = trailing_period_return(hist["indice"], 52)
         rr_colors = [P["green"] if v is not None and (not np.isnan(v)) and (v >= 0) else P["red"] for v in rr_series]
 
         def _build_rolling_12m():

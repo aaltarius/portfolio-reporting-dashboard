@@ -14,6 +14,7 @@ import pandas as pd
 from persistence.storage import macro_cat
 from core.benchmark_registry import resolve_instrument_benchmark as _central_resolve_instrument_benchmark
 from core.domain.positions import held_tickers
+from core.domain.returns import simple_period_return
 
 BENCHMARK_TICKER_FALLBACKS = {"BTI.MI": "EMB"}
 CUSTOM_BENCHMARK_COMPONENT_OPTIONS = {
@@ -187,9 +188,9 @@ def _series_return(df: pd.DataFrame, col: str = "indice") -> float | None:
     if df is None or df.empty or col not in df.columns or len(df) < 2:
         return None
     vals = pd.to_numeric(df[col], errors="coerce").dropna()
-    if len(vals) < 2 or float(vals.iloc[0]) == 0:
+    if len(vals) < 2:
         return None
-    return float(vals.iloc[-1] / vals.iloc[0] - 1.0)
+    return simple_period_return(vals.iloc[0], vals.iloc[-1])
 
 
 def _series_cagr(df: pd.DataFrame, col: str = "indice") -> float | None:

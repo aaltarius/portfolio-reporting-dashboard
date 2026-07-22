@@ -37,6 +37,28 @@ def build_drawdown_series(values: list[float]) -> list[float]:
     return drawdown.fillna(0).tolist()
 
 
+def rolling_volatility_annualized(index_series: pd.Series, window: int) -> pd.Series:
+    """Volatilità annualizzata rolling da una serie di indice/NAV.
+
+    window < 2: ritorna una serie vuota (nessun punto), stesso
+    comportamento del branch "if window < 2: continue" nel chiamante
+    originale — è compito del chiamante decidere se saltare la traccia.
+    """
+    if window < 2:
+        return pd.Series(dtype=float, index=index_series.index)
+    rets = index_series.pct_change().fillna(0)
+    return rets.rolling(window).std() * np.sqrt(252)
+
+
+def rolling_sharpe(index_series: pd.Series, window: int, clip: float = 5.0) -> pd.Series:
+    """Sharpe rolling (rf=0) da una serie di indice/NAV, annualizzato,
+    clippato a [-clip, +clip]."""
+    rets = index_series.pct_change().fillna(0)
+    roll_mean = rets.rolling(window).mean() * 252
+    roll_std = rets.rolling(window).std() * np.sqrt(252)
+    return (roll_mean / roll_std.replace(0, np.nan)).clip(-clip, clip)
+
+
 def build_category_drawdown_series(dfh: pd.DataFrame, category: str, category_tickers: list[str], category_df: pd.DataFrame = None, first_op_date=None) -> list[float]:
     """Calcola il drawdown per una categoria dai rendimenti percentuali."""
     if dfh is None or dfh.empty or not category_tickers:

@@ -162,6 +162,40 @@ def _build_summary_return_curve(dfh: pd.DataFrame | None) -> pd.DataFrame:
     return curve[["date_dt", "indice", "ret", "value", "capital", "external_flow"]]
 
 
+def simple_period_return(first: float, last: float) -> float | None:
+    """Rendimento semplice (last/first - 1) fra due valori di un indice/NAV.
+
+    Ritorna None se first è 0/NaN/None (divisione non definita) — stesso
+    guard già presente in core/services/benchmark.py::_series_return.
+    """
+    if first is None or last is None:
+        return None
+    try:
+        first_f = float(first)
+        last_f = float(last)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(first_f) or pd.isna(last_f) or first_f == 0:
+        return None
+    return last_f / first_f - 1.0
+
+
+def trailing_period_return(index_series: pd.Series, periods: int) -> pd.Series:
+    """Rendimento trailing su una finestra di `periods` osservazioni di
+    una serie di indice/NAV (non di rendimenti). Il punto i-esimo con
+    i < periods_effettivi resta NaN (non c'è abbastanza storia)."""
+    vals = index_series.values
+    n = len(vals)
+    if n == 0:
+        return pd.Series(dtype=float, index=index_series.index)
+    w = min(periods, max(n - 1, 0))
+    out = [
+        (vals[i] / vals[max(0, i - w)] - 1.0) if (i >= w and w > 0) else np.nan
+        for i in range(n)
+    ]
+    return pd.Series(out, index=index_series.index)
+
+
 def _period_returns_from_curve(curve: pd.DataFrame, freq: str) -> list[dict[str, Any]]:
     """Extract period returns from cumulative return curve."""
     if curve is None or curve.empty or "ret" not in curve.columns:
