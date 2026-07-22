@@ -20,6 +20,7 @@ from core.render_profiler import profile_step
 from core.analytics_payload_cache import load_entry as load_persistent_analytics_entry, store_entry as store_persistent_analytics_entry
 from core.services.accumuli import (
     build_accumuli_analysis,
+    DISTANZA_PAREGGIO_SOGLIA_PCT,
     IMPATTO_RATA_ALTO_PCT,
     IMPATTO_RATA_BASSO_PCT,
 )
@@ -631,7 +632,7 @@ def _distanza_judgment(value: Any) -> str:
         return "Non calcolabile"
     if v >= 0.08:
         return "Cuscinetto ampio"
-    if v >= 0.00:
+    if v >= DISTANZA_PAREGGIO_SOGLIA_PCT:
         return "Cuscinetto positivo"
     return "Recupero necessario"
 
