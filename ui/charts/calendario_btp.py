@@ -6,6 +6,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from core.config import COLORS
 from core.domain.calendar import TAX_RATE_GOV_PCT
 from ui.charts.runtime import finalize_chart
 from ui.charts.settings import apply_settings, get_chart_setting
@@ -60,9 +61,9 @@ def build_btp_calendar_figure(
     elapsed_text_color = "#0F8A38"
     gov_color = macro_color("GOV")
     colors = {
-        ("cedola", "incassata"): "#1E8449",
-        ("cedola", "futura"): "#FF4B4B",
-        ("scadenza", "incassata"): "#1E8449",
+        ("cedola", "incassata"): COLORS["success"],
+        ("cedola", "futura"): COLORS["danger"],
+        ("scadenza", "incassata"): COLORS["success"],
         ("scadenza", "futura"): "#F59E0B",
     }
 
@@ -345,7 +346,7 @@ def render_btp_calendar_table(
         return "".join(ch + "̶" for ch in text)
 
     st.markdown(
-        """
+        f"""
         <div style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin:6px 0 10px 0;">
           <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid #e5e7eb;border-radius:999px;background:#f8fafc;font-size:0.78rem;color:#0F8A38;">
             <span style="width:18px;height:0;border-top:3px solid #0F8A38;display:inline-block;"></span> Trascorso
@@ -354,10 +355,10 @@ def render_btp_calendar_table(
             <span style="width:18px;height:0;border-top:3px solid #F59E0B;display:inline-block;"></span> Residuo
           </span>
           <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid #e5e7eb;border-radius:999px;background:#f8fafc;font-size:0.78rem;color:#166534;">
-            <span style="width:10px;height:10px;border-radius:50%;background:#1E8449;display:inline-block;"></span> Incassata
+            <span style="width:10px;height:10px;border-radius:50%;background:{COLORS['success']};display:inline-block;"></span> Incassata
           </span>
           <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid #e5e7eb;border-radius:999px;background:#f8fafc;font-size:0.78rem;color:#b91c1c;">
-            <span style="width:10px;height:10px;border-radius:50%;background:#FF4B4B;display:inline-block;"></span> Futura
+            <span style="width:10px;height:10px;border-radius:50%;background:{COLORS['danger']};display:inline-block;"></span> Futura
           </span>
           <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid #e5e7eb;border-radius:999px;background:#f8fafc;font-size:0.78rem;color:#475569;">
             <span style="width:18px;height:0;border-top:2px dashed #64748B;display:inline-block;"></span> Oggi

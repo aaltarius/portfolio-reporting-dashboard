@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core.ai_analysis import AI_CALL_COUNT_KEY
+from core.config import COLORS
 from core.ai_analysis import (
     GEMINI_MODELS,
     build_gemini_prompt,
@@ -73,7 +74,7 @@ def _render_stress_scenarios(scenarios: list[dict]) -> None:
     render_section_title("Scenari di stress (AI)", icon="analysis")
     names = [s.get("name", "") for s in scenarios]
     impacts = [s.get("portfolio_impact_pct", 0) for s in scenarios]
-    colors = ["#FF4B4B" if v < 0 else "#1E8449" for v in impacts]
+    colors = [COLORS["danger"] if v < 0 else COLORS["success"] for v in impacts]
     fig = go.Figure(go.Bar(x=names, y=impacts, marker_color=colors))
     fig.update_layout(
         yaxis_title="Impatto stimato %",
