@@ -11,7 +11,81 @@ from html import escape
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 
+from ui.form_server.shell import _ROOT_VARS_BLOCK
+
 router = APIRouter()
+
+_SCHEDA_CSS = _ROOT_VARS_BLOCK + """
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:system-ui,-apple-system,sans-serif;background:var(--page-bg);color:var(--slate-900);padding:20px;}
+  .page{max-width:780px;margin:0 auto;}
+  /* Header */
+  .hdr{background:var(--white);border-radius:14px;padding:20px 24px 16px;margin-bottom:14px;box-shadow:0 1px 6px var(--black-a07);}
+  .hdr-name{font-size:21px;font-weight:800;color:var(--slate-900);margin-bottom:8px;line-height:1.2;}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;}
+  .chip{font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;}
+  .chip-tipo{background:var(--blue-100);color:var(--blue-700);}
+  .chip-ok{background:var(--green-100);color:var(--green-700);}
+  .chip-warn{background:var(--amber-100);color:var(--amber-700);}
+  .chip-gray{background:var(--slate-100);color:var(--slate-500);}
+  .hdr-meta{font-size:12px;color:var(--slate-400);}
+  /* Alerts */
+  .alert{padding:9px 14px;border-radius:8px;font-size:13px;margin-bottom:12px;}
+  .alert-ok{background:var(--green-50);color:var(--green-600);border:1px solid var(--green-200);}
+  .alert-err{background:var(--red-50);color:var(--red-600);border:1px solid var(--red-200);}
+  .alert-warn{background:var(--amber-50);color:var(--amber-700);border:1px solid var(--amber-200);}
+  /* Actions bar */
+  .actions{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;}
+  .btn{display:inline-block;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;cursor:pointer;border:none;white-space:nowrap;}
+  .btn-primary{background:var(--slate-900);color:var(--white);}
+  .btn-secondary{background:var(--white);color:var(--slate-600);border:1px solid var(--slate-200);}
+  /* Hero KPIs */
+  .hero{display:grid;gap:10px;margin-bottom:14px;}
+  .hero-3{grid-template-columns:repeat(3,1fr);}
+  .hero-2{grid-template-columns:repeat(2,1fr);}
+  .kpi-card{background:var(--white);border-radius:12px;padding:16px 14px;box-shadow:0 1px 6px var(--black-a07);text-align:center;}
+  .kpi-val{font-size:26px;font-weight:800;color:var(--slate-900);line-height:1;margin-bottom:5px;}
+  .kpi-lbl{font-size:10px;color:var(--slate-400);font-weight:700;text-transform:uppercase;letter-spacing:.06em;}
+  .kpi-card.pos .kpi-val{color:var(--green-600);}
+  .kpi-card.neg .kpi-val{color:var(--red-600);}
+  /* Sections */
+  .sec{background:var(--white);border-radius:12px;padding:18px 20px;margin-bottom:12px;box-shadow:0 1px 6px var(--black-a07);}
+  .sec-title{font-size:10px;font-weight:700;color:var(--slate-400);text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px;}
+  /* Data grid */
+  .dg{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px 20px;}
+  .dg-wide{grid-template-columns:repeat(auto-fill,minmax(300px,1fr));}
+  .di .lbl{font-size:11px;color:var(--slate-400);margin-bottom:3px;}
+  .di .val{font-size:14px;font-weight:600;color:var(--slate-800);}
+  .di .val.pos{color:var(--green-600);}
+  .di .val.neg{color:var(--red-600);}
+  /* Composition bars */
+  .comp-row{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+  .comp-lbl{font-size:12px;color:var(--slate-600);min-width:120px;}
+  .comp-bar-wrap{flex:1;background:var(--slate-100);border-radius:4px;height:7px;}
+  .comp-bar{height:7px;border-radius:4px;}
+  .bar-az{background:var(--blue-500);}
+  .bar-ob{background:var(--emerald-500);}
+  .bar-liq{background:var(--slate-400);}
+  .comp-val{font-size:12px;font-weight:700;color:var(--slate-700);min-width:44px;text-align:right;}
+  /* Stars */
+  .stars{color:var(--amber-500);font-size:17px;letter-spacing:1px;}
+  /* Source badge */
+  .sbadge{display:inline-block;font-size:9px;padding:1px 5px;border-radius:8px;margin-left:5px;vertical-align:middle;}
+  .sb-auto{background:var(--blue-100);color:var(--blue-700);}
+  .sb-pdf{background:var(--violet-100);color:var(--violet-600);}
+  .sb-manuale{background:var(--amber-100);color:var(--amber-700);}
+  /* Completeness score */
+  .score-row{display:flex;align-items:center;gap:10px;margin-top:10px;}
+  .score-lbl{font-size:11px;color:var(--slate-400);font-weight:600;white-space:nowrap;}
+  .score-bar-wrap{flex:1;background:var(--slate-200);border-radius:4px;height:6px;max-width:160px;}
+  .score-bar{height:6px;border-radius:4px;}
+  .score-text{font-size:11px;font-weight:700;}
+  .sc-green{color:var(--green-700);} .sc-bar-green{background:var(--green-500);}
+  .sc-yellow{color:var(--amber-700);} .sc-bar-yellow{background:var(--amber-500);}
+  .sc-orange{color:var(--orange-700);} .sc-bar-orange{background:var(--orange-500);}
+  .sc-red{color:var(--red-600);} .sc-bar-red{background:var(--red-500);}
+  /* Footer */
+  .foot{text-align:center;margin-top:20px;padding-bottom:10px;}"""
 
 
 def _render_scheda_strumento(strumento: dict) -> str:
@@ -42,78 +116,6 @@ def _render_scheda_strumento(strumento: dict) -> str:
     src_labels = {"auto": "Automatico", "pdf": "PDF Fineco", "manuale": "Manuale"}
     src_vals = set(v for v in (src or {}).values() if v)
     src_label = " · ".join(src_labels.get(v, v) for v in src_vals) if src_vals else ""
-
-    base_css = """
-  *{box-sizing:border-box;margin:0;padding:0;}
-  body{font-family:system-ui,-apple-system,sans-serif;background:#f0f4f8;color:#0f172a;padding:20px;}
-  .page{max-width:780px;margin:0 auto;}
-  /* Header */
-  .hdr{background:#fff;border-radius:14px;padding:20px 24px 16px;margin-bottom:14px;box-shadow:0 1px 6px rgba(0,0,0,.07);}
-  .hdr-name{font-size:21px;font-weight:800;color:#0f172a;margin-bottom:8px;line-height:1.2;}
-  .chips{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;}
-  .chip{font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;}
-  .chip-tipo{background:#dbeafe;color:#1d4ed8;}
-  .chip-ok{background:#dcfce7;color:#15803d;}
-  .chip-warn{background:#fef3c7;color:#b45309;}
-  .chip-gray{background:#f1f5f9;color:#64748b;}
-  .hdr-meta{font-size:12px;color:#94a3b8;}
-  /* Alerts */
-  .alert{padding:9px 14px;border-radius:8px;font-size:13px;margin-bottom:12px;}
-  .alert-ok{background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;}
-  .alert-err{background:#fef2f2;color:#dc2626;border:1px solid #fecaca;}
-  .alert-warn{background:#fffbeb;color:#b45309;border:1px solid #fde68a;}
-  /* Actions bar */
-  .actions{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;}
-  .btn{display:inline-block;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;cursor:pointer;border:none;white-space:nowrap;}
-  .btn-primary{background:#0f172a;color:#fff;}
-  .btn-secondary{background:#fff;color:#475569;border:1px solid #e2e8f0;}
-  /* Hero KPIs */
-  .hero{display:grid;gap:10px;margin-bottom:14px;}
-  .hero-3{grid-template-columns:repeat(3,1fr);}
-  .hero-2{grid-template-columns:repeat(2,1fr);}
-  .kpi-card{background:#fff;border-radius:12px;padding:16px 14px;box-shadow:0 1px 6px rgba(0,0,0,.07);text-align:center;}
-  .kpi-val{font-size:26px;font-weight:800;color:#0f172a;line-height:1;margin-bottom:5px;}
-  .kpi-lbl{font-size:10px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.06em;}
-  .kpi-card.pos .kpi-val{color:#16a34a;}
-  .kpi-card.neg .kpi-val{color:#dc2626;}
-  /* Sections */
-  .sec{background:#fff;border-radius:12px;padding:18px 20px;margin-bottom:12px;box-shadow:0 1px 6px rgba(0,0,0,.07);}
-  .sec-title{font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px;}
-  /* Data grid */
-  .dg{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px 20px;}
-  .dg-wide{grid-template-columns:repeat(auto-fill,minmax(300px,1fr));}
-  .di .lbl{font-size:11px;color:#94a3b8;margin-bottom:3px;}
-  .di .val{font-size:14px;font-weight:600;color:#1e293b;}
-  .di .val.pos{color:#16a34a;}
-  .di .val.neg{color:#dc2626;}
-  /* Composition bars */
-  .comp-row{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
-  .comp-lbl{font-size:12px;color:#475569;min-width:120px;}
-  .comp-bar-wrap{flex:1;background:#f1f5f9;border-radius:4px;height:7px;}
-  .comp-bar{height:7px;border-radius:4px;}
-  .bar-az{background:#3b82f6;}
-  .bar-ob{background:#10b981;}
-  .bar-liq{background:#94a3b8;}
-  .comp-val{font-size:12px;font-weight:700;color:#334155;min-width:44px;text-align:right;}
-  /* Stars */
-  .stars{color:#f59e0b;font-size:17px;letter-spacing:1px;}
-  /* Source badge */
-  .sbadge{display:inline-block;font-size:9px;padding:1px 5px;border-radius:8px;margin-left:5px;vertical-align:middle;}
-  .sb-auto{background:#dbeafe;color:#1d4ed8;}
-  .sb-pdf{background:#ede9fe;color:#7c3aed;}
-  .sb-manuale{background:#fef3c7;color:#b45309;}
-  /* Completeness score */
-  .score-row{display:flex;align-items:center;gap:10px;margin-top:10px;}
-  .score-lbl{font-size:11px;color:#94a3b8;font-weight:600;white-space:nowrap;}
-  .score-bar-wrap{flex:1;background:#e2e8f0;border-radius:4px;height:6px;max-width:160px;}
-  .score-bar{height:6px;border-radius:4px;}
-  .score-text{font-size:11px;font-weight:700;}
-  .sc-green{color:#15803d;} .sc-bar-green{background:#22c55e;}
-  .sc-yellow{color:#b45309;} .sc-bar-yellow{background:#f59e0b;}
-  .sc-orange{color:#c2410c;} .sc-bar-orange{background:#f97316;}
-  .sc-red{color:#dc2626;} .sc-bar-red{background:#ef4444;}
-  /* Footer */
-  .foot{text-align:center;margin-top:20px;padding-bottom:10px;}"""
 
     # ── Punteggio completezza ─────────────────────────────────────────────────
     _CORE_FIELDS: dict[str, list[str]] = {
@@ -151,9 +153,9 @@ def _render_scheda_strumento(strumento: dict) -> str:
     def _html_open() -> str:
         return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Scheda {ticker}</title>
-<style>{base_css}</style></head><body><div class="page">
+<style>{_SCHEDA_CSS}</style></head><body><div class="page">
 <div class="hdr">
-  <div style="font-size:12px;font-weight:700;color:#94a3b8;letter-spacing:.06em;margin-bottom:4px;">{ticker}</div>
+  <div style="font-size:12px;font-weight:700;color:var(--slate-400);letter-spacing:.06em;margin-bottom:4px;">{ticker}</div>
   <div class="hdr-name">{nome}</div>
   <div class="chips">
     <span class="chip chip-tipo">{tipo}</span>
@@ -389,7 +391,7 @@ def _render_scheda_strumento(strumento: dict) -> str:
             )
 
         if not any(tag in body for tag in ("kpi-card", "sec")):
-            body = f'<div class="sec"><p style="color:#94a3b8;font-size:13px;">Nessun dato disponibile — vai in <strong><a href="/strumenti?tab=arricchimento&amp;ticker={ticker}">Strumenti &#8594; Arricchimento</a></strong> per caricarli (automatico, da PDF o a mano).</p></div>'
+            body = f'<div class="sec"><p style="color:var(--slate-400);font-size:13px;">Nessun dato disponibile — vai in <strong><a href="/strumenti?tab=arricchimento&amp;ticker={ticker}">Strumenti &#8594; Arricchimento</a></strong> per caricarli (automatico, da PDF o a mano).</p></div>'
 
         return _html_open() + body + '<div class="foot"></div>' + _html_close()
 
