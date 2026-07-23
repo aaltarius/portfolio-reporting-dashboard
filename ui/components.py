@@ -164,6 +164,60 @@ def render_section_title(
     vertical_gap(gap_after)
 
 
+def render_frozen_analysis_status_text(slot, entry: dict[str, Any] | None, stale: bool, *, entity_label: str) -> None:
+    """Testo di stato (info/warning/caption) per un'analisi congelata (Benchmark, Accumuli, ...).
+
+    Va richiamato di nuovo con l'entry aggiornata subito dopo un eventuale
+    refresh, nello stesso rerun: altrimenti il messaggio mostra ancora la data
+    di prima del click anche quando l'analisi è già stata rigenerata, dando
+    l'impressione che il primo click non abbia fatto nulla.
+    """
+    with slot.container():
+        if entry is None:
+            st.info(
+                f"Nessuna analisi {entity_label} disponibile nella cache persistente. "
+                "La prima analisi va generata una sola volta; poi verrà recuperata anche dopo il riavvio dell'app."
+            )
+            return
+        created_at = str(entry.get("created_at") or "n/d")
+        if stale:
+            st.warning(
+                f"Sto mostrando l'ultima analisi {entity_label} disponibile in cache, generata il {created_at}. "
+                "I dati del portafoglio sono cambiati: rigenera solo se vuoi aggiornare questa lettura."
+            )
+            return
+        source = str(entry.get("cache_source") or "cache")
+        st.caption(f"Analisi {entity_label} in cache — generata il {created_at} — origine: {source}. Non viene rigenerata automaticamente nei rerun.")
+
+
+def render_frozen_analysis_freeze_header(
+    entry: dict[str, Any] | None,
+    stale: bool,
+    signature: str,
+    *,
+    title: str,
+    comment: str | None,
+    entity_label: str,
+    key_prefix: str,
+):
+    """Header operativo con bottone Analizza/Aggiorna/Rigenera per un'analisi congelata.
+
+    Ritorna (refresh_requested, status_slot). Il chiamante deve richiamare
+    render_frozen_analysis_status_text(status_slot, ...) con l'entry aggiornata
+    dopo un eventuale refresh, per evitare che il messaggio resti di un giro
+    indietro rispetto ai dati che descrive.
+    """
+    render_section_title(title, comment=comment, icon="analysis")
+    status_slot = st.empty()
+    render_frozen_analysis_status_text(status_slot, entry, stale, entity_label=entity_label)
+
+    if entry is None:
+        return st.button(f"Analizza {entity_label}", type="primary", key=f"{key_prefix}_analyze_{signature}"), status_slot
+    if stale:
+        return st.button(f"Aggiorna analisi {entity_label}", type="primary", key=f"{key_prefix}_refresh_{signature}"), status_slot
+    return st.button(f"Rigenera analisi {entity_label}", type="secondary", key=f"{key_prefix}_regen_{signature}"), status_slot
+
+
 def kpi_card(
     title: str,
     value: str,

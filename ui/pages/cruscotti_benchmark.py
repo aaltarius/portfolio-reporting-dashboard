@@ -5,7 +5,6 @@ cache o impostazioni.
 """
 from __future__ import annotations
 
-from datetime import datetime
 import hashlib
 import json
 from types import SimpleNamespace
@@ -15,72 +14,19 @@ import pandas as pd
 import streamlit as st
 
 from core.cache_signatures import build_portfolio_data_signature, charts_settings_signature, resolve_analysis_render_sig, theme_signature
+from core.frozen_analysis_cache import cached_render_value, get_frozen_analysis_cache, small_signature_part, store_frozen_analysis_cache
 from core.render_profiler import profile_step
-from core.analytics_payload_cache import load_entry as load_persistent_analytics_entry, store_entry as store_persistent_analytics_entry
 from core.services.benchmark import build_benchmark_transparency_payload, benchmark_explanation
 from ui.charts.benchmark import build_instrument_benchmark_scatter, build_portfolio_benchmark_comparison_chart, build_normalized_performance_chart, get_all_historical_tickers, resolve_period_start_date
-from ui.components import kpi_card, legend_block, render_section_title, render_styled_table, vertical_gap
+from ui.components import kpi_card, legend_block, render_frozen_analysis_freeze_header, render_frozen_analysis_status_text, render_section_title, render_styled_table, vertical_gap
 from ui.formatting import fmt_date_only_it, fmt_eur_it, fmt_num_it, fmt_pct_it
 from ui.theme import P, get_theme_context, macro_color
 
 
 BENCHMARK_PAYLOAD_CACHE_KEY = "_cruscotti_benchmark_payload_cache_v1"
 BENCHMARK_RENDER_CACHE_KEY = "_cruscotti_benchmark_render_cache_v2"
+_BENCHMARK_SIGNATURE_DICT_KEYS = frozenset({"benchmarking", "portfolio_benchmark_default", "settings_version"})
 
-
-def _prune_cache_items(items: dict[str, Any], max_items: int = 16) -> None:
-    """Mantiene contenuta la cache sessione delle figure benchmark.
-
-    max_items=16 (più basso del limite gemello in cruscotti_accumuli.py,
-    24): qui le chiavi non sono per-ticker, solo 2 figure a nome fisso
-    (confronto_benchmark, scatter_coerenza) per render_sig — il numero di
-    voci distinte non scala con la dimensione del portafoglio, quindi
-    serve meno spazio.
-    """
-    if len(items) <= max_items:
-        return
-    for old_key in list(items.keys())[: max(0, len(items) - max_items)]:
-        items.pop(old_key, None)
-
-
-def _cached_render_value(key: str, builder, *, label: str, count: int | None = None):
-    """Cache sessione per figure Benchmark già costruite da payload congelato."""
-    cache = st.session_state.setdefault(BENCHMARK_RENDER_CACHE_KEY, {})
-    if not isinstance(cache, dict):
-        cache = {}
-        st.session_state[BENCHMARK_RENDER_CACHE_KEY] = cache
-    if key in cache:
-        with profile_step("Cruscotti/Benchmark", f"cache hit figura {label}", count=count):
-            return cache[key]
-    with profile_step("Cruscotti/Benchmark", f"build figura {label}", count=count):
-        value = builder()
-    cache[key] = value
-    _prune_cache_items(cache)
-    return value
-
-
-def _small_signature_part(value: Any) -> Any:
-    """Riduce oggetti voluminosi a una firma leggera e serializzabile."""
-    if isinstance(value, pd.DataFrame):
-        if value.empty:
-            return {"rows": 0, "cols": list(value.columns)}
-        return {
-            "rows": int(len(value)),
-            "cols": list(value.columns),
-            "first_index": str(value.index[0]),
-            "last_index": str(value.index[-1]),
-        }
-    if isinstance(value, dict):
-        return {str(k): _small_signature_part(v) for k, v in value.items() if k in {
-            "benchmarking",
-            "portfolio_benchmark_default",
-            "settings_version",
-        }}
-    if isinstance(value, (list, tuple)):
-        if not value:
-            return {"len": 0}
-        return {"len": len(value), "first": str(value[0])[:80], "last": str(value[-1])[:80]}
-    return value
 
 def _safe_count(value: Any) -> int:
     """Conta liste, tuple, dict, DataFrame e Series senza valutarli in booleano."""
@@ -110,118 +56,20 @@ def _benchmark_payload_signature(ctx: SimpleNamespace, settings: dict[str, Any],
             app_version=str(getattr(ctx, "app_version", "n/d")),
             schema_version=str(getattr(ctx, "schema_version", "n/d")),
         ),
-        "benchmark_settings": _small_signature_part(settings),
-        "da": _small_signature_part(getattr(ctx, "da", pd.DataFrame())),
+        "benchmark_settings": small_signature_part(settings, _BENCHMARK_SIGNATURE_DICT_KEYS),
+        "da": small_signature_part(getattr(ctx, "da", pd.DataFrame()), _BENCHMARK_SIGNATURE_DICT_KEYS),
         "summary": {
             "twr": summary_payload.get("twr"),
             "cagr": summary_payload.get("cagr"),
             "benchmark_return": summary_payload.get("benchmark_return"),
             "tracking_error": summary_payload.get("tracking_error"),
             "information_ratio": summary_payload.get("information_ratio"),
-            "summary_history": _small_signature_part(history),
-            "benchmark_history": _small_signature_part(bench_history),
+            "summary_history": small_signature_part(history, _BENCHMARK_SIGNATURE_DICT_KEYS),
+            "benchmark_history": small_signature_part(bench_history, _BENCHMARK_SIGNATURE_DICT_KEYS),
         },
     }
     raw = json.dumps(material, sort_keys=True, default=str, ensure_ascii=False)
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
-
-
-def _get_benchmark_payload_cache(signature: str) -> tuple[dict[str, Any] | None, bool]:
-    """Restituisce (entry, stale) usando prima sessione e poi cache persistente."""
-    cache = st.session_state.setdefault(BENCHMARK_PAYLOAD_CACHE_KEY, {"items": {}, "latest_key": ""})
-    if not isinstance(cache, dict):
-        cache = {"items": {}, "latest_key": ""}
-        st.session_state[BENCHMARK_PAYLOAD_CACHE_KEY] = cache
-    items = cache.setdefault("items", {})
-    if not isinstance(items, dict):
-        items = {}
-        cache["items"] = items
-    if signature in items and isinstance(items[signature], dict):
-        items[signature].setdefault("cache_source", "session")
-        return items[signature], False
-
-    disk_entry, disk_stale, disk_source = load_persistent_analytics_entry("benchmark", signature)
-    if isinstance(disk_entry, dict):
-        disk_signature = str(disk_entry.get("signature") or signature)
-        disk_entry.setdefault("cache_source", disk_source)
-        items[disk_signature] = disk_entry
-        cache["latest_key"] = disk_signature
-        return disk_entry, disk_stale
-
-    latest_key = str(cache.get("latest_key") or "")
-    latest = items.get(latest_key)
-    if isinstance(latest, dict):
-        latest.setdefault("cache_source", "session_latest")
-        return latest, True
-    return None, False
-
-
-def _store_benchmark_payload_cache(signature: str, payload: dict[str, Any]) -> dict[str, Any]:
-    cache = st.session_state.setdefault(BENCHMARK_PAYLOAD_CACHE_KEY, {"items": {}, "latest_key": ""})
-    items = cache.setdefault("items", {})
-    entry = {
-        "signature": signature,
-        "created_at": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-        "payload": payload,
-        "cache_source": "session+disk",
-    }
-    items[signature] = entry
-    cache["latest_key"] = signature
-    store_persistent_analytics_entry("benchmark", signature, entry, max_entries=6)
-    # Mantiene solo poche analisi in memoria sessione per evitare crescita inutile.
-    if len(items) > 4:
-        for old_key in list(items.keys())[:-4]:
-            items.pop(old_key, None)
-    return entry
-
-
-def _render_benchmark_status_text(slot, entry: dict[str, Any] | None, stale: bool) -> None:
-    """Testo di stato (info/warning/caption) nel suo slot dedicato.
-
-    Va richiamato di nuovo con l'entry aggiornata subito dopo un eventuale
-    refresh, nello stesso rerun: altrimenti il messaggio mostra ancora la data
-    di prima del click anche quando l'analisi è già stata rigenerata, dando
-    l'impressione che il primo click non abbia fatto nulla.
-    """
-    with slot.container():
-        if entry is None:
-            st.info(
-                "Nessuna analisi benchmark disponibile nella cache persistente. "
-                "La prima analisi va generata una sola volta; poi verrà recuperata anche dopo il riavvio dell'app."
-            )
-            return
-        created_at = str(entry.get("created_at") or "n/d")
-        if stale:
-            st.warning(
-                f"Sto mostrando l'ultima analisi benchmark disponibile in cache, generata il {created_at}. "
-                "I dati del portafoglio sono cambiati: rigenera solo se vuoi aggiornare questa lettura."
-            )
-            return
-        source = str(entry.get("cache_source") or "cache")
-        st.caption(f"Analisi benchmark in cache — generata il {created_at} — origine: {source}. Non viene rigenerata automaticamente nei rerun.")
-
-
-def _render_benchmark_freeze_header(entry: dict[str, Any] | None, stale: bool, signature: str):
-    """Header operativo: non rigenera il benchmark se l'utente non lo chiede.
-
-    Ritorna (refresh_requested, status_slot). Il chiamante deve richiamare
-    _render_benchmark_status_text(status_slot, ...) con l'entry aggiornata dopo
-    un eventuale refresh, per evitare che il messaggio resti di un giro
-    indietro rispetto ai dati che descrive.
-    """
-    render_section_title(
-        "Benchmark",
-        comment="Analisi congelata: i calcoli benchmark vengono rigenerati solo su richiesta, per non appesantire i rerun dei Cruscotti.",
-        icon="analysis",
-    )
-    status_slot = st.empty()
-    _render_benchmark_status_text(status_slot, entry, stale)
-
-    if entry is None:
-        return st.button("Analizza benchmark", type="primary", key=f"benchmark_analyze_{signature}"), status_slot
-    if stale:
-        return st.button("Aggiorna analisi benchmark", type="primary", key=f"benchmark_refresh_{signature}"), status_slot
-    return st.button("Rigenera analisi benchmark", type="secondary", key=f"benchmark_regen_{signature}"), status_slot
 
 
 def _safe_float(value: Any, default: float | None = None) -> float | None:
@@ -649,8 +497,14 @@ def render_benchmark(ctx: SimpleNamespace, summary_bundle: Any | None = None) ->
 
     with profile_step("Cruscotti/Benchmark", "signature/cache/header"):
         signature = _benchmark_payload_signature(ctx, settings, summary_payload)
-        entry, stale = _get_benchmark_payload_cache(signature)
-        refresh_requested, status_slot = _render_benchmark_freeze_header(entry, stale, signature)
+        entry, stale = get_frozen_analysis_cache(BENCHMARK_PAYLOAD_CACHE_KEY, "benchmark", signature)
+        refresh_requested, status_slot = render_frozen_analysis_freeze_header(
+            entry, stale, signature,
+            title="Benchmark",
+            comment="Analisi congelata: i calcoli benchmark vengono rigenerati solo su richiesta, per non appesantire i rerun dei Cruscotti.",
+            entity_label="benchmark",
+            key_prefix="benchmark",
+        )
 
     if refresh_requested:
         with st.status("Analisi benchmark in corso…", expanded=True) as status:
@@ -662,10 +516,10 @@ def render_benchmark(ctx: SimpleNamespace, summary_bundle: Any | None = None) ->
                     da_frame=getattr(ctx, "da", pd.DataFrame()),
                     summary_payload=summary_payload,
                 )
-            entry = _store_benchmark_payload_cache(signature, payload)
+            entry = store_frozen_analysis_cache(BENCHMARK_PAYLOAD_CACHE_KEY, "benchmark", signature, payload)
             stale = False
             status.update(label="Analisi benchmark aggiornata", state="complete", expanded=False)
-        _render_benchmark_status_text(status_slot, entry, stale)
+        render_frozen_analysis_status_text(status_slot, entry, stale, entity_label="benchmark")
     elif entry is None:
         legend_block(
             "Questa sezione è intenzionalmente congelata: Benchmark è una lettura pesante e non viene ricalcolata durante i normali rerun di Cruscotti. "
@@ -709,10 +563,13 @@ def render_benchmark(ctx: SimpleNamespace, summary_bundle: Any | None = None) ->
         left, right = st.columns([1.65, 1.0], gap="large")
     with left:
         history_count = _safe_count(payload.get("history"))
-        comparison_fig = _cached_render_value(
+        comparison_fig = cached_render_value(
+            BENCHMARK_RENDER_CACHE_KEY,
             f"{render_sig}:confronto_benchmark",
             lambda: build_portfolio_benchmark_comparison_chart(payload.get("history")),
+            page_label="Cruscotti/Benchmark",
             label="confronto benchmark",
+            max_items=16,
             count=history_count,
         )
         with profile_step("Cruscotti/Benchmark", "render confronto benchmark", count=history_count):
@@ -739,10 +596,13 @@ def render_benchmark(ctx: SimpleNamespace, summary_bundle: Any | None = None) ->
             icon="analysis",
         )
         matrix_count = len(matrix) if isinstance(matrix, pd.DataFrame) else None
-        scatter_fig = _cached_render_value(
+        scatter_fig = cached_render_value(
+            BENCHMARK_RENDER_CACHE_KEY,
             f"{render_sig}:scatter_coerenza",
             lambda: build_instrument_benchmark_scatter(matrix),
+            page_label="Cruscotti/Benchmark",
             label="scatter coerenza",
+            max_items=16,
             count=matrix_count,
         )
         with profile_step("Cruscotti/Benchmark", "render scatter coerenza", count=matrix_count):

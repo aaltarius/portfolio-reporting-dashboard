@@ -5,7 +5,6 @@ Consuma il tema centralizzato e delega i calcoli a core.services.accumuli.
 """
 from __future__ import annotations
 
-from datetime import datetime
 import hashlib
 import json
 from types import SimpleNamespace
@@ -16,8 +15,8 @@ import streamlit as st
 
 from core.cache_signatures import build_portfolio_data_signature, charts_settings_signature, resolve_analysis_render_sig, theme_signature
 from core.constants import SOGLIA_DRAWDOWN_ALERT
+from core.frozen_analysis_cache import cached_render_value, get_frozen_analysis_cache, small_signature_part, store_frozen_analysis_cache
 from core.render_profiler import profile_step
-from core.analytics_payload_cache import load_entry as load_persistent_analytics_entry, store_entry as store_persistent_analytics_entry
 from core.services.accumuli import (
     build_accumuli_analysis,
     DISTANZA_PAREGGIO_SOGLIA_PCT,
@@ -29,29 +28,16 @@ from ui.charts.accumuli import (
     build_accumulo_price_pmc_chart,
     build_accumulo_value_chart,
 )
-from ui.components import kpi_card, legend_block, render_section_title, render_styled_table, vertical_gap
+from ui.components import kpi_card, legend_block, render_frozen_analysis_freeze_header, render_frozen_analysis_status_text, render_section_title, render_styled_table, vertical_gap
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it, fmt_qty_it
 from ui.theme import P, get_theme_context, macro_color
+from persistence.storage import _safe_float
 
 
 ACCUMULI_ANALYSIS_CACHE_KEY = "_cruscotti_accumuli_analysis_cache_v2"
 ACCUMULI_RENDER_CACHE_KEY = "_cruscotti_accumuli_render_cache_v4"
 ACCUMULI_PAYLOAD_TYPE = "accumuli_v2"
-
-
-def _prune_cache_items(items: dict[str, Any], max_items: int = 24) -> None:
-    """Mantiene contenuta la cache sessione degli oggetti UI già costruiti.
-
-    max_items=24 (più alto del limite gemello in cruscotti_benchmark.py,
-    16): qui le chiavi sono per-ticker (price_pmc/capitale_vs_valore per
-    ogni strumento PAC aperto nel dettaglio, vedi _render_detail), quindi
-    il numero di voci distinte scala con quanti strumenti l'utente ha
-    visto nella sessione — non è un limite arbitrario diverso dal gemello.
-    """
-    if len(items) <= max_items:
-        return
-    for old_key in list(items.keys())[: max(0, len(items) - max_items)]:
-        items.pop(old_key, None)
+_ACCUMULI_SIGNATURE_DICT_KEYS = frozenset({"strumenti", "operazioni", "settings", "schema_version"})
 
 
 def _frame_token(df: Any, cols: list[str] | None = None) -> str:
@@ -75,53 +61,6 @@ def _frame_token(df: Any, cols: list[str] | None = None) -> str:
         return f"df:{len(df)}:{first_idx}:{last_idx}:{','.join(map(str, df.columns))}"
 
 
-def _cached_render_value(key: str, builder, *, label: str, count: int | None = None):
-    """Cache sessione per figure UI Accumuli già costruite.
-
-    L'analisi PAC è già congelata; il log v12 ha mostrato che il costo residuo
-    era la ricostruzione ripetuta delle figure dal payload già disponibile.
-    Questa cache non modifica dati o navigazione: evita solo rebuild UI identici
-    nel rerun caldo.
-    """
-    cache = st.session_state.setdefault(ACCUMULI_RENDER_CACHE_KEY, {})
-    if not isinstance(cache, dict):
-        cache = {}
-        st.session_state[ACCUMULI_RENDER_CACHE_KEY] = cache
-    if key in cache:
-        with profile_step("Cruscotti/Accumuli", f"cache hit figura {label}", count=count):
-            return cache[key]
-    with profile_step("Cruscotti/Accumuli", f"build figura {label}", count=count):
-        value = builder()
-    cache[key] = value
-    _prune_cache_items(cache)
-    return value
-
-
-def _small_signature_part(value: Any) -> Any:
-    """Riduce oggetti voluminosi a una firma leggera per la cache UI Accumuli."""
-    if isinstance(value, pd.DataFrame):
-        if value.empty:
-            return {"rows": 0, "cols": list(value.columns)}
-        return {
-            "rows": int(len(value)),
-            "cols": list(value.columns),
-            "first_index": str(value.index[0]),
-            "last_index": str(value.index[-1]),
-        }
-    if isinstance(value, dict):
-        return {str(k): _small_signature_part(v) for k, v in value.items() if k in {
-            "strumenti",
-            "operazioni",
-            "settings",
-            "schema_version",
-        }}
-    if isinstance(value, (list, tuple)):
-        if not value:
-            return {"len": 0}
-        return {"len": len(value), "first": str(value[0])[:80], "last": str(value[-1])[:80]}
-    return value
-
-
 def _accumuli_analysis_signature(ctx: SimpleNamespace) -> str:
     """Firma logica dell'analisi accumuli, usata solo per freschezza cache sessione."""
     material = {
@@ -130,121 +69,10 @@ def _accumuli_analysis_signature(ctx: SimpleNamespace) -> str:
             app_version=str(getattr(ctx, "app_version", "n/d")),
             schema_version=str(getattr(ctx, "schema_version", "n/d")),
         ),
-        "da": _small_signature_part(getattr(ctx, "da", pd.DataFrame())),
+        "da": small_signature_part(getattr(ctx, "da", pd.DataFrame()), _ACCUMULI_SIGNATURE_DICT_KEYS),
     }
     raw = json.dumps(material, sort_keys=True, default=str, ensure_ascii=False)
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
-
-
-def _get_accumuli_analysis_cache(signature: str) -> tuple[dict[str, Any] | None, bool]:
-    """Restituisce (entry, stale) usando prima sessione e poi cache persistente."""
-    cache = st.session_state.setdefault(ACCUMULI_ANALYSIS_CACHE_KEY, {"items": {}, "latest_key": ""})
-    if not isinstance(cache, dict):
-        cache = {"items": {}, "latest_key": ""}
-        st.session_state[ACCUMULI_ANALYSIS_CACHE_KEY] = cache
-    items = cache.setdefault("items", {})
-    if not isinstance(items, dict):
-        items = {}
-        cache["items"] = items
-    if signature in items and isinstance(items[signature], dict):
-        items[signature].setdefault("cache_source", "session")
-        return items[signature], False
-
-    disk_entry, disk_stale, disk_source = load_persistent_analytics_entry(ACCUMULI_PAYLOAD_TYPE, signature)
-    if isinstance(disk_entry, dict):
-        disk_signature = str(disk_entry.get("signature") or signature)
-        disk_entry.setdefault("cache_source", disk_source)
-        items[disk_signature] = disk_entry
-        cache["latest_key"] = disk_signature
-        return disk_entry, disk_stale
-
-    latest_key = str(cache.get("latest_key") or "")
-    latest = items.get(latest_key)
-    if isinstance(latest, dict):
-        latest.setdefault("cache_source", "session_latest")
-        return latest, True
-    return None, False
-
-
-def _store_accumuli_analysis_cache(signature: str, result: Any) -> dict[str, Any]:
-    cache = st.session_state.setdefault(ACCUMULI_ANALYSIS_CACHE_KEY, {"items": {}, "latest_key": ""})
-    items = cache.setdefault("items", {})
-    entry = {
-        "signature": signature,
-        "created_at": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-        "result": result,
-        "cache_source": "session+disk",
-    }
-    items[signature] = entry
-    cache["latest_key"] = signature
-    store_persistent_analytics_entry(ACCUMULI_PAYLOAD_TYPE, signature, entry, max_entries=6)
-    if len(items) > 4:
-        for old_key in list(items.keys())[:-4]:
-            items.pop(old_key, None)
-    return entry
-
-
-def _render_accumuli_status_text(slot, entry: dict[str, Any] | None, stale: bool) -> None:
-    """Testo di stato (info/warning/caption) nel suo slot dedicato.
-
-    Va richiamato di nuovo con l'entry aggiornata subito dopo un eventuale
-    refresh, nello stesso rerun: altrimenti il messaggio mostra ancora la data
-    di prima del click anche quando l'analisi è già stata rigenerata, dando
-    l'impressione che il primo click non abbia fatto nulla.
-    """
-    with slot.container():
-        if entry is None:
-            st.info(
-                "Nessuna analisi accumuli disponibile nella cache persistente. "
-                "La prima analisi va generata una sola volta; poi verrà recuperata anche dopo il riavvio dell'app."
-            )
-            return
-        created_at = str(entry.get("created_at") or "n/d")
-        if stale:
-            st.warning(
-                f"Sto mostrando l'ultima analisi accumuli disponibile in cache, generata il {created_at}. "
-                "I dati del portafoglio sono cambiati: rigenera solo se vuoi aggiornare questa lettura."
-            )
-            return
-        source = str(entry.get("cache_source") or "cache")
-        st.caption(f"Analisi accumuli in cache — generata il {created_at} — origine: {source}. Non viene rigenerata automaticamente nei rerun.")
-
-
-def _render_accumuli_freeze_header(entry: dict[str, Any] | None, stale: bool, signature: str, show_explanations: bool = True):
-    """Header operativo: non rigenera Accumuli se l'utente non lo chiede.
-
-    Ritorna (refresh_requested, status_slot). Il chiamante deve richiamare
-    _render_accumuli_status_text(status_slot, ...) con l'entry aggiornata dopo
-    un eventuale refresh, per evitare che il messaggio resti di un giro
-    indietro rispetto ai dati che descrive.
-    """
-    render_section_title(
-        "Accumuli e PAC",
-        comment=(
-            "Analisi congelata: metriche, grafici PAC e dettaglio accumuli vengono rigenerati solo su richiesta, "
-            "così i Cruscotti restano leggeri nei rerun ordinari."
-            if show_explanations
-            else None
-        ),
-        icon="analysis",
-    )
-    status_slot = st.empty()
-    _render_accumuli_status_text(status_slot, entry, stale)
-
-    if entry is None:
-        return st.button("Analizza accumuli", type="primary", key=f"accumuli_analyze_{signature}"), status_slot
-    if stale:
-        return st.button("Aggiorna analisi accumuli", type="primary", key=f"accumuli_refresh_{signature}"), status_slot
-    return st.button("Rigenera analisi accumuli", type="secondary", key=f"accumuli_regen_{signature}"), status_slot
-
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        if pd.isna(value):
-            return default
-        return float(value)
-    except Exception:
-        return default
 
 
 def _priority_color(value: str) -> str:
@@ -783,18 +611,24 @@ def _render_detail(row: pd.Series, detail: dict[str, Any], cache_signature: str)
     with chart_col:
         series_token = _frame_token(series)
         ops_token = _frame_token(operations)
-        price_fig = _cached_render_value(
+        price_fig = cached_render_value(
+            ACCUMULI_RENDER_CACHE_KEY,
             f"{cache_signature}:{ticker}:price_pmc:{series_token}:{ops_token}",
             lambda: build_accumulo_price_pmc_chart(series, operations),
+            page_label="Cruscotti/Accumuli",
             label=f"{ticker} prezzo vs PMC",
+            max_items=24,
             count=series_count,
         )
         with profile_step("Cruscotti/Accumuli", f"detail {ticker}: render prezzo vs PMC", count=series_count):
             st.plotly_chart(price_fig, width="stretch")
-        value_fig = _cached_render_value(
+        value_fig = cached_render_value(
+            ACCUMULI_RENDER_CACHE_KEY,
             f"{cache_signature}:{ticker}:capitale_vs_valore:{series_token}",
             lambda: build_accumulo_value_chart(series),
+            page_label="Cruscotti/Accumuli",
             label=f"{ticker} capitale vs valore",
+            max_items=24,
             count=series_count,
         )
         with profile_step("Cruscotti/Accumuli", f"detail {ticker}: render capitale vs valore", count=series_count):
@@ -810,18 +644,29 @@ def render_accumuli(ctx: SimpleNamespace, show_explanations: bool = True) -> Non
     """Renderizza la scheda Accumuli senza rigenerare automaticamente l'analisi pesante."""
     with profile_step("Cruscotti/Accumuli", "signature/cache/header"):
         signature = _accumuli_analysis_signature(ctx)
-        entry, stale = _get_accumuli_analysis_cache(signature)
-        refresh_requested, status_slot = _render_accumuli_freeze_header(entry, stale, signature, show_explanations=show_explanations)
+        entry, stale = get_frozen_analysis_cache(ACCUMULI_ANALYSIS_CACHE_KEY, ACCUMULI_PAYLOAD_TYPE, signature)
+        refresh_requested, status_slot = render_frozen_analysis_freeze_header(
+            entry, stale, signature,
+            title="Accumuli e PAC",
+            comment=(
+                "Analisi congelata: metriche, grafici PAC e dettaglio accumuli vengono rigenerati solo su richiesta, "
+                "così i Cruscotti restano leggeri nei rerun ordinari."
+                if show_explanations
+                else None
+            ),
+            entity_label="accumuli",
+            key_prefix="accumuli",
+        )
 
     if refresh_requested:
         with st.status("Analisi accumuli in corso…", expanded=True) as status:
             st.write("Costruzione metriche DCA, grafici PAC e dettaglio per strumento.")
             with profile_step("Cruscotti/Accumuli", "build analysis"):
                 result = build_accumuli_analysis(getattr(ctx, "data", {}) or {})
-            entry = _store_accumuli_analysis_cache(signature, result)
+            entry = store_frozen_analysis_cache(ACCUMULI_ANALYSIS_CACHE_KEY, ACCUMULI_PAYLOAD_TYPE, signature, result)
             stale = False
             status.update(label="Analisi accumuli aggiornata", state="complete", expanded=False)
-        _render_accumuli_status_text(status_slot, entry, stale)
+        render_frozen_analysis_status_text(status_slot, entry, stale, entity_label="accumuli")
     elif entry is None:
         legend_block(
             "Questa sezione è intenzionalmente congelata: Accumuli è una lettura operativa non quotidiana e non viene "
@@ -830,7 +675,7 @@ def render_accumuli(ctx: SimpleNamespace, show_explanations: bool = True) -> Non
         )
         return
     else:
-        result = entry.get("result") if isinstance(entry, dict) else None
+        result = entry.get("payload") if isinstance(entry, dict) else None
         with profile_step("Cruscotti/Accumuli", "reuse cached analysis"):
             pass
 
@@ -860,10 +705,13 @@ def render_accumuli(ctx: SimpleNamespace, show_explanations: bool = True) -> Non
 
     if not filtered.empty:
         overview_key = f"{render_sig}:overview:{_frame_token(filtered, ['ticker', 'categoria', 'capitale', 'controvalore', 'pl_pct', 'priorita'])}"
-        overview_fig = _cached_render_value(
+        overview_fig = cached_render_value(
+            ACCUMULI_RENDER_CACHE_KEY,
             overview_key,
             lambda: build_accumuli_overview_chart(filtered),
+            page_label="Cruscotti/Accumuli",
             label="overview accumuli",
+            max_items=24,
             count=len(filtered),
         )
         with profile_step("Cruscotti/Accumuli", "render overview chart", count=len(filtered)):
