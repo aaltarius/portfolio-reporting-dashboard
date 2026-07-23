@@ -281,9 +281,12 @@ def build_category_data_signature(
 
     Isola il subset di strumenti con tipo==category così che un aggiornamento
     quotazioni su ETF non invalidi le figure GOV/FND e viceversa.
-    I contatori dello storico (n_history_dates, latest_history_date) restano
-    globali: cambiano solo quando arriva un nuovo giorno di quotazione, non
-    durante un refresh intraday, il che è il comportamento corretto.
+    history_span_by_ticker (scoped ai soli ticker della categoria) e' l'unico
+    meccanismo di rilevamento cambi storico: cattura sia il caso "nuovo
+    giorno di quotazione per un ticker di questa categoria" sia il caso
+    backfill (una data piu' vecchia gia' esistente riceve ora un valore per
+    un ticker di questa categoria), senza dipendere da contatori globali che
+    invaliderebbero la firma anche per categorie non toccate dal refresh.
     """
     payload = data if isinstance(data, dict) else {}
     strumenti = payload.get("strumenti", [])
@@ -298,7 +301,6 @@ def build_category_data_signature(
     storico = payload.get("storico_prezzi", {})
     if not isinstance(storico, dict):
         storico = {}
-    latest_history_date = max(storico.keys()) if storico else ""
     last_quotes_update = str(
         payload.get("last_quotes_update")
         or payload.get("_last_quotes_update")
@@ -313,8 +315,6 @@ def build_category_data_signature(
     signature_payload: dict[str, Any] = {
         "category": category,
         "instruments": _normalized_instrument_signature_payload(cat_strumenti),
-        "n_history_dates": len(storico),
-        "latest_history_date": latest_history_date,
         "history_span_by_ticker": history_span_by_ticker(storico, cat_tickers),
     }
     cat_hash = _safe_hash(signature_payload)
@@ -340,8 +340,12 @@ def build_ticker_data_signature(
 
     Isola il subset di strumenti con ticker==ticker così che un aggiornamento
     quotazioni su SWDA non invalidi le figure BTP/VWCE e viceversa.
-    I contatori dello storico (n_history_dates, latest_history_date) restano
-    globali: cambiano solo quando arriva un nuovo giorno di quotazione.
+    history_span (scoped al solo ticker) e' l'unico meccanismo di rilevamento
+    cambi storico: cattura sia il caso "nuovo giorno di quotazione per questo
+    ticker" sia il caso backfill (una data piu' vecchia gia' esistente
+    riceve ora un valore per questo ticker), senza dipendere da contatori
+    globali che invaliderebbero la firma anche per ticker non toccati dal
+    refresh.
     """
     payload = data if isinstance(data, dict) else {}
     strumenti = payload.get("strumenti", [])
@@ -357,7 +361,6 @@ def build_ticker_data_signature(
     storico = payload.get("storico_prezzi", {})
     if not isinstance(storico, dict):
         storico = {}
-    latest_history_date = max(storico.keys()) if storico else ""
     last_quotes_update = str(
         payload.get("last_quotes_update")
         or payload.get("_last_quotes_update")
@@ -367,8 +370,6 @@ def build_ticker_data_signature(
     signature_payload: dict[str, Any] = {
         "ticker": ticker_str,
         "instrument": _normalized_instrument_signature_payload(ticker_strumenti),
-        "n_history_dates": len(storico),
-        "latest_history_date": latest_history_date,
         "history_span": history_span_by_ticker(storico, [ticker_str]).get(ticker_str, {"n_dates": 0, "earliest": ""}),
     }
     ticker_hash = _safe_hash(signature_payload)
