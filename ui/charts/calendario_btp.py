@@ -30,15 +30,18 @@ def _stima_imposte_scadenza(lordo: float, pmc: float | None) -> float | None:
     return lordo * gain_frac * _ALIQUOTA_BTP
 
 
-def render_btp_calendar(
+def build_btp_calendar_figure(
     calendar_df: pd.DataFrame,
     theme: ThemeConfig | None = None,
     pmc_map: dict[str, float] | None = None,
-) -> None:
-    """Render BTP timeline with possession span, coupons and maturity."""
-    if calendar_df is None or calendar_df.empty:
-        return
+) -> go.Figure:
+    """Build the BTP timeline figure (possession span, coupons, maturity).
 
+    Parte cacheabile di render_btp_calendar: nessuna chiamata st.*, solo
+    costruzione della figura Plotly. Se calendar_df è vuoto dopo la pulizia,
+    ritorna una go.Figure() vuota (mai None: il chiamante passa sempre il
+    risultato a st.plotly_chart).
+    """
     df = calendar_df.copy()
     midday = pd.Timedelta(hours=12)
     df["data"] = pd.to_datetime(df["data"], errors="coerce").dt.normalize() + midday
@@ -46,7 +49,7 @@ def render_btp_calendar(
     df["data_fine"] = pd.to_datetime(df.get("data_fine"), errors="coerce").dt.normalize() + midday
     df = df.dropna(subset=["data"]).sort_values(["ticker", "data"])
     if df.empty:
-        return
+        return go.Figure()
 
     tickers = list(df["ticker"].dropna().astype(str).drop_duplicates())
     min_data = df["data"].min()
@@ -72,12 +75,6 @@ def render_btp_calendar(
         years = days // 365
         rem_days = days % 365
         return f"{years}a {rem_days}g"
-
-    def _strike_text(value: str) -> str:
-        text = str(value or "")
-        if not text:
-            return text
-        return "".join(ch + "\u0336" for ch in text)
 
     fig = go.Figure()
     today = pd.Timestamp.today().normalize() + midday
@@ -315,7 +312,37 @@ def render_btp_calendar(
         showticklabels=False,
         range=[y_bottom_pad, len(tickers) - 0.5],
     )
-    st.plotly_chart(fig, width="stretch")
+    return fig
+
+
+def render_btp_calendar_table(
+    calendar_df: pd.DataFrame,
+    theme: ThemeConfig | None = None,
+    pmc_map: dict[str, float] | None = None,
+) -> None:
+    """Render the BTP legend + events table (non-cached: leggera).
+
+    Ripete la stessa preparazione dati leggera di build_btp_calendar_figure
+    (calendar_df è la tabella eventi BTP, piccola, non gli 823 giorni di
+    storico: duplicarla è un costo trascurabile e mantiene le due funzioni
+    autonome/testabili).
+    """
+    df = calendar_df.copy()
+    midday = pd.Timedelta(hours=12)
+    df["data"] = pd.to_datetime(df["data"], errors="coerce").dt.normalize() + midday
+    df["data_inizio"] = pd.to_datetime(df.get("data_inizio"), errors="coerce").dt.normalize() + midday
+    df["data_fine"] = pd.to_datetime(df.get("data_fine"), errors="coerce").dt.normalize() + midday
+    df = df.dropna(subset=["data"]).sort_values(["ticker", "data"])
+    if df.empty:
+        return
+
+    events = df[df["tipo_riga"] == "evento"].copy()
+
+    def _strike_text(value: str) -> str:
+        text = str(value or "")
+        if not text:
+            return text
+        return "".join(ch + "̶" for ch in text)
 
     st.markdown(
         """
@@ -479,3 +506,22 @@ def render_btp_calendar(
         for col, width in column_widths.items()
     }
     render_styled_table(totale_styler, height="content", column_config=totale_column_config)
+
+
+def render_btp_calendar(
+    calendar_df: pd.DataFrame,
+    theme: ThemeConfig | None = None,
+    pmc_map: dict[str, float] | None = None,
+) -> None:
+    """Render BTP timeline with possession span, coupons and maturity.
+
+    Thin wrapper mantenuto per non rompere l'import in ui/pages/operazioni.py
+    (presente ma mai chiamato lì). Il chiamante che vuole la cache sulla
+    figura (ui/pages/cruscotti.py) usa direttamente build_btp_calendar_figure
+    dentro fcache.get_or_build, seguito da render_btp_calendar_table.
+    """
+    if calendar_df is None or calendar_df.empty:
+        return
+    fig = build_btp_calendar_figure(calendar_df, theme, pmc_map=pmc_map)
+    st.plotly_chart(fig, width="stretch")
+    render_btp_calendar_table(calendar_df, theme, pmc_map=pmc_map)

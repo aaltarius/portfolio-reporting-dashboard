@@ -28,7 +28,7 @@ from ui.charts.home import build_category_allocation_pie_chart, build_category_b
 from ui.charts.analisi import build_correlation_heatmap, build_instrument_drawdown_time_chart
 from ui.charts.quotazioni import build_category_performance_comparison_time_chart
 from ui.charts.operazioni import build_monthly_purchase_spending_time_chart, build_purchase_installments_chart
-from ui.charts.calendario_btp import render_btp_calendar
+from ui.charts.calendario_btp import build_btp_calendar_figure, render_btp_calendar_table
 from ui.charts.settings import apply_settings
 from ui.charts.tables import color_pl, style_macro_cols
 from ui.charts.summary import quarterly_table_html, monthly_heatmap_html
@@ -895,7 +895,7 @@ def _render_analitica_market_structure(ctx: SimpleNamespace, settings: dict[str,
         st.plotly_chart(fig, width="stretch")
 
 
-def _render_reddito_scadenze(ctx: SimpleNamespace, settings: dict[str, Any], theme, cache_strategy: Any) -> None:
+def _render_reddito_scadenze(ctx: SimpleNamespace, settings: dict[str, Any], theme, cache_strategy: Any, *, data_sig: str, theme_sig: str, charts_settings_sig: str) -> None:
     render_section_title(
         "Reddito e Scadenze",
         comment="Lettura finanziaria orientata al carry del portafoglio governativo: reddito netto atteso, rendimento prospettico e timeline delle scadenze future.",
@@ -906,7 +906,14 @@ def _render_reddito_scadenze(ctx: SimpleNamespace, settings: dict[str, Any], the
         st.info("Nessun dataset GOV/BTP disponibile per costruire la vista reddito e scadenze.")
         return
 
-    summary = build_income_scadenze_summary(ctx.data, getattr(ctx, "da", pd.DataFrame()), calendar_df)
+    _income_cache_key = f"income_scadenze:{data_sig}"
+    _income_cache = st.session_state.setdefault("_cruscotti_income_scadenze_cache", {})
+    if _income_cache_key in _income_cache:
+        summary = _income_cache[_income_cache_key]
+    else:
+        summary = build_income_scadenze_summary(ctx.data, getattr(ctx, "da", pd.DataFrame()), calendar_df)
+        _income_cache.clear()  # una sola voce viva: la firma cambia ad ogni variazione dati rilevante
+        _income_cache[_income_cache_key] = summary
     k1, k2, k3 = st.columns(3)
     with k1:
         kpi_card("Cedole attese 12 mesi", fmt_eur_it(summary["expected_net_income_12m"], 2), "reddito netto prospettico", accent=theme.color_green, value_color=theme.color_green)
@@ -947,10 +954,23 @@ def _render_reddito_scadenze(ctx: SimpleNamespace, settings: dict[str, Any], the
                     _pmc_map[_t] = float(_pmc)
                 except (ValueError, TypeError):
                     pass
-    render_btp_calendar(calendar_df, theme, pmc_map=_pmc_map)
+    fcache = get_figure_cache()
+    fig = fcache.get_or_build(
+        chart_id="cruscotti_btp_calendar",
+        data_sig=data_sig,
+        theme_sig=theme_sig,
+        charts_settings_sig=charts_settings_sig,
+        builder=lambda: build_btp_calendar_figure(calendar_df, theme, pmc_map=_pmc_map),
+        page_mode="Completa",
+        extra_params={"rows": len(calendar_df)},
+        strategy=cache_strategy,
+    )
+    st.plotly_chart(fig, width="stretch")
+    render_btp_calendar_table(calendar_df, theme, pmc_map=_pmc_map)
 
 
-def _render_flussi_acquisti(ctx: SimpleNamespace, theme) -> None:
+def _render_flussi_acquisti(ctx: SimpleNamespace, theme, *, data_sig: str, theme_sig: str, charts_settings_sig: str, cache_strategy: Any) -> None:
+    fcache = get_figure_cache()
     render_section_title(
         "Flussi e Acquisti",
         comment="Lettura dei flussi di accumulo e della frequenza di acquisto degli strumenti non governativi presenti in portafoglio.",
@@ -963,8 +983,16 @@ def _render_flussi_acquisti(ctx: SimpleNamespace, theme) -> None:
             comment="Mostra mese per mese quanto capitale è stato destinato agli acquisti di strumenti, separato dai movimenti di cassa non di investimento.",
             gap_after="xs",
         )
-        monthly_fig = build_monthly_purchase_spending_time_chart(monthly_purchase_df, theme)
-        apply_settings(monthly_fig, "andamento_monthly_spending")
+        monthly_fig = fcache.get_or_build(
+            chart_id="cruscotti_flussi_monthly_spending",
+            data_sig=data_sig,
+            theme_sig=theme_sig,
+            charts_settings_sig=charts_settings_sig,
+            builder=lambda: apply_settings(build_monthly_purchase_spending_time_chart(monthly_purchase_df, theme), "andamento_monthly_spending"),
+            page_mode="Completa",
+            extra_params={"rows": len(monthly_purchase_df)},
+            strategy=cache_strategy,
+        )
         st.plotly_chart(monthly_fig, width="stretch")
 
     operations = getattr(ctx, "_operations_v5_cache", None)
@@ -1001,8 +1029,16 @@ def _render_flussi_acquisti(ctx: SimpleNamespace, theme) -> None:
                     comment="Conta quante volte gli strumenti ad accumulo sono stati acquistati e mette a confronto PMC attuale e range dei prezzi di acquisto.",
                     gap_after="xs",
                 )
-                installments_fig = build_purchase_installments_chart(purchase_summary, theme)
-                apply_settings(installments_fig, "operations_purchase_installments")
+                installments_fig = fcache.get_or_build(
+                    chart_id="cruscotti_flussi_installments",
+                    data_sig=data_sig,
+                    theme_sig=theme_sig,
+                    charts_settings_sig=charts_settings_sig,
+                    builder=lambda: apply_settings(build_purchase_installments_chart(purchase_summary, theme), "operations_purchase_installments"),
+                    page_mode="Completa",
+                    extra_params={"rows": len(purchase_summary)},
+                    strategy=cache_strategy,
+                )
                 st.plotly_chart(installments_fig, width="stretch")
 
 
@@ -1149,11 +1185,11 @@ def render_cruscotti(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
 
         with inner_tabs[len(tab_labels) + 2]:
             with profile_step("Cruscotti", "render tab Flussi & Acquisti"):
-                _render_flussi_acquisti(ctx, theme)
+                _render_flussi_acquisti(ctx, theme, data_sig=data_sig, theme_sig=theme_sig, charts_settings_sig=settings_sig, cache_strategy=cache_strategy)
 
         with inner_tabs[len(tab_labels) + 3]:
             with profile_step("Cruscotti", "render tab Cedole & Scadenze"):
-                _render_reddito_scadenze(ctx, settings, theme, cache_strategy)
+                _render_reddito_scadenze(ctx, settings, theme, cache_strategy, data_sig=data_sig, theme_sig=theme_sig, charts_settings_sig=settings_sig)
 
         with inner_tabs[len(tab_labels) + 4]:
             with profile_step("Cruscotti", "render tab Accumuli"):
