@@ -5,6 +5,7 @@ from typing import Any
 import pandas as pd
 import plotly.graph_objects as go
 
+from core.config import COLORS
 from ui.charts.extrema import add_extrema_markers
 from ui.charts.runtime import finalize_chart
 from ui.charts.settings import apply_settings
@@ -93,7 +94,7 @@ def build_percentage_return_time_chart(dfh, pct_cap, pct_cost, pl_color, pl_tota
 			line=dict(color=theme.color_orange, width=1.8, dash="dash"),
 		)
 	)
-	fig.add_hline(y=0, line_dash="dot", line_color="rgba(107,114,128,0.55)", opacity=0.8)
+	fig.add_hline(y=0, line_dash="dot", line_color=hex_to_rgba(COLORS["gray"], 0.55), opacity=0.8)
 	return finalize_chart(fig, "andamento_percentage_return", hovermode="x unified", uirevision="rend-capitale")
 
 

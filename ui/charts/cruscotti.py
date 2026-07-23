@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from core.config import COLORS
 from persistence.storage import macro_cat
 from ui.charts.extrema import add_extrema_markers
 from ui.charts.settings import apply_settings, get_chart_setting
@@ -150,7 +151,7 @@ def build_compact_category_dashboard_chart(df: pd.DataFrame, accent: str) -> go.
     fig_dash.update_yaxes(automargin=True, tickfont=dict(size=9), row=1, col=1)
     fig_dash.update_yaxes(automargin=True, tickfont=dict(size=9), row=1, col=2)
     if plot_df["P/L €"].min() < 0 < plot_df["P/L €"].max():
-        fig_dash.add_vline(x=0, line_dash="dot", line_color="rgba(107,114,128,0.55)", row=1, col=2)
+        fig_dash.add_vline(x=0, line_dash="dot", line_color=hex_to_rgba(COLORS["gray"], 0.55), row=1, col=2)
     return apply_settings(fig_dash, "cruscotti_compact_category_dashboard")
 
 
@@ -278,7 +279,7 @@ def build_category_invested_vs_pl_chart(df: pd.DataFrame, accent: str) -> go.Fig
     )
     fig.update_yaxes(automargin=True, tickfont=dict(size=9))
     if plot_df["P/L €"].min() < 0 < plot_df["Controvalore"].max():
-        fig.add_vline(x=0, line_dash="dot", line_color="rgba(107,114,128,0.55)")
+        fig.add_vline(x=0, line_dash="dot", line_color=hex_to_rgba(COLORS["gray"], 0.55))
     return apply_settings(fig, "cruscotti_category_invested_vs_pl")
 
 

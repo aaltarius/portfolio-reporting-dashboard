@@ -8,6 +8,12 @@ from ui.formatting import fmt_eur_it, fmt_pct_it
 # - pagina: ui/pages/confronto.py
 # - chart_id principale: confronto_snapshot
 
+# Colore riga/colonna di riferimento "zero" in tutti i grafici di questo
+# file (7 occorrenze prima della centralizzazione, tutte nello stesso
+# file): non corrisponde a nessun colore gia' presente in core.config.COLORS
+# o ui.theme, e' una costante puramente locale a questo modulo.
+_ZERO_LINE_COLOR = "rgba(15,23,42,.35)"
+
 
 def build_snapshot_comparison_time_chart(cmp_df, snap_a_label, snap_b_label, theme):
     """Build grouped allocation comparison chart for two snapshots.
@@ -57,7 +63,7 @@ def build_snapshot_category_delta_chart(category_df, theme):
             hovertemplate="%{x}<br>Delta valore: %{y:,.2f}<extra></extra>",
             showlegend=False,
         )
-    fig.add_hline(y=0, line_color="rgba(15,23,42,.35)", line_width=1)
+    fig.add_hline(y=0, line_color=_ZERO_LINE_COLOR, line_width=1)
     return finalize_chart(
         fig,
         "confronto_category_delta",
@@ -89,7 +95,7 @@ def build_snapshot_contributors_chart(contributors_df, theme, limit=8):
             hovertemplate="%{y}<br>Delta valore: %{x:,.2f}<extra></extra>",
             showlegend=False,
         )
-    fig.add_vline(x=0, line_color="rgba(15,23,42,.35)", line_width=1)
+    fig.add_vline(x=0, line_color=_ZERO_LINE_COLOR, line_width=1)
     return finalize_chart(
         fig,
         "confronto_contributors",
@@ -173,7 +179,7 @@ def build_snapshot_pl_delta_chart(holdings_df, theme, limit=10):
             hovertemplate="%{y}<br>Delta P/L: %{x:,.2f}<extra></extra>",
             showlegend=False,
         )
-    fig.add_vline(x=0, line_color="rgba(15,23,42,.35)", line_width=1)
+    fig.add_vline(x=0, line_color=_ZERO_LINE_COLOR, line_width=1)
     return finalize_chart(
         fig,
         "confronto_pl_delta",
@@ -255,7 +261,7 @@ def build_multi_snapshot_holdings_grouped_chart(holdings_wide_df, metric_prefix,
             cliponaxis=False,
         )
     if metric_prefix == "P/L":
-        fig.add_hline(y=0, line_color="rgba(15,23,42,.35)", line_width=1)
+        fig.add_hline(y=0, line_color=_ZERO_LINE_COLOR, line_width=1)
     return finalize_chart(
         fig,
         chart_id,
@@ -306,7 +312,7 @@ def build_snapshot_value_decomposition_chart(holdings_df, theme, limit=8):
         cliponaxis=False,
         hovertemplate="%{x}<br>Delta P/L: %{y:,.2f}<extra></extra>",
     )
-    fig.add_hline(y=0, line_color="rgba(15,23,42,.35)", line_width=1)
+    fig.add_hline(y=0, line_color=_ZERO_LINE_COLOR, line_width=1)
     return finalize_chart(
         fig,
         "confronto_value_decomposition",
@@ -355,7 +361,7 @@ def build_snapshot_return_delta_chart(holdings_df, theme, limit=10):
         hovertemplate="%{y}<br>Delta rendimento: %{x:.2%}<extra></extra>",
         showlegend=False,
     )
-    fig.add_vline(x=0, line_color="rgba(15,23,42,.35)", line_width=1)
+    fig.add_vline(x=0, line_color=_ZERO_LINE_COLOR, line_width=1)
     return finalize_chart(
         fig,
         "confronto_return_delta",
@@ -420,7 +426,7 @@ def build_multi_snapshot_delta_bar_chart(
         hovertemplate=hover,
         showlegend=False,
     )
-    fig.add_vline(x=0, line_color="rgba(15,23,42,.35)", line_width=1)
+    fig.add_vline(x=0, line_color=_ZERO_LINE_COLOR, line_width=1)
     layout_updates = {"bargap": 0.22}
     if title:
         layout_updates["title"] = {"text": title}

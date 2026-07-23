@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
+from core.config import COLORS
 from core.domain.risk import build_drawdown_series
 from ui.charts.settings import apply_settings
 from ui.formatting import fmt_pct_it, hex_to_rgba
@@ -112,5 +113,5 @@ def build_instrument_drawdown_time_chart(dh, tickers, date_fmt):
             )
         )
     fig.update_layout(hovermode="x unified")
-    fig.add_hline(y=0, line_dash="dot", line_color="rgba(107,114,128,0.55)", opacity=0.8)
+    fig.add_hline(y=0, line_dash="dot", line_color=hex_to_rgba(COLORS["gray"], 0.55), opacity=0.8)
     return apply_settings(fig, "analisi_instrument_drawdown")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import plotly.graph_objects as go
 
+from core.config import COLORS
 from ui.charts.runtime import finalize_chart
 from ui.formatting import fmt_num_it, hex_to_rgba
 
@@ -29,7 +30,7 @@ def build_category_drawdown_time_chart(dfh, drawdown_series, chart_id, dfmt, the
             fillcolor=hex_to_rgba(theme.color_red, 0.12),
         )
     )
-    fig.add_hline(y=0, line_dash="dot", line_color="rgba(107,114,128,0.55)", opacity=0.7)
+    fig.add_hline(y=0, line_dash="dot", line_color=hex_to_rgba(COLORS["gray"], 0.55), opacity=0.7)
     return finalize_chart(fig, chart_id, hovermode="x unified")
 
 
@@ -56,5 +57,5 @@ def build_category_monthly_returns_time_chart(monthly_data, chart_id, theme):
             hovertemplate="%{x|%b %Y}: %{y:.2f}%<extra></extra>",
         )
     )
-    fig.add_hline(y=0, line_dash="dot", line_color="rgba(107,114,128,0.55)", opacity=0.7)
+    fig.add_hline(y=0, line_dash="dot", line_color=hex_to_rgba(COLORS["gray"], 0.55), opacity=0.7)
     return finalize_chart(fig, chart_id)
