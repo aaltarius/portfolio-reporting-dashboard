@@ -154,18 +154,22 @@ def _category_horizon_start_date(history_dates: pd.Series, spec: dict[str, int |
     return pd.Timestamp(history_dates.iloc[0])
 
 
-def _pl_delta_from_series(history_dates: pd.Series, values: pd.Series, start_date: pd.Timestamp | None) -> tuple[float | None, bool]:
+def _category_horizon_start_dates(history_dates: pd.Series) -> dict[str, pd.Timestamp | None]:
+    """Calcola la data di inizio per ciascun orizzonte una sola volta per
+    categoria: non dipende dallo strumento, prima veniva ricalcolata per
+    ogni strumento del loop (fino a 17x invece di 1x)."""
+    return {label: _category_horizon_start_date(history_dates, spec) for label, spec in _CATEGORY_PL_HORIZONS}
+
+
+def _pl_delta_from_prepared_frame(frame: pd.DataFrame, start_date: pd.Timestamp | None) -> tuple[float | None, bool]:
+    """Come la vecchia _pl_delta_from_series, ma riceve un frame gia'
+    convertito/pulito/ordinato (colonne 'Data','P/L') cosi' che il chiamante
+    lo prepari una sola volta per strumento invece che una volta per
+    ciascuno dei 9 orizzonti."""
     if start_date is None:
         return None, False
-    frame = pd.DataFrame(
-        {
-            "Data": pd.to_datetime(history_dates, errors="coerce"),
-            "P/L": pd.to_numeric(values, errors="coerce"),
-        }
-    ).dropna(subset=["Data", "P/L"])
     if len(frame) < 2:
         return None, True
-    frame = frame.sort_values("Data")
     end_value = float(frame["P/L"].iloc[-1])
     first_available_date = pd.Timestamp(frame["Data"].iloc[0])
     is_partial = first_available_date > pd.Timestamp(start_date)
@@ -189,16 +193,22 @@ def _build_category_pl_horizon_table(dfh: pd.DataFrame, category_df: pd.DataFram
     if work.empty:
         return pd.DataFrame()
 
+    horizon_start_dates = _category_horizon_start_dates(work["_Data"])
+
     tickers = [str(t).strip() for t in category_df["Ticker"].dropna().astype(str).tolist() if str(t).strip()]
     rows: list[dict[str, Any]] = []
     for ticker in tickers:
         pl_col = f"PL_{ticker}"
         if pl_col not in work.columns:
             continue
+        frame = pd.DataFrame({
+            "Data": work["_Data"],
+            "P/L": pd.to_numeric(work[pl_col], errors="coerce"),
+        }).dropna(subset=["Data", "P/L"]).sort_values("Data")
+
         row: dict[str, Any] = {"Ticker": ticker}
-        for label, spec in _CATEGORY_PL_HORIZONS:
-            start_date = _category_horizon_start_date(work["_Data"], spec)
-            delta, is_partial = _pl_delta_from_series(work["_Data"], work[pl_col], start_date)
+        for label, _spec in _CATEGORY_PL_HORIZONS:
+            delta, is_partial = _pl_delta_from_prepared_frame(frame, horizon_start_dates[label])
             row[label] = delta
             row[f"_{label}_partial"] = is_partial
         rows.append(row)
