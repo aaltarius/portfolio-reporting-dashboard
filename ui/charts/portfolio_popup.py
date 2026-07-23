@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pandas as pd
+from core.config import COLORS
 from persistence.storage import macro_cat
 from ui.charts.instrument_badges import commission_badge
 from ui.charts.natura_icons import get_natura_visual
@@ -98,6 +99,7 @@ a.tk-link:hover{opacity:0.65;}
 svg.spark{width:100%;height:140px;display:block;border-radius:10px;background:#f9fafb;}
 .mc-footer{font-size:0.78rem;color:#9ca3af;}
 """
+_MODAL_CSS = _MODAL_CSS.replace("#1E8449", COLORS["success"]).replace("#FF4B4B", COLORS["danger"])
 
 _MODAL_HTML = """
 <div id="mo" onclick="if(event.target===this)closeM()">
@@ -205,6 +207,7 @@ function showModal(tk){
 function closeM(){document.getElementById('mo').classList.remove('on');}
 document.addEventListener('keydown',function(e){if(e.key==='Escape')closeM();});
 """
+_MODAL_JS = _MODAL_JS.replace("#1E8449", COLORS["success"]).replace("#FF4B4B", COLORS["danger"])
 
 
 def render_portfolio_table_with_popup(df, data, direction_map=None):
@@ -227,13 +230,13 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
     def _trend_sym(tk):
         state = direction_map.get(str(tk or ""), "flat")
         if state == "up_big":
-            return ("▲▲", "#1E8449")
+            return ("▲▲", COLORS["success"])
         if state == "up":
-            return ("▲", "#1E8449")
+            return ("▲", COLORS["success"])
         if state == "down_big":
-            return ("▼▼", "#FF4B4B")
+            return ("▼▼", COLORS["danger"])
         if state == "down":
-            return ("▼", "#FF4B4B")
+            return ("▼", COLORS["danger"])
         return ("—", "#9CA3AF")
 
     def _sort_val_num(v):
@@ -260,7 +263,7 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
             pl_p = float(row.get("P/L %", 0) or 0)
         except Exception:
             pl_e = pl_p = 0.0
-        pl_col = "#1E8449" if pl_e >= 0 else "#FF4B4B"
+        pl_col = COLORS["success"] if pl_e >= 0 else COLORS["danger"]
         pl_e_str = fmt_eur_it(pl_e, 2, signed=True)
         pl_p_str = fmt_pct_it(pl_p, 2, signed=True)
         sym_sort = "1" if sym == "▲" else "2" if sym == "—" else "3"
@@ -285,7 +288,7 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
     _total_comm = float(pd.to_numeric(df["Comm."], errors="coerce").fillna(0).sum())
     _total_pl_e = float(pd.to_numeric(df["P/L €"], errors="coerce").fillna(0).sum())
     _total_pl_p = _total_pl_e / abs(_total_cost) if abs(_total_cost) > 1e-09 else 0.0
-    _total_pl_col = "#1E8449" if _total_pl_e >= 0 else "#FF4B4B"
+    _total_pl_col = COLORS["success"] if _total_pl_e >= 0 else COLORS["danger"]
     tfoot_html = (
         f'<tfoot><tr><td></td><td colspan="7" style="font-weight:800;font-size:0.85rem;letter-spacing:.02em;padding:9px 12px;">TOTALE</td>'
         f'<td class="num" style="font-weight:700;padding:9px 12px;">{fmt_eur_it(_total_ctv, 2)}</td>'
@@ -469,14 +472,14 @@ def render_weekly_pl_table(result, da, data):
         comm_badge = commission_badge(info_map.get(tk, {}).get("zero_commissioni")) if tipo_code in ("ETF", "ETC") else ""
         cells = ""
         for i, v in enumerate(row["deltas"]):
-            cell_col = "#1E8449" if (v is not None and v >= 0) else ("#FF4B4B" if v is not None else "#9CA3AF")
+            cell_col = COLORS["success"] if (v is not None and v >= 0) else (COLORS["danger"] if v is not None else "#9CA3AF")
             day_max, day_min = day_extrema[i]
             is_extreme = v is not None and (v == day_max or v == day_min)
             weight = "700" if is_extreme else "400"
             gap_style = "border-left:2px solid #d1d5db;" if week_gap_before[i] else ""
             cells += f'<td class="num" data-sort="{_sort_val(v)}" style="color:{cell_col};font-weight:{weight};{gap_style}">{fmt_num_it(v, 2, signed=True)}</td>\n'
         totale = row["totale"]
-        tot_col = "#1E8449" if totale >= 0 else "#FF4B4B"
+        tot_col = COLORS["success"] if totale >= 0 else COLORS["danger"]
         arrow_char = "↗" if totale >= 0 else "↘"
         strumento = str(row["strumento"])
         row_all_up = n_days == 7 and all(d is not None and d > 0 for d in row["deltas"])
@@ -497,10 +500,10 @@ def render_weekly_pl_table(result, da, data):
 
     total_cells = ""
     for i, v in enumerate(day_totals):
-        cell_col = "#1E8449" if v >= 0 else "#FF4B4B"
+        cell_col = COLORS["success"] if v >= 0 else COLORS["danger"]
         gap_style = "border-left:2px solid #d1d5db;" if week_gap_before[i] else ""
         total_cells += f'<td class="num" style="color:{cell_col};font-weight:700;padding:9px 12px;{gap_style}">{fmt_num_it(v, 2, signed=True)}</td>\n'
-    grand_col = "#1E8449" if grand_total >= 0 else "#FF4B4B"
+    grand_col = COLORS["success"] if grand_total >= 0 else COLORS["danger"]
     tfoot_html = (
         '<tfoot><tr>'
         '<td colspan="5" style="font-weight:800;font-size:0.85rem;letter-spacing:.02em;padding:9px 12px;">TOTALE</td>'

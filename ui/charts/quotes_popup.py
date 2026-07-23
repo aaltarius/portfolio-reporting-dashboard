@@ -5,6 +5,7 @@ import re
 
 import pandas as pd
 
+from core.config import COLORS
 from persistence.storage import macro_cat
 from core.finance import build_ptf_df
 from core.instrument_classification import is_nav_fund
@@ -75,7 +76,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
         in_portfolio = abs(holding_qty) > 0 or abs(holding_ctv) > 0
         holding_label = "Sì" if in_portfolio else "No"
         holding_sort = "0" if in_portfolio else "1"
-        holding_color = "#1E8449" if in_portfolio else "#9CA3AF"
+        holding_color = COLORS["success"] if in_portfolio else "#9CA3AF"
         row_background = "" if in_portfolio else "background:#f3f4f6;"
         nature_label = str(info.get("natura") or "Esposizione diversificata")
         nature_color, icon_svg = get_natura_visual(nature_label)
@@ -88,13 +89,13 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
         except Exception:
             delta_val = 0.0
         if delta_val > 0.03:
-            sym, sym_col, sym_sort = "▲▲", "#1E8449", "0"
+            sym, sym_col, sym_sort = "▲▲", COLORS["success"], "0"
         elif delta_val > 0:
-            sym, sym_col, sym_sort = "▲", "#1E8449", "1"
+            sym, sym_col, sym_sort = "▲", COLORS["success"], "1"
         elif delta_val < -0.03:
-            sym, sym_col, sym_sort = "▼▼", "#FF4B4B", "4"
+            sym, sym_col, sym_sort = "▼▼", COLORS["danger"], "4"
         elif delta_val < 0:
-            sym, sym_col, sym_sort = "▼", "#FF4B4B", "3"
+            sym, sym_col, sym_sort = "▼", COLORS["danger"], "3"
         else:
             sym, sym_col, sym_sort = "—", "#9CA3AF", "2"
         is_fam = is_nav_fund(ticker, tipo)
@@ -106,7 +107,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
             esito_label, esito_title = "🟡 Warn.", esito
         else:
             esito_label, esito_title = "🔴 Err.", esito
-        esito_col = "#1E8449" if "OK" in esito_label else "#2563EB" if "NAV" in esito_label else "#F59E0B" if "Warn" in esito_label else "#FF4B4B"
+        esito_col = COLORS["success"] if "OK" in esito_label else "#2563EB" if "NAV" in esito_label else "#F59E0B" if "Warn" in esito_label else COLORS["danger"]
         latest_log_item = max(logs_by_ticker.get(ticker, []), key=lambda x: str(x.get("timestamp") or ""), default=None)
         # Sovrascrive esito_title con il messaggio esteso dal log (warning dettagliato)
         if "Warn" in esito_label and latest_log_item:
@@ -137,7 +138,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
         _delta_eur_sort = _sort_num(_delta_eur)
         if _delta_eur is not None and abs(_delta_eur) >= 0.0005:
             _delta_eur_fmt = fmt_num_it(_delta_eur, 3, signed=True)
-            _delta_eur_col = "#1E8449" if _delta_eur > 0 else "#FF4B4B"
+            _delta_eur_col = COLORS["success"] if _delta_eur > 0 else COLORS["danger"]
         else:
             _delta_eur_fmt, _delta_eur_col = "—", "#9CA3AF"
 
@@ -654,6 +655,7 @@ function sendH(){
 sendH(); requestAnimationFrame(sendH); setTimeout(sendH,150); setTimeout(sendH,600);
 </script>
 </body></html>"""
+    html_content = html_content.replace("#1E8449", COLORS["success"]).replace("#FF4B4B", COLORS["danger"])
     html_content = html_content.replace("__ROWS__", rows_html)
     html_content = html_content.replace("__QUOTES_JSON__", payload_json)
     html_content = html_content.replace("__BODY_FONT__", body_font)
