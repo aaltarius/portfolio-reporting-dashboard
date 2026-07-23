@@ -13,7 +13,7 @@ from fastapi import APIRouter, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from ui.charts.instrument_badges import commission_badge
-from ui.form_server.shell import STREAMLIT_URL
+from ui.form_server.shell import STREAMLIT_URL, _ROOT_VARS_BLOCK
 
 logger = logging.getLogger("portafoglio.form_server.sator")
 
@@ -22,68 +22,68 @@ router = APIRouter()
 _SATOR_DEFAULT_CATS = ["ETF", "ETC"]
 _SATOR_ALL_CATS = ["ETF", "ETC", "FONDO", "AZIONE", "BTP", "ALTRO"]
 
-_SATOR_CSS = """<style>
+_SATOR_CSS = _ROOT_VARS_BLOCK + """
 *,*::before,*::after{box-sizing:border-box}
-body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#f1f5f9;color:#1e293b;margin:0;padding:16px 20px 60px;font-size:.9rem}
+body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--slate-100);color:var(--slate-800);margin:0;padding:16px 20px 60px;font-size:.9rem}
 .sp{max-width:1440px;margin:0 auto}
-.sp-card{background:#fff;border-radius:14px;padding:20px 24px;box-shadow:0 2px 10px rgba(0,0,0,.06);margin-bottom:16px}
-h1{font-size:1.15rem;font-weight:800;margin:0 0 14px;color:#1e293b}
-h2{font-size:.75rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#64748b;margin:0 0 14px}
-label.lbl{display:block;font-weight:700;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;margin:0 0 4px;color:#64748b}
-select,input[type=text],input[type=number]{width:100%;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:.88rem;background:#fff;outline:none;transition:border-color .15s,box-shadow .15s}
-select:focus,input:focus{border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.12)}
+.sp-card{background:var(--white);border-radius:14px;padding:20px 24px;box-shadow:0 2px 10px var(--black-a06);margin-bottom:16px}
+h1{font-size:1.15rem;font-weight:800;margin:0 0 14px;color:var(--slate-800)}
+h2{font-size:.75rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--slate-500);margin:0 0 14px}
+label.lbl{display:block;font-weight:700;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;margin:0 0 4px;color:var(--slate-500)}
+select,input[type=text],input[type=number]{width:100%;padding:8px 10px;border:1px solid var(--slate-300);border-radius:8px;font-size:.88rem;background:var(--white);outline:none;transition:border-color .15s,box-shadow .15s}
+select:focus,input:focus{border-color:var(--indigo-500);box-shadow:0 0 0 3px var(--indigo-500-a12)}
 .form-row{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap}
 .fg{display:flex;flex-direction:column;gap:3px}
 .fg-sm{min-width:100px}
 .fg-md{min-width:150px}
 .fg-lg{flex:1;min-width:180px}
 .cat-wrap{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}
-.cat-wrap label{display:inline-flex;align-items:center;gap:4px;font-size:.82rem;cursor:pointer;padding:4px 9px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;transition:all .15s;user-select:none}
-.cat-wrap label:hover{border-color:#6366f1;background:#eef2ff}
-.cat-wrap input[type=checkbox]{accent-color:#6366f1;width:13px;height:13px;flex-shrink:0}
-.btn-analizza{padding:9px 24px;background:#6366f1;color:#fff;border:none;border-radius:9px;font-size:.9rem;font-weight:700;cursor:pointer;white-space:nowrap;transition:background .15s}
-.btn-analizza:hover{background:#4f46e5}
+.cat-wrap label{display:inline-flex;align-items:center;gap:4px;font-size:.82rem;cursor:pointer;padding:4px 9px;border:1px solid var(--slate-200);border-radius:6px;background:var(--slate-50);transition:all .15s;user-select:none}
+.cat-wrap label:hover{border-color:var(--indigo-500);background:var(--indigo-50)}
+.cat-wrap input[type=checkbox]{accent-color:var(--indigo-500);width:13px;height:13px;flex-shrink:0}
+.btn-analizza{padding:9px 24px;background:var(--indigo-500);color:var(--white);border:none;border-radius:9px;font-size:.9rem;font-weight:700;cursor:pointer;white-space:nowrap;transition:background .15s}
+.btn-analizza:hover{background:var(--indigo-600)}
 .sp-body{display:flex;gap:16px;align-items:flex-start}
 .sp-table-col{flex:1;min-width:0}
 .sp-eval-panel{width:278px;flex-shrink:0;position:sticky;top:16px}
-.ev-h{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;margin:0 0 2px}
-.ev-v{font-size:1.05rem;font-weight:800;color:#1e293b;transition:color .3s}
-.ev-block{margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #f1f5f9}
+.ev-h{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--slate-400);margin:0 0 2px}
+.ev-v{font-size:1.05rem;font-weight:800;color:var(--slate-800);transition:color .3s}
+.ev-block{margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--slate-100)}
 .ev-block:last-of-type{border-bottom:none;margin-bottom:0;padding-bottom:0}
 .ev-row{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
-.bar-wrap{background:#e2e8f0;border-radius:4px;height:7px;overflow:hidden;margin:3px 0 8px}
+.bar-wrap{background:var(--slate-200);border-radius:4px;height:7px;overflow:hidden;margin:3px 0 8px}
 .bar-fill{height:100%;border-radius:4px;transition:width .4s ease}
 .ev-headline{text-align:center;padding:10px 14px;border-radius:10px;font-weight:800;font-size:.9rem;margin:10px 0;display:none}
-.note-inp{width:100%;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:.84rem;outline:none;margin-bottom:8px}
-.note-inp:focus{border-color:#059669}
-.btn-save{display:block;width:100%;padding:11px;background:#059669;color:#fff;border:none;border-radius:9px;font-size:.9rem;font-weight:700;cursor:pointer;transition:background .15s}
-.btn-save:hover{background:#047857}
-.btn-save:disabled{background:#94a3b8;cursor:not-allowed}
+.note-inp{width:100%;padding:8px 10px;border:1px solid var(--slate-300);border-radius:8px;font-size:.84rem;outline:none;margin-bottom:8px}
+.note-inp:focus{border-color:var(--emerald-600)}
+.btn-save{display:block;width:100%;padding:11px;background:var(--emerald-600);color:var(--white);border:none;border-radius:9px;font-size:.9rem;font-weight:700;cursor:pointer;transition:background .15s}
+.btn-save:hover{background:var(--emerald-700)}
+.btn-save:disabled{background:var(--slate-400);cursor:not-allowed}
 .sr-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:.8rem}
-.sr-table th{text-align:left;font-size:.64rem;text-transform:uppercase;letter-spacing:.03em;color:#94a3b8;font-weight:700;padding:4px 4px 8px;border-bottom:2px solid #e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sr-table td{padding:6px 4px;border-bottom:1px solid #f1f5f9;vertical-align:middle;overflow:hidden}
-.sr-table tr:hover td{background:#fafbfc}
+.sr-table th{text-align:left;font-size:.64rem;text-transform:uppercase;letter-spacing:.03em;color:var(--slate-400);font-weight:700;padding:4px 4px 8px;border-bottom:2px solid var(--slate-200);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sr-table td{padding:6px 4px;border-bottom:1px solid var(--slate-100);vertical-align:middle;overflow:hidden}
+.sr-table tr:hover td{background:var(--slate-hover)}
 .sr-table tr:last-child td{border-bottom:none}
 .sc-badge{display:inline-block;font-size:.72rem;font-weight:800;border-radius:4px;padding:2px 5px;line-height:1.2}
-.sc-g{background:#dcfce7;color:#166534}.sc-m{background:#fef9c3;color:#854d0e}.sc-b{background:#fee2e2;color:#991b1b}
+.sc-g{background:var(--green-100);color:var(--green-800)}.sc-m{background:var(--yellow-100);color:var(--yellow-800)}.sc-b{background:var(--red-100);color:var(--red-800)}
 .rb-dot{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:middle}
-.rb-core{background:#3b82f6}.rb-dif{background:#22c55e}.rb-sat{background:#f97316}
+.rb-core{background:var(--blue-500)}.rb-dif{background:var(--green-500)}.rb-sat{background:var(--orange-500)}
 .tbl-actions{display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap}
-.btn-sm{padding:5px 12px;border:1px solid #e2e8f0;background:#f8fafc;color:#475569;border-radius:7px;font-size:.78rem;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
-.btn-sm:hover{border-color:#6366f1;color:#6366f1;background:#eef2ff}
-.btn-sm-p{background:#eef2ff;color:#6366f1;border-color:#c7d2fe}
-.btn-sm-p:hover{background:#6366f1;color:#fff}
-.hist-row{display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #f1f5f9;flex-wrap:wrap}
+.btn-sm{padding:5px 12px;border:1px solid var(--slate-200);background:var(--slate-50);color:var(--slate-600);border-radius:7px;font-size:.78rem;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
+.btn-sm:hover{border-color:var(--indigo-500);color:var(--indigo-500);background:var(--indigo-50)}
+.btn-sm-p{background:var(--indigo-50);color:var(--indigo-500);border-color:var(--indigo-200)}
+.btn-sm-p:hover{background:var(--indigo-500);color:var(--white)}
+.hist-row{display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--slate-100);flex-wrap:wrap}
 .hist-row:last-child{border-bottom:none}
-.hist-detail{background:#f8fafc;border-radius:8px;padding:12px 14px;margin-bottom:8px;font-size:.8rem;display:none}
-.hist-detail .dl{display:flex;gap:10px;padding:4px 0;border-bottom:1px solid #e2e8f0;align-items:center}
+.hist-detail{background:var(--slate-50);border-radius:8px;padding:12px 14px;margin-bottom:8px;font-size:.8rem;display:none}
+.hist-detail .dl{display:flex;gap:10px;padding:4px 0;border-bottom:1px solid var(--slate-200);align-items:center}
 .hist-detail .dl:last-child{border-bottom:none}
-.alert-warn{background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 14px;color:#92400e;font-size:.84rem;margin-bottom:12px}
-.alert-ok{background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:10px 14px;color:#166534;font-size:.84rem;margin-bottom:12px}
-.notice{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:8px 14px;color:#1d4ed8;font-size:.8rem;margin-bottom:10px;display:none}
-.empty-state{text-align:center;color:#94a3b8;font-size:.84rem;padding:28px 0}
-.legend-box{display:flex;flex-wrap:wrap;gap:6px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:.74rem;color:#475569}
-.legend-box b{color:#1e293b}
+.alert-warn{background:var(--amber-50);border:1px solid var(--amber-300);border-radius:8px;padding:10px 14px;color:var(--amber-800);font-size:.84rem;margin-bottom:12px}
+.alert-ok{background:var(--green-50);border:1px solid var(--green-300);border-radius:8px;padding:10px 14px;color:var(--green-800);font-size:.84rem;margin-bottom:12px}
+.notice{background:var(--blue-50);border:1px solid var(--blue-200);border-radius:8px;padding:8px 14px;color:var(--blue-700);font-size:.8rem;margin-bottom:10px;display:none}
+.empty-state{text-align:center;color:var(--slate-400);font-size:.84rem;padding:28px 0}
+.legend-box{display:flex;flex-wrap:wrap;gap:6px 16px;background:var(--slate-50);border:1px solid var(--slate-200);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:.74rem;color:var(--slate-600)}
+.legend-box b{color:var(--slate-800)}
 </style>"""
 
 
@@ -167,15 +167,15 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
         sem = escape(r["sem"])
         dati_warning = "" if r["dati_ok"] else (
             "<span title='Storico troppo corto (<30 giorni di quotazioni): Momentum e Rischio sono indicativi' "
-            "style='color:#c2410c;font-size:.7rem;margin-left:2px'>&#9888;</span>"
+            "style='color:var(--orange-700);font-size:.7rem;margin-left:2px'>&#9888;</span>"
         )
         comm_badge = commission_badge(r["zero_commission"])
         table_rows += (
             f"<tr>"
             f"<td style='font-size:1.05rem;padding-left:4px;width:22px'>{sem}</td>"
             f"<td style='font-weight:800;white-space:nowrap;width:66px;overflow:hidden;text-overflow:ellipsis'>{tk}{comm_badge}{dati_warning}</td>"
-            f"<td style='width:106px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#475569' title='{name_esc}'>{name_short}</td>"
-            f"<td style='width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.7rem;color:#64748b' title='{escape(funz_full)}'>{funz}</td>"
+            f"<td style='width:106px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--slate-600)' title='{name_esc}'>{name_short}</td>"
+            f"<td style='width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.7rem;color:var(--slate-500)' title='{escape(funz_full)}'>{funz}</td>"
             f"<td style='text-align:center;width:24px'>{_ruolo_badge(r['bucket'])}</td>"
             f"<td style='text-align:center;width:36px' title='{why_esc}'>{_voto_badge(r['voto'])}</td>"
             f"<td style='text-align:center;width:28px'>{_sc_badge(r['fit'])}</td>"
@@ -183,15 +183,15 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
             f"<td style='text-align:center;width:28px'>{_sc_badge(r['risk'])}</td>"
             f"<td style='text-align:center;width:28px'>{_sc_badge(r['div_s'])}</td>"
             f"<td style='text-align:center;width:28px'>{_sc_badge(r['cost'])}</td>"
-            f"<td style='text-align:right;white-space:nowrap;overflow:hidden;color:#475569;width:58px'>€ {px_it}</td>"
-            f"<td style='text-align:center;color:#64748b;width:32px'>{qp_it}</td>"
-            f"<td style='text-align:center;font-weight:700;color:#6366f1;width:28px'>{r['sug']}</td>"
+            f"<td style='text-align:right;white-space:nowrap;overflow:hidden;color:var(--slate-600);width:58px'>€ {px_it}</td>"
+            f"<td style='text-align:center;color:var(--slate-500);width:32px'>{qp_it}</td>"
+            f"<td style='text-align:center;font-weight:700;color:var(--indigo-500);width:28px'>{r['sug']}</td>"
             f"<td style='text-align:center;width:26px'>"
             f"<input type='checkbox' id='sel_{tk}' onchange='computeEval()' "
-            f"style='accent-color:#6366f1;width:14px;height:14px;cursor:pointer'></td>"
+            f"style='accent-color:var(--indigo-500);width:14px;height:14px;cursor:pointer'></td>"
             f"<td style='text-align:center;width:48px'>"
             f"<input type='number' id='qta_{tk}' min='0' step='1' value='0' oninput='computeEval()' "
-            f"style='width:40px;padding:3px 4px;border:1px solid #cbd5e1;border-radius:6px;font-size:.8rem;text-align:center'></td>"
+            f"style='width:40px;padding:3px 4px;border:1px solid var(--slate-300);border-radius:6px;font-size:.8rem;text-align:center'></td>"
             f"</tr>"
         )
 
@@ -201,7 +201,7 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
         f"<div class='tbl-actions'>"
         f"<button type='button' class='btn-sm btn-sm-p' onclick='prefillSug()'>↺ Usa suggeriti SATOR</button>"
         f"<button type='button' class='btn-sm' onclick='clearSel()'>✕ Azzera</button>"
-        f"<span style='font-size:.74rem;color:#94a3b8;margin-left:4px'>Modifica Qta → valutazione live a destra</span>"
+        f"<span style='font-size:.74rem;color:var(--slate-400);margin-left:4px'>Modifica Qta → valutazione live a destra</span>"
         f"</div>"
         f"<div>"
         f"<table class='sr-table'><thead><tr>"
@@ -285,17 +285,17 @@ def _render_sator_page(
   <h2>Valutazione live</h2>
   <div class="ev-block">
     <div class="ev-row"><span class="ev-h">Budget</span><span style="font-size:.88rem;font-weight:700">€ {budget_for_eval:,.2f}".replace(",","X").replace(".","​,").replace("X",".")</span></div>
-    <div class="ev-row"><span class="ev-h">Totale ordine</span><span class="ev-v" id="ev_total" style="color:#94a3b8">—</span></div>
-    <div class="ev-row"><span class="ev-h">Delta budget</span><span class="ev-v" id="ev_delta" style="color:#94a3b8">—</span></div>
+    <div class="ev-row"><span class="ev-h">Totale ordine</span><span class="ev-v" id="ev_total" style="color:var(--slate-400)">—</span></div>
+    <div class="ev-row"><span class="ev-h">Delta budget</span><span class="ev-v" id="ev_delta" style="color:var(--slate-400)">—</span></div>
   </div>
   <div class="ev-block" id="ev_rip_sec" style="display:none">
     <div class="ev-h" style="margin-bottom:8px">Ripartizione</div>
-    <div style="display:flex;justify-content:space-between;font-size:.8rem"><span style="color:#3b82f6;font-weight:600">Core</span><span id="ev_core_pct">—</span></div>
-    <div class="bar-wrap"><div class="bar-fill" id="ev_core_bar" style="background:#3b82f6;width:0%"></div></div>
-    <div style="display:flex;justify-content:space-between;font-size:.8rem"><span style="color:#22c55e;font-weight:600">Difensivo</span><span id="ev_diff_pct">—</span></div>
-    <div class="bar-wrap"><div class="bar-fill" id="ev_diff_bar" style="background:#22c55e;width:0%"></div></div>
-    <div style="display:flex;justify-content:space-between;font-size:.8rem"><span style="color:#f97316;font-weight:600">Satellite</span><span id="ev_sat_pct">—</span></div>
-    <div class="bar-wrap"><div class="bar-fill" id="ev_sat_bar" style="background:#f97316;width:0%"></div></div>
+    <div style="display:flex;justify-content:space-between;font-size:.8rem"><span style="color:var(--blue-500);font-weight:600">Core</span><span id="ev_core_pct">—</span></div>
+    <div class="bar-wrap"><div class="bar-fill" id="ev_core_bar" style="background:var(--blue-500);width:0%"></div></div>
+    <div style="display:flex;justify-content:space-between;font-size:.8rem"><span style="color:var(--green-500);font-weight:600">Difensivo</span><span id="ev_diff_pct">—</span></div>
+    <div class="bar-wrap"><div class="bar-fill" id="ev_diff_bar" style="background:var(--green-500);width:0%"></div></div>
+    <div style="display:flex;justify-content:space-between;font-size:.8rem"><span style="color:var(--orange-500);font-weight:600">Satellite</span><span id="ev_sat_pct">—</span></div>
+    <div class="bar-wrap"><div class="bar-fill" id="ev_sat_bar" style="background:var(--orange-500);width:0%"></div></div>
   </div>
   <div class="ev-block" id="ev_scores_sec" style="display:none">
     <div class="ev-row"><span class="ev-h">Voto medio pond.</span><span class="ev-v" id="ev_voto">—</span></div>
@@ -356,10 +356,10 @@ function computeEval(){{
     }}
   }});
   const t=document.getElementById('ev_total'),d=document.getElementById('ev_delta');
-  t.textContent=nsel?fmtEur(total):'—'; t.style.color=nsel?'#1e293b':'#94a3b8';
+  t.textContent=nsel?fmtEur(total):'—'; t.style.color=nsel?'var(--slate-800)':'var(--slate-400)';
   const btn=document.getElementById('btn_save'); if(btn)btn.disabled=nsel===0;
   if(!nsel){{
-    d.textContent='—';d.style.color='#94a3b8';
+    d.textContent='—';d.style.color='var(--slate-400)';
     document.getElementById('ev_rip_sec').style.display='none';
     document.getElementById('ev_scores_sec').style.display='none';
     document.getElementById('ev_headline_box').style.display='none';
@@ -370,7 +370,7 @@ function computeEval(){{
   const delta=total-budget_val;
   const overTol=Math.max(1,budget_val*.05),underLim=Math.max(50,budget_val*.10);
   d.textContent=(delta>=0?'+':'')+fmtEur(delta);
-  d.style.color=delta>overTol?'#ef4444':delta>0?'#f97316':delta<-underLim?'#f59e0b':'#22c55e';
+  d.style.color=delta>overTol?'var(--red-500)':delta>0?'var(--orange-500)':delta<-underLim?'var(--amber-500)':'var(--green-500)';
   const cpct=total>0?(bkts.Core||0)/total*100:0;
   const dpct=total>0?(bkts.Difensivo||0)/total*100:0;
   const spct=total>0?(bkts.Satellite||0)/total*100:0;
@@ -387,11 +387,11 @@ function computeEval(){{
   document.getElementById('ev_voto').textContent=fmtV(vm);
   const af=peso_s>0?fit_s/peso_s:0,ar=peso_s>0?risk_s/peso_s:0;
   let headline,hlBg,hlCol;
-  if(delta>overTol){{headline='Fuori budget';hlBg='#fef2f2';hlCol='#b91c1c';}}
-  else if(delta>0){{headline='Appena fuori budget';hlBg='#fff7ed';hlCol='#c2410c';}}
-  else if(delta<-underLim){{headline='Budget sottoutilizzato';hlBg='#fefce8';hlCol='#92400e';}}
-  else if(af>=0.62&&ar>=0.50){{headline='Scelta coerente ✓';hlBg='#f0fdf4';hlCol='#15803d';}}
-  else{{headline='Scelta da rivedere';hlBg='#fff7ed';hlCol='#c2410c';}}
+  if(delta>overTol){{headline='Fuori budget';hlBg='var(--red-50)';hlCol='var(--red-700)';}}
+  else if(delta>0){{headline='Appena fuori budget';hlBg='var(--orange-50)';hlCol='var(--orange-700)';}}
+  else if(delta<-underLim){{headline='Budget sottoutilizzato';hlBg='var(--yellow-50)';hlCol='var(--amber-800)';}}
+  else if(af>=0.62&&ar>=0.50){{headline='Scelta coerente ✓';hlBg='var(--green-50)';hlCol='var(--green-700)';}}
+  else{{headline='Scelta da rivedere';hlBg='var(--orange-50)';hlCol='var(--orange-700)';}}
   const hbox=document.getElementById('ev_headline_box');
   hbox.style.display='';hbox.style.background=hlBg;hbox.style.color=hlCol;hbox.textContent=headline;
 }}
@@ -491,27 +491,27 @@ function renderHistory(){{
     const glbl=dec.giudizio?.label||'—';
     const lines=dec.order_lines||[];
     const note=(dec.note||'').trim();
-    const gCol=glbl.includes('coerente')?'#15803d':glbl.includes('rivedere')?'#c2410c':'#92400e';
-    const gBg=glbl.includes('coerente')?'#f0fdf4':glbl.includes('rivedere')?'#fff7ed':'#fefce8';
+    const gCol=glbl.includes('coerente')?'var(--green-700)':glbl.includes('rivedere')?'var(--orange-700)':'var(--amber-800)';
+    const gBg=glbl.includes('coerente')?'var(--green-50)':glbl.includes('rivedere')?'var(--orange-50)':'var(--yellow-50)';
     let linesHtml='';
     lines.forEach(l=>{{
       const am=parseFloat(l.amount||l.importo||0);
-      linesHtml+=`<div class="dl"><span style="font-weight:800;min-width:60px">${{l.ticker}}</span><span style="flex:1;color:#64748b">${{l.name||''}}</span><span style="white-space:nowrap;color:#475569">${{l.shares||l.quantita||0}} q × ${{fmtEur(l.price||l.prezzo||0)}}</span><span style="font-weight:700;margin-left:10px">${{fmtEur(am)}}</span></div>`;
+      linesHtml+=`<div class="dl"><span style="font-weight:800;min-width:60px">${{l.ticker}}</span><span style="flex:1;color:var(--slate-500)">${{l.name||''}}</span><span style="white-space:nowrap;color:var(--slate-600)">${{l.shares||l.quantita||0}} q × ${{fmtEur(l.price||l.prezzo||0)}}</span><span style="font-weight:700;margin-left:10px">${{fmtEur(am)}}</span></div>`;
     }});
-    const ripartRow=Object.entries(dec.ripartizione||{{}}).filter(([,v])=>v.amount>0).map(([k,v])=>`<span style="font-size:.75rem;color:#64748b">${{k}}: ${{fmtPct(v.pct)}}</span>`).join(' · ');
+    const ripartRow=Object.entries(dec.ripartizione||{{}}).filter(([,v])=>v.amount>0).map(([k,v])=>`<span style="font-size:.75rem;color:var(--slate-500)">${{k}}: ${{fmtPct(v.pct)}}</span>`).join(' · ');
     html+=`
     <div class="hist-row">
-      <div style="min-width:105px;font-size:.75rem;color:#64748b">${{created}}</div>
-      <div><span style="font-size:.72rem;color:#94a3b8">Budget</span> <strong style="font-size:.85rem">${{fmtEur(budget_d)}}</strong></div>
-      <div><span style="font-size:.72rem;color:#94a3b8">Importo</span> <strong style="font-size:.85rem">${{fmtEur(imp)}}</strong></div>
+      <div style="min-width:105px;font-size:.75rem;color:var(--slate-500)">${{created}}</div>
+      <div><span style="font-size:.72rem;color:var(--slate-400)">Budget</span> <strong style="font-size:.85rem">${{fmtEur(budget_d)}}</strong></div>
+      <div><span style="font-size:.72rem;color:var(--slate-400)">Importo</span> <strong style="font-size:.85rem">${{fmtEur(imp)}}</strong></div>
       <div><span style="background:${{gBg}};color:${{gCol}};font-size:.74rem;font-weight:700;padding:2px 9px;border-radius:6px;display:inline-block">${{glbl}}</span></div>
-      <div style="font-size:.78rem;color:#64748b">⭐ ${{fmtV(vm)}} · ${{lines.length}} str.</div>
-      ${{ripartRow?`<div style="font-size:.75rem;color:#94a3b8">${{ripartRow}}</div>`:''}}
-      ${{note?`<div style="font-size:.74rem;color:#94a3b8;font-style:italic">«${{note}}»</div>`:''}}
+      <div style="font-size:.78rem;color:var(--slate-500)">⭐ ${{fmtV(vm)}} · ${{lines.length}} str.</div>
+      ${{ripartRow?`<div style="font-size:.75rem;color:var(--slate-400)">${{ripartRow}}</div>`:''}}
+      ${{note?`<div style="font-size:.74rem;color:var(--slate-400);font-style:italic">«${{note}}»</div>`:''}}
       <div style="margin-left:auto;display:flex;gap:6px;flex-shrink:0">
         <button class="btn-sm" onclick="toggleHistDetail(${{origIdx}})">▼ Dettaglio</button>
         <button class="btn-sm btn-sm-p" onclick="loadDecision(${{origIdx}})" ${{!hasAnalysis?'style="opacity:.6"':''}}>↺ Riparti</button>
-        <button class="btn-sm" style="color:#b91c1c;border-color:#fecaca" onclick="deleteDecision('${{dec.decision_id}}')">🗑 Elimina</button>
+        <button class="btn-sm" style="color:var(--red-700);border-color:var(--red-200)" onclick="deleteDecision('${{dec.decision_id}}')">🗑 Elimina</button>
       </div>
     </div>
     <div id="hist_d_${{origIdx}}" class="hist-detail">${{linesHtml||'<em>Nessuna linea</em>'}}</div>`;
@@ -537,7 +537,7 @@ if(hasAnalysis){{prefillSug();}}
   <div class="sp-card">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;margin-bottom:14px">
       <h1 style="margin:0">🧠 SATOR – Analisi e pianificazione</h1>
-      <a href="{STREAMLIT_URL}" target="_blank" style="font-size:.82rem;color:#6366f1;text-decoration:none;font-weight:600">← Torna a Streamlit</a>
+      <a href="{STREAMLIT_URL}" target="_blank" style="font-size:.82rem;color:var(--indigo-500);text-decoration:none;font-weight:600">← Torna a Streamlit</a>
     </div>
     {ok_html}{err_html}
     <form method="post" action="/sator" onsubmit="collectCats()">
@@ -575,7 +575,7 @@ if(hasAnalysis){{prefillSug();}}
   </form>
 
   <div class="sp-card">
-    <h2>Decisioni precedenti <span id="hist_count" style="font-weight:400;color:#94a3b8"></span></h2>
+    <h2>Decisioni precedenti <span id="hist_count" style="font-weight:400;color:var(--slate-400)"></span></h2>
     <div id="hist_container"></div>
   </div>
 
