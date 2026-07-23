@@ -14,14 +14,14 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from core.cache_signatures import build_portfolio_data_signature, resolve_analysis_render_sig
+from core.cache_signatures import build_portfolio_data_signature, charts_settings_signature, resolve_analysis_render_sig, theme_signature
 from core.render_profiler import profile_step
 from core.analytics_payload_cache import load_entry as load_persistent_analytics_entry, store_entry as store_persistent_analytics_entry
 from core.services.benchmark import build_benchmark_transparency_payload, benchmark_explanation
 from ui.charts.benchmark import build_instrument_benchmark_scatter, build_portfolio_benchmark_comparison_chart, build_normalized_performance_chart, get_all_historical_tickers, resolve_period_start_date
 from ui.components import kpi_card, legend_block, render_section_title, render_styled_table, vertical_gap
 from ui.formatting import fmt_date_only_it, fmt_eur_it, fmt_num_it, fmt_pct_it
-from ui.theme import P, macro_color
+from ui.theme import P, get_theme_context, macro_color
 
 
 BENCHMARK_PAYLOAD_CACHE_KEY = "_cruscotti_benchmark_payload_cache_v1"
@@ -682,6 +682,9 @@ def render_benchmark(ctx: SimpleNamespace, summary_bundle: Any | None = None) ->
     # corrente del portfolio: così un refresh prezzi non invalida le figure
     # di un'analisi benchmark che non è stata rigenerata.
     render_sig = resolve_analysis_render_sig(signature, entry)
+    _theme_sig = theme_signature(get_theme_context())
+    _settings_sig = charts_settings_signature("ui/charts/settings.py")
+    render_sig = f"{render_sig}:{_theme_sig}:{_settings_sig}"
 
     with profile_step("Cruscotti/Benchmark", "render header KPI e spiegazione"):
         cfg = payload.get("config", {})

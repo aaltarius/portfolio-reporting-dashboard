@@ -14,7 +14,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from core.cache_signatures import build_portfolio_data_signature, resolve_analysis_render_sig
+from core.cache_signatures import build_portfolio_data_signature, charts_settings_signature, resolve_analysis_render_sig, theme_signature
 from core.constants import SOGLIA_DRAWDOWN_ALERT
 from core.render_profiler import profile_step
 from core.analytics_payload_cache import load_entry as load_persistent_analytics_entry, store_entry as store_persistent_analytics_entry
@@ -31,7 +31,7 @@ from ui.charts.accumuli import (
 )
 from ui.components import kpi_card, legend_block, render_section_title, render_styled_table, vertical_gap
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it, fmt_qty_it
-from ui.theme import P, macro_color
+from ui.theme import P, get_theme_context, macro_color
 
 
 ACCUMULI_ANALYSIS_CACHE_KEY = "_cruscotti_accumuli_analysis_cache_v2"
@@ -838,6 +838,9 @@ def render_accumuli(ctx: SimpleNamespace, show_explanations: bool = True) -> Non
     # corrente del portfolio: così un refresh prezzi non invalida le figure
     # di un'analisi accumuli che non è stata rigenerata.
     render_sig = resolve_analysis_render_sig(signature, entry)
+    _theme_sig = theme_signature(get_theme_context())
+    _settings_sig = charts_settings_signature("ui/charts/settings.py")
+    render_sig = f"{render_sig}:{_theme_sig}:{_settings_sig}"
 
     if result is None:
         st.info("Analisi accumuli non disponibile. Premi “Analizza accumuli” per ricostruirla.")
