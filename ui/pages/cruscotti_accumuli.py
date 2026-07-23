@@ -31,7 +31,6 @@ from ui.charts.accumuli import (
 from ui.components import kpi_card, legend_block, render_frozen_analysis_freeze_header, render_frozen_analysis_status_text, render_section_title, render_styled_table, vertical_gap
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it, fmt_qty_it
 from ui.theme import P, get_theme_context, macro_color
-from persistence.storage import _safe_float
 
 
 ACCUMULI_ANALYSIS_CACHE_KEY = "_cruscotti_accumuli_analysis_cache_v2"
@@ -73,6 +72,15 @@ def _accumuli_analysis_signature(ctx: SimpleNamespace) -> str:
     }
     raw = json.dumps(material, sort_keys=True, default=str, ensure_ascii=False)
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if pd.isna(value):
+            return default
+        return float(value)
+    except Exception:
+        return default
 
 
 def _priority_color(value: str) -> str:
