@@ -65,8 +65,7 @@ def vertical_gap(size: str = "md") -> None:
     st.markdown(f"<div style='height:{px}px;'></div>", unsafe_allow_html=True)
 
 
-def _section_icon_svg(kind: str = "default") -> str:
-    icons = {
+_SECTION_ICON_SVGS: dict[str, str] = {
         "portfolio": """
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="4" fill="currentColor" opacity=".16"/><path d="M7 9h10M7 13h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         """,
@@ -94,23 +93,35 @@ def _section_icon_svg(kind: str = "default") -> str:
         "default": """
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4" fill="currentColor" opacity=".14"/><path d="M8 9h8M8 13h8M8 17h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         """,
-    }
-    return icons.get(kind, icons["default"])
+}
+
+
+def _section_icon_svg(kind: str = "default") -> str:
+    return _SECTION_ICON_SVGS.get(kind, _SECTION_ICON_SVGS["default"])
+
+
+# Palette fissa (icon_color, icon_bg, icon_border) per gli accenti icona dei
+# titoli di sezione (render_section_title) — deliberatamente indipendente da
+# ui.theme/core.config.COLORS: sono accenti di navigazione stabili per
+# "kind" di pagina (portfolio/analisi/rischio/...), non colori finanziari
+# soggetti alla palette utente (stesso principio gia' usato per la palette
+# separata di ui/form_server/theme.py). Unica fonte, non ricostruita ad ogni
+# chiamata di render_section_title (~92 chiamate per render completo).
+_SECTION_ICON_STYLES: dict[str, tuple[str, str, str]] = {
+    "portfolio": ("#2563eb", "rgba(37,99,235,.12)", "rgba(37,99,235,.28)"),
+    "analysis": ("#7c3aed", "rgba(124,58,237,.12)", "rgba(124,58,237,.28)"),
+    "income": ("#059669", "rgba(5,150,105,.12)", "rgba(5,150,105,.28)"),
+    "risk": ("#dc2626", "rgba(220,38,38,.10)", "rgba(220,38,38,.24)"),
+    "settings": ("#475569", "rgba(71,85,105,.12)", "rgba(71,85,105,.24)"),
+    "data": ("#0f766e", "rgba(15,118,110,.12)", "rgba(15,118,110,.24)"),
+    "quotes": ("#ea580c", "rgba(234,88,12,.12)", "rgba(234,88,12,.26)"),
+    "operations": ("#0284c7", "rgba(2,132,199,.12)", "rgba(2,132,199,.26)"),
+    "default": ("#3b82f6", "rgba(59,130,246,.12)", "rgba(59,130,246,.28)"),
+}
 
 
 def _section_icon_style(kind: str = "default") -> tuple[str, str, str]:
-    styles = {
-        "portfolio": ("#2563eb", "rgba(37,99,235,.12)", "rgba(37,99,235,.28)"),
-        "analysis": ("#7c3aed", "rgba(124,58,237,.12)", "rgba(124,58,237,.28)"),
-        "income": ("#059669", "rgba(5,150,105,.12)", "rgba(5,150,105,.28)"),
-        "risk": ("#dc2626", "rgba(220,38,38,.10)", "rgba(220,38,38,.24)"),
-        "settings": ("#475569", "rgba(71,85,105,.12)", "rgba(71,85,105,.24)"),
-        "data": ("#0f766e", "rgba(15,118,110,.12)", "rgba(15,118,110,.24)"),
-        "quotes": ("#ea580c", "rgba(234,88,12,.12)", "rgba(234,88,12,.26)"),
-        "operations": ("#0284c7", "rgba(2,132,199,.12)", "rgba(2,132,199,.26)"),
-        "default": ("#3b82f6", "rgba(59,130,246,.12)", "rgba(59,130,246,.28)"),
-    }
-    return styles.get(kind, styles["default"])
+    return _SECTION_ICON_STYLES.get(kind, _SECTION_ICON_STYLES["default"])
 
 
 def render_section_title(
