@@ -1957,7 +1957,7 @@ def _apply_chart_chrome(fig, settings: dict[str, Any], margin: dict[str, int]) -
 def apply_settings(fig, chart_id: str):
     """Applica il layout finale. Deve essere l'ultima chiamata prima del return del grafico."""
     settings = _chart_settings(chart_id)
-    return _apply_settings_pipeline_runtime(
+    fig = _apply_settings_pipeline_runtime(
         fig,
         settings,
         clear_all_range_controls=_clear_all_range_controls,
@@ -1981,3 +1981,9 @@ def apply_settings(fig, chart_id: str):
         normalise_annotations=_normalise_annotations,
         add_quarter_gridlines=_add_quarter_gridlines,
     )
+    # Convenzione numerica italiana nei tooltip/tick label (Plotly/d3 di
+    # default usa quella americana ".,"): centralizzato qui perche' questo
+    # e' il punto unico attraversato da ogni grafico dell'app (chiamato
+    # direttamente o via finalize_chart), come da Parte 9 del roadmap v5.
+    fig.update_layout(separators=",.")
+    return fig
