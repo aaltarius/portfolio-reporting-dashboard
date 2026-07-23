@@ -55,7 +55,7 @@ from ui.sator_matrix import (
     sator_matrix_column_config,
     sator_matrix_height,
 )
-from ui.theme import get_theme_context
+from ui.theme import bucket_color, get_theme_context
 from ui.notifications import queue_success
 from ui.ux_helpers import confirm_danger, render_danger_hint
 
@@ -204,11 +204,6 @@ def _build_bucket_allocation_table_html(
     sia il vecchio box testuale "Lettura dell'allocazione" sia il box
     "Strumenti per bucket": un solo oggetto visivo invece di grafico + due
     box di testo."""
-    bucket_colors = {
-        "Core": getattr(theme, "color_blue", "#5B8DEF"),
-        "Difensivo": getattr(theme, "color_green", "#22c55e"),
-        "Satellite": getattr(theme, "color_orange", "#E8B960"),
-    }
     total_value = float(bucket_totals.sum())
     body_rows: list[str] = []
     for b in ("Core", "Difensivo", "Satellite"):
@@ -216,7 +211,7 @@ def _build_bucket_allocation_table_html(
         reminders_for_bucket = (watchlist_reminders or {}).get(b, [])
         if sub.empty and not reminders_for_bucket:
             continue
-        tone = bucket_colors[b]
+        tone = bucket_color(b, theme)
         target = float(objective.get(objective_key[b], 0.0))
         attuale = float(current_mix.get(b, 0.0))
         scost = (attuale - target) * 100.0
@@ -537,9 +532,6 @@ def _render_bucket_detail_box(combo_df: pd.DataFrame, importi: pd.Series) -> Non
     _render_sator_explain_box(rows, title="Dettaglio composizione ordine")
 
 
-_REF_SNAPSHOT_BUCKET_COLORS = {"Core": "color_blue", "Difensivo": "color_green", "Satellite": "color_orange"}
-
-
 def _build_sator_reference_summary_html(latest: dict, theme, data: dict) -> str:
     """Card per 'Fotografia di riferimento' sotto la mappa a bolle dei
     prossimi acquisti: stessi campi gia' salvati da build_sator_decision_record
@@ -567,7 +559,7 @@ def _build_sator_reference_summary_html(latest: dict, theme, data: dict) -> str:
         pct = float(entry.get("pct", 0.0))
         if not entry:
             continue
-        tone = getattr(theme, _REF_SNAPSHOT_BUCKET_COLORS[b], "#5B8DEF")
+        tone = bucket_color(b, theme)
         mix_rows_html += (
             f'<div class="ref-snapshot-mix-row" style="--tone:{tone}">'
             f'<span class="ref-snapshot-mix-label"><span class="dot"></span>{b}</span>'
@@ -600,7 +592,7 @@ def _build_sator_reference_summary_html(latest: dict, theme, data: dict) -> str:
             natura_label = natura_by_ticker.get(ticker.strip().upper(), "Esposizione diversificata")
             natura_color, natura_svg = get_natura_visual(natura_label)
             bucket = str(line.get("bucket") or "Satellite")
-            bucket_tone = getattr(theme, _REF_SNAPSHOT_BUCKET_COLORS.get(bucket, "color_orange"), "#E8B960")
+            bucket_tone = bucket_color(bucket, theme)
             if bucket in buckets_rendered:
                 bucket_total_cell = ""
             else:

@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 from ui.charts.runtime import finalize_chart
 from ui.formatting import fmt_eur_it, fmt_pct_it
 from ui.charts.natura_icons import get_natura_visual
+from ui.theme import bucket_color
 
 
 def build_composition_donut_chart(per_funzione: pd.Series, theme) -> go.Figure:
@@ -39,11 +40,6 @@ def build_ante_post_bucket_chart(bucket_df: pd.DataFrame, theme) -> go.Figure:
     """Mix Core/Difensivo/Satellite prima e dopo un ordine simulato."""
     fig = go.Figure()
     if bucket_df is not None and not bucket_df.empty:
-        colors = {
-            "Core": getattr(theme, "color_blue", "#5B8DEF"),
-            "Difensivo": getattr(theme, "color_green", "#22c55e"),
-            "Satellite": getattr(theme, "color_orange", "#E8B960"),
-        }
         for bucket in ("Core", "Difensivo", "Satellite"):
             if bucket not in bucket_df.index:
                 continue
@@ -53,7 +49,7 @@ def build_ante_post_bucket_chart(bucket_df: pd.DataFrame, theme) -> go.Figure:
                 name=bucket,
                 x=["Prima", "Dopo"],
                 y=[before, after],
-                marker_color=colors.get(bucket),
+                marker_color=bucket_color(bucket, theme),
                 text=[fmt_pct_it(before / 100.0, 1) if before >= 4 else "", fmt_pct_it(after / 100.0, 1) if after >= 4 else ""],
                 textposition="inside",
                 hovertemplate=f"{bucket}: %{{y:.1f}}%<extra></extra>",
@@ -70,11 +66,6 @@ def build_objective_mix_chart(objective: dict, current_mix: dict, theme) -> go.F
         "Satellite": objective.get("satellite", 0.0) * 100.0,
     }
     attuale_pct = {b: float(current_mix.get(b, 0.0)) * 100.0 for b in buckets}
-    colors = {
-        "Core": getattr(theme, "color_blue", "#5B8DEF"),
-        "Difensivo": getattr(theme, "color_green", "#22c55e"),
-        "Satellite": getattr(theme, "color_orange", "#E8B960"),
-    }
     fig = go.Figure()
     for bucket in buckets:
         ob = obiettivo_pct[bucket]
@@ -83,7 +74,7 @@ def build_objective_mix_chart(objective: dict, current_mix: dict, theme) -> go.F
             name=bucket,
             x=["Obiettivo", "Attuale"],
             y=[ob, att],
-            marker_color=colors.get(bucket),
+            marker_color=bucket_color(bucket, theme),
             text=[fmt_pct_it(ob / 100.0, 1) if ob >= 4 else "", fmt_pct_it(att / 100.0, 1) if att >= 4 else ""],
             textposition="inside",
             hovertemplate=f"{bucket}: %{{y:.1f}}%<extra></extra>",
@@ -123,11 +114,6 @@ def build_allocation_rings_chart(rings_df: pd.DataFrame, objective: dict, theme)
     fig = go.Figure()
     if rings_df is None or rings_df.empty:
         return finalize_chart(fig, "pianificazione_allocation_rings")
-    bucket_colors = {
-        "Core": getattr(theme, "color_blue", "#5B8DEF"),
-        "Difensivo": getattr(theme, "color_green", "#22c55e"),
-        "Satellite": getattr(theme, "color_orange", "#E8B960"),
-    }
     inner_labels: list[str] = []
     inner_values: list[float] = []
     inner_colors: list[str] = []
@@ -144,7 +130,7 @@ def build_allocation_rings_chart(rings_df: pd.DataFrame, objective: dict, theme)
         total = float(sub["value"].sum())
         inner_labels.append(bucket)
         inner_values.append(total)
-        inner_colors.append(bucket_colors[bucket])
+        inner_colors.append(bucket_color(bucket, theme))
         inner_hover.append(f"{bucket}<br>{fmt_eur_it(total, 2)}")
 
         natura_groups: dict[str, dict[str, object]] = {}
@@ -250,11 +236,6 @@ def build_next_purchase_bubble_chart(bubble_df: pd.DataFrame, theme) -> go.Figur
     df["rischio"] = 1.0 - df["risk_efficiency"]
     max_importo = max(float(df["importo"].max()), 1.0)
     df["marker_size"] = 14.0 + (df["importo"].clip(lower=0.0) / max_importo) * 26.0
-    bucket_colors = {
-        "Core": getattr(theme, "color_blue", "#5B8DEF"),
-        "Difensivo": getattr(theme, "color_green", "#22c55e"),
-        "Satellite": getattr(theme, "color_orange", "#E8B960"),
-    }
     for bucket in ("Core", "Difensivo", "Satellite"):
         sub = df[df["bucket"] == bucket]
         if sub.empty:
@@ -268,7 +249,7 @@ def build_next_purchase_bubble_chart(bubble_df: pd.DataFrame, theme) -> go.Figur
             name=bucket,
             marker=dict(
                 size=sub["marker_size"],
-                color=bucket_colors[bucket],
+                color=bucket_color(bucket, theme),
                 opacity=0.82,
                 line=dict(color="rgba(17,24,39,0.28)", width=1),
             ),

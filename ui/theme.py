@@ -240,6 +240,30 @@ def macro_color(categoria: str) -> str:
     return category_color(cat)
 
 
+_BUCKET_COLOR_ATTR = {"Core": "color_blue", "Difensivo": "color_green", "Satellite": "color_orange"}
+_BUCKET_COLOR_FALLBACK = {"Core": "#5B8DEF", "Difensivo": "#22c55e", "Satellite": "#E8B960"}
+
+
+def bucket_color(bucket: str, theme: Any) -> str:
+    """
+    Ritorna colore per bucket Core/Difensivo/Satellite (Pianificazione/SATOR).
+
+    Palette-aware: legge l'attributo color_blue/color_green/color_orange dal
+    ThemeConfig passato (varia con la palette utente selezionata), con
+    fallback statico per-bucket se l'attributo non e' presente.
+
+    Args:
+        bucket: "Core", "Difensivo" o "Satellite"
+        theme: ThemeConfig (o oggetto duck-typed con gli stessi attributi)
+
+    Returns:
+        Colore hex associato al bucket
+    """
+    attr = _BUCKET_COLOR_ATTR.get(bucket, "color_orange")
+    fallback = _BUCKET_COLOR_FALLBACK.get(bucket, "#E8B960")
+    return getattr(theme, attr, fallback)
+
+
 def instrument_color(ticker: str | None) -> str:
     """
     Ritorna un colore stabile per ticker basato sulla palette strumenti centralizzata.
