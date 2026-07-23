@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import re
 
 import pandas as pd
@@ -11,6 +10,7 @@ from core.finance import build_ptf_df
 from core.instrument_classification import is_nav_fund
 from ui.charts.instrument_badges import commission_badge
 from ui.charts.natura_icons import get_natura_visual
+from ui.formatting import fmt_num_it, fmt_pct_it
 from ui.streamlit_compat import iframe_height_for_rows, iframe_scroll_for_rows, render_html_iframe
 from ui.theme import macro_color
 
@@ -34,24 +34,6 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
     def _cat_col(ticker):
         cat = macro_cat(cat_map.get(str(ticker or ""), ""))
         return macro_color(cat)
-
-    def _fmt_num(v, dec=2):
-        try:
-            f = float(v)
-            return f"{f:,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        except Exception:
-            return "n/d"
-
-    def _fmt_pct(v, dec=2, signed=False):
-        try:
-            f = float(v) * 100
-            if math.isnan(f) or math.isinf(f):
-                return "n/d"
-            s = _fmt_num(abs(f), dec)
-            sign = "+" if signed and f > 0 else "-" if f < 0 else ""
-            return f"{sign}{s}%"
-        except Exception:
-            return "n/d"
 
     def _sort_num(v):
         try:
@@ -154,8 +136,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
             _delta_eur = None
         _delta_eur_sort = _sort_num(_delta_eur)
         if _delta_eur is not None and abs(_delta_eur) >= 0.0005:
-            _sign = "+" if _delta_eur > 0 else "-" if _delta_eur < 0 else ""
-            _delta_eur_fmt = f"{_sign}{_fmt_num(abs(_delta_eur), 3)}"
+            _delta_eur_fmt = fmt_num_it(_delta_eur, 3, signed=True)
             _delta_eur_col = "#1E8449" if _delta_eur > 0 else "#FF4B4B"
         else:
             _delta_eur_fmt, _delta_eur_col = "—", "#9CA3AF"
@@ -163,14 +144,14 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
         rows_html += (
             f'<tr style="{row_background}">'
             f'<td data-sort="{sym_sort}" style="text-align:center;padding:9px 6px;color:{sym_col};font-weight:800;">{sym}</td>'
-            f'<td class="num" data-sort="{_sort_num(delta_val)}" style="color:{sym_col};font-weight:700;">{_fmt_pct(delta, 2, signed=True)}</td>'
+            f'<td class="num" data-sort="{_sort_num(delta_val)}" style="color:{sym_col};font-weight:700;">{fmt_pct_it(delta, 2, signed=True)}</td>'
             f'<td data-sort="{ticker}"><a class="tk-link" style="color:{color}" href="#" onclick="showQuoteModal(\'{ticker}\');return false;">{ticker}</a>{comm_badge}</td>'
             f'<td data-sort="{name}" style="color:{color};max-width:115px;" title="{name}">{name[:21]}</td>'
             f'<td data-sort="{nature_label}" style="text-align:center;width:36px;min-width:36px;max-width:36px;padding-left:4px;padding-right:4px;">'
             f'<span class="type-icon" title="{nature_label}" aria-label="{nature_label}" style="color:{nature_color};">{icon_svg}</span></td>'
             f'<td data-sort="{tipo}" style="color:{color};font-weight:700;max-width:31px;overflow:hidden;text-overflow:ellipsis;" title="{tipo}">{tipo}</td>'
-            f'<td class="num" data-sort="{_sort_num(prezzo)}" style="max-width:68px;">{_fmt_num(prezzo, 3)}</td>'
-            f'<td class="num" data-sort="{_sort_num(prezzo_prec)}" style="max-width:68px;">{_fmt_num(prezzo_prec, 3)}</td>'
+            f'<td class="num" data-sort="{_sort_num(prezzo)}" style="max-width:68px;">{fmt_num_it(prezzo, 3)}</td>'
+            f'<td class="num" data-sort="{_sort_num(prezzo_prec)}" style="max-width:68px;">{fmt_num_it(prezzo_prec, 3)}</td>'
             f'<td class="num" data-sort="{_delta_eur_sort}" style="color:{_delta_eur_col};font-weight:700;max-width:76px;">{_delta_eur_fmt}</td>'
             f'<td data-sort="{fonte}" style="max-width:88px;" title="{fonte}">{fonte}</td>'
             f'<td class="num" data-sort="{_sort_dt}" style="max-width:90px;color:#6b7280;white-space:nowrap;" title="{_title_dt}">{price_date_fmt}</td>'

@@ -6,6 +6,7 @@ import pandas as pd
 from persistence.storage import macro_cat
 from ui.charts.instrument_badges import commission_badge
 from ui.charts.natura_icons import get_natura_visual
+from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it
 from ui.streamlit_compat import iframe_height_for_rows, render_html_iframe
 from ui.theme import CATEGORY_COLORS, macro_color
 
@@ -235,34 +236,6 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
             return ("▼", "#FF4B4B")
         return ("—", "#9CA3AF")
 
-    def _fmt_num(v, dec=2):
-        try:
-            f = float(v)
-            s = f"{f:,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
-            return s
-        except Exception:
-            return "n/d"
-
-    def _fmt_eur(v, dec=2, signed=False):
-        try:
-            f = float(v)
-            s = _fmt_num(f, dec)
-            if signed and f > 0:
-                return f"+{s} €"
-            return f"{s} €"
-        except Exception:
-            return "n/d"
-
-    def _fmt_pct(v, dec=1, signed=False):
-        try:
-            f = float(v) * 100
-            s = _fmt_num(f, dec)
-            if signed and f > 0:
-                return f"+{s}%"
-            return f"{s}%"
-        except Exception:
-            return "n/d"
-
     def _sort_val_num(v):
         try:
             return str(round(float(v or 0), 6))
@@ -288,8 +261,8 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
         except Exception:
             pl_e = pl_p = 0.0
         pl_col = "#1E8449" if pl_e >= 0 else "#FF4B4B"
-        pl_e_str = _fmt_eur(pl_e, 2, signed=True)
-        pl_p_str = _fmt_pct(pl_p, 2, signed=True)
+        pl_e_str = fmt_eur_it(pl_e, 2, signed=True)
+        pl_p_str = fmt_pct_it(pl_p, 2, signed=True)
         sym_sort = "1" if sym == "▲" else "2" if sym == "—" else "3"
         rows_html += (
             f'''<tr>\n          <td data-sort="{sym_sort}" style="color:{sym_col};font-weight:800;">{sym}</td>\n'''
@@ -297,12 +270,12 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
             f'''          <td data-sort="{nome}" style="color:{col};max-width:140px;" title="{nome}">{nome[:24]}</td>\n'''
             f'''          <td data-sort="{tipo}" style="color:{col};max-width:80px;" title="{tipo}">{tipo[:16]}</td>\n'''
             f'''          <td class="natura-cell" title="{natura_label}" style="color:{natura_color};width:20px;text-align:center;">{natura_svg}</td>\n'''
-            f'''          <td class="num" data-sort="{_sort_val_num(row.get('Quote', ''))}">{_fmt_num(row.get('Quote', ''), 3)}</td>\n'''
-            f'''          <td class="num" data-sort="{_sort_val_num(row.get('Prezzo', ''))}">{_fmt_eur(row.get('Prezzo', ''), 3)}</td>\n'''
-            f'''          <td class="num" data-sort="{_sort_val_num(row.get('PMC', ''))}">{_fmt_eur(row.get('PMC', ''), 3)}</td>\n'''
-            f'''          <td class="num" data-sort="{_sort_val_num(row.get('Controvalore', ''))}">{_fmt_eur(row.get('Controvalore', ''), 2)}</td>\n'''
-            f'''          <td class="num" data-sort="{_sort_val_num(row.get('Costo', ''))}">{_fmt_eur(row.get('Costo', ''), 2)}</td>\n'''
-            f'''          <td class="num" data-sort="{_sort_val_num(row.get('Comm.', ''))}">{_fmt_eur(row.get('Comm.', ''), 2)}</td>\n'''
+            f'''          <td class="num" data-sort="{_sort_val_num(row.get('Quote', ''))}">{fmt_num_it(row.get('Quote', ''), 3)}</td>\n'''
+            f'''          <td class="num" data-sort="{_sort_val_num(row.get('Prezzo', ''))}">{fmt_eur_it(row.get('Prezzo', ''), 3)}</td>\n'''
+            f'''          <td class="num" data-sort="{_sort_val_num(row.get('PMC', ''))}">{fmt_eur_it(row.get('PMC', ''), 3)}</td>\n'''
+            f'''          <td class="num" data-sort="{_sort_val_num(row.get('Controvalore', ''))}">{fmt_eur_it(row.get('Controvalore', ''), 2)}</td>\n'''
+            f'''          <td class="num" data-sort="{_sort_val_num(row.get('Costo', ''))}">{fmt_eur_it(row.get('Costo', ''), 2)}</td>\n'''
+            f'''          <td class="num" data-sort="{_sort_val_num(row.get('Comm.', ''))}">{fmt_eur_it(row.get('Comm.', ''), 2)}</td>\n'''
             f'''          <td class="num" data-sort="{_sort_val_num(pl_e)}" style="color:{pl_col};font-weight:700;">{pl_e_str}</td>\n'''
             f'''          <td class="num" data-sort="{_sort_val_num(pl_p)}" style="color:{pl_col};font-weight:700;">{pl_p_str}</td>\n'''
             f"""        </tr>"""
@@ -315,11 +288,11 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
     _total_pl_col = "#1E8449" if _total_pl_e >= 0 else "#FF4B4B"
     tfoot_html = (
         f'<tfoot><tr><td></td><td colspan="7" style="font-weight:800;font-size:0.85rem;letter-spacing:.02em;padding:9px 12px;">TOTALE</td>'
-        f'<td class="num" style="font-weight:700;padding:9px 12px;">{_fmt_eur(_total_ctv, 2)}</td>'
-        f'<td class="num" style="font-weight:700;padding:9px 12px;">{_fmt_eur(_total_cost, 2)}</td>'
-        f'<td class="num" style="font-weight:700;padding:9px 12px;">{_fmt_eur(_total_comm, 2)}</td>'
-        f'<td class="num" style="color:{_total_pl_col};font-weight:800;padding:9px 12px;">{_fmt_eur(_total_pl_e, 2, signed=True)}</td>'
-        f'<td class="num" style="color:{_total_pl_col};font-weight:800;padding:9px 12px;">{_fmt_pct(_total_pl_p, 2, signed=True)}</td></tr></tfoot>'
+        f'<td class="num" style="font-weight:700;padding:9px 12px;">{fmt_eur_it(_total_ctv, 2)}</td>'
+        f'<td class="num" style="font-weight:700;padding:9px 12px;">{fmt_eur_it(_total_cost, 2)}</td>'
+        f'<td class="num" style="font-weight:700;padding:9px 12px;">{fmt_eur_it(_total_comm, 2)}</td>'
+        f'<td class="num" style="color:{_total_pl_col};font-weight:800;padding:9px 12px;">{fmt_eur_it(_total_pl_e, 2, signed=True)}</td>'
+        f'<td class="num" style="color:{_total_pl_col};font-weight:800;padding:9px 12px;">{fmt_pct_it(_total_pl_p, 2, signed=True)}</td></tr></tfoot>'
     )
     ticker_json = json.dumps(ticker_info, ensure_ascii=False)
     n_rows = len(df)
@@ -462,38 +435,6 @@ def render_weekly_pl_table(result, da, data):
         cat = macro_cat(tipo)
         return CATEGORY_COLORS.get(cat, macro_color(cat))
 
-    def _fmt_num(v, dec=2):
-        try:
-            f = float(v)
-            s = f"{f:,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
-            return s
-        except Exception:
-            return "n/d"
-
-    def _fmt_eur(v, dec=2, signed=False):
-        try:
-            f = float(v)
-            s = _fmt_num(f, dec)
-            if signed and f > 0:
-                return f"+{s} €"
-            return f"{s} €"
-        except Exception:
-            return "n/d"
-
-    def _fmt_day(v):
-        if v is None:
-            return "—"
-        try:
-            f = float(v)
-        except Exception:
-            return "—"
-        s = _fmt_num(abs(f), 2)
-        if f > 0:
-            return f"+{s}"
-        if f < 0:
-            return f"-{s}"
-        return s
-
     def _sort_val(v):
         if v is None:
             return "-999999999"
@@ -533,7 +474,7 @@ def render_weekly_pl_table(result, da, data):
             is_extreme = v is not None and (v == day_max or v == day_min)
             weight = "700" if is_extreme else "400"
             gap_style = "border-left:2px solid #d1d5db;" if week_gap_before[i] else ""
-            cells += f'<td class="num" data-sort="{_sort_val(v)}" style="color:{cell_col};font-weight:{weight};{gap_style}">{_fmt_day(v)}</td>\n'
+            cells += f'<td class="num" data-sort="{_sort_val(v)}" style="color:{cell_col};font-weight:{weight};{gap_style}">{fmt_num_it(v, 2, signed=True)}</td>\n'
         totale = row["totale"]
         tot_col = "#1E8449" if totale >= 0 else "#FF4B4B"
         arrow_char = "↗" if totale >= 0 else "↘"
@@ -547,10 +488,10 @@ def render_weekly_pl_table(result, da, data):
             f'<td data-sort="{strumento}" style="color:{col};max-width:130px;" title="{strumento}">{strumento[:24]}</td>\n'
             f'<td data-sort="{tipo_code}" style="color:{col};">{tipo_code}</td>\n'
             f'<td class="natura-cell" title="{natura_label}" style="color:{natura_color};width:20px;text-align:center;">{natura_svg}</td>\n'
-            f'<td class="num" data-sort="{_sort_val(row["quote"])}">{_fmt_num(row["quote"], 3)}</td>\n'
+            f'<td class="num" data-sort="{_sort_val(row["quote"])}">{fmt_num_it(row["quote"], 3)}</td>\n'
             f'{cells}'
             f'<td style="color:{tot_col};font-weight:800;text-align:center;width:26px;">{arrow_char}</td>\n'
-            f'<td class="num" data-sort="{_sort_val(totale)}" style="color:{tot_col};font-weight:700;">{_fmt_eur(totale, 2, signed=True)}</td>\n'
+            f'<td class="num" data-sort="{_sort_val(totale)}" style="color:{tot_col};font-weight:700;">{fmt_eur_it(totale, 2, signed=True)}</td>\n'
             '</tr>'
         )
 
@@ -558,14 +499,14 @@ def render_weekly_pl_table(result, da, data):
     for i, v in enumerate(day_totals):
         cell_col = "#1E8449" if v >= 0 else "#FF4B4B"
         gap_style = "border-left:2px solid #d1d5db;" if week_gap_before[i] else ""
-        total_cells += f'<td class="num" style="color:{cell_col};font-weight:700;padding:9px 12px;{gap_style}">{_fmt_day(v)}</td>\n'
+        total_cells += f'<td class="num" style="color:{cell_col};font-weight:700;padding:9px 12px;{gap_style}">{fmt_num_it(v, 2, signed=True)}</td>\n'
     grand_col = "#1E8449" if grand_total >= 0 else "#FF4B4B"
     tfoot_html = (
         '<tfoot><tr>'
         '<td colspan="5" style="font-weight:800;font-size:0.85rem;letter-spacing:.02em;padding:9px 12px;">TOTALE</td>'
         f'{total_cells}'
         '<td></td>'
-        f'<td class="num" style="color:{grand_col};font-weight:800;padding:9px 12px;">{_fmt_eur(grand_total, 2, signed=True)}</td>'
+        f'<td class="num" style="color:{grand_col};font-weight:800;padding:9px 12px;">{fmt_eur_it(grand_total, 2, signed=True)}</td>'
         '</tr></tfoot>'
     )
 
