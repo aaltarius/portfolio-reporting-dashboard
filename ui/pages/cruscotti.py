@@ -40,6 +40,16 @@ from ui.pages.cruscotti_accumuli import render_accumuli
 from ui.pages.cruscotti_benchmark import render_benchmark
 from ui.streamlit_compat import render_html_iframe
 
+# Colori della tabella di validazione statistiche (style_validation_row):
+# ognuno era ripetuto identico due volte nello stesso file (la regola di
+# stile applicata alla cella + il testo di legenda che la spiega) -
+# costanti locali per evitare la ridondanza, non corrispondono a chiavi
+# gia' presenti in core.config.COLORS.
+_NS_GRAY_BG = "#e8e8e8"
+_NS_GRAY_TEXT = "#999"
+_NEGATIVE_METRIC_RED = "#d9534f"
+_DEFAULT_CHART_BG = "#f9f9f9"
+
 
 def _render_risk_contribution_analitica(bundle: Any) -> None:
     """Render risk contribution chart from bundle."""
@@ -620,18 +630,18 @@ def _render_analitica(bundle: Any) -> None:
 
                 # Regola 1: Grigio per CAGR e Calmar se storico < 365gg
                 elif col in ["CAGR", "Calmar"] and not history_valid[idx]:
-                    styles[col_idx] = "background-color: #e8e8e8; color: #999; opacity: 0.7;"
+                    styles[col_idx] = f"background-color: {_NS_GRAY_BG}; color: {_NS_GRAY_TEXT}; opacity: 0.7;"
 
                 # Regola 2: Grigio per "n.s." (non significativo)
                 elif (idx, col) in cell_is_ns:
-                    styles[col_idx] = "color: #999; font-style: italic;"
+                    styles[col_idx] = f"color: {_NS_GRAY_TEXT}; font-style: italic;"
 
                 # Regola 3: Colore rosso per valori negativi (Sharpe, Sortino, Calmar)
                 elif col in ["Sharpe (rf 0%)", "Sortino", "Calmar"]:
                     try:
                         val_num = float(val)
                         if val_num < 0:
-                            styles[col_idx] = "color: #d9534f; font-weight: 500;"
+                            styles[col_idx] = f"color: {_NEGATIVE_METRIC_RED}; font-weight: 500;"
                     except (ValueError, TypeError):
                         pass
 
@@ -693,11 +703,11 @@ def _render_analitica(bundle: Any) -> None:
         validation_explanation = (
             "<div style='white-space: normal; word-wrap: break-word;'>"
             "<strong>Interpretazione delle celle:</strong><br>"
-            "• <strong style='background-color: #e8e8e8; padding: 2px 4px;'>Sfondo grigio</strong> "
+            f"• <strong style='background-color: {_NS_GRAY_BG}; padding: 2px 4px;'>Sfondo grigio</strong> "
             "— CAGR e Calmar: storico inferiore a 365 giorni (valori annualizzati non rappresentativi).<br>"
-            "• <strong style='color: #999; font-style: italic;'>n.s.</strong> — Sharpe/Sortino: volatilità "
+            f"• <strong style='color: {_NS_GRAY_TEXT}; font-style: italic;'>n.s.</strong> — Sharpe/Sortino: volatilità "
             "inferiore allo 0,5% (indicatore non significativo). Calmar: drawdown inferiore allo 0,5%.<br>"
-            "• <strong style='color: #d9534f;'>Rosso</strong> — Sharpe, Sortino, Calmar negativi "
+            f"• <strong style='color: {_NEGATIVE_METRIC_RED};'>Rosso</strong> — Sharpe, Sortino, Calmar negativi "
             "(rendimento non compensa il rischio; non utilizzabili per il confronto tra strumenti).<br>"
             "• <strong>Normali</strong> — Rend. Tot., Volatilità Ann., Max Drawdown, VaR, CVaR: "
             "sempre mostrati indipendentemente dalle limitazioni sopra."
@@ -869,7 +879,7 @@ def _render_analitica_market_structure(ctx: SimpleNamespace, settings: dict[str,
             data_sig=_hist_sig,
             theme_sig=_theme_sig,
             charts_settings_sig=_settings_sig,
-            builder=lambda: build_correlation_heatmap(analysis_bundle.corr, getattr(ctx, "CHART_BG", "#f9f9f9")),
+            builder=lambda: build_correlation_heatmap(analysis_bundle.corr, getattr(ctx, "CHART_BG", _DEFAULT_CHART_BG)),
             page_mode="Completa",
             extra_params={"cache_bust": "cruscotti_corr_instr_transition_v1", "tickers": "|".join(list(analysis_bundle.analysis_returns.columns))},
             strategy=cache_strategy,
@@ -887,7 +897,7 @@ def _render_analitica_market_structure(ctx: SimpleNamespace, settings: dict[str,
             data_sig=_hist_sig,
             theme_sig=_theme_sig,
             charts_settings_sig=_settings_sig,
-            builder=lambda: build_correlation_heatmap(analysis_bundle.corr_cat, getattr(ctx, "CHART_BG", "#f9f9f9")),
+            builder=lambda: build_correlation_heatmap(analysis_bundle.corr_cat, getattr(ctx, "CHART_BG", _DEFAULT_CHART_BG)),
             page_mode="Completa",
             extra_params={"cache_bust": "cruscotti_corr_cat_transition_v1", "categories": "|".join(list(analysis_bundle.cat_flow_returns.columns))},
             strategy=cache_strategy,

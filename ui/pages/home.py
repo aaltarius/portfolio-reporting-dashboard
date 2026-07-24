@@ -12,6 +12,7 @@ from streamlit.delta_generator import DeltaGenerator
 
 from core.asset_categories import get_selected_category_codes
 from core.cache_signatures import build_portfolio_data_signature, charts_settings_signature, theme_signature
+from core.config import COLORS
 from core.data_models import ThemeConfig
 from core.figure_cache import CachingStrategy, get_figure_cache
 from persistence.storage import get_proventi_normalizzati
@@ -799,7 +800,7 @@ def _render_category_analysis(
 
 def _flow_card(title: str, rows: list[tuple[str, str]], total_label: str, total_val: str, total_ok: bool) -> str:
     """HTML card per il flowchart finanziario. rows = [(label, valore_formattato), ...]"""
-    tot_color = "#16a34a" if total_ok else "#dc2626"
+    tot_color = COLORS["success"] if total_ok else COLORS["danger"]
     rows_html = "".join(
         f'<tr><td style="padding:2px 6px;font-size:12px;color:#888;">{lbl}</td>'
         f'<td style="padding:2px 6px;font-size:12px;font-weight:600;text-align:right;">{val}</td></tr>'

@@ -8,7 +8,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from ui.charts.settings import apply_settings
-from ui.theme import P, macro_color
+from ui.theme import INSTRUMENT_PALETTE, P, macro_color
 from core.domain.positions import held_tickers
 
 
@@ -133,10 +133,10 @@ def build_normalized_performance_chart(
 
     sorted_dates = sorted(storico_prezzi.keys())
 
-    palette = [
-        P["blue"], P["orange"], P["green"], P["red"],
-        "#7E57C2", "#42A5F5", "#FF7043", "#9CCC65", "#AB47BC", "#26C6DA",
-    ]
+    # Ultimi 6 valori: stessi di ui.theme.INSTRUMENT_PALETTE[-6:] (le 6 tinte
+    # "extra" oltre COLORS["instrument_1..6"], gia' canoniche in
+    # core.constants.STRUMENTO_PALETTE) - riusate, non ridichiarate qui.
+    palette = [P["blue"], P["orange"], P["green"], P["red"]] + INSTRUMENT_PALETTE[-6:]
 
     added = 0
     for tk in tickers:
