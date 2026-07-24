@@ -229,6 +229,41 @@ def _build_category_pl_horizon_table(dfh: pd.DataFrame, category_df: pd.DataFram
     return pd.concat([table, pd.DataFrame([total_row])], ignore_index=True)
 
 
+def _combine_category_pl_horizon_tables(tables: list[pd.DataFrame | None]) -> pd.DataFrame:
+    """Costruisce la tabella P/L horizon di 'Tutto' sommando le tabelle
+    per-categoria gia' calcolate nello stesso giro (GOV/ETF/FND/...),
+    invece di ricalcolarla da zero rileggendo lo storico prezzi di ogni
+    strumento una seconda volta.
+
+    Sicuro perche' il P/L in euro per orizzonte e' additivo tra categorie
+    che partizionano lo stesso universo di strumenti (ogni ticker
+    appartiene a UNA sola categoria) - a differenza di drawdown/rendimenti
+    mensili (non additivi: dipendono dalla serie storica combinata, non
+    dalla somma delle serie per categoria), che restano calcolati
+    sull'aggregato reale e non sono toccati da questa ottimizzazione.
+    """
+    per_ticker_frames = [
+        table[table["Ticker"] != "TOTALE"]
+        for table in tables
+        if table is not None and not table.empty
+    ]
+    if not per_ticker_frames:
+        return pd.DataFrame()
+
+    combined = pd.concat(per_ticker_frames, ignore_index=True)
+    horizon_cols = [label for label, _spec in _CATEGORY_PL_HORIZONS]
+    sort_col = "3D" if "3D" in combined.columns else horizon_cols[0]
+    combined = combined.sort_values(sort_col, na_position="last").reset_index(drop=True)
+
+    total_row: dict[str, Any] = {"Ticker": "TOTALE"}
+    for col in horizon_cols:
+        total_row[col] = pd.to_numeric(combined[col], errors="coerce").sum(min_count=1)
+        partial_col = f"_{col}_partial"
+        if partial_col in combined.columns:
+            total_row[partial_col] = bool(combined[partial_col].fillna(False).any())
+    return pd.concat([combined, pd.DataFrame([total_row])], ignore_index=True)
+
+
 @dataclass(slots=True)
 class AdvancedAnalysisDatasetBundle:
     info_map: dict[str, dict[str, Any]]
@@ -568,7 +603,13 @@ def get_analysis_category_dashboard_bundles(
                 )
 
         with profile_step("Cruscotti/CategoryDashboard", f"{dataset.category} - build P/L horizon table", count=len(dfh_top) if dfh_top is not None else 0):
-            pl_horizon_table = _build_category_pl_horizon_table(dfh_top, dataset.df)
+            if dataset.category == "Tutto" and bundles:
+                # "Tutto" e' sempre l'ultimo dataset del giro (appeso in coda
+                # da _build_analysis_category_datasets_cached): le tabelle
+                # per-categoria sono gia' tutte in bundles a questo punto.
+                pl_horizon_table = _combine_category_pl_horizon_tables([b.pl_horizon_table for b in bundles])
+            else:
+                pl_horizon_table = _build_category_pl_horizon_table(dfh_top, dataset.df)
 
         bundles.append(
             AnalysisCategoryDashboardBundle(
