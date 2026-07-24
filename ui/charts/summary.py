@@ -172,17 +172,21 @@ def monthly_heatmap_html(monthly_returns, theme=None):
     )
 
 
+def _prepare_date_indice_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Converte 'data'->'date_dt' (formato italiano), pulisce 'indice',
+    scarta le righe invalide, ordina cronologicamente. Estratta perche'
+    era lo stesso identico blocco ripetuto per hist e bench in
+    summary_series_df."""
+    if df.empty:
+        return df
+    df["date_dt"] = pd.to_datetime(df["data"], dayfirst=True, errors="coerce")
+    df["indice"] = pd.to_numeric(df["indice"], errors="coerce")
+    return df.dropna(subset=["date_dt", "indice"]).sort_values("date_dt")
+
+
 def summary_series_df(summary_payload):
-    hist = pd.DataFrame(summary_payload.get("summary_history", []))
-    if not hist.empty:
-        hist["date_dt"] = pd.to_datetime(hist["data"], dayfirst=True, errors="coerce")
-        hist["indice"] = pd.to_numeric(hist["indice"], errors="coerce")
-        hist = hist.dropna(subset=["date_dt", "indice"]).sort_values("date_dt")
-    bench = pd.DataFrame(summary_payload.get("benchmark_history", []))
-    if not bench.empty:
-        bench["date_dt"] = pd.to_datetime(bench["data"], dayfirst=True, errors="coerce")
-        bench["indice"] = pd.to_numeric(bench["indice"], errors="coerce")
-        bench = bench.dropna(subset=["date_dt", "indice"]).sort_values("date_dt")
+    hist = _prepare_date_indice_frame(pd.DataFrame(summary_payload.get("summary_history", [])))
+    bench = _prepare_date_indice_frame(pd.DataFrame(summary_payload.get("benchmark_history", [])))
     return hist, bench
 
 

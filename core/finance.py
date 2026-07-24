@@ -53,7 +53,7 @@ from core.domain.positions import (
     build_ptf_df,
     get_cash_balance,
 )
-from core.series_utils import build_category_return_index
+from core.series_utils import build_category_return_index, build_value_curve_frame
 from core.domain.cashflows import compute_xirr, build_xirr_flows
 from core.domain.returns import (
     business_day_deltas,
@@ -1094,10 +1094,7 @@ def _build_summary_value_curve_fallback(dfh: pd.DataFrame | None) -> pd.DataFram
     """
     if dfh is None or dfh.empty or "Data" not in dfh.columns or "Valore" not in dfh.columns:
         return pd.DataFrame(columns=["date_dt", "indice", "ret"])
-    work = pd.DataFrame({
-        "date_dt": pd.to_datetime(dfh["Data"], errors="coerce"),
-        "value": pd.to_numeric(dfh["Valore"], errors="coerce"),
-    }).dropna(subset=["date_dt", "value"]).sort_values("date_dt").reset_index(drop=True)
+    work = build_value_curve_frame(dfh)
     work = work[work["value"] > 0]
     if len(work) < 2:
         return pd.DataFrame(columns=["date_dt", "indice", "ret"])

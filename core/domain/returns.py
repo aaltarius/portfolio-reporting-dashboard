@@ -5,6 +5,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from core.series_utils import build_value_curve_frame
+
 
 def business_day_deltas(index: Any) -> pd.Series:
     """Calculate business day deltas between dates."""
@@ -139,11 +141,7 @@ def _build_summary_return_curve(dfh: pd.DataFrame | None) -> pd.DataFrame:
     if not needed.issubset(set(dfh.columns)):
         return pd.DataFrame(columns=["date_dt", "indice", "ret"])
 
-    curve = pd.DataFrame({
-        "date_dt": pd.to_datetime(dfh["Data"], errors="coerce"),
-        "value": pd.to_numeric(dfh["Valore"], errors="coerce"),
-        "capital": pd.to_numeric(dfh["Capitale"], errors="coerce"),
-    }).dropna(subset=["date_dt", "value"]).sort_values("date_dt").reset_index(drop=True)
+    curve = build_value_curve_frame(dfh, extra_columns={"capital": "Capitale"})
     if len(curve) < 2:
         return pd.DataFrame(columns=["date_dt", "indice", "ret"])
 

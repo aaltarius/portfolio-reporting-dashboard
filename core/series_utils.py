@@ -13,6 +13,34 @@ def slice_recent(df, days):
     return df[df.index >= cutoff].copy()
 
 
+def build_value_curve_frame(
+    dfh: pd.DataFrame,
+    extra_columns: dict[str, str] | None = None,
+) -> pd.DataFrame:
+    """Prepara la curva storica valore/data da un dfh (colonne 'Data'/'Valore'):
+    converte le date, pulisce i numerici, scarta le righe con data o valore
+    invalidi, ordina cronologicamente.
+
+    extra_columns={"nome_colonna_output": "nome_colonna_input"} per includere
+    altre colonne numeriche pulite allo stesso modo (es. {"capital":
+    "Capitale"} per il calcolo TWR flow-adjusted) - NON incluse nel dropna,
+    stesso comportamento delle chiamate originali che duplicavano questo
+    blocco (core/finance.py, core/domain/returns.py).
+    """
+    columns: dict[str, pd.Series] = {
+        "date_dt": pd.to_datetime(dfh["Data"], errors="coerce"),
+        "value": pd.to_numeric(dfh["Valore"], errors="coerce"),
+    }
+    for out_name, in_name in (extra_columns or {}).items():
+        columns[out_name] = pd.to_numeric(dfh[in_name], errors="coerce")
+    return (
+        pd.DataFrame(columns)
+        .dropna(subset=["date_dt", "value"])
+        .sort_values("date_dt")
+        .reset_index(drop=True)
+    )
+
+
 def get_current_position_start_dates(data, positions=None) -> dict[str, pd.Timestamp]:
     """Return the latest opening date for each currently open position."""
     open_positions = positions if isinstance(positions, dict) else {}
