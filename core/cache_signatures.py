@@ -20,6 +20,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from persistence.storage import macro_cat
+
 logger = logging.getLogger("portafoglio.core.cache_signatures")
 
 
@@ -295,7 +297,7 @@ def build_category_data_signature(
 
     cat_strumenti = [
         s for s in strumenti
-        if isinstance(s, dict) and str(s.get("tipo", "")).strip() == category
+        if isinstance(s, dict) and macro_cat(s.get("tipo", "")) == category
     ]
 
     storico = payload.get("storico_prezzi", {})
