@@ -18,6 +18,7 @@ import pandas as pd
 import streamlit as st
 
 from core.asset_categories import ACTIVE_CATEGORY_CODES, get_selected_category_codes
+from core.cache_signatures import build_category_data_signature
 from core.cashflow_indices import build_group_cashflow_indices, seed_group_cashflow_indices_cache
 from core.settings_profiles import get_effective_summary_settings, get_runtime_ui_settings
 from core.services import get_valid_quote_tickers_by_category
@@ -505,6 +506,89 @@ def get_analysis_category_datasets(
 
 
 @st.cache_data(show_spinner=False, persist="disk")
+def _build_quotazioni_category_ticker_bundles_cached(
+    category_bundle_sig: str,
+    category: str,
+    _data: dict[str, Any],
+    _dh_hist: pd.DataFrame,
+    _is_complete_view: bool,
+    _include_ticker_detail_charts: bool,
+    _closed_tickers: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Dati "ticker detail chart" (serie normalizzata + benchmark) per UNA sola macro-categoria.
+
+    Estratta da _build_quotazioni_dataset_bundle_cached (V5-ROADMAP.md,
+    Parte 2, item 2.7): la firma e' scoped alla categoria via
+    build_category_data_signature, cosi' un aggiornamento quotazioni su
+    ETF non invalida piu' anche i ticker_bundles di GOV/FND/ETC.
+    """
+    _ = category_bundle_sig
+    info_map = {s["ticker"]: s for s in _data.get("strumenti", [])}
+    _closed_set = frozenset(_closed_tickers) if _closed_tickers else None
+    valid_tickers = get_valid_quote_tickers_by_category(_data, _dh_hist, closed_tickers=_closed_set)
+    category_tickers = [
+        tk for tk in valid_tickers
+        if macro_cat(info_map.get(tk, {}).get("tipo", "")) == category
+    ]
+
+    ticker_bundles: list[dict[str, Any]] = []
+    if not (_is_complete_view and _include_ticker_detail_charts) or not category_tickers:
+        return {"category_tickers": category_tickers, "ticker_bundles": ticker_bundles}
+
+    benchmark_runtime_cache: dict[str, dict[str, Any]] = {}
+    normalized_benchmark_cache: dict[tuple[str, str], tuple[str, list[pd.Timestamp], list[float]] | None] = {}
+
+    benchmark_tickers = []
+    for tk in category_tickers:
+        bench_assignment = resolve_instrument_benchmark(info_map.get(tk, {}), prefer_master=False)
+        if bench_assignment.ticker:
+            benchmark_tickers.append(bench_assignment.ticker)
+    benchmark_runtime_cache = _prefetch_benchmark_data(_data, benchmark_tickers)
+
+    _positions = calc_positions(_data)
+    _position_starts = get_current_position_start_dates(_data, _positions)
+
+    for tk in category_tickers:
+        series = _dh_hist[tk].dropna()
+        if len(series) < 1:
+            continue
+        _purchase_date = _position_starts.get(tk)
+        _bench_start = series.index[0]
+        if _purchase_date is not None:
+            _from_purchase = series.loc[series.index >= _purchase_date]
+            if not _from_purchase.empty:
+                _base_price = float(_from_purchase.iloc[0])
+                norm = (series / _base_price) * 100
+                _bench_start = _from_purchase.index[0]
+            else:
+                norm = (series / series.iloc[0]) * 100
+        else:
+            norm = (series / series.iloc[0]) * 100
+        benchmark_series = None
+        bench_assignment = resolve_instrument_benchmark(info_map.get(tk, {}), prefer_master=False)
+        if bench_assignment.ticker:
+            bd = _get_cached_benchmark_data(_data, bench_assignment.ticker, benchmark_runtime_cache)
+            benchmark_series = _get_runtime_normalized_benchmark_series(
+                normalized_benchmark_cache,
+                _data,
+                bench_assignment.ticker,
+                bench_assignment.label,
+                bd,
+                _bench_start,
+            )
+        ticker_bundles.append({
+            "category": category,
+            "ticker": tk,
+            "instrument_info": info_map.get(tk, {}),
+            "normalized_series": norm,
+            "benchmark_series": benchmark_series,
+            "purchase_date": _purchase_date,
+        })
+
+    return {"category_tickers": category_tickers, "ticker_bundles": ticker_bundles}
+
+
+@st.cache_data(show_spinner=False, persist="disk")
 def _build_quotazioni_dataset_bundle_cached(
     bundle_sig: str,
     _data: dict[str, Any],
@@ -527,64 +611,7 @@ def _build_quotazioni_dataset_bundle_cached(
         if cat in _visible_categories:
             category_groups.setdefault(cat, []).append(tk)
 
-    benchmark_runtime_cache: dict[str, dict[str, Any]] = {}
-    normalized_benchmark_cache: dict[tuple[str, str], tuple[str, list[pd.Timestamp], list[float]] | None] = {}
     ticker_bundles: list[QuotazioniTickerBundle] = []
-
-    if _is_complete_view and _include_ticker_detail_charts:
-        benchmark_tickers = []
-        for tk in valid_tickers:
-            bench_assignment = resolve_instrument_benchmark(info_map.get(tk, {}), prefer_master=False)
-            bench_ticker = bench_assignment.ticker
-            if bench_ticker:
-                benchmark_tickers.append(bench_ticker)
-        benchmark_runtime_cache = _prefetch_benchmark_data(_data, benchmark_tickers)
-
-        # Data di primo acquisto per ogni strumento in portafoglio
-        _positions = calc_positions(_data)
-        _position_starts = get_current_position_start_dates(_data, _positions)
-
-        for category in _visible_categories:
-            for tk in category_groups.get(category, []):
-                series = _dh_hist[tk].dropna()
-                if len(series) < 1:
-                    continue
-                # Option B: serie completa normalizzata al prezzo di acquisto.
-                # Se lo strumento non è in portafoglio usa iloc[0] (comportamento originale).
-                _purchase_date = _position_starts.get(tk)
-                _bench_start = series.index[0]
-                if _purchase_date is not None:
-                    _from_purchase = series.loc[series.index >= _purchase_date]
-                    if not _from_purchase.empty:
-                        _base_price = float(_from_purchase.iloc[0])
-                        norm = (series / _base_price) * 100
-                        _bench_start = _from_purchase.index[0]
-                    else:
-                        norm = (series / series.iloc[0]) * 100
-                else:
-                    norm = (series / series.iloc[0]) * 100
-                benchmark_series = None
-                bench_assignment = resolve_instrument_benchmark(info_map.get(tk, {}), prefer_master=False)
-                if bench_assignment.ticker:
-                    bd = _get_cached_benchmark_data(_data, bench_assignment.ticker, benchmark_runtime_cache)
-                    benchmark_series = _get_runtime_normalized_benchmark_series(
-                        normalized_benchmark_cache,
-                        _data,
-                        bench_assignment.ticker,
-                        bench_assignment.label,
-                        bd,
-                        _bench_start,
-                    )
-                ticker_bundles.append(
-                    QuotazioniTickerBundle(
-                        category=category,
-                        ticker=tk,
-                        instrument_info=info_map.get(tk, {}),
-                        normalized_series=norm,
-                        benchmark_series=benchmark_series,
-                        purchase_date=_purchase_date,
-                    )
-                )
 
     cat_groups = {}
     for tk in valid_tickers:
@@ -642,17 +669,7 @@ def _build_quotazioni_dataset_bundle_cached(
         "valid_tickers": valid_tickers,
         "info_map": info_map,
         "category_groups": category_groups,
-        "ticker_bundles": [
-            {
-                "category": item.category,
-                "ticker": item.ticker,
-                "instrument_info": item.instrument_info,
-                "normalized_series": item.normalized_series,
-                "benchmark_series": item.benchmark_series,
-                "purchase_date": item.purchase_date,
-            }
-            for item in ticker_bundles
-        ],
+        "ticker_bundles": [],
         "instrument_flow_index_df": instrument_flow_index_df,
         "category_flow_index_df": category_flow_index_df,
     }
@@ -670,6 +687,8 @@ def get_quotazioni_dataset_bundle(
     flow_data_sig: str,
     settings: dict[str, Any] | None = None,
     closed_tickers: tuple[str, ...] = (),
+    app_version: str = "n/d",
+    schema_version: str = "n/d",
 ) -> QuotazioniDatasetBundle:
     """Bundle shared per la pagina Quotazioni."""
     visible_categories = _resolve_dataset_category_codes(settings)
@@ -693,6 +712,30 @@ def get_quotazioni_dataset_bundle(
             bool(include_instrument_flow_chart),
             tuple(closed_tickers),
         )
+
+    merged_ticker_bundles: list[dict[str, Any]] = []
+    for category in visible_categories:
+        cat_sig = build_category_data_signature(
+            data, category, app_version=app_version, schema_version=schema_version,
+        )
+        category_bundle_sig = (
+            f"v1|cat={category}|catsig={cat_sig}"
+            f"|complete={int(bool(is_complete_view))}"
+            f"|ticker_details={int(bool(include_ticker_detail_charts))}"
+            f"|closed={closed_tickers_sig}"
+        )
+        with profile_step("Quotazioni", "load/build cached ticker_bundles categoria", detail=f"cat={category}|sig={category_bundle_sig}"):
+            cached_category = _build_quotazioni_category_ticker_bundles_cached(
+                category_bundle_sig,
+                category,
+                data,
+                dh_hist,
+                bool(is_complete_view),
+                bool(include_ticker_detail_charts),
+                tuple(closed_tickers),
+            )
+        merged_ticker_bundles.extend(cached_category.get("ticker_bundles", []) or [])
+
     return QuotazioniDatasetBundle(
         valid_tickers=list(cached_bundle.get("valid_tickers", []) or []),
         info_map=dict(cached_bundle.get("info_map", {}) or {}),
@@ -706,7 +749,7 @@ def get_quotazioni_dataset_bundle(
                 benchmark_series=item.get("benchmark_series"),
                 purchase_date=item.get("purchase_date"),
             )
-            for item in list(cached_bundle.get("ticker_bundles", []) or [])
+            for item in merged_ticker_bundles
         ],
         instrument_flow_index_df=cached_bundle.get("instrument_flow_index_df", pd.DataFrame()),
         category_flow_index_df=cached_bundle.get("category_flow_index_df", pd.DataFrame()),

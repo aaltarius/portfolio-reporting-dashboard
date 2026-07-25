@@ -288,6 +288,8 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 flow_data_sig=_flow_data_sig,
                 settings=settings,
                 closed_tickers=_closed_tk,
+                app_version=str(getattr(ctx, "app_version", "n/d")),
+                schema_version=str(getattr(ctx, "schema_version", "n/d")),
             )
             tkd = quotazioni_bundle.valid_tickers
             info_map = quotazioni_bundle.info_map
