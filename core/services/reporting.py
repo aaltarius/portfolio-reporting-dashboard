@@ -176,7 +176,7 @@ def render_reporting_compliance_markdown(reporting_pack: dict[str, Any]) -> str:
         f"- P/L totale: {_fmt_num(snapshot.get('total_pl'), 2)}",
         f"- P/L %: {_fmt_num(snapshot.get('total_pl_pct'), 2, percent=True)}",
         f"- XIRR: {_fmt_num(snapshot.get('xirr'), 2, percent=True)}",
-        f"- TWR: {_fmt_num(snapshot.get('twr'), 2, percent=True)}",
+        f"- TWR proxy: {_fmt_num(snapshot.get('twr'), 2, percent=True)}",
         f"- Volatilità annua: {_fmt_num(snapshot.get('volatility_ann'), 2, percent=True)}",
         f"- Max drawdown: {_fmt_num(snapshot.get('max_drawdown'), 2, percent=True)}",
         "",

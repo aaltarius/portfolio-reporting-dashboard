@@ -165,8 +165,7 @@ def history_span_by_ticker(storico: dict[str, Any], tickers: list[str]) -> dict[
     gia' un prezzo su quel giorno): la chiave non e' nuova, quindi il conteggio
     e la data piu' recente restano identici anche se il ticker backfillato ha
     ora un perimetro storico piu' ampio. Guardare la presenza per-ticker cattura
-    questo caso restando comunque stabile durante un refresh quotazioni
-    intraday, che aggiorna solo il *valore* del prezzo odierno, non le chiavi.
+    questo caso senza invalidare categorie/ticker non toccati dal refresh.
     """
     ticker_set = {t for t in tickers if t}
     dates_by_ticker: dict[str, list[str]] = {t: [] for t in ticker_set}
@@ -180,6 +179,32 @@ def history_span_by_ticker(storico: dict[str, Any], tickers: list[str]) -> dict[
         tk: {"n_dates": len(dates), "earliest": min(dates) if dates else ""}
         for tk, dates in dates_by_ticker.items()
     }
+
+
+def latest_history_point_by_ticker(storico: dict[str, Any], tickers: list[str]) -> dict[str, dict[str, Any]]:
+    """Ultima data/prezzo storico per ticker, scoped al perimetro richiesto."""
+    ticker_set = {t for t in tickers if t}
+    latest_by_ticker: dict[str, tuple[str, Any]] = {}
+    for day, prices in storico.items():
+        if not isinstance(prices, dict):
+            continue
+        day_str = str(day or "")
+        for tk, value in prices.items():
+            if tk not in ticker_set:
+                continue
+            current = latest_by_ticker.get(tk)
+            if current is None or day_str > current[0]:
+                latest_by_ticker[tk] = (day_str, value)
+
+    result: dict[str, dict[str, Any]] = {}
+    for tk in ticker_set:
+        day, value = latest_by_ticker.get(tk, ("", None))
+        try:
+            normalized_value = None if value in (None, "") else round(float(value), 6)
+        except Exception:
+            normalized_value = str(value or "")
+        result[tk] = {"latest": day, "value": normalized_value}
+    return result
 
 
 def _base_market_signature_payload(
@@ -318,6 +343,7 @@ def build_category_data_signature(
         "category": category,
         "instruments": _normalized_instrument_signature_payload(cat_strumenti),
         "history_span_by_ticker": history_span_by_ticker(storico, cat_tickers),
+        "latest_history_point_by_ticker": latest_history_point_by_ticker(storico, cat_tickers),
     }
     cat_hash = _safe_hash(signature_payload)
     return data_signature(
@@ -373,6 +399,7 @@ def build_ticker_data_signature(
         "ticker": ticker_str,
         "instrument": _normalized_instrument_signature_payload(ticker_strumenti),
         "history_span": history_span_by_ticker(storico, [ticker_str]).get(ticker_str, {"n_dates": 0, "earliest": ""}),
+        "latest_history_point": latest_history_point_by_ticker(storico, [ticker_str]).get(ticker_str, {"latest": "", "value": None}),
     }
     ticker_hash = _safe_hash(signature_payload)
     return data_signature(

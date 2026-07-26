@@ -197,7 +197,35 @@ def _build_last_day_contributors_report(
         "down_count": len(negatives),
         "best": positives,
         "worst": negatives,
+        "all": contributors,
     }
+
+
+def _build_portfolio_table_direction_map(
+    da: pd.DataFrame,
+    dfh: pd.DataFrame,
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    """Arricchisce le frecce prezzo con la variazione giornaliera P/L per riga."""
+    base_map: dict[str, Any] = dict(build_price_direction_map(data))
+    if da is None or da.empty or dfh is None or len(dfh) < 2:
+        return base_map
+
+    visible_tickers = {str(tk) for tk in da.get("Ticker", pd.Series(dtype=str)).dropna()}
+    info_map = {str(s.get("ticker", "")): s for s in data.get("strumenti", [])}
+    report = _build_last_day_contributors_report(dfh, info_map, data) or {}
+    for item in report.get("all", []):
+        tk = str(item.get("ticker") or "")
+        if not tk or tk not in visible_tickers:
+            continue
+        existing = base_map.get(tk, "flat")
+        state = existing.get("state", "flat") if isinstance(existing, dict) else existing
+        base_map[tk] = {
+            "state": state or "flat",
+            "delta_eur": item.get("delta"),
+            "delta_pct": item.get("pct_change"),
+        }
+    return base_map
 
 
 def _compute_home_category_deltas(
@@ -529,12 +557,27 @@ def _render_portfolio_table_section(
     settings = settings or {}
     if not da.empty:
         with profile_step("Portafoglio", "render tabella posizioni", count=len(da)):
-            _price_direction_map = build_price_direction_map(data)
+            _price_direction_map = _build_portfolio_table_direction_map(da, dfh_top, data)
             render_portfolio_table_with_popup(da, data, direction_map=_price_direction_map)
             legend_block(
-                "Posizioni attualmente in portafoglio con quantità, prezzo corrente, costo medio di carico, controvalore e risultato. "
-                + macro_legend_html(settings) +
-                " Prima del ticker la freccia indica il movimento rispetto alla giornata precedente: verde verso l'alto in caso di aumento, rossa verso il basso in caso di calo, linea orizzontale in caso di stabilità."
+                """
+                <div style="width:100%;">
+                  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:10px;">
+                    <div>
+                      <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:.08em;font-weight:800;opacity:.68;margin-bottom:2px;">Lettura rapida</div>
+                      <div style="font-size:0.95rem;font-weight:800;line-height:1.25;">Da sinistra a destra: esposizione, valore, andamento, risultato e giornata.</div>
+                    </div>
+                    <div style="font-size:0.78rem;font-weight:800;padding:4px 9px;border-radius:999px;border:1px solid color-mix(in srgb,var(--ptf-primary) 22%,transparent);background:color-mix(in srgb,var(--ptf-primary) 7%,transparent);white-space:nowrap;">Clic sul ticker = dettaglio completo</div>
+                  </div>
+                  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0;border-top:1px solid color-mix(in srgb,var(--ptf-text) 10%,transparent);">
+                    <div style="padding:9px 12px 3px 0;"><b>Esposizione</b><br><span style="opacity:.78;">Peso %, quote e PMC.</span></div>
+                    <div style="padding:9px 12px 3px 0;"><b>Valore</b><br><span style="opacity:.78;">Controvalore della posizione.</span></div>
+                    <div style="padding:9px 12px 3px 0;"><b>60g</b><br><span style="opacity:.78;">Prezzo recente; tratteggio = PMC.</span></div>
+                    <div style="padding:9px 12px 3px 0;"><b>Risultato</b><br><span style="opacity:.78;">P/L € e P/L %.</span></div>
+                    <div style="padding:9px 0 3px 0;"><b>Giornata</b><br><span style="opacity:.78;">Var. gg e freccia prezzo.</span></div>
+                  </div>
+                </div>
+                """
             )
 
         if should_render_section("Portafoglio", "Andamento ultima giornata", settings):
@@ -924,4 +967,3 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             _render_category_analysis(da, getattr(ctx, "category_breakdown", None), settings, chart_loader=_chart_loader)
             vertical_gap("md")
         back_to_top(show_prev=True, show_next=True, nav_key="portafoglio")
-

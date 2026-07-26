@@ -819,7 +819,7 @@ def build_category_dashboard_metrics(
         {"label": "Rend. su giacenza media", "value": avg_balance_return, "kind": "pct", "note": "P/L / giacenza media"},
         {"label": "Annualizzato lineare", "value": annualized_linear, "kind": "pct", "note": "Rendimento semplice / anni"},
         {"label": "XIRR", "value": xirr_value, "kind": "pct", "note": "Money-weighted return"},
-        {"label": "TWR", "value": twr_total, "kind": "pct", "note": "Time-weighted return"},
+        {"label": "TWR proxy", "value": twr_total, "kind": "pct", "note": "Time-weighted return proxy"},
         {"label": "Volatilità", "value": volatility_ann, "kind": "pct", "note": "Volatilità annualizzata"},
     ]
 

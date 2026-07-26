@@ -34,7 +34,7 @@ from core.services.sator import (
     build_next_purchase_bubble_frame,
     latest_sator_decision,
 )
-from persistence.storage import load_data, load_sator_decisions, save_data, save_sator_decisions, save_settings
+from persistence.storage import load_data, load_sator_decisions, load_settings, save_data, save_sator_decisions, save_settings
 from ui.formatting import fmt_eur_it, fmt_pct_it
 from ui.i18n import t
 from ui.page_chrome import render_page_intro as render_page_intro_shared, render_section_line as render_section_line_shared
@@ -120,6 +120,10 @@ def _section_line() -> None:
     return render_section_line_shared()
 
 
+# LEGACY_REVIEW 2026-07-26: helper del vecchio modulo SATOR interno.
+# La pagina Pianificazione non richiama piu' _render_sator_module; SATOR e'
+# definitivo su sidebar/form-server. Tenere questi helper solo per confronto
+# e rimozione controllata nella prossima revisione.
 def _render_sator_alerts(alerts: list[dict[str, str]]) -> None:
     for alert in alerts or []:
         level = str(alert.get("level") or "info")
@@ -354,6 +358,7 @@ def _build_manual_choice_feedback(combo_df: pd.DataFrame, budget: float) -> tupl
 
 
 def _build_sator_master_table(ranking_df: pd.DataFrame, budget: float, manual_alloc: dict[str, int] | None = None, max_lines: int = 5) -> pd.DataFrame:
+    """LEGACY_REVIEW: usato solo dal vecchio modulo SATOR in-page."""
     return build_sator_matrix_frame(ranking_df, budget=budget, manual_alloc=manual_alloc, max_lines=int(max_lines))
 
 
@@ -371,6 +376,58 @@ _OBJECTIVE_PRESETS = {
 }
 
 
+def _state_float(key: str, fallback: float) -> float:
+    try:
+        return float(st.session_state.get(key, fallback) or fallback)
+    except Exception:
+        return float(fallback)
+
+
+def _save_portfolio_objective_settings_from_state() -> None:
+    settings = load_settings()
+    preset_label = str(st.session_state.get("obj_preset", "-") or "-")
+    preset = _OBJECTIVE_PRESETS.get(preset_label)
+    if preset:
+        objective = dict(preset)
+    else:
+        objective = _normalize_objective_inputs(
+            _state_float("obj_core", 0.0),
+            _state_float("obj_difensivo", 0.0),
+            _state_float("obj_satellite", 0.0),
+        )
+    st.session_state["obj_core"] = objective["core"] * 100
+    st.session_state["obj_difensivo"] = objective["difensivo"] * 100
+    st.session_state["obj_satellite"] = objective["satellite"] * 100
+    st.session_state["obj_preset"] = "-"
+
+    sator_cfg = ensure_sator_settings(settings)
+    caps = dict(sator_cfg["concentration_caps"])
+    cap_edits = {
+        nature: _state_float(f"cap_{nature}", float(value) * 100.0) / 100.0
+        for nature, value in caps.items()
+    }
+    weights = {
+        "strategic_fit": _state_float("w_fit", 0.0),
+        "tactical_momentum": _state_float("w_mom", 0.0),
+        "risk_efficiency": _state_float("w_risk", 0.0),
+        "diversification_benefit": _state_float("w_div", 0.0),
+        "cost_efficiency": _state_float("w_cost", 0.0),
+    }
+    weight_total = sum(max(0.0, value) for value in weights.values())
+
+    settings["portfolio_objective"] = objective
+    settings.setdefault("sator", {})["concentration_caps"] = cap_edits
+    if weight_total > 0:
+        settings["sator"]["score_weights"] = {
+            key: max(0.0, value) / weight_total
+            for key, value in weights.items()
+        }
+    save_settings(settings)
+    st.session_state["_settings_runtime"] = settings
+    invalidate_portfolio_cache("impostazioni obiettivo portafoglio salvate")
+    queue_success("Obiettivo di portafoglio salvato. Cruscotti, Analitica e SATOR useranno subito il nuovo target.")
+
+
 def _render_portfolio_objective_section(ctx: SimpleNamespace, theme) -> None:
     settings = ctx.settings
     data = ctx.data
@@ -383,14 +440,9 @@ def _render_portfolio_objective_section(ctx: SimpleNamespace, theme) -> None:
         gap_after="sm",
     )
 
-    preset_label = st.selectbox("Preset rapido (facoltativo)", ["-"] + list(_OBJECTIVE_PRESETS.keys()), key="obj_preset")
-    if preset_label != "-" and st.button("Applica preset", key="obj_apply_preset"):
-        preset = _OBJECTIVE_PRESETS[preset_label]
-        st.session_state["obj_core"] = preset["core"] * 100
-        st.session_state["obj_difensivo"] = preset["difensivo"] * 100
-        st.session_state["obj_satellite"] = preset["satellite"] * 100
-
     with st.form("portfolio_objective_form", clear_on_submit=False):
+        st.selectbox("Preset rapido (facoltativo)", ["-"] + list(_OBJECTIVE_PRESETS.keys()), key="obj_preset")
+        st.caption("Se scegli un preset, al salvataggio avra' priorita' sui tre valori manuali Core/Difensivo/Satellite.")
         c1, c2, c3 = st.columns(3, gap="small")
         core_pct = c1.number_input("Core %", min_value=0.0, max_value=100.0, step=1.0,
                                     value=float(st.session_state.get("obj_core", objective["core"] * 100)), key="obj_core")
@@ -427,21 +479,11 @@ def _render_portfolio_objective_section(ctx: SimpleNamespace, theme) -> None:
                 unsafe_allow_html=True,
             )
 
-        submitted = st.form_submit_button("Salva obiettivo di portafoglio", width="stretch")
-
-    if submitted:
-        settings["portfolio_objective"] = _normalize_objective_inputs(core_pct, dif_pct, sat_pct)
-        settings.setdefault("sator", {})["concentration_caps"] = {k: v / 100.0 for k, v in cap_edits.items()}
-        w_total = w_fit + w_mom + w_risk + w_div + w_cost
-        if w_total > 0:
-            settings["sator"]["score_weights"] = {
-                "strategic_fit": w_fit / w_total, "tactical_momentum": w_mom / w_total,
-                "risk_efficiency": w_risk / w_total, "diversification_benefit": w_div / w_total,
-                "cost_efficiency": w_cost / w_total,
-            }
-        save_settings(settings)
-        objective = settings["portfolio_objective"]
-        st.success("Obiettivo di portafoglio salvato.")
+        st.form_submit_button(
+            "Salva obiettivo e aggiorna analisi",
+            width="stretch",
+            on_click=_save_portfolio_objective_settings_from_state,
+        )
 
     state_df = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
     current_mix = compute_current_bucket_mix(data, state_df)
@@ -456,6 +498,7 @@ def _render_objective_mix_chart(objective: dict, current_mix: dict, theme) -> No
 
 
 def _satellite_target_from_objective(settings: dict) -> float:
+    """LEGACY_REVIEW: helper del vecchio giudizio ordine SATOR in-page."""
     objective = (settings or {}).get("portfolio_objective", {})
     return float(objective.get("satellite", 0.20) or 0.20)
 
@@ -948,7 +991,9 @@ def _render_sator_ante_post(combo_df: pd.DataFrame, master_df: pd.DataFrame, bud
 
 
 def _render_sator_universe_editor(ctx: SimpleNamespace) -> None:
-    """Tabella per inserire, una volta sola, classificazione e costi di ogni
+    """LEGACY_REVIEW: editor usato dal vecchio modulo SATOR in-page.
+
+    Tabella per inserire, una volta sola, classificazione e costi di ogni
     strumento: natura/funzione, TER, spread, zero-commissioni. I valori salvati
     qui contano come scelte dell'utente e non vengono piu' sovrascritti
     dall'inferenza automatica. TER e Spread si inseriscono in percentuale
@@ -1045,6 +1090,7 @@ def _render_sator_universe_editor(ctx: SimpleNamespace) -> None:
 
 
 def _render_sator_module(ctx: SimpleNamespace, theme) -> None:
+    """LEGACY_REVIEW: vecchio SATOR interno, non chiamato da render_pianificazione."""
     settings = ctx.settings
     if str((settings or {}).get("sator_mode", "entrambi")) == "sidebar":
         return
@@ -1374,8 +1420,5 @@ def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         _section_line()
         with st.container():
             _render_decision_dashboard_section(ctx, theme)
-
-        with st.container():
-            _render_sator_module(ctx, theme)
 
         back_to_top()

@@ -73,6 +73,75 @@ def _build_ticker_info(df, data):
     return ticker_info
 
 
+def _mini_sparkline_svg(
+    points,
+    pl_positive: bool | None = None,
+    reference_value: float | None = None,
+    width: int = 72,
+    height: int = 30,
+) -> tuple[str, float]:
+    """Mini grafico inline usato nella tabella principale, basato sulla sparkline del popup."""
+    values: list[float] = []
+    for point in points or []:
+        try:
+            values.append(float(point.get("v")))
+        except Exception:
+            continue
+    if len(values) < 2:
+        return '<span class="mini-spark-empty">—</span>', 0.0
+
+    first = values[0]
+    last = values[-1]
+    sort_return = (last / first - 1.0) if abs(first) > 1e-12 else 0.0
+    positive_color = (last >= first) if pl_positive is None else bool(pl_positive)
+    color = COLORS["success"] if positive_color else COLORS["danger"]
+    fill = "rgba(30,132,73,0.10)" if positive_color else "rgba(255,75,75,0.10)"
+
+    try:
+        ref = float(reference_value) if reference_value is not None else None
+    except Exception:
+        ref = None
+    if ref is not None and abs(ref) <= 1e-12:
+        ref = None
+
+    scale_values = values + ([ref] if ref is not None else [])
+    mn = min(scale_values)
+    mx = max(scale_values)
+    rng = mx - mn or 0.001
+    pad = 2
+    usable_w = width - pad * 2
+    usable_h = height - pad * 2
+
+    def to_y(value: float) -> float:
+        return height - pad - ((value - mn) / rng) * usable_h
+
+    coords: list[tuple[float, float]] = []
+    for idx, value in enumerate(values):
+        x = pad + (idx / (len(values) - 1)) * usable_w
+        y = to_y(value)
+        coords.append((x, y))
+
+    line_points = " ".join(f"{x:.1f},{y:.1f}" for x, y in coords)
+    area_points = f"{pad},{height - pad} {line_points} {width - pad},{height - pad}"
+    dot_x, dot_y = coords[-1]
+    ref_line = ""
+    if ref is not None:
+        ref_y = to_y(ref)
+        ref_line = (
+            f'<line class="mini-spark-pmc" x1="{pad}" x2="{width - pad}" y1="{ref_y:.1f}" y2="{ref_y:.1f}" '
+            f'stroke="#6B7280" stroke-width="1" stroke-dasharray="4 3" opacity="0.72"></line>'
+        )
+    svg = (
+        f'<svg class="mini-spark" viewBox="0 0 {width} {height}" preserveAspectRatio="none" aria-hidden="true">'
+        f'<polygon points="{area_points}" fill="{fill}"></polygon>'
+        f'{ref_line}'
+        f'<polyline points="{line_points}" fill="none" stroke="{color}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></polyline>'
+        f'<circle cx="{dot_x:.1f}" cy="{dot_y:.1f}" r="2.1" fill="{color}"></circle>'
+        f'</svg>'
+    )
+    return svg, sort_return
+
+
 _MODAL_CSS = """
 a.tk-link{text-decoration:none;font-weight:700;cursor:pointer;border-bottom:1.5px dotted;transition:opacity .15s;}
 a.tk-link:hover{opacity:0.65;}
@@ -227,8 +296,14 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
         cat = macro_cat(tipo)
         return cat_color_map.get(cat, macro_color(cat))
 
+    def _direction_entry(tk):
+        raw = direction_map.get(str(tk or ""), "flat")
+        if isinstance(raw, dict):
+            return raw
+        return {"state": raw}
+
     def _trend_sym(tk):
-        state = direction_map.get(str(tk or ""), "flat")
+        state = str(_direction_entry(tk).get("state") or "flat")
         if state == "up_big":
             return ("▲▲", COLORS["success"])
         if state == "up":
@@ -246,18 +321,53 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
             return "0"
 
     rows_html = ""
+    _total_ctv = float(pd.to_numeric(df["Controvalore"], errors="coerce").fillna(0).sum())
+    _daily_deltas: list[float] = []
     for _, row in df.iterrows():
         tk = str(row.get("Ticker", ""))
         tipo = str(row.get("Tipo", ""))
+        tipo_code = macro_cat(tipo)
         nome = str(row.get("Strumento", ""))
         info = info_map.get(tk, {})
         natura_label = str(info.get("natura") or "Esposizione diversificata")
         natura_color, natura_svg = get_natura_visual(natura_label)
         # "Zero commissioni" esiste solo come campo per ETF/ETC: per le altre
         # categorie il badge non e' applicabile, non va mostrato di default.
-        comm_badge = commission_badge(info.get("zero_commissioni")) if macro_cat(tipo) in ("ETF", "ETC") else ""
+        comm_badge = commission_badge(info.get("zero_commissioni")) if tipo_code in ("ETF", "ETC") else ""
         col = _cat_col(tipo)
         sym, sym_col = _trend_sym(tk)
+        direction = _direction_entry(tk)
+        state = str(direction.get("state") or "flat")
+        try:
+            ctv = float(row.get("Controvalore", 0) or 0)
+        except Exception:
+            ctv = 0.0
+        weight = ctv / _total_ctv if abs(_total_ctv) > 1e-09 else 0.0
+        try:
+            day_delta = (
+                float(direction.get("delta_eur"))
+                if direction.get("delta_eur") is not None
+                else None
+            )
+        except Exception:
+            day_delta = None
+        try:
+            day_pct = (
+                float(direction.get("delta_pct"))
+                if direction.get("delta_pct") is not None
+                else None
+            )
+        except Exception:
+            day_pct = None
+        if day_delta is not None:
+            _daily_deltas.append(day_delta)
+        day_col = (
+            COLORS["success"] if (day_delta is not None and day_delta >= 0)
+            else COLORS["danger"] if day_delta is not None
+            else "#9CA3AF"
+        )
+        day_delta_str = fmt_eur_it(day_delta, 2, signed=True) if day_delta is not None else "—"
+        day_pct_str = fmt_pct_it(day_pct, 2, signed=True) if day_pct is not None else "—"
         try:
             pl_e = float(row.get("P/L €", 0) or 0)
             pl_p = float(row.get("P/L %", 0) or 0)
@@ -266,36 +376,64 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
         pl_col = COLORS["success"] if pl_e >= 0 else COLORS["danger"]
         pl_e_str = fmt_eur_it(pl_e, 2, signed=True)
         pl_p_str = fmt_pct_it(pl_p, 2, signed=True)
-        sym_sort = "1" if sym == "▲" else "2" if sym == "—" else "3"
+        mini_spark_svg, mini_spark_sort = _mini_sparkline_svg(
+            ticker_info.get(tk, {}).get("spark", []),
+            pl_positive=pl_e >= 0,
+            reference_value=row.get("PMC", None),
+        )
+        sym_sort = {
+            "up_big": "0",
+            "up": "1",
+            "flat": "2",
+            "down": "3",
+            "down_big": "4",
+        }.get(state, "2")
         rows_html += (
-            f'''<tr>\n          <td data-sort="{sym_sort}" style="color:{sym_col};font-weight:800;">{sym}</td>\n'''
-            f'''          <td data-sort="{tk}"><a class="tk-link" style="color:{col}" href="#" onclick="showModal('{tk}');return false;">{tk}</a>{comm_badge}</td>\n'''
-            f'''          <td data-sort="{nome}" style="color:{col};max-width:140px;" title="{nome}">{nome[:24]}</td>\n'''
-            f'''          <td data-sort="{tipo}" style="color:{col};max-width:80px;" title="{tipo}">{tipo[:16]}</td>\n'''
+            f'''<tr>\n          <td data-sort="{tk}"><a class="tk-link" style="color:{col}" href="#" onclick="showModal('{tk}');return false;">{tk}</a>{comm_badge}</td>\n'''
+            f'''          <td data-sort="{nome}" style="color:{col};max-width:112px;" title="{nome}">{nome[:21]}</td>\n'''
+            f'''          <td data-sort="{tipo_code}" style="color:{col};font-weight:700;max-width:54px;" title="{tipo}">{tipo_code}</td>\n'''
             f'''          <td class="natura-cell" title="{natura_label}" style="color:{natura_color};width:20px;text-align:center;">{natura_svg}</td>\n'''
+            f'''          <td class="num" data-sort="{_sort_val_num(row.get('PMC', ''))}">{fmt_eur_it(row.get('PMC', ''), 3)}</td>\n'''
+            f'''          <td class="num" data-sort="{_sort_val_num(weight)}" style="font-weight:700;">{fmt_pct_it(weight, 2)}</td>\n'''
             f'''          <td class="num" data-sort="{_sort_val_num(row.get('Quote', ''))}">{fmt_num_it(row.get('Quote', ''), 3)}</td>\n'''
             f'''          <td class="num" data-sort="{_sort_val_num(row.get('Prezzo', ''))}">{fmt_eur_it(row.get('Prezzo', ''), 3)}</td>\n'''
-            f'''          <td class="num" data-sort="{_sort_val_num(row.get('PMC', ''))}">{fmt_eur_it(row.get('PMC', ''), 3)}</td>\n'''
             f'''          <td class="num" data-sort="{_sort_val_num(row.get('Controvalore', ''))}">{fmt_eur_it(row.get('Controvalore', ''), 2)}</td>\n'''
-            f'''          <td class="num" data-sort="{_sort_val_num(row.get('Costo', ''))}">{fmt_eur_it(row.get('Costo', ''), 2)}</td>\n'''
-            f'''          <td class="num" data-sort="{_sort_val_num(row.get('Comm.', ''))}">{fmt_eur_it(row.get('Comm.', ''), 2)}</td>\n'''
+            f'''          <td class="mini-spark-cell" data-sort="{_sort_val_num(mini_spark_sort)}">{mini_spark_svg}</td>\n'''
             f'''          <td class="num" data-sort="{_sort_val_num(pl_e)}" style="color:{pl_col};font-weight:700;">{pl_e_str}</td>\n'''
             f'''          <td class="num" data-sort="{_sort_val_num(pl_p)}" style="color:{pl_col};font-weight:700;">{pl_p_str}</td>\n'''
+            f'''          <td class="num" data-sort="{_sort_val_num(day_delta)}" style="color:{day_col};font-weight:700;">{day_delta_str}</td>\n'''
+            f'''          <td class="num" data-sort="{_sort_val_num(day_pct)}" style="color:{day_col};font-weight:700;">{day_pct_str}</td>\n'''
+            f'''          <td data-sort="{sym_sort}" style="color:{sym_col};font-weight:800;text-align:center;width:26px;">{sym}</td>\n'''
             f"""        </tr>"""
         )
-    _total_ctv = float(pd.to_numeric(df["Controvalore"], errors="coerce").fillna(0).sum())
     _total_cost = float(pd.to_numeric(df["Costo"], errors="coerce").fillna(0).sum())
-    _total_comm = float(pd.to_numeric(df["Comm."], errors="coerce").fillna(0).sum())
     _total_pl_e = float(pd.to_numeric(df["P/L €"], errors="coerce").fillna(0).sum())
     _total_pl_p = _total_pl_e / abs(_total_cost) if abs(_total_cost) > 1e-09 else 0.0
     _total_pl_col = COLORS["success"] if _total_pl_e >= 0 else COLORS["danger"]
+    _total_day_delta = sum(_daily_deltas) if _daily_deltas else None
+    _total_day_base = (_total_ctv - _total_day_delta) if _total_day_delta is not None else 0.0
+    _total_day_pct = (
+        _total_day_delta / _total_day_base
+        if _total_day_delta is not None and abs(_total_day_base) > 1e-09
+        else None
+    )
+    _total_day_col = (
+        COLORS["success"] if (_total_day_delta is not None and _total_day_delta >= 0)
+        else COLORS["danger"] if _total_day_delta is not None
+        else "#9CA3AF"
+    )
     tfoot_html = (
-        f'<tfoot><tr><td></td><td colspan="7" style="font-weight:800;font-size:0.85rem;letter-spacing:.02em;padding:9px 12px;">TOTALE</td>'
+        f'<tfoot><tr><td colspan="4" style="font-weight:800;font-size:0.85rem;letter-spacing:.02em;padding:9px 12px;">TOTALE</td>'
+        f'<td></td>'
+        f'<td class="num" style="font-weight:800;padding:9px 12px;">{fmt_pct_it(1.0, 2) if abs(_total_ctv) > 1e-09 else "—"}</td>'
+        f'<td></td><td></td>'
         f'<td class="num" style="font-weight:700;padding:9px 12px;">{fmt_eur_it(_total_ctv, 2)}</td>'
-        f'<td class="num" style="font-weight:700;padding:9px 12px;">{fmt_eur_it(_total_cost, 2)}</td>'
-        f'<td class="num" style="font-weight:700;padding:9px 12px;">{fmt_eur_it(_total_comm, 2)}</td>'
+        f'<td></td>'
         f'<td class="num" style="color:{_total_pl_col};font-weight:800;padding:9px 12px;">{fmt_eur_it(_total_pl_e, 2, signed=True)}</td>'
-        f'<td class="num" style="color:{_total_pl_col};font-weight:800;padding:9px 12px;">{fmt_pct_it(_total_pl_p, 2, signed=True)}</td></tr></tfoot>'
+        f'<td class="num" style="color:{_total_pl_col};font-weight:800;padding:9px 12px;">{fmt_pct_it(_total_pl_p, 2, signed=True)}</td>'
+        f'<td class="num" style="color:{_total_day_col};font-weight:800;padding:9px 12px;">{fmt_eur_it(_total_day_delta, 2, signed=True) if _total_day_delta is not None else "—"}</td>'
+        f'<td class="num" style="color:{_total_day_col};font-weight:800;padding:9px 12px;">{fmt_pct_it(_total_day_pct, 2, signed=True) if _total_day_pct is not None else "—"}</td>'
+        f'<td></td></tr></tfoot>'
     )
     ticker_json = json.dumps(ticker_info, ensure_ascii=False)
     n_rows = len(df)
@@ -305,18 +443,18 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
     html_content = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
 *{{box-sizing:border-box;margin:0;padding:0;}}
-html,body{{background:transparent;font-family:"Source Sans Pro",system-ui,-apple-system,sans-serif;font-size:14px;overflow:hidden;color:#262730;}}
+html,body{{background:transparent;font-family:"Source Sans Pro",system-ui,-apple-system,sans-serif;font-size:13px;overflow:hidden;color:#262730;}}
 .tw{{border:1px solid #e6e9ef;border-radius:8px;overflow:hidden;background:#fff;width:100%;}}
-table{{width:100%;border-collapse:collapse;table-layout:auto;}}
+table{{width:100%;border-collapse:collapse;table-layout:fixed;}}
 thead th{{
-  background:#f0f2f6;font-size:12px;font-weight:600;letter-spacing:.01em;
-  color:#262730;padding:9px 12px;border-bottom:1px solid #e6e9ef;border-right:1px solid #e6e9ef;
+  background:#f0f2f6;font-size:11.5px;font-weight:600;letter-spacing:.01em;
+  color:#262730;padding:8px 7px;border-bottom:1px solid #e6e9ef;border-right:1px solid #e6e9ef;
   text-align:right;white-space:nowrap;position:relative;user-select:none;cursor:pointer;
 }}
 thead th:last-child{{border-right:none;}}
-thead th:nth-child(1),thead th:nth-child(5){{text-align:center;width:26px;cursor:default;padding:9px 6px;}}
-thead th:nth-child(2),thead th:nth-child(3),thead th:nth-child(4){{text-align:left;}}
-thead th:hover:not(:nth-child(1)):not(:nth-child(5)){{background:#e3e6e9;}}
+thead th:nth-child(4),thead th:nth-child(15){{text-align:center;cursor:default;padding:8px 4px;}}
+thead th:nth-child(1),thead th:nth-child(2),thead th:nth-child(3){{text-align:left;}}
+thead th:hover:not(:nth-child(4)):not(:nth-child(15)){{background:#e3e6e9;}}
 thead th .sort-ind{{font-size:9px;margin-left:3px;color:#9094a3;}}
 thead th.asc .sort-ind::after{{content:'▲';color:#262730;}}
 thead th.desc .sort-ind::after{{content:'▼';color:#262730;}}
@@ -325,13 +463,15 @@ thead th.desc .sort-ind::after{{content:'▼';color:#262730;}}
 tbody tr{{border-bottom:1px solid #f0f2f6;}}
 tbody tr:last-child{{border-bottom:none;}}
 tbody tr:hover{{background:#f0f2f6;}}
-tbody td{{padding:9px 12px;vertical-align:middle;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border-right:1px solid #f0f2f6;}}
+tbody td{{padding:8px 7px;vertical-align:middle;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border-right:1px solid #f0f2f6;}}
 tbody td:last-child{{border-right:none;}}
-tbody td:nth-child(1),tbody td:nth-child(5){{padding:9px 6px;text-align:center;}}
+tbody td:nth-child(4),tbody td:nth-child(15){{padding:8px 4px;text-align:center;}}
 .natura-cell svg{{width:15px;height:15px;}}
+.mini-spark-cell{{text-align:center;padding:5px 4px;}}
+.mini-spark{{display:block;width:64px;height:28px;margin:0 auto;overflow:visible;max-width:100%;}}
+.mini-spark-empty{{color:#9CA3AF;font-weight:700;}}
 tfoot tr{{border-top:2px solid #d1d5db;background:#f8f9fa;}}
 tfoot td{{vertical-align:middle;white-space:nowrap;border-right:1px solid #e6e9ef;}}
-tfoot td:first-child{{padding:9px 6px;text-align:center;border-right:1px solid #e6e9ef;}}
 tfoot td:last-child{{border-right:none;}}
 .num{{text-align:right;font-variant-numeric:tabular-nums;}}
 {_MODAL_CSS}
@@ -339,20 +479,39 @@ tfoot td:last-child{{border-right:none;}}
 <body>
 <div class="tw">
 <table id="ptf-table">
+<colgroup>
+  <col style="width:7.5%">
+  <col style="width:12%">
+  <col style="width:5%">
+  <col style="width:2.3%">
+  <col style="width:7%">
+  <col style="width:6%">
+  <col style="width:6.4%">
+  <col style="width:7.2%">
+  <col style="width:8.8%">
+  <col style="width:6.6%">
+  <col style="width:7.5%">
+  <col style="width:6.5%">
+  <col style="width:7.6%">
+  <col style="width:7.6%">
+  <col style="width:2%">
+</colgroup>
 <thead><tr>
-  <th data-col="0"></th>
-  <th data-col="1">Ticker<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="2">Strumento<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="3">Tipo<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="4"></th>
-  <th data-col="5">Quote<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="6">Prezzo<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="7">PMC<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="8">Controvalore<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="9">Costo<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="10">Comm.<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="11">P/L €<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="12">P/L %<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="0">Ticker<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="1">Strumento<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="2">Cat.<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="3"></th>
+  <th data-col="4">PMC<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="5">Peso %<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="6">Quote<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="7" title="Prezzo dell'ultima quotazione disponibile">Ult. quot.<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="8">Controv.<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="9">60g<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="10">P/L €<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="11">P/L %<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="12">Var gg €<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="13">Var gg %<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="14"></th>
 </tr></thead>
 <tbody id="ptf-body">{rows_html}</tbody>
 {tfoot_html}
@@ -363,7 +522,7 @@ tfoot td:last-child{{border-right:none;}}
 {_MODAL_JS}
 var _sCol=-1,_sAsc=true;
 function sortTable(col){{
-  if(col===0||col===4)return;
+  if(col===3||col===14)return;
   var tbody=document.getElementById('ptf-body');
   var rows=Array.from(tbody.querySelectorAll('tr'));
   var asc=(_sCol===col)?!_sAsc:true;_sCol=col;_sAsc=asc;

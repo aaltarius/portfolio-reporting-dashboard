@@ -22,15 +22,25 @@ def build_drawdown_series(values: list[float]) -> list[float]:
     if not values or len(values) == 0:
         return []
 
-    s = pd.Series(values)
+    s = pd.to_numeric(pd.Series(values), errors="coerce")
     s_clean = s.replace(0, np.nan)
     if s_clean.dropna().empty:
         return [0.0] * len(values)
 
-    # Interpreta i valori come rendimenti percentuali decimali (-2.97 = -2,97%)
-    # e converte in equity curve: eq = 1.0 + (r / 100)
-    # Poi calcola drawdown normalizzato: (eq - eq_max) / eq_max
-    equity_curve = 1.0 + (s / 100.0)
+    non_na = s.dropna()
+    looks_like_absolute_curve = (
+        not non_na.empty
+        and float(non_na.iloc[0]) > 0
+        and bool((non_na >= 0).all())
+        and float(non_na.max()) > 10.0
+    )
+
+    if looks_like_absolute_curve:
+        equity_curve = s
+    else:
+        # Interpreta i valori come rendimenti percentuali decimali
+        # (-2.97 = -2,97%) e converte in equity curve: eq = 1.0 + (r / 100).
+        equity_curve = 1.0 + (s / 100.0)
     eq_running_max = equity_curve.expanding().max()
     drawdown = ((equity_curve - eq_running_max) / eq_running_max) * 100
 

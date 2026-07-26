@@ -194,6 +194,53 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
           line-height:1.55;
           margin:0 0 12px 0;
         }}
+        .settings-ops-guide {{
+          display:flex;
+          flex-direction:column;
+          gap:8px;
+          margin:2px 0 16px 0;
+        }}
+        .settings-ops-guide__row {{
+          display:grid;
+          grid-template-columns:minmax(138px, 0.28fr) 1fr;
+          gap:12px;
+          align-items:center;
+          padding:11px 13px;
+          border:1px solid color-mix(in srgb, var(--guide-color) 34%, {theme.border_color});
+          border-left:4px solid var(--guide-color);
+          border-radius:8px;
+          background:color-mix(in srgb, var(--guide-color) 8%, var(--ptf-surface, #ffffff));
+        }}
+        .settings-ops-guide__tag {{
+          display:inline-flex;
+          align-items:center;
+          width:max-content;
+          max-width:100%;
+          padding:4px 8px;
+          border-radius:999px;
+          background:color-mix(in srgb, var(--guide-color) 16%, transparent);
+          color:var(--guide-color);
+          font-weight:800;
+          font-size:.78rem;
+          line-height:1.15;
+          white-space:nowrap;
+        }}
+        .settings-ops-guide__text {{
+          color:{theme.font_color};
+          font-size:.9rem;
+          line-height:1.42;
+          margin:0;
+        }}
+        .settings-ops-guide__text strong {{
+          color:{theme.font_color};
+          font-weight:800;
+        }}
+        @media (max-width: 720px) {{
+          .settings-ops-guide__row {{
+            grid-template-columns:1fr;
+            gap:7px;
+          }}
+        }}
         </style>""",
         unsafe_allow_html=True,
     )
@@ -386,41 +433,6 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     key="appearance_visibility_mode",
                 )
 
-                st.markdown("**Modalità accesso operativo**")
-                _op_opts = ["Entrambi", "Solo sidebar", "Solo Centro Operativo"]
-                _op_vals = ["entrambi", "sidebar", "tradizionale"]
-                _cur_op = str(settings.get("operativo_mode", "entrambi"))
-                ui_operativo_mode = st.radio(
-                    "Centro Operativo vs Sidebar",
-                    _op_opts,
-                    index=_op_vals.index(_cur_op) if _cur_op in _op_vals else 0,
-                    horizontal=True,
-                    key="operativo_mode_radio",
-                    help="'Entrambi': Centro Operativo e pulsanti sidebar attivi. 'Solo sidebar': nasconde il Centro Operativo nelle pagine. 'Solo Centro Operativo': nasconde i pulsanti operativi in sidebar.",
-                )
-                _sator_opts = ["Entrambi", "Solo sidebar", "Solo pianificazione"]
-                _sator_vals = ["entrambi", "sidebar", "tradizionale"]
-                _cur_sator = str(settings.get("sator_mode", "entrambi"))
-                ui_sator_mode = st.radio(
-                    "SATOR",
-                    _sator_opts,
-                    index=_sator_vals.index(_cur_sator) if _cur_sator in _sator_vals else 0,
-                    horizontal=True,
-                    key="sator_mode_radio",
-                    help="'Entrambi': pulsante sidebar e sezione in Pianificazione. 'Solo sidebar': nasconde la sezione SATOR in Pianificazione. 'Solo pianificazione': nasconde il pulsante sidebar.",
-                )
-                _export_opts = ["Entrambi", "Solo sidebar", "Solo Gestione Dati"]
-                _export_vals = ["entrambi", "sidebar", "tradizionale"]
-                _cur_export = str(settings.get("export_pp_mode", "entrambi"))
-                ui_export_pp_mode = st.radio(
-                    "Esporta PP",
-                    _export_opts,
-                    index=_export_vals.index(_cur_export) if _cur_export in _export_vals else 0,
-                    horizontal=True,
-                    key="export_pp_mode_radio",
-                    help="'Entrambi': pulsante sidebar e sezione in Gestione Dati. 'Solo sidebar': nasconde la sezione export in Gestione Dati. 'Solo Gestione Dati': nasconde il pulsante sidebar.",
-                )
-
                 st.markdown("**Categorie visibili**")
                 category_options = [code for code in ASSET_CATEGORY_REGISTRY.keys() if code != "ALTRO"]
                 current_categories = normalize_category_selection(
@@ -489,25 +501,51 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             with st.container():
                 render_section_title(
                     "Avanzate",
-                    comment="Opzioni per debugging, profiling interno e comportamento del pre-render.",
+                    comment="Strumenti tecnici per capire lentezze e gestire la preparazione anticipata dei grafici. Per l'uso quotidiano puoi lasciare i valori consigliati.",
                     icon="settings",
+                )
+                st.markdown(
+                    f"""
+                    <div class="settings-ops-guide">
+                      <div class="settings-ops-guide__row" style="--guide-color:{theme.color_green};">
+                        <span class="settings-ops-guide__tag">Uso normale</span>
+                        <p class="settings-ops-guide__text">Lascia spenti i report tecnici e mantieni attiva la <strong>cache anticipata dei grafici</strong>.</p>
+                      </div>
+                      <div class="settings-ops-guide__row" style="--guide-color:{theme.color_orange};">
+                        <span class="settings-ops-guide__tag">Se sembra lento</span>
+                        <p class="settings-ops-guide__text">Attiva il <strong>report tempi a fondo pagina</strong> per capire quale pagina, grafico o tabella pesa di piu'.</p>
+                      </div>
+                      <div class="settings-ops-guide__row" style="--guide-color:{theme.color_blue};">
+                        <span class="settings-ops-guide__tag">Diagnosi tecnica</span>
+                        <p class="settings-ops-guide__text">Usa la <strong>diagnosi completa</strong> solo durante una revisione: misura tutte le pagine, ma rende il rerun piu' lento.</p>
+                      </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
                 )
                 legacy_debug = bool(runtime_ui_settings.get("debug_render_monitor", False))
                 debug_render_progress = st.checkbox(
-                    "Debug: avanzamento sintetico in sidebar",
+                    "Mostra avanzamento tecnico in sidebar",
                     value=bool(runtime_ui_settings.get("debug_render_progress", legacy_debug)),
-                    help="Mostra nella sidebar un avanzamento sintetico del rendering quando la modalita debug e attiva.",
+                    help="Aggiunge una piccola barra di avanzamento nella sidebar mentre Streamlit costruisce le pagine. Serve solo per diagnosi; non velocizza l'app.",
                 )
                 debug_render_log = st.checkbox(
-                    "Debug: log a fondo pagina",
+                    "Mostra report tempi a fondo pagina",
                     value=bool(runtime_ui_settings.get("debug_render_log", legacy_debug)),
-                    help="Mostra il log copiabile dei tempi di rendering a fondo pagina.",
+                    help="Mostra in fondo all'app un report copiabile con i tempi di rendering: utile per capire quale pagina, grafico o tabella rallenta il caricamento.",
                 )
+                debug_scope_options = [
+                    "Normale: misura la UI reale",
+                    "Diagnosi completa: misura tutte le pagine",
+                ]
                 debug_render_scope = st.selectbox(
-                    "Profiling render",
-                    ["UI completa a schede", "Sweep completo"],
+                    "Misurazione tempi di caricamento",
+                    debug_scope_options,
                     index=0 if str(runtime_ui_settings.get("debug_render_scope", "current_page")) == "current_page" else 1,
-                    help="UI completa a schede mantiene il comportamento reale dell'app. Sweep completo aggiunge anche il riepilogo tempi pagina-per-pagina dell'intera UI.",
+                    help="'Normale' misura il comportamento reale dell'app. 'Diagnosi completa' aggiunge un controllo pagina-per-pagina, piu' dettagliato ma piu' lento.",
+                )
+                st.caption(
+                    "La misurazione tempi non cambia i calcoli e non migliora le prestazioni: serve solo a vedere dove si consuma tempo durante un rerun."
                 )
                 log_level = st.selectbox(
                     "Livello log applicativo",
@@ -517,33 +555,41 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     ) if str(runtime_ui_settings.get("log_level", "INFO")).upper() in ["DEBUG", "INFO", "WARNING", "ERROR"] else 1,
                     help="Controlla la verbosità del log applicativo generale portafoglio.log.",
                 )
-                st.markdown("**Pre-render iniziale**")
+                st.markdown("**Cache anticipata dei grafici**")
+                st.caption(
+                    "Prepara in anticipo i grafici principali dopo un cambio dati, tema o impostazioni. "
+                    "Il primo caricamento puo' durare un po' di piu', ma i passaggi successivi trovano piu' figure gia' pronte."
+                )
                 pr1, pr2 = st.columns(2)
                 pre_render_enabled = pr1.checkbox(
-                    "Pre-render cache attivo",
+                    "Prepara i grafici in anticipo",
                     value=bool(pre_render_settings.get("enabled", True)),
-                    help="Abilita la costruzione preventiva delle figure principali nella cache.",
+                    help="Consigliato: costruisce in anticipo le figure piu' costose e le salva nella cache grafici. Disattivalo solo se vuoi avvii piu' leggeri durante prove o sviluppo.",
                 )
                 pre_render_initial_complete = pr2.checkbox(
-                    "Completo all'avvio",
+                    "Fallo subito al primo caricamento",
                     value=bool(pre_render_settings.get("initial_complete", True)),
                     disabled=not pre_render_enabled,
-                    help="Esegue il pre-render in modo sincrono durante l'avvio quando la firma dati/tema cambia.",
+                    help="Se i dati o il tema sono cambiati, prepara subito i grafici principali durante il caricamento iniziale. Puo' rendere piu' lento quel caricamento, ma riduce attese successive.",
                 )
                 pr3, pr4 = st.columns(2)
                 pre_render_background_enabled = pr3.checkbox(
-                    "Fallback in background",
+                    "Se non puo' farlo subito, fallo in background",
                     value=bool(pre_render_settings.get("background_enabled", True)),
                     disabled=not pre_render_enabled,
-                    help="Consente il pre-render non bloccante quando quello iniziale completo non è attivo.",
+                    help="Quando la preparazione immediata non parte, prova a preparare i grafici senza bloccare la navigazione. Utile come rete di sicurezza.",
                 )
                 pre_render_cooldown_minutes = pr4.number_input(
-                    "Cooldown pre-render (min)",
+                    "Attendi almeno (min) prima di rifarlo",
                     min_value=1,
                     max_value=1440,
                     value=max(1, int(pre_render_settings.get("cooldown_seconds", 1800)) // 60),
                     step=5,
                     disabled=not pre_render_enabled,
+                    help="Evita di ricostruire la cache troppo spesso. Esempio: 30 minuti significa che, a parita' di dati/tema, l'app non ripete subito la preparazione anticipata.",
+                )
+                st.caption(
+                    "In pratica: tieni attiva la cache anticipata se usi l'app normalmente. Disattivala solo per test tecnici o se vuoi capire il tempo di caricamento senza grafici pre-preparati."
                 )
 
             submitted_settings = st.form_submit_button("💾 Salva impostazioni", width="stretch", type="primary")
@@ -612,7 +658,7 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     "debug_render_monitor": bool(debug_render_progress or debug_render_log),
                     "debug_render_progress": bool(debug_render_progress),
                     "debug_render_log": bool(debug_render_log),
-                    "debug_render_scope": "full_sweep" if debug_render_scope == "Sweep completo" else "current_page",
+                    "debug_render_scope": "full_sweep" if str(debug_render_scope).startswith("Diagnosi completa") else "current_page",
                     "page_mode": str(runtime_ui_settings.get("page_mode", "per_pagina")),
                 }
                 settings["i18n"] = {
@@ -630,9 +676,9 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     "scope": str(pre_render_settings.get("scope", "core_charts_v1")),
                 }
                 # Appearance
-                settings["operativo_mode"] = _op_vals[_op_opts.index(ui_operativo_mode)]
-                settings["sator_mode"] = _sator_vals[_sator_opts.index(ui_sator_mode)]
-                settings["export_pp_mode"] = _export_vals[_export_opts.index(ui_export_pp_mode)]
+                settings["operativo_mode"] = "sidebar"
+                settings["sator_mode"] = "sidebar"
+                settings["export_pp_mode"] = "sidebar"
                 settings["appearance"] = {
                     **settings.get("appearance", {}),
                     "color_palette": ui_color_palette,

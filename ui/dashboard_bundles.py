@@ -94,6 +94,12 @@ def _purge_stale_category_dashboard_bundles_cache(active_key: str) -> None:
                 pass
 
 
+def _objective_cache_token(objective: dict[str, Any] | None) -> str:
+    payload = dict(objective or {})
+    digest = hashlib.md5(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:12]
+    return digest
+
+
 @dataclass(slots=True)
 class SummaryDatasetBundle:
     payload: dict[str, Any]
@@ -816,6 +822,7 @@ def get_analitica_bundle(
             target_gap_fig = empty_chart("analisi_target_gap")
         else:
             objective = settings.get("portfolio_objective", {"core": 0.55, "difensivo": 0.25, "satellite": 0.20}) if isinstance(settings, dict) else {}
+            objective_token = _objective_cache_token(objective)
             bucket_of_ticker = compute_instrument_buckets(data)
             macro_target_df = _build_bucket_gap_macro_df(da, bucket_of_ticker, objective)
             target_gap_fig = fcache.get_or_build(
@@ -825,6 +832,7 @@ def get_analitica_bundle(
                 charts_settings_sig=charts_settings_sig,
                 builder=lambda: build_target_gap_chart(macro_target_df) if not macro_target_df.empty else empty_chart("analisi_target_gap"),
                 page_mode="Completa",
+                extra_params={"objective": objective_token, "bucket_model": "sator_bucket_v1"},
                 strategy=cache_strategy,
             )
 

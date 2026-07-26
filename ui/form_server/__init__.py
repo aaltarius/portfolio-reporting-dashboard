@@ -13,12 +13,17 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
+from typing import Any
 
 logger = logging.getLogger("portafoglio.form_server")
 
 FORM_PORT = 8502
 
 _started = threading.Event()
+_start_lock = threading.Lock()
+_server_thread: threading.Thread | None = None
+_last_error: str | None = None
 
 
 def _build_fastapi_app():
@@ -48,33 +53,77 @@ def _build_fastapi_app():
 
 def start_form_server(port: int = FORM_PORT) -> None:
     """Avvia il form server in un thread daemon. Idempotente."""
-    if _started.is_set():
-        return
-    _started.set()
+    global _server_thread, _last_error
 
-    import asyncio
-    import uvicorn
+    with _start_lock:
+        if _server_thread is not None and _server_thread.is_alive():
+            _started.set()
+            return
 
-    fastapi_app = _build_fastapi_app()
-    config = uvicorn.Config(
-        fastapi_app,
-        host="127.0.0.1",
-        port=port,
-        log_level="warning",
-        access_log=False,
-    )
-    server = uvicorn.Server(config)
+        if _started.is_set():
+            logger.warning(
+                "Form server marcato come avviato, ma il thread non risponde: nuovo tentativo su porta %d",
+                port,
+            )
+            _started.clear()
 
-    def _run():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
         try:
-            loop.run_until_complete(server.serve())
-        except Exception as exc:
-            logger.error("Form server terminato inaspettatamente: %s", exc)
-        finally:
-            loop.close()
+            import asyncio
+            import uvicorn
 
-    t = threading.Thread(target=_run, daemon=True, name="PortafoglioFormServer")
-    t.start()
-    logger.info("Form server avviato su http://127.0.0.1:%d/operazioni", port)
+            fastapi_app = _build_fastapi_app()
+        except Exception as exc:
+            _last_error = f"{type(exc).__name__}: {exc}"
+            logger.exception("Impossibile preparare il form server su porta %d: %s", port, _last_error)
+            _started.clear()
+            return
+
+        config = uvicorn.Config(
+            fastapi_app,
+            host="127.0.0.1",
+            port=port,
+            log_level="warning",
+            access_log=False,
+        )
+        server = uvicorn.Server(config)
+
+        def _run():
+            global _last_error
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(server.serve())
+            except Exception as exc:
+                _last_error = f"{type(exc).__name__}: {exc}"
+                logger.exception("Form server terminato inaspettatamente: %s", _last_error)
+            finally:
+                _started.clear()
+                loop.close()
+
+        _server_thread = threading.Thread(target=_run, daemon=True, name="PortafoglioFormServer")
+        _server_thread.start()
+        _started.set()
+
+        for _ in range(20):
+            if getattr(server, "started", False):
+                _last_error = None
+                logger.info("Form server attivo su http://127.0.0.1:%d/operazioni", port)
+                return
+            if not _server_thread.is_alive():
+                _started.clear()
+                _last_error = _last_error or "Il thread Uvicorn si e' chiuso prima dell'avvio."
+                logger.error("Form server non avviato su porta %d: %s", port, _last_error)
+                return
+            time.sleep(0.05)
+
+        logger.info("Form server in avvio su http://127.0.0.1:%d/operazioni", port)
+
+
+def get_form_server_status() -> dict[str, Any]:
+    """Restituisce uno stato leggero per diagnostica UI/log."""
+    return {
+        "port": FORM_PORT,
+        "started": _started.is_set(),
+        "thread_alive": bool(_server_thread is not None and _server_thread.is_alive()),
+        "last_error": _last_error,
+    }

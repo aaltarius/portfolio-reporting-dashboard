@@ -11,12 +11,15 @@ import json
 import logging
 import os
 import threading
+import time
 from typing import Any
 
 import streamlit as st
 import pandas as pd
 from types import SimpleNamespace
 from datetime import date
+
+_APP_RUN_STARTED_AT = time.perf_counter()
 
 # === RESET CACHE STREAMLIT (solo se richiesto) ===
 # Non svuotare cache a ogni rerun: Streamlit rilancia app.py a ogni interazione.
@@ -107,15 +110,24 @@ def _render_shutdown_dashboard_screen() -> None:
         _shutdown_streamlit_server()
 
     st.markdown("""
-    <div class="header-panel" style="margin-top:2.5rem;">
-        <div class="header-top">
-            <div class="header-title">⏻ Arresto dashboard in corso</div>
-            <div class="header-badge">Server Streamlit in chiusura</div>
+    <div class="shutdown-shell">
+        <div class="shutdown-panel">
+            <div class="shutdown-mark">S</div>
+            <div class="shutdown-content">
+                <div class="shutdown-kicker">SESTANTE</div>
+                <div class="shutdown-title">Dashboard in chiusura</div>
+                <div class="shutdown-sub">
+                    Il server Streamlit locale verrà arrestato tra pochi istanti.
+                    Dopo la chiusura puoi chiudere questa scheda del browser.
+                </div>
+                <div class="shutdown-footer">
+                    <span class="shutdown-pill">Server in arresto</span>
+                    <span class="shutdown-command">Per riaprire: streamlit run app.py</span>
+                </div>
+            </div>
         </div>
-        <div class="header-sub">Il processo Streamlit locale verrà terminato tra pochi istanti. Dopo la chiusura puoi chiudere questa scheda del browser.</div>
     </div>
     """, unsafe_allow_html=True)
-    st.info("Il terminale tornerà disponibile appena il server sarà arrestato. Per riaprire la dashboard dovrai rilanciare `streamlit run app.py`.")
     st.stop()
 
 
@@ -582,37 +594,60 @@ _RENDER_ALWAYS_PROGRESS_ENABLED = True
 
 # === SCENARIO CACHE BADGE ===
 def _scenario_cache_badge_display(scenario: str) -> str:
-    """Mappa scenario profiling a emoji + label con colore."""
+    """Mappa lo scenario di cache a una label compatta per il banner."""
     badge_map = {
-        "cold_start": ("❄️", "cold_start", "#0EA5E9"),           # blu
-        "post_data_change": ("🔄", "post_data_change", "#F97316"), # arancio
-        "warm_rerun": ("⚡", "warm_rerun", "#10B981"),              # verde
+        "cold_start": ("Cold start", "#0EA5E9"),
+        "post_data_change": ("Dati aggiornati", "#F97316"),
+        "warm_rerun": ("Cache calda", "#10B981"),
     }
-    emoji, label, color = badge_map.get(scenario, ("•", scenario, "#6B7280"))
-    return f'<span style="color:{color};font-weight:600;font-size:0.85rem;letter-spacing:0.5px;">{emoji} {label}</span>'
+    label, color = badge_map.get(scenario, (str(scenario or "run"), "#6B7280"))
+    return (
+        f'<span class="header-status-dot" style="--status-color:{color};"></span>'
+        f"<span>{label}</span>"
+    )
 
 
 # === PAGE HEADER ===
 st.markdown('<div id="page-top"></div>', unsafe_allow_html=True)
 _debug_badge = " • DEBUG" if _RENDER_DEBUG_ENABLED else ""
 _scenario_badge = _scenario_cache_badge_display(_CURRENT_PROFILING_SCENARIO)
-st.markdown(f"""<div class="header-panel">
-    <div class="header-main">
-        <div class="header-top">
-            <div class="header-icon">📊</div>
-            <div class="header-title">{t(settings, "app.title", "Sestante")}</div>
+_cache_strategy_label = str(resolve_figure_cache_strategy(settings, st.session_state) or "auto").replace("_", " ")
+_app_title = str(t(settings, "app.title", "Sestante") or "Sestante").upper()
+_header_date_text = str(getattr(ctx, "header_date", "") or "")
+_header_update_marker = "(ultimo aggiornamento quotazioni:"
+if _header_update_marker in _header_date_text:
+    _header_today_text, _header_update_text = _header_date_text.split(_header_update_marker, 1)
+    _header_today_text = _header_today_text.strip()
+    _header_update_text = _header_update_text.rstrip(") ").strip()
+else:
+    _header_today_text = _header_date_text.strip() or fmtd(date.today())
+    _header_update_text = fmt_dt_it(getattr(ctx, "last_quotes_update", None))
+st.markdown(f"""<div class="header-panel header-executive">
+    <div class="header-brand">
+        <div class="header-brand-mark">S</div>
+        <div class="header-brand-copy">
+            <div class="header-title">{_app_title}</div>
+            <div class="header-tagline">Portfolio Control Center</div>
         </div>
-        <div class="header-sub">{ctx.header_date}</div>
     </div>
-    <div class="header-side">
-        <div class="header-side-row">
-            <span class="header-side-label">Versione</span>
-            <span class="header-side-val accent">v{APP_VERSION}{_debug_badge}</span>
+    <div class="header-right">
+        <div class="header-meta">
+            <div class="header-chip">
+                <span class="header-chip-label">Versione</span>
+                <span class="header-chip-value accent">v{APP_VERSION}{_debug_badge}</span>
+            </div>
+            <div class="header-chip">
+                <span class="header-chip-label">Run</span>
+                <span class="header-chip-value">{_scenario_badge}</span>
+            </div>
+            <div class="header-chip">
+                <span class="header-chip-label">Cache</span>
+                <span class="header-chip-value">{_cache_strategy_label}</span>
+            </div>
         </div>
-        <div class="header-side-div"></div>
-        <div class="header-side-row">
-            <span class="header-side-label">Stato</span>
-            <span class="header-side-val">{_scenario_badge}</span>
+        <div class="header-timeline">
+            <span><strong>Data</strong> {_header_today_text}</span>
+            <span><strong>Aggiornamento</strong> {_header_update_text}</span>
         </div>
     </div>
 </div>""", unsafe_allow_html=True)
@@ -671,6 +706,7 @@ render_dashboard_tabs(
     operational_origin_page_index=int(_CURRENT_RERUN_CONTEXT.get("origin_page_index") or 0),
     dirty_flags=dict(_CURRENT_RERUN_CONTEXT.get("dirty_flags") or {}),
     progress_host=_header_progress_host,
+    run_started_at=_APP_RUN_STARTED_AT,
 )
 
 try:

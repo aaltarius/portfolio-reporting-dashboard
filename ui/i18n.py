@@ -136,7 +136,7 @@ TRANSLATIONS = {
         "page_intro.portafoglio.title": "Home",
         "page_intro.portafoglio.comment": "Quick portfolio overview: active positions, recent performance, allocation by macro category and income already received.",
         "page_intro.quotazioni.comment": "Operational control for refreshing, price history and the status of available quotes for tracked instruments.",
-        "page_intro.operazioni.comment": "Operations hub to enter, correct and review portfolio events, cash movements and instrument records.",
+        "page_intro.operazioni.comment": "Read-only ledger for portfolio events and cash movements. Operational actions open from the sidebar.",
         "page_intro.cruscotti.comment": "Portfolio analytics hub: dashboards by category, cross-cutting views, GOV/BTP income, purchase flows and recurring-investment tracking.",
         "page_intro.summary.comment": "Generate a complete portfolio HTML report, ready to download and print to PDF from the browser. Here you only choose the period and the actual contents.",
         "page_intro.pianificazione.title": "Planning",

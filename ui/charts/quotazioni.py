@@ -4,7 +4,6 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from core.series_resample import downsample_for_display
-from core.series_utils import slice_recent
 from ui.charts.base100 import apply_settings_base100, base100_hline_kwargs
 from ui.charts.extrema import add_global_extrema_markers
 from ui.formatting import hex_to_rgba
@@ -92,19 +91,28 @@ def build_quote_history_time_chart(ticker, instrument, normalized_series, benchm
     return fig
 
 
-def build_instrument_performance_comparison_time_chart(flow_index_df, tickers, dfmt, chart_id="quotazioni_instrument_performance"):
+def build_instrument_performance_comparison_time_chart(
+    flow_index_df,
+    tickers,
+    dfmt,
+    chart_id="quotazioni_instrument_performance",
+    portfolio_series=None,
+    portfolio_label="Portafoglio",
+):
     """Build comparison chart by instrument in Quotazioni.
 
     chart_id: quotazioni_instrument_performance
     chiamato da: ui/pages/quotazioni.py
     """
     fig = go.Figure()
+    plotted_series = {}
     for ticker in tickers:
         if ticker not in flow_index_df.columns:
             continue
         series = flow_index_df[ticker].dropna()
         if len(series) < 2:
             continue
+        plotted_series[ticker] = series
         fig.add_trace(
             go.Scatter(
                 x=series.index,
@@ -114,8 +122,25 @@ def build_instrument_performance_comparison_time_chart(flow_index_df, tickers, d
                 line=dict(width=2.2, color=instrument_color(ticker)),
             )
         )
+    if portfolio_series is not None:
+        ref_series = pd.Series(portfolio_series).dropna()
+        if len(ref_series) >= 2:
+            fig.add_trace(
+                go.Scatter(
+                    x=ref_series.index,
+                    y=ref_series.values,
+                    name=portfolio_label,
+                    mode="lines",
+                    line=dict(width=1.8, color="rgba(31, 41, 55, 0.42)", dash="dot"),
+                    opacity=0.72,
+                    legendrank=999,
+                    meta={"exclude_from_extrema": True, "role": "portfolio_reference"},
+                    hovertemplate=f"{portfolio_label}: %{{y:.2f}}<extra></extra>",
+                )
+            )
     fig.add_hline(y=100, **base100_hline_kwargs(chart_id))
-    add_global_extrema_markers(fig, slice_recent(flow_index_df, 30), chart_id)
+    if plotted_series:
+        add_global_extrema_markers(fig, pd.DataFrame(plotted_series), chart_id)
     fig.update_layout(hovermode="x unified", uirevision="perf-strumento")
     return apply_settings_base100(fig, chart_id)
 
@@ -127,8 +152,12 @@ def build_category_performance_comparison_time_chart(cat_flow_index, dfmt, chart
     chiamato da: ui/pages/quotazioni.py; prewarm da ui/prewarm_bundle.py
     """
     fig = go.Figure()
+    plotted_series = {}
     for cat in list(cat_flow_index.columns):
         if cat in cat_flow_index.columns:
+            series = cat_flow_index[cat].dropna()
+            if len(series) >= 2:
+                plotted_series[cat] = series
             fig.add_trace(
                 go.Scatter(
                     x=cat_flow_index.index,
@@ -139,6 +168,7 @@ def build_category_performance_comparison_time_chart(cat_flow_index, dfmt, chart
                 )
             )
     fig.add_hline(y=100, **base100_hline_kwargs(chart_id))
-    add_global_extrema_markers(fig, slice_recent(cat_flow_index, 30), chart_id)
+    if plotted_series:
+        add_global_extrema_markers(fig, pd.DataFrame(plotted_series), chart_id)
     fig.update_layout(hovermode="x unified", uirevision="perf-categoria")
     return apply_settings_base100(fig, chart_id)

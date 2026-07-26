@@ -68,6 +68,7 @@ class QuotazioniDatasetBundle:
     category_groups: dict[str, list[str]]
     ticker_bundles: list[QuotazioniTickerBundle]
     instrument_flow_index_df: pd.DataFrame
+    portfolio_flow_index_series: pd.Series
     category_flow_index_df: pd.DataFrame
 
 
@@ -620,13 +621,17 @@ def _build_quotazioni_dataset_bundle_cached(
             cat_groups.setdefault(cat, []).append(tk)
 
     instrument_flow_index_df = pd.DataFrame()
+    portfolio_flow_index_series = pd.Series(dtype=float)
     category_flow_index_df = pd.DataFrame()
     if _is_complete_view and _include_instrument_flow_chart:
         instrument_key_map = {f"__ticker__:{tk}": [tk] for tk in valid_tickers}
-        combined_group_map = {**instrument_key_map, **cat_groups}
+        portfolio_key = "__portfolio__"
+        combined_group_map = {**instrument_key_map, portfolio_key: valid_tickers, **cat_groups}
         combined_index_df, combined_returns_df, combined_values_df, combined_flows_df = build_group_cashflow_indices(_data, _dh_flow, combined_group_map)
         if not combined_index_df.empty:
             instrument_columns = [key for key in instrument_key_map if key in combined_index_df.columns]
+            if portfolio_key in combined_index_df.columns:
+                portfolio_flow_index_series = combined_index_df[portfolio_key].dropna()
             category_columns = [key for key in cat_groups if key in combined_index_df.columns]
             instrument_value_columns = [key for key in instrument_key_map if key in combined_values_df.columns]
             category_value_columns = [key for key in cat_groups if key in combined_values_df.columns]
@@ -671,6 +676,7 @@ def _build_quotazioni_dataset_bundle_cached(
         "category_groups": category_groups,
         "ticker_bundles": [],
         "instrument_flow_index_df": instrument_flow_index_df,
+        "portfolio_flow_index_series": portfolio_flow_index_series,
         "category_flow_index_df": category_flow_index_df,
     }
 
@@ -695,7 +701,7 @@ def get_quotazioni_dataset_bundle(
     category_sig = "|".join(visible_categories)
     closed_tickers_sig = "|".join(sorted(closed_tickers)) if closed_tickers else ""
     bundle_sig = (
-        f"v2|quotes={quotes_data_sig}|flow={flow_data_sig}|complete={int(bool(is_complete_view))}"
+        f"v3|quotes={quotes_data_sig}|flow={flow_data_sig}|complete={int(bool(is_complete_view))}"
         f"|ticker_details={int(bool(include_ticker_detail_charts))}"
         f"|instrument_flow={int(bool(include_instrument_flow_chart))}"
         f"|cats={category_sig}|closed={closed_tickers_sig}"
@@ -752,5 +758,6 @@ def get_quotazioni_dataset_bundle(
             for item in merged_ticker_bundles
         ],
         instrument_flow_index_df=cached_bundle.get("instrument_flow_index_df", pd.DataFrame()),
+        portfolio_flow_index_series=cached_bundle.get("portfolio_flow_index_series", pd.Series(dtype=float)),
         category_flow_index_df=cached_bundle.get("category_flow_index_df", pd.DataFrame()),
     )

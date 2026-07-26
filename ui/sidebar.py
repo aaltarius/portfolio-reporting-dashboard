@@ -470,38 +470,29 @@ def render_sidebar(data: dict) -> None:
             # completare aggiorna la pagina una sola volta ed evita il doppio ciclo
             # update -> riavvio -> full render.
 
-        _sidebar_settings = load_settings() or {}
-        _op_mode = str(_sidebar_settings.get("operativo_mode", "entrambi"))
-        _show_op_btns = _op_mode != "tradizionale"
-        _sator_mode = str(_sidebar_settings.get("sator_mode", "entrambi"))
-        _export_pp_mode = str(_sidebar_settings.get("export_pp_mode", "entrambi"))
+        if st.button("➕ Inserisci operazione", width="stretch"):
+            import webbrowser
+            webbrowser.open_new_tab("http://localhost:8502/operazioni")
 
-        if _show_op_btns:
-            if st.button("➕ Inserisci operazione", width="stretch"):
-                import webbrowser
-                webbrowser.open_new_tab("http://localhost:8502/operazioni")
+        if st.button("📌 Strumenti", width="stretch"):
+            import webbrowser
+            webbrowser.open_new_tab("http://localhost:8502/strumenti")
 
-            if st.button("📌 Strumenti", width="stretch"):
-                import webbrowser
-                webbrowser.open_new_tab("http://localhost:8502/strumenti")
+        if st.button("📝 Operazioni", width="stretch"):
+            import webbrowser
+            webbrowser.open_new_tab("http://localhost:8502/operazioni_gestione")
 
-            if st.button("📝 Operazioni", width="stretch"):
-                import webbrowser
-                webbrowser.open_new_tab("http://localhost:8502/operazioni_gestione")
+        if st.button("💵 Liquidità", width="stretch"):
+            import webbrowser
+            webbrowser.open_new_tab("http://localhost:8502/liquidita_gestione")
 
-            if st.button("💵 Liquidità", width="stretch"):
-                import webbrowser
-                webbrowser.open_new_tab("http://localhost:8502/liquidita_gestione")
+        if st.button("📊 Esporta PP", width="stretch"):
+            import webbrowser
+            webbrowser.open_new_tab("http://localhost:8502/export_pp")
 
-        if _export_pp_mode != "tradizionale":
-            if st.button("📊 Esporta PP", width="stretch"):
-                import webbrowser
-                webbrowser.open_new_tab("http://localhost:8502/export_pp")
-
-        if _sator_mode != "tradizionale":
-            if st.button("🧠 SATOR", width="stretch"):
-                import webbrowser
-                webbrowser.open_new_tab("http://localhost:8502/sator")
+        if st.button("🧠 SATOR", width="stretch"):
+            import webbrowser
+            webbrowser.open_new_tab("http://localhost:8502/sator")
 
         if st.button("🔒 Privacy", width="stretch"):
             import webbrowser

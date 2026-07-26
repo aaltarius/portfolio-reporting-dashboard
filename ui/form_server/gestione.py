@@ -5,11 +5,8 @@ Estratto da form_server.py. Condivide la stessa pipeline di storage dell'app
 principale: nessuna logica duplicata.
 
 Nota: le funzioni _fs_rebuild_registers/_fs_reopen_instruments/_fs_delete_event/
-_fs_update_event qui sotto hanno un equivalente quasi identico in
-ui/pages/operazioni.py (Centro Operativo Streamlit). E' una duplicazione voluta:
-l'utente sta ancora valutando se tenere queste funzionalita' solo su sidebar,
-solo nell'app principale, o entrambe (vedi operativo_mode in impostazioni) — non
-va deduplicata finche' non decide.
+_fs_update_event qui sotto sono la superficie operativa definitiva aperta dalla
+sidebar. La pagina Operazioni dell'app principale resta un registro consultivo.
 """
 from __future__ import annotations
 

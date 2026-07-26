@@ -119,7 +119,7 @@ def _migrate_json_to_data_dir():
 # ---------------------------------------------------------------------------
 # Domain constants
 # ---------------------------------------------------------------------------
-APP_VERSION    = "4.9.38"
+APP_VERSION    = "4.9.40"
 SCHEMA_VERSION = "3.3"
 
 TIPI_EVENTO_PORTAFOGLIO = [
@@ -269,9 +269,9 @@ def default_settings():
         "ui_summary_layout": "GIPS Completo",
         "ui_debug_render_monitor": False,
         "ui_show_page_mode_controls": True,
-        "operativo_mode": "entrambi",
-        "sator_mode": "entrambi",
-        "export_pp_mode": "entrambi",
+        "operativo_mode": "sidebar",
+        "sator_mode": "sidebar",
+        "export_pp_mode": "sidebar",
         "privacy_mode": {
             "enabled": False,
             "hidden_tickers": [],

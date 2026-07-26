@@ -606,11 +606,11 @@ CHARTS: dict[str, dict[str, Any]] = {
     # ------------------------------------------------------------------
 
     'quotazioni_quote_history': {'type': 'time',
-     'height': 360,
+     'height': 320,
      'legend': 'bottom',
-     'show_buttons': True,
+     'show_buttons': None,
      'default_button': 'ALL',
-     'margin_delta': {'t': 0, 'b': -20, 'l': 0, 'r': -50},
+     'margin_delta': {'t': 0, 'b': -40, 'l': 0, 'r': -50},
      'y_title': 'Indice di rendimento (Base 100)',
      'y_nticks': 6,
      'quarter_mode': None,

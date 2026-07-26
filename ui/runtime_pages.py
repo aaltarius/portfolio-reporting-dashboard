@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -17,6 +18,9 @@ from core.render_profiler import (
 )
 
 
+_TAB_STATE_STORAGE_KEY = "sestante.activeTabIndex.v1"
+
+
 @dataclass(slots=True)
 class PageDef:
     page_id: str
@@ -24,9 +28,90 @@ class PageDef:
     renderer: Callable[[Any, Any], None]
 
 
-def trigger_tab_navigation() -> None:
+def _render_inline_script(html: str) -> None:
+    if hasattr(st, "html"):
+        try:
+            st.html(html, unsafe_allow_javascript=True)
+            return
+        except TypeError:
+            st.html(html)
+            return
+        except Exception:
+            return
+
+
+def _install_tab_state_bridge(page_defs: list[PageDef]) -> None:
+    """Mantiene la tab Streamlit selezionata anche dopo rerun causati da widget."""
+    page_ids = [page.page_id for page in page_defs]
+    page_ids_json = json.dumps(page_ids)
     html = f"""<script>
 (function(){{
+  var storageKey = {json.dumps(_TAB_STATE_STORAGE_KEY)};
+  var pageIds = {page_ids_json};
+  function parentDoc(){{ try{{ return window.parent.document; }}catch(e){{ return document; }} }}
+  function tabs(){{
+    var d = parentDoc();
+    var tabList = d.querySelector('[role="tablist"]');
+    if(!tabList) return [];
+    return Array.from(tabList.querySelectorAll('[role="tab"]'));
+  }}
+  function selectedIndex(items){{
+    return items.findIndex(function(t){{ return t.getAttribute('aria-selected') === 'true'; }});
+  }}
+  function saveIndex(idx){{
+    if(idx < 0 || idx >= pageIds.length) return;
+    try{{ window.parent.sessionStorage.setItem(storageKey, String(idx)); }}catch(e){{}}
+  }}
+  function readIndex(){{
+    try{{
+      var raw = window.parent.sessionStorage.getItem(storageKey);
+      var idx = parseInt(raw || '', 10);
+      if(Number.isFinite(idx) && idx >= 0 && idx < pageIds.length) return idx;
+    }}catch(e){{}}
+    return null;
+  }}
+  function bindAndRestore(){{
+    var items = tabs();
+    if(!items.length) return;
+    items.forEach(function(tab, idx){{
+      if(tab.dataset.sestanteTabBridge === '1') return;
+      tab.dataset.sestanteTabBridge = '1';
+      tab.addEventListener('click', function(){{ saveIndex(idx); }}, true);
+    }});
+    var wanted = readIndex();
+    var current = selectedIndex(items);
+    if(wanted !== null && wanted !== current && items[wanted]){{
+      items[wanted].click();
+    }} else if(current >= 0) {{
+      saveIndex(current);
+    }}
+  }}
+  [0, 60, 180, 360, 720, 1200].forEach(function(delay){{ setTimeout(bindAndRestore, delay); }});
+}})();
+</script>"""
+    _render_inline_script(html)
+
+
+def trigger_tab_navigation() -> None:
+    try:
+        total_pages = max(1, int(st.session_state.get("total_pages", 1) or 1))
+    except Exception:
+        total_pages = 1
+    active_index = _clamp_active_tab_index([PageDef(str(i), str(i), lambda *_: None) for i in range(total_pages)])
+    html = f"""<script>
+(function(){{
+  var storageKey = {json.dumps(_TAB_STATE_STORAGE_KEY)};
+  var targetIndex = {active_index};
+  try{{ window.parent.sessionStorage.setItem(storageKey, String(targetIndex)); }}catch(e){{}}
+  function clickTargetTab(){{
+    try{{
+      var d=window.parent.document;
+      var tabList=d.querySelector('[role="tablist"]');
+      if(!tabList) return;
+      var tabs=Array.from(tabList.querySelectorAll('[role="tab"]'));
+      if(tabs[targetIndex] && tabs[targetIndex].getAttribute('aria-selected') !== 'true'){{ tabs[targetIndex].click(); }}
+    }}catch(e){{}}
+  }}
   function scrollTop(){{
     try{{
       var d=window.parent.document;
@@ -37,21 +122,17 @@ def trigger_tab_navigation() -> None:
       if(d.body) d.body.scrollTop=0;
     }}catch(e){{ window.scrollTo({{top:0,behavior:'auto'}}); }}
   }}
+  clickTargetTab();
   scrollTop();
+  setTimeout(clickTargetTab, 80);
   setTimeout(scrollTop, 80);
+  setTimeout(clickTargetTab, 320);
   setTimeout(scrollTop, 320);
+  setTimeout(clickTargetTab, 600);
   setTimeout(scrollTop, 600);
 }})();
 </script>"""
-    if hasattr(st, "html"):
-        try:
-            st.html(html, unsafe_allow_javascript=True)
-            return
-        except TypeError:
-            st.html(html)
-            return
-        except Exception:
-            return
+    _render_inline_script(html)
 
 
 def _clamp_active_tab_index(page_defs: list[PageDef]) -> int:
@@ -79,6 +160,14 @@ def _render_page_selector(page_defs: list[PageDef], *, active_index: int) -> int
         return active_index
 
 
+def _format_final_progress_text(*, render_started_at: float, run_started_at: float | None) -> str:
+    ui_elapsed = time.perf_counter() - render_started_at
+    if run_started_at is None:
+        return f"Dashboard pronta - UI {ui_elapsed:.1f}s"
+    total_elapsed = time.perf_counter() - run_started_at
+    return f"Dashboard pronta - UI {ui_elapsed:.1f}s - totale run {total_elapsed:.1f}s"
+
+
 def _render_page_step(
     *,
     label: str,
@@ -92,12 +181,16 @@ def _render_page_step(
     sidebar_progress=None,
     render_steps: list[tuple[str, Any, Any]],
     app_logger,
+    progress_start_pct: int = 0,
+    progress_span_pct: int = 100,
 ) -> None:
     t0 = time.perf_counter()
-    percent_before = int(((step - 1) / max(total, 1)) * 100)
+    progress_base = max(0, min(int(progress_start_pct), 99))
+    progress_span = max(1, min(int(progress_span_pct), 100 - progress_base))
+    percent_before = progress_base + int(((step - 1) / max(total, 1)) * progress_span)
     elapsed_before = time.perf_counter() - render_started_at
     if render_progress is not None:
-        render_progress.progress(percent_before, text=f"Rendering {label}... ({elapsed_before:.1f}s)")
+        render_progress.progress(percent_before, text=f"Rendering {label}... UI {elapsed_before:.1f}s")
     if sidebar_progress is not None:
         sidebar_progress.progress(max(1, percent_before), text=f"Debug sidebar: {label}")
     status = "OK"
@@ -112,12 +205,12 @@ def _render_page_step(
     finally:
         elapsed = time.perf_counter() - t0
         render_steps.append((label, elapsed, step, status, error_msg))
-        percent_after = int((step / max(total, 1)) * 100)
+        percent_after = progress_base + int((step / max(total, 1)) * progress_span)
         elapsed_after = time.perf_counter() - render_started_at
         if render_progress is not None:
             render_progress.progress(
                 percent_after,
-                text=(f"Completato: {label} ({elapsed_after:.1f}s)" if status == "OK" else f"Errore: {label} ({elapsed_after:.1f}s)"),
+                text=(f"Completato: {label} - UI {elapsed_after:.1f}s" if status == "OK" else f"Errore: {label} - UI {elapsed_after:.1f}s"),
             )
         if sidebar_progress is not None:
             sidebar_progress.progress(
@@ -126,13 +219,39 @@ def _render_page_step(
             )
 
 
-def _render_standard_tabs(page_defs: list[PageDef], ctx: Any) -> None:
+def _render_standard_tabs(
+    page_defs: list[PageDef],
+    ctx: Any,
+    *,
+    render_started_at: float | None = None,
+    render_progress=None,
+    render_steps: list[tuple[str, Any, Any]] | None = None,
+    app_logger=None,
+) -> None:
     tab_targets = st.tabs([page.label for page in page_defs])
-    for idx, (page, target) in enumerate(zip(page_defs, tab_targets)):
-        st.session_state["current_page_index"] = idx
+    _install_tab_state_bridge(page_defs)
+    total_render_steps = len(page_defs)
+    for idx, (page, target) in enumerate(zip(page_defs, tab_targets), start=1):
+        st.session_state["current_page_index"] = idx - 1
         st.session_state["current_page_total"] = len(page_defs)
         st.session_state["current_page_id"] = page.page_id
-        page.renderer(target, ctx)
+        if render_progress is not None and render_started_at is not None and render_steps is not None and app_logger is not None:
+            _render_page_step(
+                label=page.label,
+                step=idx,
+                total=total_render_steps,
+                render_func=page.renderer,
+                target=target,
+                context=ctx,
+                render_started_at=render_started_at,
+                render_progress=render_progress,
+                render_steps=render_steps,
+                app_logger=app_logger,
+                progress_start_pct=8,
+                progress_span_pct=90,
+            )
+        else:
+            page.renderer(target, ctx)
 
 
 
@@ -199,6 +318,7 @@ def render_dashboard_tabs(
     operational_origin_page_index: int | None = None,
     dirty_flags: dict[str, bool] | None = None,
     progress_host=None,
+    run_started_at: float | None = None,
 ) -> None:
     render_started_at = time.perf_counter()
     render_steps: list[tuple[str, Any, Any]] = []
@@ -213,9 +333,9 @@ def render_dashboard_tabs(
     render_progress = None
     if debug_progress_enabled:
         try:
-            render_progress = (progress_host or st).progress(0, text="Preparazione caricamento dashboard...")
+            render_progress = (progress_host or st).progress(0, text="Preparazione interfaccia...")
         except Exception:
-            render_progress = st.progress(0, text="Preparazione caricamento dashboard...")
+            render_progress = st.progress(0, text="Preparazione interfaccia...")
 
     if debug_enabled:
         reset_render_profile()
@@ -230,19 +350,19 @@ def render_dashboard_tabs(
             pass
         render_elapsed = time.perf_counter() - render_started_at
         if render_progress is not None:
-            render_progress.progress(3, text=f"Rendering Overview / KPI iniziali... ({render_elapsed:.1f}s)")
+            render_progress.progress(3, text=f"Rendering Overview / KPI iniziali... UI {render_elapsed:.1f}s")
         render_overview(st.container(), ctx)
         render_elapsed = time.perf_counter() - render_started_at
         if render_progress is not None:
-            render_progress.progress(8, text=f"Completato: Overview / KPI iniziali ({render_elapsed:.1f}s)")
+            render_progress.progress(8, text=f"Completato: Overview / KPI iniziali - UI {render_elapsed:.1f}s")
     else:
         render_elapsed = time.perf_counter() - render_started_at
         if render_progress is not None:
-            render_progress.progress(3, text=f"Rendering Overview / KPI iniziali... ({render_elapsed:.1f}s)")
+            render_progress.progress(3, text=f"Rendering Overview / KPI iniziali... UI {render_elapsed:.1f}s")
         render_overview(st.container(), ctx)
         render_elapsed = time.perf_counter() - render_started_at
         if render_progress is not None:
-            render_progress.progress(8, text=f"Completato: Overview / KPI iniziali ({render_elapsed:.1f}s)")
+            render_progress.progress(8, text=f"Completato: Overview / KPI iniziali - UI {render_elapsed:.1f}s")
         render_log = None
         sidebar_progress = None
 
@@ -272,10 +392,12 @@ def render_dashboard_tabs(
             sidebar_progress=sidebar_progress,
             render_steps=render_steps,
             app_logger=app_logger,
+            progress_start_pct=8,
+            progress_span_pct=90,
         )
         render_elapsed_total = time.perf_counter() - render_started_at
         if render_progress is not None:
-            render_progress.progress(100, text=f"Dashboard pronta in {render_elapsed_total:.1f} secondi")
+            render_progress.progress(100, text=_format_final_progress_text(render_started_at=render_started_at, run_started_at=run_started_at))
         if debug_log_enabled:
             try:
                 skipped_pages = _format_skipped_pages(page_defs, active_page.page_id)
@@ -332,6 +454,7 @@ def render_dashboard_tabs(
                 app_logger.warning("Impossibile mostrare log rendering operativo: %s", exc)
     elif debug_full_sweep:
         tab_targets = st.tabs([page.label for page in page_defs])
+        _install_tab_state_bridge(page_defs)
         total_render_steps = len(page_defs)
         for idx, (page, target) in enumerate(zip(page_defs, tab_targets), start=1):
             st.session_state["current_page_index"] = idx - 1
@@ -348,11 +471,13 @@ def render_dashboard_tabs(
                 sidebar_progress=sidebar_progress,
                 render_steps=render_steps,
                 app_logger=app_logger,
+                progress_start_pct=8,
+                progress_span_pct=90,
             )
 
         render_elapsed_total = time.perf_counter() - render_started_at
         if render_progress is not None:
-            render_progress.progress(100, text=f"Dashboard pronta in {render_elapsed_total:.1f} secondi")
+            render_progress.progress(100, text=_format_final_progress_text(render_started_at=render_started_at, run_started_at=run_started_at))
         try:
             render_lines = [
                 "=== PORTFOLIO DASHBOARD — RENDER LOG ===",
@@ -427,6 +552,7 @@ def render_dashboard_tabs(
             app_logger.warning("Impossibile mostrare log rendering dettagliato: %s", exc)
     elif debug_enabled:
         tab_targets = st.tabs([page.label for page in page_defs])
+        _install_tab_state_bridge(page_defs)
         total_render_steps = len(page_defs)
         for idx, (page, target) in enumerate(zip(page_defs, tab_targets), start=1):
             st.session_state["current_page_index"] = idx - 1
@@ -444,10 +570,12 @@ def render_dashboard_tabs(
                 sidebar_progress=sidebar_progress,
                 render_steps=render_steps,
                 app_logger=app_logger,
+                progress_start_pct=8,
+                progress_span_pct=90,
             )
         render_elapsed_total = time.perf_counter() - render_started_at
         if render_progress is not None:
-            render_progress.progress(100, text=f"Dashboard pronta in {render_elapsed_total:.1f} secondi")
+            render_progress.progress(100, text=_format_final_progress_text(render_started_at=render_started_at, run_started_at=run_started_at))
         if debug_log_enabled:
             try:
                 render_lines = [
@@ -502,7 +630,13 @@ def render_dashboard_tabs(
             except Exception as exc:
                 app_logger.warning("Impossibile mostrare log rendering dettagliato: %s", exc)
     else:
-        _render_standard_tabs(page_defs, ctx)
-        render_elapsed_total = time.perf_counter() - render_started_at
+        _render_standard_tabs(
+            page_defs,
+            ctx,
+            render_started_at=render_started_at,
+            render_progress=render_progress,
+            render_steps=render_steps,
+            app_logger=app_logger,
+        )
         if render_progress is not None:
-            render_progress.progress(100, text=f"Dashboard pronta in {render_elapsed_total:.1f} secondi")
+            render_progress.progress(100, text=_format_final_progress_text(render_started_at=render_started_at, run_started_at=run_started_at))

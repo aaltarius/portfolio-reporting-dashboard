@@ -420,6 +420,9 @@ def _process_op_cart_items(
     return count, []
 
 
+# LEGACY_REVIEW 2026-07-26: vecchio dialog Streamlit interno.
+# La superficie operativa definitiva e' la sidebar, che apre i form-server
+# in ui/form_server/*. render_operazioni non richiama piu' questo dialog.
 @st.dialog("➕ Nuove operazioni", width="large")
 def nuove_operazioni_dialog(data: dict[str, Any], ctx: SimpleNamespace) -> None:
     """
@@ -482,6 +485,10 @@ def nuove_operazioni_dialog(data: dict[str, Any], ctx: SimpleNamespace) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# LEGACY_REVIEW 2026-07-26: Centro Operativo Streamlit interno.
+# Queste funzioni restano isolate per confronto/revisione, ma non fanno piu'
+# parte del percorso UI principale. I percorsi vivi sono in ui/form_server/*,
+# aperti dai pulsanti definitivi della sidebar.
 # Centro Operativo — funzioni comuni e popup Streamlit
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1053,7 +1060,7 @@ def gestisci_liquidita_dialog(data: dict[str, Any], ctx: SimpleNamespace) -> Non
 
 
 def _render_centro_operativo(data: dict[str, Any], ctx: SimpleNamespace, theme) -> None:
-    """Area unica di gestione operativa della scheda Operazioni."""
+    """LEGACY_REVIEW: vecchia area operativa in-page, non chiamata dal render."""
     _op_mode = str((ctx.settings or {}).get("operativo_mode", "entrambi"))
     if _op_mode == "sidebar":
         return
@@ -1221,11 +1228,10 @@ def render_operazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
     with tab:
         render_page_intro_shared(
             t(settings, "tab.operations", "Operazioni"),
-            t(settings, "page_intro.operazioni.comment", "Centro operativo per inserire, correggere e consultare eventi di portafoglio, movimenti di cassa e anagrafica strumenti."),
+            t(settings, "page_intro.operazioni.comment", "Registro consultivo degli eventi di portafoglio e dei movimenti di cassa. Le azioni operative si aprono dalla sidebar."),
             "operations",
             theme,
         )
-        _render_centro_operativo(data, ctx, theme)
 
         operations = get_portfolio_operations(get_registro_eventi(data))
 

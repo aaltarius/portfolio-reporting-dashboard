@@ -56,6 +56,29 @@ from ui.dashboard_bundles import get_advanced_analysis_dataset_bundle
 from core.render_profiler import profile_step, record_render_event
 from ui.page_chrome import render_page_intro as render_page_intro_shared
 
+
+_QUOTAZIONI_PERF_CHART_ID = "quotazioni_instrument_performance_time_v2"
+_QUOTAZIONI_PERF_EXTREMA_LOGIC_VERSION = "from_plotly_traces_v1"
+_QUOTAZIONI_PERF_REFERENCE_VERSION = "portfolio_reference_dotted_v1"
+_QUOTAZIONI_PERF_CACHE_CLEANUP_KEY = (
+    f"_cache_cleanup_{_QUOTAZIONI_PERF_CHART_ID}_{_QUOTAZIONI_PERF_EXTREMA_LOGIC_VERSION}_{_QUOTAZIONI_PERF_REFERENCE_VERSION}"
+)
+
+
+def _clear_quotazioni_perf_legacy_cache(fcache) -> None:
+    """Rimuove una tantum le figure cacheate prima della correzione MAX/MIN."""
+    if st.session_state.get(_QUOTAZIONI_PERF_CACHE_CLEANUP_KEY):
+        return
+    for key in list(st.session_state.keys()):
+        if str(key).startswith(f"_fig_cache_{_QUOTAZIONI_PERF_CHART_ID}_"):
+            st.session_state.pop(key, None)
+    try:
+        fcache.clear_by_pattern(_QUOTAZIONI_PERF_CHART_ID)
+    except Exception:
+        pass
+    st.session_state[_QUOTAZIONI_PERF_CACHE_CLEANUP_KEY] = True
+
+
 def _get_freshness_badge(last_refresh_dt: Any) -> str:
     """Ritorna emoji di freschezza basato su quanto tempo fa è avvenuto il refresh."""
     if not last_refresh_dt:
@@ -76,6 +99,56 @@ def _get_freshness_badge(last_refresh_dt: Any) -> str:
             return "🔴"  # Stale (> 60 min)
     except Exception:
         return "⚪"
+
+
+def _latest_portfolio_history_date(data: dict[str, Any]) -> pd.Timestamp | None:
+    storico = data.get("storico_prezzi", {}) if isinstance(data, dict) else {}
+    if not isinstance(storico, dict) or not storico:
+        return None
+    try:
+        return pd.Timestamp(max(str(day) for day in storico.keys())).normalize()
+    except Exception:
+        return None
+
+
+def _quote_history_status_html(item: Any, data: dict[str, Any]) -> str:
+    series = getattr(item, "normalized_series", None)
+    try:
+        clean_series = series.dropna()
+    except Exception:
+        clean_series = pd.Series(dtype=float)
+
+    if clean_series.empty:
+        return """
+        <div class="quote-history-status muted">
+          <span class="quote-history-status__dot"></span>
+          <span>Storico quotazioni non disponibile</span>
+        </div>
+        """
+
+    latest = pd.Timestamp(clean_series.index.max()).normalize()
+    latest_label = latest.strftime("%d/%m/%Y")
+    state_class = "ok"
+    state_label = "storico aggiornato"
+
+    global_latest = _latest_portfolio_history_date(data)
+    if global_latest is not None:
+        gap_days = max(0, int((global_latest - latest).days))
+        if gap_days > 7:
+            state_class = "warn"
+            state_label = f"possibile storico incompleto: {gap_days} giorni dall'ultimo dato portafoglio"
+        elif gap_days > 3:
+            state_class = "hold"
+            state_label = f"calendario da verificare: {gap_days} giorni dall'ultimo dato portafoglio"
+
+    return f"""
+    <div class="quote-history-status {state_class}">
+      <span class="quote-history-status__dot"></span>
+      <span>Ultimo dato: <strong>{latest_label}</strong></span>
+      <span>{len(clean_series)} sedute</span>
+      <span>{state_label}</span>
+    </div>
+    """
 
 
 def _render_top_data_kpis(data: dict[str, Any], theme, settings: dict[str, Any] | None = None, chiusi_tickers: frozenset | None = None) -> None:
@@ -141,6 +214,7 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
     _theme_sig = theme_signature(theme)
     _settings_sig = charts_settings_signature("ui/charts/settings.py")
     fcache = get_figure_cache()
+    _clear_quotazioni_perf_legacy_cache(fcache)
 
     # Resolve cache strategy once, reuse for all figures
     _cache_strategy = resolve_figure_cache_strategy(settings, st.session_state)
@@ -334,6 +408,7 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     strategy=_cache_strategy,
                 )
                 st.plotly_chart(fig, width="stretch")
+                st.markdown(_quote_history_status_html(item, data), unsafe_allow_html=True)
 
             _quotazioni_full_res = get_effective_quotazioni_full_resolution(settings)
 
@@ -371,14 +446,21 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 if not quotazioni_bundle.instrument_flow_index_df.empty:
                     with profile_step("Quotazioni", "render confronto performance strumenti", count=len(tkd)):
                         fig = fcache.get_or_build(
-                            chart_id="quotazioni_instrument_performance_time_v2",
+                            chart_id=_QUOTAZIONI_PERF_CHART_ID,
                             data_sig=_hist_flow_sig,
                             theme_sig=_theme_sig,
                             charts_settings_sig=_settings_sig,
-                            builder=lambda: build_instrument_performance_comparison_time_chart(quotazioni_bundle.instrument_flow_index_df, tkd, dfmt, chart_id="quotazioni_instrument_performance_time_v2"),
+                            builder=lambda: build_instrument_performance_comparison_time_chart(
+                                quotazioni_bundle.instrument_flow_index_df,
+                                tkd,
+                                dfmt,
+                                chart_id=_QUOTAZIONI_PERF_CHART_ID,
+                                portfolio_series=quotazioni_bundle.portfolio_flow_index_series,
+                            ),
                             page_mode="Completa",  # Solo in modalità Completa
                             extra_params={
-                                "cache_bust": "quotazioni_perf_time_v4",
+                                "extrema_logic_version": _QUOTAZIONI_PERF_EXTREMA_LOGIC_VERSION,
+                                "portfolio_reference": _QUOTAZIONI_PERF_REFERENCE_VERSION,
                                 "tickers": "|".join(tkd),
                             },
                             strategy=_cache_strategy,
@@ -394,6 +476,3 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 )
 
         back_to_top(show_prev=False, show_next=True, nav_key="quotazioni")
-
-
-

@@ -169,6 +169,9 @@ def add_global_extrema_markers(fig, frame, chart_id: str):
     """
     if not bool(get_chart_setting(chart_id, "show_extrema", False)):
         return fig
+    trace_frame = _extract_line_trace_frame(fig)
+    if trace_frame is not None and not trace_frame.empty:
+        frame = trace_frame
     if frame is None or frame.empty or frame.shape[1] == 0:
         return fig
     long = frame.stack().dropna().reset_index()
@@ -214,3 +217,37 @@ def add_global_extrema_markers(fig, frame, chart_id: str):
         )
     )
     return fig
+
+
+def _extract_line_trace_frame(fig) -> pd.DataFrame:
+    """Build a wide frame from the line traces that are already plotted."""
+    series_by_name: dict[str, pd.Series] = {}
+    for trace in getattr(fig, "data", []) or []:
+        meta = getattr(trace, "meta", None)
+        if isinstance(meta, dict) and bool(meta.get("exclude_from_extrema", False)):
+            continue
+        mode = str(getattr(trace, "mode", "") or "")
+        if "lines" not in mode:
+            continue
+        name = str(getattr(trace, "name", "") or "").strip()
+        if not name:
+            continue
+        raw_x = getattr(trace, "x", None)
+        raw_y = getattr(trace, "y", None)
+        x_values = list(raw_x) if raw_x is not None else []
+        y_values = list(raw_y) if raw_y is not None else []
+        if not x_values or not y_values:
+            continue
+        n = min(len(x_values), len(y_values))
+        try:
+            y_num = pd.to_numeric(pd.Series(y_values[:n]), errors="coerce")
+            idx = pd.to_datetime(pd.Series(x_values[:n]), errors="coerce")
+            valid = y_num.notna() & idx.notna()
+            if valid.sum() == 0:
+                continue
+            series_by_name[name] = pd.Series(y_num[valid].to_numpy(dtype=float), index=pd.DatetimeIndex(idx[valid]))
+        except Exception:
+            continue
+    if not series_by_name:
+        return pd.DataFrame()
+    return pd.DataFrame(series_by_name).sort_index()

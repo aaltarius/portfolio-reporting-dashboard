@@ -777,16 +777,27 @@ class FigureCache:
             try:
                 with self._MANIFEST_LOCK:
                     manifest = self._load_manifest(repair_on_corruption=True)
+                    manifest_keys_to_delete = []
 
-                for entry in manifest.values():
+                for key, entry in list(manifest.items()):
                     chart_id = str(entry.get("chart_id") or "")
                     fig_sig = str(entry.get("signature") or "")
                     if chart_id and fig_sig and pattern_lower in chart_id.lower():
+                        manifest_keys_to_delete.append(key)
                         stem = self._cache_file_stem(chart_id, fig_sig)
                         for suffix in (".json.gz", ".json.json.gz", ".pickle.gz", ".json.pickle.gz", ".pickle"):
                             candidate = self.CACHE_DIR / f"{stem}{suffix}"
                             if candidate.exists():
                                 targets.add(candidate)
+                    elif pattern_lower in str(key).lower():
+                        manifest_keys_to_delete.append(key)
+                if manifest_keys_to_delete:
+                    with self._MANIFEST_LOCK:
+                        manifest = self._load_manifest(repair_on_corruption=True)
+                        for key in manifest_keys_to_delete:
+                            manifest.pop(key, None)
+                        type(self)._MANIFEST_DIRTY = True
+                    self.flush_manifest()
             except Exception as exc:
                 logger.warning("Manifest non usato per clear_by_pattern(%s): %s", pattern, exc)
 

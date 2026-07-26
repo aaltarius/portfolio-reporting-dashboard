@@ -1,5 +1,81 @@
 # Changelog
 
+## 4.9.40 - Consolidamento sidebar, Pianificazione fluida e cache Analitica coerente
+
+**Accesso operativo definitivo dalla sidebar:**
+- le azioni operative sono state consolidate sulla sidebar come unica superficie ufficiale: Inserisci operazione, Strumenti, Operazioni, Liquidità, Esporta PP e SATOR sono sempre disponibili dai pulsanti laterali
+- rimossi da Setup i radio "Centro Operativo vs Sidebar", "SATOR" ed "Esporta PP": erano diventati un livello di scelta ridondante e rischiavano di mantenere due flussi paralleli per la stessa operazione
+- i default di configurazione sono ora `operativo_mode="sidebar"`, `sator_mode="sidebar"` ed `export_pp_mode="sidebar"`; al salvataggio Setup normalizza comunque eventuali vecchi file impostazioni su questo assetto
+- reso più robusto il bootstrap del form-server FastAPI su porta `8502`: se un rerun trova il vecchio thread morto, l'avvio viene ritentato; il log ora distingue l'avvio richiesto dal server realmente attivo
+- aggiunte a `requirements.txt` le dipendenze effettive dei servizi sidebar (`fastapi`, `uvicorn[standard]`, `python-multipart`), prima usate dal codice ma non dichiarate dal progetto
+- la pagina Operazioni diventa un registro consultivo degli eventi di portafoglio e dei movimenti di cassa: il vecchio Centro Operativo interno non viene più renderizzato
+- in Pianificazione non viene più renderizzato il vecchio modulo SATOR Streamlit interno: restano Obiettivo di portafoglio, dashboard decisionale e fotografia di riferimento; SATOR operativo vive nella pagina standalone aperta dalla sidebar
+- rimossa da Gestione Dati la sezione duplicata "Esporta per Portfolio Performance": l'export resta nel form-server dedicato `/export_pp`
+
+**Tabella Portafoglio: prezzo e layout compatto:**
+- aggiunta nella tabella "Controvalore del Portafoglio" la colonna dell'ultima quotazione disponibile, accanto a quote e controvalore
+- spostato `PMC` prima del peso, così prezzo medio di carico, peso, quantità, ultima quotazione e controvalore seguono una lettura più naturale
+- introdotte larghezze esplicite di colonna con font tabella a 13px: `Strumento` è più compatto, le colonne finali `P/L` e `Var gg` sono più larghe e la freccia finale non occupa spazio eccessivo
+
+**Codice legacy tracciato per revisione:**
+- aggiunta `ui/legacy/README.md` con la mappa dei percorsi vivi e dei blocchi legacy rimasti temporaneamente nel codice sorgente
+- marcati con `LEGACY_REVIEW 2026-07-26` i vecchi dialog Streamlit del Centro Operativo in `ui/pages/operazioni.py` e il vecchio modulo SATOR interno in `ui/pages/pianificazione.py`
+- scelta volutamente conservativa: i blocchi legacy sono commentati e isolati, non spostati fisicamente, perché contengono decorator Streamlit e helper intrecciati; la prossima revisione potrà eliminarli o migrare eventuali funzioni residue verso `ui/form_server/*` o `core/services/*`
+
+**Pianificazione: preset obiettivo in un solo salvataggio:**
+- eliminato il doppio click "Applica preset" + "Salva obiettivo di portafoglio": il preset rapido ora sta dentro lo stesso form dell'obiettivo e viene applicato direttamente dal pulsante "Salva obiettivo e aggiorna analisi"
+- il salvataggio usa una callback Streamlit: l'impostazione viene scritta prima del rerun top-to-bottom, quindi Cruscotti/Analitica vede subito il nuovo target nello stesso ciclo di aggiornamento
+- dopo il salvataggio i campi Core/Difensivo/Satellite vengono riallineati ai valori realmente salvati e il preset torna neutro (`-`), evitando che un preset rimanga selezionato e sovrascriva modifiche manuali successive
+
+**Cruscotti / Analitica: fix cache "Scostamento da allocazione target":**
+- il grafico "Scostamento da Allocazione Target" usava una firma cache che non includeva `portfolio_objective`: dopo aver cambiato target in Pianificazione poteva restare visibile una figura costruita con il vecchio obiettivo
+- aggiunto `_objective_cache_token()` in `ui/dashboard_bundles.py` e incluso il token in `extra_params` della figure cache del grafico `analisi_target_gap`
+- aggiunti test di regressione per verificare che due target diversi producano firme cache diverse e che il blocco Analitica includa esplicitamente l'obiettivo nella cache
+
+**Navigazione e rerun:**
+- aggiunto un bridge leggero per ricordare il tab principale selezionato nel browser (`sessionStorage`, chiave `sestante.activeTabIndex.v1`): dopo un rerun causato da un widget, l'app non deve tornare senza motivo alla prima scheda
+- migliorata la navigazione programmata verso Quotazioni/Operazioni: il bridge aggiorna anche lo stato browser prima di cliccare il tab target, riducendo i ritorni inattesi dopo azioni da sidebar
+
+**Setup / Avanzate: audit operativo:**
+- verificato che `Profiling render` è ancora funzionante: misura i tempi reali della UI e, in modalità "Sweep completo", aggiunge il riepilogo pagina-per-pagina; resta in Avanzate come strumento diagnostico, spento di default
+- verificato che il pre-render iniziale è ancora cablato e funzionante (`app.py`, `core/cache_prewarmer.py`, `ui/prewarm_bundle.py`, eventi persistiti in `core/render_profiler.py`): non rimosso perché continua a governare la costruzione preventiva delle figure principali
+- la diagnostica del pre-render resta disponibile anche in Gestione Dati tramite stato prewarm, esecuzione manuale background e log render copiabile
+- riscritte le etichette di Setup Avanzate per utenti non tecnici: `Profiling render` diventa "Misurazione tempi di caricamento", `Pre-render iniziale` diventa "Cache anticipata dei grafici", con note pratiche su quando lasciare tutto attivo, quando mostrare il report tempi e quando usare la diagnosi completa
+- il box istruzioni di Avanzate è ora un pannello a righe colorate (Uso normale / Se sembra lento / Diagnosi tecnica), più leggibile del precedente blocco testuale
+
+**Copertura test:**
+- aggiunti/aggiornati test statici e unitari per bloccare regressioni su sidebar-only, preset Pianificazione, cache Analitica target, restore del tab selezionato e marcatura legacy
+- verificati i blocchi collegati con `py_compile` e test mirati (`test_streamlit_pages`, `test_analitica_target_gap_objective_cache`, `test_portfolio_objective_settings`, `test_sator_*`, `test_page_intro_i18n`)
+
+## 4.9.39 - Portafoglio più leggibile, Quotazioni coerenti e shell iniziale rifinita
+
+**Tabella "Controvalore del Portafoglio":**
+- riordinata la tabella per renderla più leggibile: peso e quote sono più vicini, il PMC precede il controvalore, le commissioni/costo iniziale non occupano più spazio nella vista principale
+- aggiunta la colonna con mini-grafico 60 giorni per ogni strumento posseduto, basata sugli stessi dati dello sparkline nel popup di dettaglio
+- il mini-grafico segue il colore del P/L della posizione, non l'ultimo movimento di prezzo: evita incoerenze come strumento in utile mostrato rosso nella tabella ma verde nel popup
+- aggiunta linea orizzontale tratteggiata del PMC dentro il mini-grafico e nel popup, così si vede subito se il prezzo recente si muove sopra o sotto il carico
+- riarticolate le colonne finali in ordine operativo: grafico, P/L €, P/L %, Var gg €, Var gg % e freccia direzionale
+- riscritto il commento sotto la tabella: rimossa la legenda categorie ridondante, sostituita da una lettura più utile di peso, esposizione, andamento recente, P/L e variazione giornaliera
+
+**Popup e grafici strumento:**
+- il popup ticker e la tabella condividono dati, logica sparkline e riferimento PMC, riducendo discrepanze tra mini-grafico e dettaglio
+- nella pagina Quotazioni, il grafico "Rendimento dello strumento" è stato riallineato matematicamente al valore massimo/minimo reale mostrato a video
+- aggiunto confronto non invasivo con il rendimento del portafoglio nel grafico dello strumento, come riferimento visivo puntinato/trasparente
+
+**Quotazioni: storico e freschezza dati:**
+- aggiunto sotto i grafici in Quotazioni un indicatore sintetico dello stato dello storico prezzi, con ultima data disponibile e avviso quando la serie sembra più corta del previsto
+- la firma cache ora include anche l'ultimo punto storico per ticker/categoria: un backfill o un aggiornamento dell'ultima data non resta nascosto dietro cache costruite con storico precedente
+- aggiunti test su `latest_history_point_by_ticker` e sulla resa dell'indicatore `quote-history-status`
+
+**Banner iniziale, progresso render e chiusura app:**
+- rifinito il banner iniziale Sestante: titolo, sottotitolo "Portfolio Control Center", data/aggiornamento e KPI sono stati riorganizzati in modo più professionale
+- la barra di avanzamento render ora misura il tempo UI dall'inizio del run alla fine e mostra messaggi più espliciti durante il rendering delle pagine
+- ripristinata e ridisegnata la pagina finale dopo "Arresta Streamlit": schermata compatta e coerente col tema, senza layout rotto dopo la richiesta di shutdown
+
+**Rerun e usabilità:**
+- selezionare un preset rapido in Pianificazione non deve più generare un rerun immediato solo per la scelta del valore: il comportamento è stato spostato verso conferme esplicite nei form
+- corretto il caso in cui un rerun da Pianificazione riportava l'utente in fondo alla pagina Quotazioni senza una causa comprensibile
+
 ## 4.9.38 - Pannello laterale del box iniziale più stretto
 
 **Rifinitura del box iniziale (v4.9.37):**

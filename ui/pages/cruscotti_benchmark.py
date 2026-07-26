@@ -187,7 +187,7 @@ def _render_component_table(components: list[dict[str, Any]]) -> None:
 
 def _render_benchmark_kpis(metrics: dict[str, Any]) -> None:
     items = [
-        ("Portafoglio", _fmt_pct(metrics.get("portfolio_return")), "Rendimento TWR/proxy", P["blue"], P["green"] if (_safe_float(metrics.get("portfolio_return"), 0.0) or 0.0) >= 0 else P["red"]),
+        ("Portafoglio", _fmt_pct(metrics.get("portfolio_return")), "Rendimento TWR proxy", P["blue"], P["green"] if (_safe_float(metrics.get("portfolio_return"), 0.0) or 0.0) >= 0 else P["red"]),
         ("Benchmark", _fmt_pct(metrics.get("benchmark_return")), "Rendimento riferimento", P["orange"], P["green"] if (_safe_float(metrics.get("benchmark_return"), 0.0) or 0.0) >= 0 else P["red"]),
         ("Extra-rendimento", _fmt_pct(metrics.get("excess_return")), _excess_note(metrics.get("excess_return")), P["green"], P["green"] if (_safe_float(metrics.get("excess_return"), 0.0) or 0.0) >= 0 else P["red"]),
         ("CAGR portafoglio", _fmt_pct(metrics.get("portfolio_cagr")), "Rendimento annualizzato", P["blue"], None),
