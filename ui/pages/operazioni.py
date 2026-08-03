@@ -3,7 +3,7 @@ ui/pages/operazioni.py — Tab Operazioni: event log and transaction registry
 Pure rendering with pre-filtered service data.
 """
 from types import SimpleNamespace
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -47,39 +47,19 @@ def _default_tax_rate_pct(evento: str, ticker: str, info_map: dict[str, dict[str
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-def _set_stato_strumento(
-    data: dict[str, Any],
-    ticker: str,
-    stato: str,
-    data_chiusura: Optional[str] = None,
-    motivo_chiusura: Optional[str] = None,
-) -> None:
-    for s in data.get("strumenti", []):
-        if s.get("ticker") == ticker:
-            s["stato"] = stato
-            if stato == "aperto":
-                s["data_chiusura"] = None
-                s["motivo_chiusura"] = None
-            else:
-                s["data_chiusura"] = data_chiusura
-                s["motivo_chiusura"] = motivo_chiusura
-            break
-
-
 def _build_strumenti_chiusi_section(data: dict[str, Any]) -> None:
     """Renders closed-instrument summary at the bottom of the Operazioni page."""
+    from core.constants import QTY_ZERO_EPS
+    from core.domain.instrument_status import compute_instrument_statuses
+
     df_positions = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
     if df_positions.empty:
         return
-    df_chiusi_pos = df_positions[df_positions["Quote"] <= 0.0001]
+    df_chiusi_pos = df_positions[df_positions["Quote"] <= QTY_ZERO_EPS]
     if df_chiusi_pos.empty:
         return
-    # Strumenti con stato=="chiuso": GOV rimborsati/venduti definitivamente.
-    chiusi_tickers = {
-        str(s.get("ticker") or "")
-        for s in data.get("strumenti", [])
-        if s.get("stato") == "chiuso" and str(s.get("ticker") or "")
-    }
+    statuses = compute_instrument_statuses(data)
+    chiusi_tickers = {tk for tk, status in statuses.items() if not status.is_open}
     chiusi = [s for s in data.get("strumenti", []) if s.get("ticker") in chiusi_tickers]
     if not chiusi:
         return
@@ -111,6 +91,7 @@ def _build_strumenti_chiusi_section(data: dict[str, Any]) -> None:
     rows = []
     for s in chiusi:
         ticker = str(s.get("ticker", "") or "")
+        status = statuses.get(ticker)
         nome = str(s.get("nome", ticker) or ticker)
         tipo = macro_cat(str(s.get("tipo", "") or ""))
         data_apertura = fmtds(first_buy.get(ticker, "")) if first_buy.get(ticker) else "—"
@@ -140,6 +121,7 @@ def _build_strumenti_chiusi_section(data: dict[str, Any]) -> None:
             "Cedole/Div. netti €": cedole + dividendi,
             "Imposte €": imposte,
             "Return Totale €": return_totale,
+            "Osserva prezzo": "Sì" if (status and status.osserva_prezzo) else ("—" if (status and status.is_terminal) else "No"),
         })
 
     if not rows:
@@ -180,7 +162,9 @@ def _build_strumenti_chiusi_section(data: dict[str, Any]) -> None:
     render_styled_table(styled, height="content")
     legend_block(
         "P/L Realizzato = differenza tra prezzo di rimborso/vendita e prezzo medio di carico, al netto di commissioni. "
-        "Return Totale include anche cedole e dividendi netti incassati nel periodo di detenzione."
+        "Return Totale include anche cedole e dividendi netti incassati nel periodo di detenzione. "
+        "Per attivare/disattivare l'osservazione prezzo di uno strumento chiuso (non applicabile ai titoli di Stato "
+        "rimborsati a scadenza, che cessano di esistere) usa la sezione Strumenti del pannello operativo."
     )
 
 
