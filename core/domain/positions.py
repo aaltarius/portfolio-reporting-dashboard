@@ -234,6 +234,7 @@ def sync_realized_split_fields(data: dict[str, Any]) -> bool:
     raw_eventi = data.get("registro_eventi") or []
     if not raw_eventi:
         return False
+    original_cache_posizioni = data.get("cache_posizioni")
     data["cache_posizioni"] = {}
     state = compute_portfolio_state(data, include_closed=True)
     enriched_by_id = {
@@ -254,6 +255,12 @@ def sync_realized_split_fields(data: dict[str, Any]) -> bool:
                 changed = True
     if changed:
         data["cache_posizioni"] = {}
+    else:
+        # Nulla da correggere: non lasciare in giro un bucket ricalcolato al
+        # volo (con updated_at fresco) al posto di quello pre-esistente, o
+        # ogni chiamata (es. da load_data) risulterebbe "diversa" e
+        # forzerebbe una riscrittura su disco anche a dati invariati.
+        data["cache_posizioni"] = original_cache_posizioni if original_cache_posizioni is not None else {}
     return changed
 
 
