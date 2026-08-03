@@ -47,6 +47,8 @@ def filtra_strumenti_da_aggiornare(ptf: dict) -> list:
     """Strumenti per cui ha senso importare un prezzo: esclude i terminali
     (GOV rimborsati) e i chiusi non osservati, stessa regola del fetch
     quotazioni ordinario (core.domain.instrument_status.active_fetch_tickers)."""
+    if _SCRIPT_DIR not in sys.path:
+        sys.path.insert(0, _SCRIPT_DIR)
     from core.domain.instrument_status import active_fetch_tickers
 
     fetch_tickers = active_fetch_tickers(ptf)
