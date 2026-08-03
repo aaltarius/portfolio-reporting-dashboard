@@ -52,6 +52,7 @@ from core.domain.positions import (
     calc_positions,
     build_ptf_df,
     get_cash_balance,
+    sync_realized_split_fields,
 )
 from core.series_utils import build_category_return_index, build_value_curve_frame
 from core.domain.cashflows import compute_xirr, build_xirr_flows, build_portfolio_external_xirr_flows
@@ -228,6 +229,16 @@ def append_evento_portafoglio(data: dict[str, Any], evento: EventDict) -> EventD
             "importo_netto": netto, "note": ev.get("note", "")
         })
         data["proventi"].sort(key=lambda x: x.get("data", ""))
+    sync_realized_split_fields(data)
+    if tipo in {"VENDITA", "RIMBORSO A SCADENZA"}:
+        raw_ev = next(
+            (e for e in data["registro_eventi"] if e.get("event_id") == ev.get("event_id")),
+            None,
+        )
+        if raw_ev is not None:
+            for field in ("capitale_liberato", "plusvalenza_lorda", "plusvalenza_netta"):
+                if field in raw_ev:
+                    ev[field] = raw_ev[field]
     data["schema_version"] = SCHEMA_VERSION
     data["cache_posizioni"] = {}
     data["cache_storico_portafoglio"] = {}
