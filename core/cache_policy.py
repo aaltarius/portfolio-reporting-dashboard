@@ -565,7 +565,7 @@ register_cache_artifact(
         level="L1",
         owner="app.get_or_build_orchestration_payload",
         storage="page_artifact",
-        version="orchestration-payload-v1",
+        version="orchestration-payload-v2",
         dependencies=("portfolio_data_signature", "settings_signature", "cache_bust", "schema_version"),
         clear_group="portfolio",
         stale_policy="rebuild_on_semantic_signature_or_cache_bust",

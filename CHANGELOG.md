@@ -2,6 +2,34 @@
 
 ## 5.0-pre - Governo cache applicativo centralizzato
 
+- unificata la gestione degli strumenti chiusi (rimborsati a scadenza o
+  venduti): stato aperto/chiuso/terminale sempre calcolato dal registro
+  eventi (mai piu' dal campo `stato`, che non veniva aggiornato da nessun
+  codice di produzione); nuovo `core/domain/instrument_status.py` con
+  `active_fetch_tickers()` come unico filtro fetch quotazioni, usato da
+  sidebar, runtime context, pagina Quotazioni e `tools/importa_quotazioni.py`
+- introdotto `discharge_lot()` come unica definizione dello scarico PMC su
+  vendita/rimborso, riusata da `compute_portfolio_state`, `_apply_event_to_pos`
+  e `calcola_capitale_rientrato` al posto di quattro implementazioni
+  indipendenti; soglia "posizione azzerata" unificata su `QTY_ZERO_EPS`
+- ogni evento VENDITA/RIMBORSO A SCADENZA persiste ora `capitale_liberato`
+  (quota di costo storico restituita, non reddito) e `plusvalenza_netta`
+  (P/L realizzato al netto di commissioni/imposte), riallineati
+  automaticamente dopo ogni inserimento/modifica/cancellazione evento e al
+  caricamento dati (backfill retroattivo sugli eventi storici)
+- nuovo KPI "Capitale Versato Residuo" in Overview: costo storico delle sole
+  posizioni aperte, con invariante testato `capitale investito lordo ==
+  capitale versato residuo + capitale rientrato`
+- nuovo alert "titoli scaduti non ancora rimborsati" (GOV con scadenza
+  passata e nessun evento RIMBORSO registrato), sempre visibile in Overview
+- nuovo flag `osserva_prezzo` per strumento: uno strumento non-GOV venduto
+  puo' restare nel fetch quotazioni su scelta esplicita dell'operatore
+  (toggle nel form-server, tab Strumenti → Chiusi); i titoli di Stato
+  rimborsati a scadenza restano sempre esclusi, senza eccezioni
+- ricostruita la sezione "Posizioni Chiuse" di Operazioni sullo stato
+  calcolato (prima non mostrava mai nulla per via del campo `stato` morto)
+- bump della versione cache orchestrazione per forzare un refresh pulito
+  dopo il refactor (evita AttributeError su cache preesistenti)
 - introdotto `core/cache_orchestrator.py` come ingresso canonico per gli
   artefatti cache registrati: i moduli runtime ora chiedono un artefatto tramite
   `artifact_id`, mentre `page_id`, `layer`, `log_page` e provider arrivano dal
