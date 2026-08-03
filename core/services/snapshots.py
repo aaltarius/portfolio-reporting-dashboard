@@ -15,6 +15,7 @@ from typing import Any
 import pandas as pd
 
 from core.asset_categories import ACTIVE_CATEGORY_CODES
+from core.constants import QTY_ZERO_EPS
 from core.finance import build_ptf_df, compute_portfolio_state
 from persistence.storage import get_registro_eventi, macro_cat
 
@@ -37,7 +38,7 @@ def build_snapshot_from_portfolio_data(data: dict[str, Any], label: str = "Snaps
 
     if da is not None and not da.empty:
         work = da.copy()
-        work = work[pd.to_numeric(work.get("Quote", 0), errors="coerce").fillna(0) > 0.0001].copy()
+        work = work[pd.to_numeric(work.get("Quote", 0), errors="coerce").fillna(0) > QTY_ZERO_EPS].copy()
         if "Categoria" not in work.columns:
             work["Categoria"] = work["Tipo"].apply(macro_cat)
         for _, row in work.iterrows():

@@ -41,6 +41,7 @@ from persistence.storage import (
 )
 from core.validation import validate_evento_portafoglio
 from core.benchmark_registry import resolve_instrument_benchmark
+from core.constants import QTY_ZERO_EPS
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Re-exports from core/domain modules (backward compatibility shim)
@@ -1195,7 +1196,7 @@ def build_portfolio_summary_payload(
         _state_all = compute_portfolio_state(data, include_closed=True)
         _df_all = _state_all.get("df", pd.DataFrame())
     if da_frame.empty and not _df_all.empty:
-        da_frame = _df_all[_df_all["Quote"] > 0.0001].copy()
+        da_frame = _df_all[_df_all["Quote"] > QTY_ZERO_EPS].copy()
     if liquidita is None:
         liquidita = _safe_float((_state_all or compute_portfolio_state(data, include_closed=True)).get("liquidita", 0.0))
     else:

@@ -12,6 +12,7 @@ from typing import Any
 import pandas as pd
 
 from core.asset_categories import ACTIVE_CATEGORY_CODES, get_selected_category_codes
+from core.constants import QTY_ZERO_EPS
 from persistence.storage import macro_cat
 
 
@@ -122,7 +123,7 @@ def _prepare_positions(frame: pd.DataFrame | None) -> pd.DataFrame:
         out["Categoria"] = out["Tipo"].apply(macro_cat)
     else:
         out["Categoria"] = out["Categoria"].apply(macro_cat)
-    return out[out["Quote"].fillna(0.0) > 0.0001].copy()
+    return out[out["Quote"].fillna(0.0) > QTY_ZERO_EPS].copy()
 
 
 def _sum(frame: pd.DataFrame, col: str) -> float:

@@ -10,6 +10,7 @@ from typing import Any, List
 import numpy as np
 import pandas as pd
 from core.asset_categories import ACTIVE_CATEGORY_CODES, get_selected_category_codes
+from core.constants import QTY_ZERO_EPS
 from persistence.storage import _safe_float
 
 logger = logging.getLogger("portafoglio.core.services.cruscotti")
@@ -96,8 +97,8 @@ def estrai_posizioni_aperte_chiuse(
     if df is None or df.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    da = df[df["Quote"] > 0.0001].copy()
-    dc = df[df["Quote"] <= 0.0001].copy()
+    da = df[df["Quote"] > QTY_ZERO_EPS].copy()
+    dc = df[df["Quote"] <= QTY_ZERO_EPS].copy()
     return da, dc
 
 

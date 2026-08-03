@@ -7,6 +7,7 @@ import math
 
 import pandas as pd
 
+from core.constants import QTY_ZERO_EPS
 from core.domain.positions import discharge_lot
 
 _EPS = 1e-9
@@ -37,8 +38,8 @@ def _split_open_closed_positions(
     if "Quote" not in df_positions.columns:
         return df_positions.copy(), pd.DataFrame()
     quote_values = pd.to_numeric(df_positions["Quote"], errors="coerce").replace([float("inf"), -float("inf")], pd.NA).fillna(0.0)
-    open_positions = df_positions[quote_values > 0.0001].copy()
-    closed_positions = df_positions[quote_values <= 0.0001].copy()
+    open_positions = df_positions[quote_values > QTY_ZERO_EPS].copy()
+    closed_positions = df_positions[quote_values <= QTY_ZERO_EPS].copy()
     return open_positions, closed_positions
 
 

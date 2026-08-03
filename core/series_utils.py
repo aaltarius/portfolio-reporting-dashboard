@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from core.asset_categories import ACTIVE_CATEGORY_CODES, get_selected_category_codes
+from core.constants import QTY_ZERO_EPS
 from persistence.storage import _normalize_macro_label, get_registro_eventi
 
 
@@ -47,7 +48,7 @@ def get_current_position_start_dates(data, positions=None) -> dict[str, pd.Times
     current_open = {
         str(tk): float((pos or {}).get("qty", 0.0) or 0.0)
         for tk, pos in open_positions.items()
-        if float((pos or {}).get("qty", 0.0) or 0.0) > 0.0001
+        if float((pos or {}).get("qty", 0.0) or 0.0) > QTY_ZERO_EPS
     }
     if not current_open:
         return {}
@@ -71,13 +72,13 @@ def get_current_position_start_dates(data, positions=None) -> dict[str, pd.Times
         before = float(qty_by_ticker.get(ticker, 0.0) or 0.0)
         if event_type == "ACQUISTO":
             after = before + qty
-            if before <= 0.0001 and after > 0.0001:
+            if before <= QTY_ZERO_EPS and after > QTY_ZERO_EPS:
                 start_by_ticker[ticker] = pd.Timestamp(event_date).normalize()
             qty_by_ticker[ticker] = after
         elif event_type in {"VENDITA", "RIMBORSO A SCADENZA"}:
             after = max(0.0, before - qty)
             qty_by_ticker[ticker] = after
-            if after <= 0.0001:
+            if after <= QTY_ZERO_EPS:
                 start_by_ticker.pop(ticker, None)
 
     return {
@@ -103,7 +104,7 @@ def build_category_return_index(dh, data, settings=None, positions=None):
             if tk in info_map
             and _normalize_macro_label(info_map[tk].get("tipo", "")) == cat
             and (price_frame[tk].notna().sum() > 0)
-            and float((open_positions.get(tk, {}) or {}).get("qty", 0.0) or 0.0) > 0.0001
+            and float((open_positions.get(tk, {}) or {}).get("qty", 0.0) or 0.0) > QTY_ZERO_EPS
         ]
         if not tickers:
             continue
