@@ -1316,6 +1316,10 @@ def load_data():
 
     d.setdefault("instrument_master", _build_instrument_master(d.get("strumenti", []), d.get("benchmark_data", {})))
     _backfill_natura_and_tipo(d.get("strumenti", []))
+
+    from core.domain.positions import sync_realized_split_fields
+    sync_realized_split_fields(d)
+
     if raw != d:
         _write_json_file(DATA_FILE, d)
     logger.debug("Dati caricati: strumenti=%s eventi=%s storico_prezzi=%s", len(d.get("strumenti", [])), len(d.get("registro_eventi", [])), len(d.get("storico_prezzi", {})))
