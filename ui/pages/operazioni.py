@@ -121,7 +121,7 @@ def _build_strumenti_chiusi_section(data: dict[str, Any]) -> None:
             "Cedole/Div. netti €": cedole + dividendi,
             "Imposte €": imposte,
             "Return Totale €": return_totale,
-            "Osserva prezzo": "Sì" if (status and status.osserva_prezzo) else ("—" if (status and status.is_terminal) else "No"),
+            "Osserva prezzo": "—" if (status and status.is_terminal) else ("Sì" if (status and status.osserva_prezzo) else "No"),
         })
 
     if not rows:
