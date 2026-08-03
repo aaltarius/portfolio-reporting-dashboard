@@ -151,6 +151,9 @@ def build_runtime_context_data(
         _dfstats = None
     portfolio_alerts = build_portfolio_alerts(da, settings, risk_df=_risk_df, dfstats=_dfstats)
 
+    from core.services.income_scadenze import matured_unredeemed_gov
+    maturity_alerts = matured_unredeemed_gov(data)
+
     _t = time.perf_counter()
     ops = build_operations_report(data)
     if logger: logger.info("[TIMING] build_operations_report: %.2fs", time.perf_counter() - _t)
@@ -211,6 +214,7 @@ def build_runtime_context_data(
         "category_triplet_items": category_triplet_items,
         "portfolio_radar_payload": portfolio_radar_payload,
         "portfolio_alerts": portfolio_alerts,
+        "maturity_alerts": maturity_alerts,
         "capital_flows": capital_flows,
         "calculations_settings": calculations_settings,
         "include_proventi_in_total_return_effective": include_proventi,

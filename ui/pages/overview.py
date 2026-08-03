@@ -31,6 +31,7 @@ def render_overview(container: DeltaGenerator, ctx: SimpleNamespace) -> None:
         pl_totale = ctx.pl_totale
         pp = ctx.pp
         cap = ctx.cap
+        capitale_versato_residuo = ctx.capitale_versato_residuo
         capitale_rientrato = ctx.capitale_rientrato
         proventi_netti_totali = ctx.proventi_netti_totali
         liquidita_attuale = ctx.liquidita_attuale
@@ -74,6 +75,16 @@ def render_overview(container: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 for item in portfolio_alerts[:max_items]
             ]
             st.warning("**Avvisi attivi sul portafoglio**\n" + "\n".join(lines))
+
+        maturity_alerts = getattr(ctx, "maturity_alerts", [])
+        if maturity_alerts:
+            lines = [
+                f"- **{item['ticker']}** ({item['nome']}): scaduto il {item['scadenza']}, "
+                f"{item['giorni_scaduto']} giorni fa, quantità ancora in portafoglio {item['quantita']:.2f}. "
+                "Registra il rimborso a scadenza dalla sidebar."
+                for item in maturity_alerts
+            ]
+            st.error("**Titoli scaduti non ancora rimborsati**\n" + "\n".join(lines))
 
         triplet_items = getattr(ctx, "category_triplet_items", [])
 
@@ -135,7 +146,7 @@ def render_overview(container: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 kpi_card("Valore Attuale per Categoria", "—", "Nessuna posizione aperta", accent=P_dict["orange"])
 
         st.markdown("<br>", unsafe_allow_html=True)
-        pk1, pk2, pk3, pk4 = st.columns(4)
+        pk1, pk2, pk3, pk4, pk5 = st.columns(5)
         with pk1:
             kpi_card(
                 "Capitale Versato<br>Storico",
@@ -167,4 +178,15 @@ def render_overview(container: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 liquidita_sub,
                 accent=P_dict["blue"],
                 value_color=P_dict["blue"]
+            )
+        with pk5:
+            capitale_versato_residuo_sub = (
+                f"<span style='{_formula_style}'>capitale versato − capitale rientrato</span>"
+            )
+            kpi_card(
+                "Capitale Versato<br>Residuo",
+                fmt_eur_it(capitale_versato_residuo, 2),
+                "quota di capitale ancora investita nelle posizioni aperte" + capitale_versato_residuo_sub,
+                accent=P_dict["gray"],
+                value_color=P_dict["gray"]
             )
