@@ -111,27 +111,11 @@ def build_runtime_context_data(
         if col.startswith("PL_") and dfh[col].dtype != "float64":
             dfh[col] = dfh[col].astype("float64")
 
-    # chiusi = GOV definitivamente chiusi (scompaiono da tutto).
-    # Fonte primaria: stato=="chiuso" nel JSON (settato da _set_stato_strumento).
-    # Fallback: evento RIMBORSO A SCADENZA nel registro (RIMBORSO è sempre chiusura GOV).
-    _rimborso_tickers = frozenset(
-        str(ev.get("ticker") or "")
-        for ev in eventi
-        if ev.get("tipo_evento") == "RIMBORSO A SCADENZA" and str(ev.get("ticker") or "")
-    )
-    chiusi_tickers: frozenset[str] = frozenset(
-        str(s.get("ticker") or "")
-        for s in (data.get("strumenti") or [])
-        if str(s.get("ticker") or "")
-        and (s.get("stato") == "chiuso" or str(s.get("ticker") or "") in _rimborso_tickers)
-    )
-
-    # active_tickers = tutti gli strumenti TRANNE quelli confermati chiusi
-    active_tickers = [
-        str(s.get("ticker") or "")
-        for s in (data.get("strumenti") or [])
-        if str(s.get("ticker") or "") and str(s.get("ticker") or "") not in chiusi_tickers
-    ]
+    from core.domain.instrument_status import active_fetch_tickers as _active_fetch_tickers
+    _fetch_tickers = _active_fetch_tickers(data)
+    all_tickers_ctx = frozenset(str(s.get("ticker") or "") for s in (data.get("strumenti") or []) if str(s.get("ticker") or ""))
+    chiusi_tickers: frozenset[str] = all_tickers_ctx - _fetch_tickers
+    active_tickers = [tk for tk in all_tickers_ctx if tk in _fetch_tickers]
     quotes_refresh_df = build_quotes_refresh_df(quotes_log, active_tickers)
     quotazioni_stats = get_quotazioni_stats(quotes_refresh_df)
     category_breakdown = get_category_allocation_breakdown(da, settings)
