@@ -53,6 +53,7 @@ from core.domain.positions import (
     build_ptf_df,
     get_cash_balance,
     sync_realized_split_fields,
+    discharge_lot,
 )
 from core.series_utils import build_category_return_index, build_value_curve_frame
 from core.domain.cashflows import compute_xirr, build_xirr_flows, build_portfolio_external_xirr_flows
@@ -292,19 +293,13 @@ def _apply_event_to_pos(
         pos[tk]["cost"] += qty * prezzo + comm + imp
         cash += netto
     elif tipo in {"VENDITA", "RIMBORSO A SCADENZA"} and tk:
-        qty_before = pos[tk]["qty"]
-        cost_before = pos[tk]["cost"]
-        scarico_qty = min(qty, qty_before) if qty_before > 0 else 0.0
-        pmc = (cost_before / qty_before) if qty_before > _EPS else 0.0
-        scarico_cost = scarico_qty * pmc
-        realiz_lordo = scarico_qty * prezzo - scarico_cost
-        realiz_netto = realiz_lordo - comm - imp
-        pos[tk]["qty"] = max(0.0, qty_before - scarico_qty)
-        pos[tk]["cost"] = max(0.0, cost_before - scarico_cost)
-        pos[tk]["realized_gross"] += realiz_lordo
-        pos[tk]["realized_net"] += realiz_netto
-        realized_gross_total += realiz_lordo
-        realized_net_total += realiz_netto
+        result = discharge_lot(pos[tk]["qty"], pos[tk]["cost"], qty, prezzo, comm, imp)
+        pos[tk]["qty"] = result.qty_dopo
+        pos[tk]["cost"] = result.costo_dopo
+        pos[tk]["realized_gross"] += result.plusvalenza_lorda
+        pos[tk]["realized_net"] += result.plusvalenza_netta
+        realized_gross_total += result.plusvalenza_lorda
+        realized_net_total += result.plusvalenza_netta
         taxes_total += imp
         cash += netto
     elif tipo in {"CEDOLA", "DIVIDENDO", "VERSAMENTO", "PRELIEVO", "COMMISSIONE", "IMPOSTA"}:
