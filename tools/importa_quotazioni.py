@@ -43,6 +43,16 @@ def _load_json(path):
         return json.load(f)
 
 
+def filtra_strumenti_da_aggiornare(ptf: dict) -> list:
+    """Strumenti per cui ha senso importare un prezzo: esclude i terminali
+    (GOV rimborsati) e i chiusi non osservati, stessa regola del fetch
+    quotazioni ordinario (core.domain.instrument_status.active_fetch_tickers)."""
+    from core.domain.instrument_status import active_fetch_tickers
+
+    fetch_tickers = active_fetch_tickers(ptf)
+    return [s for s in ptf.get("strumenti", []) if s.get("ticker", "") in fetch_tickers]
+
+
 def _save_json(path, data):
     backup = path + ".bak"
     if os.path.exists(path):
@@ -90,7 +100,7 @@ def main():
 
     n_ok = 0
     n_skip = 0
-    for s in ptf.get("strumenti", []):
+    for s in filtra_strumenti_da_aggiornare(ptf):
         tk = s.get("ticker", "")
         if tk in prezzi and prezzi[tk] is not None:
             old_price = s.get("prezzo")
