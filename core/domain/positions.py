@@ -220,6 +220,43 @@ def compute_portfolio_state(
     return {"df": df, "liquidita": liquidita, "eventi": eventi, "eventi_arricchiti": eventi_arricchiti}
 
 
+def sync_realized_split_fields(data: dict[str, Any]) -> bool:
+    """Riallinea capitale_liberato/plusvalenza_lorda/plusvalenza_netta sugli
+    eventi VENDITA/RIMBORSO A SCADENZA persistiti in data['registro_eventi'].
+
+    Va richiamata dopo ogni mutazione del registro eventi (append/modifica/
+    cancellazione) e al caricamento dati. I valori persistiti sono una vista
+    materializzata per display/audit: i calcoli finanziari (KPI, P/L, storico)
+    ricalcolano sempre tramite discharge_lot()/compute_portfolio_state e non
+    dipendono dalla presenza di questi campi. Idempotente: scrive solo se il
+    valore persistito differisce da quello ricalcolato.
+    """
+    raw_eventi = data.get("registro_eventi") or []
+    if not raw_eventi:
+        return False
+    data["cache_posizioni"] = {}
+    state = compute_portfolio_state(data, include_closed=True)
+    enriched_by_id = {
+        str(ev.get("event_id") or ""): ev
+        for ev in state.get("eventi_arricchiti", [])
+    }
+    changed = False
+    for raw_ev in raw_eventi:
+        norm_id = str(_normalize_event_record(raw_ev).get("event_id") or "")
+        enriched = enriched_by_id.get(norm_id)
+        if enriched is None:
+            continue
+        for field in ("capitale_liberato", "plusvalenza_lorda", "plusvalenza_netta"):
+            new_value = round(float(enriched.get(field, 0.0)), 6)
+            old_value = raw_ev.get(field)
+            if old_value is None or round(_safe_float(old_value), 6) != new_value:
+                raw_ev[field] = new_value
+                changed = True
+    if changed:
+        data["cache_posizioni"] = {}
+    return changed
+
+
 def calc_positions(data: dict[str, Any]) -> dict[str, dict[str, float]]:
     """Posizioni per ticker, forma slim (qty/cost/comm/realized_net/realized_gross/tax)."""
     state = compute_portfolio_state(data, include_closed=True)
