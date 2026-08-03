@@ -15,9 +15,29 @@ from persistence.storage import _safe_float
 logger = logging.getLogger("portafoglio.core.services.cruscotti")
 
 
+def _finite_series_sum(frame: pd.DataFrame, col: str) -> float:
+    if frame is None or frame.empty or col not in frame.columns:
+        return 0.0
+    return float(pd.to_numeric(frame[col], errors="coerce").map(_safe_float).sum())
+
+
+def _finite_numeric_series(series: pd.Series | Any) -> pd.Series:
+    if series is None:
+        return pd.Series(dtype=float)
+    return pd.to_numeric(series, errors="coerce").map(_safe_float)
+
+
+def _sanitize_numeric_columns(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    out = frame.copy() if frame is not None else pd.DataFrame()
+    for col in columns:
+        if col in out.columns:
+            out[col] = _finite_numeric_series(out[col])
+    return out
+
+
 def calcola_proventi_netti(proventi: list[dict[str, Any]]) -> float:
     """Somma i proventi netti da cedole e dividendi normalizzati."""
-    return float(sum(float(p.get("importo_netto", 0) or 0) for p in (proventi or [])))
+    return float(sum(_safe_float(p.get("importo_netto", 0)) for p in (proventi or [])))
 
 
 def build_operations_report(data: dict[str, Any]) -> pd.DataFrame:
@@ -31,6 +51,17 @@ def build_operations_report(data: dict[str, Any]) -> pd.DataFrame:
     ops = pd.DataFrame(data.get("operazioni", [])).copy() if data.get("operazioni") else pd.DataFrame()
     if ops.empty:
         return ops
+    for col, default in {
+        "data": "",
+        "ticker": "",
+        "tipo": "",
+        "qty": 0.0,
+        "price": 0.0,
+        "comm": 0.0,
+        "note": "",
+    }.items():
+        if col not in ops.columns:
+            ops[col] = default
 
     ops["Data"] = ops["data"].apply(fmtds)
     ops["Prezzo"] = ops["price"].apply(lambda v: fmt_eur_it(v, 4))
@@ -92,8 +123,9 @@ def build_macro_summary_report(
             columns=["Tipologia", "Costo", "Controvalore", "Peso %", "P/L €", "P/L %"]
         )
 
-    df_aperte = df_aperte.copy()
+    df_aperte = _sanitize_numeric_columns(df_aperte, ["Costo", "Controvalore", "P/L €"])
     df_aperte["Categoria"] = df_aperte["Tipo"].apply(macro_cat)
+    tv = _safe_float(tv)
 
     visible_categories = list(get_selected_category_codes(settings))
     report = (
@@ -106,7 +138,7 @@ def build_macro_summary_report(
 
     report["Peso %"] = report["Controvalore"] / tv if tv > 0 else 0
     report["P/L %"] = report.apply(
-        lambda r: r["PLe"] / abs(r["Costo"]) if abs(r["Costo"]) > 0.001 else 0,
+        lambda r: _safe_float(r["PLe"]) / abs(_safe_float(r["Costo"])) if abs(_safe_float(r["Costo"])) > 0.001 else 0,
         axis=1
     )
 
@@ -132,7 +164,7 @@ def get_category_allocation_breakdown(
     if df_aperte is None or df_aperte.empty:
         return pd.DataFrame(columns=["Categoria", "Controvalore", "Costo", "P/L €", "Comm.", "P/L %"])
 
-    da_cat = df_aperte.copy()
+    da_cat = _sanitize_numeric_columns(df_aperte, ["Controvalore", "Costo", "P/L €", "Comm."])
     if "Categoria" not in da_cat.columns:
         da_cat["Categoria"] = da_cat["Tipo"].apply(macro_cat)
 
@@ -148,7 +180,7 @@ def get_category_allocation_breakdown(
     if agg.empty:
         return agg
     agg["P/L %"] = agg.apply(
-        lambda r: r["P/L €"] / abs(r["Costo"]) if abs(r["Costo"]) > 0.001 else 0,
+        lambda r: _safe_float(r["P/L €"]) / abs(_safe_float(r["Costo"])) if abs(_safe_float(r["Costo"])) > 0.001 else 0,
         axis=1
     )
     return agg
@@ -170,8 +202,8 @@ def category_value_pl_items(
     for cat in visible_categories:
         cat_data = df_aperte[df_aperte["Categoria"] == cat]
         if not cat_data.empty:
-            cat_value = fmt_eur_it(cat_data["Controvalore"].sum(), 0)
-            cat_pl = cat_data["P/L €"].sum() if "P/L €" in cat_data.columns else 0.0
+            cat_value = fmt_eur_it(_finite_series_sum(cat_data, "Controvalore"), 0)
+            cat_pl = _finite_series_sum(cat_data, "P/L €")
             cat_pl_str = fmt_eur_it(cat_pl, 0, signed=True)
             items.append((cat, cat_value, cat_pl_str, "green" if cat_pl >= 0 else "red"))
     return items
@@ -211,14 +243,14 @@ def _derive_quantitative_radar_target(portfolio_objective: dict[str, float] | No
     caps = concentration_caps or {}
     out = {axis: 0.0 for axis in _RADAR_QUANTITATIVE_AXES}
     for bucket_key in ("core", "difensivo", "satellite"):
-        bucket_target_pct = float(objective.get(bucket_key, 0.0)) * 100.0
+        bucket_target_pct = _safe_float(objective.get(bucket_key, 0.0)) * 100.0
         natures_in_bucket = [n for n, b in _NATURE_TO_BUCKET.items() if b == bucket_key]
-        cap_total = sum(float(caps.get(n, 0.0)) for n in natures_in_bucket)
+        cap_total = sum(_safe_float(caps.get(n, 0.0)) for n in natures_in_bucket)
         if cap_total <= 0:
             continue
         for nature in natures_in_bucket:
             axis = _NATURE_TO_RADAR_AXIS[nature]
-            share = float(caps.get(nature, 0.0)) / cap_total
+            share = _safe_float(caps.get(nature, 0.0)) / cap_total
             out[axis] += bucket_target_pct * share
     return out
 
@@ -245,7 +277,7 @@ _SATELLITE_SHARE_HIGH = 0.35  # quota satellite del vecchio profilo "Dinamico"
 
 
 def _derive_qualitative_radar_target(portfolio_objective: dict[str, float] | None) -> dict[str, float]:
-    satellite = float((portfolio_objective or {}).get("satellite", 0.20))
+    satellite = _safe_float((portfolio_objective or {}).get("satellite", 0.20), 0.20)
     span = _SATELLITE_SHARE_HIGH - _SATELLITE_SHARE_LOW
     t = max(0.0, min(1.0, (satellite - _SATELLITE_SHARE_LOW) / span)) if span > 0 else 0.5
     out = {axis: lo + t * (hi - lo) for axis, (lo, hi) in _RADAR_QUALITATIVE_ANCHORS.items()}
@@ -288,7 +320,8 @@ def build_portfolio_radar_payload(
             return None
         try:
             cleaned = str(s).replace("%", "").replace("+", "").replace(" ", "").replace(",", ".")
-            return float(cleaned)
+            parsed = float(cleaned)
+            return parsed if np.isfinite(parsed) else None
         except (ValueError, TypeError):
             return None
 
@@ -329,15 +362,16 @@ def build_portfolio_radar_payload(
         ]
         weights = {axis: 0.0 for axis in axes}
         work = df_aperte.copy() if df_aperte is not None else pd.DataFrame()
-        if work.empty and float(liquidita or 0.0) <= 0:
+        liquidita_f = _safe_float(liquidita)
+        if work.empty and liquidita_f <= 0:
             return weights
         if not work.empty:
-            work["Controvalore"] = pd.to_numeric(work.get("Controvalore"), errors="coerce").fillna(0.0)
+            work["Controvalore"] = pd.to_numeric(work.get("Controvalore"), errors="coerce").map(_safe_float)
             for _, row in work.iterrows():
                 asset_class = _classify_radar_asset_class(row)
-                weights[asset_class] += float(row.get("Controvalore", 0.0) or 0.0)
-        if float(liquidita or 0.0) > 0:
-            weights["Liquidità"] += float(liquidita or 0.0)
+                weights[asset_class] += _safe_float(row.get("Controvalore", 0.0))
+        if liquidita_f > 0:
+            weights["Liquidità"] += liquidita_f
         total = sum(weights.values())
         if total <= 0:
             return weights
@@ -348,7 +382,7 @@ def build_portfolio_radar_payload(
         df_aperte: pd.DataFrame,
         enrichment_map: dict[str, dict],
     ) -> tuple[dict[str, float], dict[str, str]]:
-        weights_ratio = {k: float(v or 0.0) / 100.0 for k, v in quantitative_weights.items()}
+        weights_ratio = {k: _safe_float(v) / 100.0 for k, v in quantitative_weights.items()}
         expected_return_assumptions = {
             "Azionario": 7.0,
             "Obbligazionario governativo": 3.0,
@@ -389,9 +423,9 @@ def build_portfolio_radar_payload(
 
         work = df_aperte.copy() if df_aperte is not None else pd.DataFrame()
         if not work.empty:
-            work["Costo"] = pd.to_numeric(work.get("Costo"), errors="coerce").fillna(0.0)
-            work["Controvalore"] = pd.to_numeric(work.get("Controvalore"), errors="coerce").fillna(0.0)
-            total_value = float(work["Controvalore"].sum()) or 1.0
+            work["Costo"] = pd.to_numeric(work.get("Costo"), errors="coerce").map(_safe_float)
+            work["Controvalore"] = pd.to_numeric(work.get("Controvalore"), errors="coerce").map(_safe_float)
+            total_value = _safe_float(work["Controvalore"].sum()) or 1.0
             _macro_scores = {"GOV": 9.0, "ETF": 8.2, "FND": 5.8}
             cost_scores = []
             fx_penalties = []
@@ -399,7 +433,7 @@ def build_portfolio_radar_payload(
             duration_contributions: list[tuple[float, float]] = []
             ter_real_count = 0
             for _, row in work.iterrows():
-                weight = float(row.get("Controvalore", 0.0) or 0.0) / total_value
+                weight = _safe_float(row.get("Controvalore", 0.0)) / total_value
                 tipo = str(row.get("Tipo") or row.get("tipo") or "")
                 txt = _portfolio_text_blob(row)
                 ticker = str(row.get("Ticker") or row.get("ticker") or "").strip()
@@ -560,15 +594,16 @@ def build_portfolio_radar_payload(
     quantitative_tickers = {label: [] for label in quantitative_labels}
     work = df_aperte.copy() if df_aperte is not None else pd.DataFrame()
     if not work.empty:
-        work["Controvalore"] = pd.to_numeric(work.get("Controvalore"), errors="coerce").fillna(0.0)
+        work["Controvalore"] = pd.to_numeric(work.get("Controvalore"), errors="coerce").map(_safe_float)
         for _, row in work.iterrows():
             asset_class = _classify_radar_asset_class(row)
-            quantitative_amounts[asset_class] += float(row.get("Controvalore", 0.0) or 0.0)
+            quantitative_amounts[asset_class] += _safe_float(row.get("Controvalore", 0.0))
             ticker = str(row.get("Ticker") or row.get("ticker") or "").strip()
             if ticker:
                 quantitative_tickers[asset_class].append(ticker)
-    if float(liquidita or 0.0) > 0:
-        quantitative_amounts["Liquidità"] += float(liquidita or 0.0)
+    liquidita_f = _safe_float(liquidita)
+    if liquidita_f > 0:
+        quantitative_amounts["Liquidità"] += liquidita_f
 
     quantitative_comparison = quantitative_comparison_target
     qualitative_comparison = qualitative_comparison_target
@@ -587,7 +622,7 @@ def build_portfolio_radar_payload(
                 f"{sum(quantitative_amounts.values()):.2f} = {quantitative_weights[label]:.2f}%. "
                 f"Il totale considerato include anche la liquidità netta, se presente. "
                 f"Strumenti agganciati: "
-                f"{', '.join(quantitative_tickers[label]) if quantitative_tickers[label] else ('liquidità netta' if label == 'Liquidità' and float(liquidita or 0.0) > 0 else 'nessuno')}."
+                f"{', '.join(quantitative_tickers[label]) if quantitative_tickers[label] else ('liquidità netta' if label == 'Liquidità' and liquidita_f > 0 else 'nessuno')}."
             ),
         }
         for label in quantitative_labels
@@ -687,9 +722,9 @@ def build_category_dashboard_metrics(
         return []
 
     tickers = [str(tk) for tk in work.get("Ticker", pd.Series(dtype=str)).dropna().astype(str).tolist()]
-    invested = float(pd.to_numeric(work.get("Costo"), errors="coerce").fillna(0.0).sum()) if "Costo" in work.columns else 0.0
-    current_value = float(pd.to_numeric(work.get("Controvalore"), errors="coerce").fillna(0.0).sum()) if "Controvalore" in work.columns else 0.0
-    pl_abs = float(pd.to_numeric(work.get("P/L €"), errors="coerce").fillna(0.0).sum()) if "P/L €" in work.columns else (current_value - invested)
+    invested = _finite_series_sum(work, "Costo")
+    current_value = _finite_series_sum(work, "Controvalore")
+    pl_abs = _finite_series_sum(work, "P/L €") if "P/L €" in work.columns else (current_value - invested)
     simple_return = (pl_abs / invested) if abs(invested) > 1e-9 else None
 
     # Calcola data della prima operazione PER QUESTA CATEGORIA
@@ -736,12 +771,14 @@ def build_category_dashboard_metrics(
                     op_tipo = str(op.get("tipo", "")).strip().upper()
 
                     # Calcola importo: prova prima con "importo", poi con qty × price
-                    op_importo = float(op.get("importo", 0) or 0)
+                    op_importo = _safe_float(op.get("importo", 0))
                     if op_importo == 0.0:
-                        qty = float(op.get("qty", 0) or 0)
-                        price = float(op.get("price", 0) or 0)
+                        qty = _safe_float(op.get("qty", 0))
+                        price = _safe_float(op.get("price", 0))
                         if qty > 0 and price > 0:
                             op_importo = qty * price
+                    if op_importo <= 0:
+                        raise ValueError("importo operazione non valido")
 
                     op_date = pd.to_datetime(op_data).date()
 
@@ -785,18 +822,20 @@ def build_category_dashboard_metrics(
 
         # GIACENZA MEDIA: media storica dei valori nel periodo della categoria
         if avg_balance is None and values_df is not None and not values_df.empty and category in values_df.columns:
-            value_series = pd.to_numeric(values_df[category], errors="coerce").dropna()
+            value_series = _finite_numeric_series(values_df[category])
+            value_series = value_series[value_series.abs() > 1e-12]
             if not value_series.empty:
-                avg_balance = float(value_series.mean())
+                avg_balance = _safe_float(value_series.mean())
 
         if index_df is not None and not index_df.empty and category in index_df.columns:
-            twr_series = pd.to_numeric(index_df[category], errors="coerce").dropna()
-            if not twr_series.empty and abs(float(twr_series.iloc[0])) > 1e-9:
-                twr_total = (float(twr_series.iloc[-1]) / float(twr_series.iloc[0])) - 1.0
+            twr_series = _finite_numeric_series(index_df[category])
+            twr_series = twr_series[twr_series.abs() > 1e-12]
+            if not twr_series.empty and abs(_safe_float(twr_series.iloc[0])) > 1e-9:
+                twr_total = (_safe_float(twr_series.iloc[-1]) / _safe_float(twr_series.iloc[0])) - 1.0
         if returns_df is not None and not returns_df.empty and category in returns_df.columns:
-            ret_series = pd.to_numeric(returns_df[category], errors="coerce").dropna()
+            ret_series = _finite_numeric_series(returns_df[category])
             if len(ret_series) >= 2:
-                volatility_ann = float(ret_series.std(ddof=0) * np.sqrt(252.0))
+                volatility_ann = _safe_float(ret_series.std(ddof=0) * np.sqrt(252.0))
 
     avg_balance_return = (pl_abs / avg_balance) if avg_balance is not None and abs(avg_balance) > 1e-9 else None
     annualized_linear = (simple_return / years_total) if simple_return is not None and years_total > 0 else None

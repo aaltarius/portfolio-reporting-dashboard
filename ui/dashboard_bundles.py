@@ -10,6 +10,8 @@ import pandas as pd
 import streamlit as st
 
 from core.asset_categories import get_selected_category_codes
+from core.cache_policy import build_cache_artifact_signature, get_cache_artifact_spec
+from core.cache_orchestrator import get_or_build_registered_artifact
 from core.dashboard_datasets import (
     AnalysisCategoryDataset,
     SummaryPayloadBundle,
@@ -18,7 +20,7 @@ from core.dashboard_datasets import (
     summary_figures_cache_is_valid,
 )
 from core.cache_signatures import build_category_data_signature
-from core.figure_cache import get_figure_cache
+from core.cache_orchestrator import get_registered_figure_cache
 from core.render_profiler import profile_step
 from core.services import build_advanced_analysis_data, build_category_dashboard_metrics
 from ui.charts.analitica import (
@@ -42,56 +44,8 @@ from ui.charts.summary import build_summary_figures
 from ui.charts.runtime import empty_chart
 from core.services.sator import compute_instrument_buckets
 from core.services import build_percentage_return_series
-from persistence.storage import get_proventi_normalizzati
+from persistence.storage import _safe_float, get_proventi_normalizzati
 from ui.theme import macro_color
-
-
-_CATEGORY_DASHBOARD_BUNDLES_CACHE_PREFIX = "_cruscotti_category_dashboard_bundles_v1:"
-
-
-def _category_dashboard_bundles_cache_key(
-    *,
-    data_sig: str,
-    theme_sig: str,
-    charts_settings_sig: str,
-    cache_strategy: Any,
-    settings: dict[str, Any] | None,
-) -> str:
-    """Session key for the expensive Cruscotti category dashboard bundle.
-
-    The bundle contains Plotly figures plus intermediate DataFrames. It is safe to
-    keep in Streamlit session_state because the key changes whenever portfolio
-    data, selected categories, theme/charts code signature or cache strategy
-    changes. This avoids rebuilding P/L horizon tables and drawdown/monthly
-    intermediate datasets on every warm rerun caused by unrelated widgets.
-    """
-    try:
-        visible_categories = tuple(get_selected_category_codes(settings))
-    except Exception:
-        visible_categories = tuple()
-    strategy_name = getattr(cache_strategy, "name", str(cache_strategy))
-    payload = {
-        "data_sig": str(data_sig or ""),
-        "theme_sig": str(theme_sig or ""),
-        "charts_settings_sig": str(charts_settings_sig or ""),
-        "cache_strategy": str(strategy_name or ""),
-        "visible_categories": visible_categories,
-    }
-    digest = hashlib.md5(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
-    return f"{_CATEGORY_DASHBOARD_BUNDLES_CACHE_PREFIX}{digest}"
-
-
-def _purge_stale_category_dashboard_bundles_cache(active_key: str) -> None:
-    try:
-        keys = [key for key in st.session_state.keys() if str(key).startswith(_CATEGORY_DASHBOARD_BUNDLES_CACHE_PREFIX)]
-    except Exception:
-        return
-    for key in keys:
-        if key != active_key:
-            try:
-                del st.session_state[key]
-            except Exception:
-                pass
 
 
 def _objective_cache_token(objective: dict[str, Any] | None) -> str:
@@ -336,7 +290,7 @@ def _build_market_only_history(
             date_key = ""
         if not date_key:
             continue
-        netto = float(item.get("importo_netto", 0.0) or 0.0)
+        netto = _safe_float(item.get("importo_netto", 0.0))
         if abs(netto) <= 1e-12:
             continue
         income_by_date[date_key] = income_by_date.get(date_key, 0.0) + netto
@@ -357,6 +311,22 @@ def _build_market_only_history(
         if column in adjusted.columns:
             adjusted[column] = pd.to_numeric(adjusted[column], errors="coerce").sub(cumulative_income_series, fill_value=0.0)
     return adjusted
+
+
+def _build_category_dashboard_metrics_payload(
+    category: str,
+    data: dict[str, Any],
+    category_df: pd.DataFrame,
+    dh_flow: pd.DataFrame | None,
+    proventi: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    return build_category_dashboard_metrics(
+        category=category,
+        data=data,
+        category_df=category_df,
+        dh_flow=dh_flow,
+        proventi=proventi,
+    )
 
 
 def get_summary_dataset_bundle(
@@ -436,7 +406,7 @@ def get_summary_dataset_bundle(
     )
 
 
-def get_analysis_category_dashboard_bundles(
+def _build_analysis_category_dashboard_bundles(
     *,
     dfh_top: pd.DataFrame,
     da: pd.DataFrame,
@@ -452,17 +422,8 @@ def get_analysis_category_dashboard_bundles(
     app_version: str = "n/d",
     schema_version: str = "n/d",
 ) -> list[AnalysisCategoryDashboardBundle]:
-    cache_key = _category_dashboard_bundles_cache_key(
-        data_sig=data_sig,
-        theme_sig=theme_sig,
-        charts_settings_sig=charts_settings_sig,
-        cache_strategy=cache_strategy,
-        settings=settings,
-    )
-    cached_bundles = st.session_state.get(cache_key)
-    if isinstance(cached_bundles, list):
-        with profile_step("Cruscotti", "cache hit dashboard categoria completo", detail=f"key={cache_key[-16:]}", count=len(cached_bundles)):
-            return cached_bundles
+    with profile_step("Cruscotti", "build dashboard categoria completo", detail="source=builder", count=len(da) if da is not None else 0):
+        pass
 
     datasets: list[AnalysisCategoryDataset] = get_analysis_category_datasets(
         da=da,
@@ -470,7 +431,7 @@ def get_analysis_category_dashboard_bundles(
         data_sig=data_sig,
         settings=settings,
     )
-    fcache = get_figure_cache()
+    fcache = get_registered_figure_cache()
     bundles: list[AnalysisCategoryDashboardBundle] = []
     for dataset in datasets:
         # Per-category signature: only instruments in this category change → only
@@ -481,13 +442,32 @@ def get_analysis_category_dashboard_bundles(
             app_version=app_version,
             schema_version=schema_version,
         )
-        metrics = build_category_dashboard_metrics(
-            category=dataset.category,
-            data=data,
-            category_df=dataset.df,
-            dh_flow=dh_flow,
-            proventi=proventi,
+        metrics_sig = build_cache_artifact_signature(
+            "cruscotti.category_metrics",
+            inputs={
+                "category": dataset.category,
+                "category_data_sig": cat_data_sig,
+                "data_sig": str(data_sig or ""),
+                "dh_flow_rows": int(len(dh_flow)) if dh_flow is not None else 0,
+                "proventi_count": int(len(proventi or [])),
+                "metrics_version": "metrics_v2",
+            },
         )
+        metrics_spec = get_cache_artifact_spec("cruscotti.category_metrics")
+        with profile_step("Cruscotti/CategoryDashboard", f"{dataset.category} - load/build metrics", count=len(dataset.df) if dataset.df is not None else 0, detail=f"sig={metrics_sig[-24:]}"):
+            metrics_artifact = get_or_build_registered_artifact(
+                artifact_id=metrics_spec.artifact_id,
+                signature=metrics_sig,
+                builder=lambda current_category=dataset.category, current_df=dataset.df: _build_category_dashboard_metrics_payload(
+                    current_category,
+                    data,
+                    current_df,
+                    dh_flow,
+                    proventi,
+                ),
+                clone_on_read=True,
+            )
+            metrics = metrics_artifact.value if isinstance(metrics_artifact.value, list) else []
         with profile_step("Cruscotti/CategoryDashboard", f"{dataset.category} - build grafico compatto", count=len(dataset.df) if dataset.df is not None else 0):
             compact_figure = fcache.get_or_build(
                 chart_id="cruscotti_compact_category_dashboard",
@@ -611,7 +591,7 @@ def get_analysis_category_dashboard_bundles(
         with profile_step("Cruscotti/CategoryDashboard", f"{dataset.category} - build P/L horizon table", count=len(dfh_top) if dfh_top is not None else 0):
             if dataset.category == "Tutto" and bundles:
                 # "Tutto" e' sempre l'ultimo dataset del giro (appeso in coda
-                # da _build_analysis_category_datasets_cached): le tabelle
+                # da _build_analysis_category_datasets_payload): le tabelle
                 # per-categoria sono gia' tutte in bundles a questo punto.
                 pl_horizon_table = _combine_category_pl_horizon_tables([b.pl_horizon_table for b in bundles])
             else:
@@ -635,31 +615,85 @@ def get_analysis_category_dashboard_bundles(
                 pl_horizon_table=pl_horizon_table,
             )
         )
-    st.session_state[cache_key] = bundles
-    _purge_stale_category_dashboard_bundles_cache(cache_key)
     return bundles
 
 
-@st.cache_data(show_spinner=False, persist="disk")
-def _build_advanced_analysis_data_cached(
-    base_sig: str,
-    _data: dict[str, Any],
-    _da: pd.DataFrame,
-    _dh: pd.DataFrame,
-    _dh_flow: pd.DataFrame,
-    _proventi: list[dict[str, Any]],
-    _settings: dict[str, Any] | None,
-    _full_window: int,
+def get_analysis_category_dashboard_bundles(
+    *,
+    dfh_top: pd.DataFrame,
+    da: pd.DataFrame,
+    data: dict[str, Any],
+    settings: dict[str, Any] | None,
+    dh_flow: pd.DataFrame,
+    proventi: list[dict[str, Any]] | None,
+    data_sig: str,
+    theme_sig: str,
+    charts_settings_sig: str,
+    cache_strategy: Any,
+    theme: Any = None,
+    app_version: str = "n/d",
+    schema_version: str = "n/d",
+) -> list[AnalysisCategoryDashboardBundle]:
+    spec = get_cache_artifact_spec("cruscotti.category_dashboard_bundles")
+    try:
+        visible_categories = tuple(get_selected_category_codes(settings))
+    except Exception:
+        visible_categories = tuple()
+    strategy_name = getattr(cache_strategy, "name", str(cache_strategy))
+    signature = build_cache_artifact_signature(
+        "cruscotti.category_dashboard_bundles",
+        inputs={
+            "data_sig": str(data_sig or ""),
+            "theme_sig": str(theme_sig or ""),
+            "charts_settings_sig": str(charts_settings_sig or ""),
+            "visible_categories": visible_categories,
+            "cache_strategy": str(strategy_name or ""),
+            "app_version": str(app_version or "n/d"),
+            "schema_version": str(schema_version or "n/d"),
+        },
+    )
+    artifact = get_or_build_registered_artifact(
+        artifact_id=spec.artifact_id,
+        signature=signature,
+        builder=lambda: _build_analysis_category_dashboard_bundles(
+            dfh_top=dfh_top,
+            da=da,
+            data=data,
+            settings=settings,
+            dh_flow=dh_flow,
+            proventi=proventi,
+            data_sig=data_sig,
+            theme_sig=theme_sig,
+            charts_settings_sig=charts_settings_sig,
+            cache_strategy=cache_strategy,
+            theme=theme,
+            app_version=app_version,
+            schema_version=schema_version,
+        ),
+        clone_on_read=False,
+        disk_codec="pickle",
+    )
+    value = artifact.value
+    return value if isinstance(value, list) else []
+
+
+def _build_advanced_analysis_data_payload(
+    data: dict[str, Any],
+    da: pd.DataFrame,
+    dh: pd.DataFrame,
+    dh_flow: pd.DataFrame,
+    proventi: list[dict[str, Any]],
+    settings: dict[str, Any] | None,
+    full_window: int,
 ) -> dict[str, Any]:
-    _ = base_sig
     return build_advanced_analysis_data(
-        _data,
-        _da,
-        _dh,
-        _dh_flow,
-        _proventi,
-        settings=_settings,
-        recent_window=_full_window,
+        data,
+        da,
+        dh,
+        dh_flow,
+        proventi,
+        settings=settings,
+        recent_window=full_window,
     )
 
 
@@ -681,17 +715,38 @@ def get_advanced_analysis_dataset_bundle(
     bundle_sig = f"{data_sig}|recent_window={int(recent_window)}|cats={selected_categories}|open_position_window_return_index_v3"
     base_sig = f"{data_sig}|recent_window=full|cats={selected_categories}|open_position_window_return_index_v3"
     full_window = max(int(recent_window or 92), len(dh.index) if dh is not None else 0, len(dh_flow.index) if dh_flow is not None else 0)
-    with profile_step("Analisi", "load/build cached advanced analysis", detail=f"base_sig={base_sig}"):
-        analysis_data = _build_advanced_analysis_data_cached(
-            base_sig,
-            data,
-            da,
-            dh,
-            dh_flow,
-            proventi,
-            settings,
-            full_window,
+    spec = get_cache_artifact_spec("cruscotti.advanced_analysis_data")
+    signature = build_cache_artifact_signature(
+        "cruscotti.advanced_analysis_data",
+        inputs={
+            "base_sig": base_sig,
+            "data_sig": str(data_sig or ""),
+            "selected_categories": selected_categories,
+            "dh_rows": int(len(dh.index)) if dh is not None else 0,
+            "dh_cols": tuple(str(col) for col in getattr(dh, "columns", [])),
+            "dh_flow_rows": int(len(dh_flow.index)) if dh_flow is not None else 0,
+            "dh_flow_cols": tuple(str(col) for col in getattr(dh_flow, "columns", [])),
+            "proventi_count": int(len(proventi or [])),
+            "full_window": int(full_window),
+        },
+    )
+    with profile_step("Analisi", "load/build advanced analysis data", detail=f"sig={signature[-24:]}"):
+        artifact = get_or_build_registered_artifact(
+            artifact_id=spec.artifact_id,
+            signature=signature,
+            builder=lambda: _build_advanced_analysis_data_payload(
+                data,
+                da,
+                dh,
+                dh_flow,
+                proventi,
+                settings,
+                full_window,
+            ),
+            clone_on_read=True,
+            disk_codec="pickle",
         )
+        analysis_data = artifact.value if isinstance(artifact.value, dict) else {}
 
     cat_flow_returns = analysis_data["cat_flow_returns"]
     if isinstance(cat_flow_returns, pd.DataFrame) and not cat_flow_returns.empty:
@@ -740,7 +795,7 @@ def _build_bucket_gap_macro_df(da_frame: pd.DataFrame, bucket_of_ticker: dict[st
     return macro
 
 
-def get_analitica_bundle(
+def _build_analitica_bundle(
     *,
     dfh_top: pd.DataFrame,
     da: pd.DataFrame,
@@ -770,7 +825,7 @@ def get_analitica_bundle(
     include_benchmark: bool = True,
     i18n_profile: dict[str, Any] | None = None,
 ) -> AnaliticaBundle:
-    fcache = get_figure_cache()
+    fcache = get_registered_figure_cache()
     dfh_market_only = _build_market_only_history(
         dfh_top,
         data=data,
@@ -956,4 +1011,136 @@ def get_analitica_bundle(
         include_benchmark=include_benchmark,
         theme=theme,
         analysis_bundle=analysis_bundle,
+    )
+
+
+def get_analitica_bundle(
+    *,
+    dfh_top: pd.DataFrame,
+    da: pd.DataFrame,
+    data: dict[str, Any],
+    settings: dict[str, Any] | None,
+    data_sig: str,
+    theme_sig: str,
+    charts_settings_sig: str,
+    cache_strategy: Any,
+    theme: Any,
+    dfmt: str,
+    pl_color: str,
+    pl_totale: float,
+    radar_payload: dict[str, Any] | None = None,
+    dh_hist: pd.DataFrame | None = None,
+    dh_flow: pd.DataFrame | None = None,
+    proventi: list[dict[str, Any]] | None = None,
+    summary_bundle: SummaryDatasetBundle | None = None,
+    schema_version: str = "n/d",
+    app_version: str = "n/d",
+    show_advanced_metrics: bool = True,
+    show_commentary: bool = True,
+    show_explanations: bool = False,
+    layout_full: bool = True,
+    layout_analytic: bool = True,
+    include_methodology: bool = True,
+    include_benchmark: bool = True,
+    i18n_profile: dict[str, Any] | None = None,
+) -> AnaliticaBundle:
+    spec = get_cache_artifact_spec("cruscotti.analitica_bundle")
+    objective = settings.get("portfolio_objective", {}) if isinstance(settings, dict) else {}
+    try:
+        visible_categories = tuple(get_selected_category_codes(settings))
+    except Exception:
+        visible_categories = tuple()
+    strategy_name = getattr(cache_strategy, "name", str(cache_strategy))
+    signature = build_cache_artifact_signature(
+        "cruscotti.analitica_bundle",
+        inputs={
+            "data_sig": str(data_sig or ""),
+            "theme_sig": str(theme_sig or ""),
+            "charts_settings_sig": str(charts_settings_sig or ""),
+            "cache_strategy": str(strategy_name or ""),
+            "visible_categories": visible_categories,
+            "objective": objective,
+            "summary_payload_sig": getattr(summary_bundle, "payload_sig", ""),
+            "summary_figure_scope": getattr(summary_bundle, "figure_scope", ""),
+            "radar_payload": radar_payload or {},
+            "dfmt": str(dfmt or ""),
+            "pl_color": str(pl_color or ""),
+            "pl_totale": round(float(pl_totale or 0.0), 6),
+            "schema_version": str(schema_version or "n/d"),
+            "app_version": str(app_version or "n/d"),
+            "show_advanced_metrics": bool(show_advanced_metrics),
+            "show_commentary": bool(show_commentary),
+            "show_explanations": bool(show_explanations),
+            "layout_full": bool(layout_full),
+            "layout_analytic": bool(layout_analytic),
+            "include_methodology": bool(include_methodology),
+            "include_benchmark": bool(include_benchmark),
+        },
+    )
+    artifact = get_or_build_registered_artifact(
+        artifact_id=spec.artifact_id,
+        signature=signature,
+        builder=lambda: _build_analitica_bundle(
+            dfh_top=dfh_top,
+            da=da,
+            data=data,
+            settings=settings,
+            data_sig=data_sig,
+            theme_sig=theme_sig,
+            charts_settings_sig=charts_settings_sig,
+            cache_strategy=cache_strategy,
+            theme=theme,
+            dfmt=dfmt,
+            pl_color=pl_color,
+            pl_totale=pl_totale,
+            radar_payload=radar_payload,
+            dh_hist=dh_hist,
+            dh_flow=dh_flow,
+            proventi=proventi,
+            summary_bundle=summary_bundle,
+            schema_version=schema_version,
+            app_version=app_version,
+            show_advanced_metrics=show_advanced_metrics,
+            show_commentary=show_commentary,
+            show_explanations=show_explanations,
+            layout_full=layout_full,
+            layout_analytic=layout_analytic,
+            include_methodology=include_methodology,
+            include_benchmark=include_benchmark,
+            i18n_profile=i18n_profile,
+        ),
+        clone_on_read=False,
+        disk_codec="pickle",
+    )
+    value = artifact.value
+    if isinstance(value, AnaliticaBundle):
+        return value
+    return _build_analitica_bundle(
+        dfh_top=dfh_top,
+        da=da,
+        data=data,
+        settings=settings,
+        data_sig=data_sig,
+        theme_sig=theme_sig,
+        charts_settings_sig=charts_settings_sig,
+        cache_strategy=cache_strategy,
+        theme=theme,
+        dfmt=dfmt,
+        pl_color=pl_color,
+        pl_totale=pl_totale,
+        radar_payload=radar_payload,
+        dh_hist=dh_hist,
+        dh_flow=dh_flow,
+        proventi=proventi,
+        summary_bundle=summary_bundle,
+        schema_version=schema_version,
+        app_version=app_version,
+        show_advanced_metrics=show_advanced_metrics,
+        show_commentary=show_commentary,
+        show_explanations=show_explanations,
+        layout_full=layout_full,
+        layout_analytic=layout_analytic,
+        include_methodology=include_methodology,
+        include_benchmark=include_benchmark,
+        i18n_profile=i18n_profile,
     )

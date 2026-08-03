@@ -18,6 +18,10 @@ from persistence.storage import (
 import pandas as pd
 
 
+_EVENTI_CON_GIACENZA = {"VENDITA", "RIMBORSO A SCADENZA"}
+_EVENTI_PROVENTO = {"CEDOLA", "DIVIDENDO"}
+
+
 def _instrument_lookup(data, ticker):
     return next((s for s in data.get("strumenti", []) if s.get("ticker") == ticker), {})
 
@@ -32,7 +36,12 @@ def _instrument_type_info(data, ticker):
 
 def _supports_coupon(data, ticker):
     _, _, tipo, txt = _instrument_type_info(data, ticker)
-    return any(k in txt for k in ["titolo di stato", "btp", "bond", "obbl", "cedola"]) or macro_cat(tipo) == "GOV"
+    category = macro_cat(tipo)
+    if category == "GOV":
+        return True
+    if category in {"ETF", "FND", "ETC"}:
+        return False
+    return any(k in txt for k in ["titolo di stato", "btp", "bond", "obbl", "cedola"])
 
 
 def _supports_dividend(data, ticker):
@@ -46,7 +55,12 @@ def _supports_dividend(data, ticker):
 
 def _supports_redemption(data, ticker):
     _, _, tipo, txt = _instrument_type_info(data, ticker)
-    return any(k in txt for k in ["titolo di stato", "btp", "bond", "obbl", "scadenza", "maturity"]) or macro_cat(tipo) == "GOV"
+    category = macro_cat(tipo)
+    if category == "GOV":
+        return True
+    if category in {"ETF", "FND", "ETC"}:
+        return False
+    return any(k in txt for k in ["titolo di stato", "btp", "bond", "obbl", "scadenza", "maturity"])
 
 
 def validate_evento_portafoglio(data, evento):
@@ -66,16 +80,20 @@ def validate_evento_portafoglio(data, evento):
     tk = ev.get("ticker", "")
     ignore_cash_check = bool(evento.get("ignore_cash_check")) if isinstance(evento, dict) else False
 
-    if tipo in {"ACQUISTO", "VENDITA", "RIMBORSO A SCADENZA", "CEDOLA", "DIVIDENDO"} and not tk:
+    if tipo not in set(TIPI_EVENTO_PORTAFOGLIO):
+        return False, "Tipo evento non valido."
+
+    if tipo in EVENTI_CON_STRUMENTO and not tk:
         return False, "Seleziona uno strumento."
 
-    if tipo in {"ACQUISTO", "VENDITA", "RIMBORSO A SCADENZA"}:
+    if tipo in EVENTI_CON_QUANTITA:
         if qty <= 0:
             return False, "La quantità deve essere maggiore di zero."
+    if tipo in EVENTI_CON_PREZZO:
         if prezzo <= 0:
             return False, "Il prezzo deve essere maggiore di zero."
 
-    if tipo in {"CEDOLA", "DIVIDENDO", "VERSAMENTO", "PRELIEVO", "COMMISSIONE", "IMPOSTA"} and abs(lordo) <= 1e-12 and abs(netto) <= 1e-12:
+    if tipo in EVENTI_CON_IMPORTO and abs(lordo) <= 1e-12 and abs(netto) <= 1e-12:
         return False, "L'importo deve essere maggiore di zero."
 
     stato = compute_portfolio_state(data, include_closed=True)
@@ -92,7 +110,7 @@ def validate_evento_portafoglio(data, evento):
         if fabbisogno - saldo > 1e-9:
             return False, f"Liquidità insufficiente per l'acquisto: disponibili {fmt_eur_it(saldo,2)}. Attiva il versamento automatico o registra prima un versamento."
 
-    if tipo in {"VENDITA", "RIMBORSO A SCADENZA"}:
+    if tipo in _EVENTI_CON_GIACENZA:
         if row is None or qty_disp <= 1e-12:
             return False, "Lo strumento non risulta presente in portafoglio."
         if qty - qty_disp > 1e-9:
@@ -100,7 +118,7 @@ def validate_evento_portafoglio(data, evento):
         if tipo == "RIMBORSO A SCADENZA" and not _supports_redemption(data, tk):
             return False, "Il rimborso a scadenza è consentito solo per strumenti compatibili con la scadenza/rimborso."
 
-    if tipo in {"CEDOLA", "DIVIDENDO"}:
+    if tipo in _EVENTI_PROVENTO:
         if row is None or qty_disp <= 1e-12:
             return False, "Per registrare il provento devi avere una posizione aperta sullo strumento."
         if tipo == "CEDOLA" and not _supports_coupon(data, tk):

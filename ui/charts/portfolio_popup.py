@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import html
 import json
+import math
+from datetime import date
 
 import pandas as pd
 from core.config import COLORS
+from core.domain.calendar import CEDOLA_FREQ_MONTHS, CEDOLA_FREQ_PAYMENTS, TAX_RATE_GOV_PCT, build_btp_calendar
 from persistence.storage import macro_cat
-from ui.charts.instrument_badges import commission_badge
+from ui.charts.instrument_badges import ISSUER_BADGE_CSS, commission_badge, issuer_badge
 from ui.charts.natura_icons import get_natura_visual
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it
 from ui.streamlit_compat import iframe_height_for_rows, render_html_iframe
@@ -71,6 +75,256 @@ def _build_ticker_info(df, data):
             "spark": spark,
         }
     return ticker_info
+
+
+def _fmt_date_it(value) -> str:
+    ts = pd.to_datetime(value, errors="coerce")
+    if pd.isna(ts):
+        return "n/d"
+    return ts.strftime("%d/%m/%Y")
+
+
+def _as_float_or_none(value) -> float | None:
+    try:
+        out = float(value)
+    except Exception:
+        return None
+    return out if math.isfinite(out) else None
+
+
+def _safe_btp_tax_rate(value) -> float:
+    raw = _as_float_or_none(value)
+    if raw is None:
+        return TAX_RATE_GOV_PCT / 100.0
+    return raw if raw <= 1.0 else raw / 100.0
+
+
+def _next_coupon_from_anagrafica(
+    strumento: dict,
+    today: pd.Timestamp,
+    scadenza: pd.Timestamp,
+) -> tuple[pd.Timestamp | None, float | None]:
+    cedola_perc = _as_float_or_none(strumento.get("cedola_perc"))
+    if cedola_perc is None or cedola_perc <= 0:
+        return None, None
+    first_coupon = pd.to_datetime(
+        strumento.get("prima_cedola") or strumento.get("data_origine") or today,
+        errors="coerce",
+    )
+    if pd.isna(first_coupon):
+        return None, None
+    freq = str(strumento.get("cedola_frequenza", "annuale") or "annuale").strip().lower()
+    current = first_coupon.normalize()
+    while current < today and current <= scadenza:
+        current = current + pd.DateOffset(months=CEDOLA_FREQ_MONTHS.get(freq, 12))
+    if current > scadenza:
+        return None, None
+    nominale = _as_float_or_none(strumento.get("nominale")) or 100.0
+    quantita = _as_float_or_none(strumento.get("quantita")) or 1.0
+    payments_per_year = CEDOLA_FREQ_PAYMENTS.get(freq, 1)
+    tax_rate = _safe_btp_tax_rate(strumento.get("aliquota_cedola"))
+    amount = (cedola_perc / 100.0) * nominale / payments_per_year * quantita * (1.0 - tax_rate)
+    return current, amount
+
+
+def _parse_decimal_it(value) -> float | None:
+    if value in (None, "") or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return _as_float_or_none(value)
+    text = str(value).strip().replace("%", "").replace(" ", "")
+    if not text:
+        return None
+    if "," in text and "." in text:
+        text = text.replace(".", "").replace(",", ".")
+    else:
+        text = text.replace(",", ".")
+    return _as_float_or_none(text)
+
+
+def _coupon_bounds_from_maturity(scadenza: pd.Timestamp, today: pd.Timestamp, freq: str) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
+    step_months = CEDOLA_FREQ_MONTHS.get(str(freq or "").strip().lower(), 12)
+    if step_months <= 0:
+        step_months = 12
+    next_coupon = scadenza.normalize()
+    # I BTP ordinari pagano sulle date allineate alla scadenza. Risalire dalla
+    # scadenza evita di dipendere da prima_cedola/data_origine, spesso legate
+    # all'acquisto e non al periodo cedolare corrente.
+    while next_coupon > today:
+        prev_coupon = next_coupon - pd.DateOffset(months=step_months)
+        if prev_coupon <= today:
+            return prev_coupon.normalize(), next_coupon.normalize()
+        next_coupon = prev_coupon.normalize()
+    return next_coupon.normalize(), (next_coupon + pd.DateOffset(months=step_months)).normalize()
+
+
+def _estimate_btp_accrued_interest(strumento: dict, today: pd.Timestamp) -> dict[str, object]:
+    cedola_perc = _parse_decimal_it(strumento.get("cedola_perc"))
+    scadenza = pd.to_datetime(strumento.get("scadenza"), errors="coerce")
+    if cedola_perc is None or cedola_perc <= 0 or pd.isna(scadenza):
+        return {
+            "accrued_interest_net": None,
+            "accrued_interest_gross": None,
+            "accrued_interest_days": None,
+            "accrued_interest_period_days": None,
+        }
+    last_coupon, next_coupon = _coupon_bounds_from_maturity(scadenza.normalize(), today, strumento.get("cedola_frequenza"))
+    if last_coupon is None or next_coupon is None or next_coupon <= last_coupon:
+        return {
+            "accrued_interest_net": None,
+            "accrued_interest_gross": None,
+            "accrued_interest_days": None,
+            "accrued_interest_period_days": None,
+        }
+    nominale = _parse_decimal_it(strumento.get("nominale")) or 100.0
+    quantita = _parse_decimal_it(strumento.get("quantita")) or 1.0
+    payments_per_year = CEDOLA_FREQ_PAYMENTS.get(str(strumento.get("cedola_frequenza", "annuale") or "annuale").strip().lower(), 1)
+    coupon_gross = nominale * quantita * (cedola_perc / 100.0) / payments_per_year
+    elapsed_days = max(int((today - last_coupon).days), 0)
+    period_days = max(int((next_coupon - last_coupon).days), 1)
+    gross = coupon_gross * min(elapsed_days, period_days) / period_days
+    net = gross * (1.0 - _safe_btp_tax_rate(strumento.get("aliquota_cedola")))
+    return {
+        "accrued_interest_net": net,
+        "accrued_interest_gross": gross,
+        "accrued_interest_days": elapsed_days,
+        "accrued_interest_period_days": period_days,
+        "accrued_interest_last_coupon": last_coupon,
+        "accrued_interest_next_coupon": next_coupon,
+    }
+
+
+def _build_btp_badge_map(data: dict) -> dict[str, dict[str, object]]:
+    """Micro-sintesi GOV/BTP per la tabella Controvalore.
+
+    Usa il calendario BTP gia' disponibile nel dominio: niente scraping, niente
+    refresh rete. Se il calendario non e' costruibile, il chiamante mostra solo
+    celle vuote.
+    """
+    try:
+        calendar_df = build_btp_calendar(data)
+    except Exception:
+        calendar_df = pd.DataFrame()
+
+    today = pd.Timestamp(date.today()).normalize()
+    next_12m = today + pd.DateOffset(months=12)
+    out: dict[str, dict[str, object]] = {}
+    if calendar_df is not None and not calendar_df.empty:
+        work = calendar_df.copy()
+        work["data"] = pd.to_datetime(work.get("data"), errors="coerce")
+        work = work.dropna(subset=["data"])
+        work = work[work["tipo_riga"].astype(str).eq("evento")].copy()
+        work["importo"] = pd.to_numeric(work.get("importo"), errors="coerce").fillna(0.0)
+
+        for ticker, group in work.groupby(work["ticker"].astype(str), dropna=False):
+            future = group[group["data"] >= today].sort_values("data")
+            coupons = future[future["tipo_evento"].astype(str).str.lower().eq("cedola")]
+            maturities = future[future["tipo_evento"].astype(str).str.lower().eq("scadenza")]
+            next_coupon = coupons.iloc[0] if not coupons.empty else None
+            next_maturity = maturities.iloc[0] if not maturities.empty else None
+            coupon_12m = float(coupons.loc[coupons["data"] <= next_12m, "importo"].sum()) if not coupons.empty else 0.0
+            days_coupon = int((pd.Timestamp(next_coupon["data"]).normalize() - today).days) if next_coupon is not None else None
+            days_maturity = int((pd.Timestamp(next_maturity["data"]).normalize() - today).days) if next_maturity is not None else None
+            out[str(ticker)] = {
+                "next_coupon_date": next_coupon["data"] if next_coupon is not None else None,
+                "next_coupon_amount": float(next_coupon["importo"]) if next_coupon is not None else 0.0,
+                "days_coupon": days_coupon,
+                "maturity_date": next_maturity["data"] if next_maturity is not None else None,
+                "maturity_amount": float(next_maturity["importo"]) if next_maturity is not None else 0.0,
+                "days_maturity": days_maturity,
+                "coupon_12m": coupon_12m,
+            }
+
+    # Fallback anagrafico: utile quando l'anagrafica usa gia' "GOV" come
+    # tipo sintetico e il calendario BTP di dominio non la include.
+    for strumento in data.get("strumenti", []) or []:
+        if macro_cat(strumento.get("tipo", "")) != "GOV":
+            continue
+        ticker = str(strumento.get("ticker") or "").strip()
+        if not ticker:
+            continue
+        maturity_date = pd.to_datetime(strumento.get("scadenza"), errors="coerce")
+        if pd.isna(maturity_date):
+            continue
+        maturity_date = maturity_date.normalize()
+        entry = out.setdefault(ticker, {
+            "next_coupon_date": None,
+            "next_coupon_amount": None,
+            "days_coupon": None,
+            "maturity_date": None,
+            "maturity_amount": None,
+            "days_maturity": None,
+            "coupon_12m": 0.0,
+        })
+        if entry.get("maturity_date") is None:
+            nominale = _as_float_or_none(strumento.get("nominale")) or 100.0
+            quantita = _as_float_or_none(strumento.get("quantita")) or 1.0
+            entry["maturity_date"] = maturity_date
+            entry["maturity_amount"] = nominale * quantita
+            entry["days_maturity"] = int((maturity_date - today).days)
+        if entry.get("next_coupon_date") is None:
+            coupon_date, coupon_amount = _next_coupon_from_anagrafica(strumento, today, maturity_date)
+            if coupon_date is not None:
+                entry["next_coupon_date"] = coupon_date
+                entry["next_coupon_amount"] = coupon_amount
+                entry["days_coupon"] = int((coupon_date - today).days)
+                if coupon_date <= next_12m:
+                    entry["coupon_12m"] = float(coupon_amount or 0.0)
+        entry.update(_estimate_btp_accrued_interest(strumento, today))
+    return out
+
+
+def _btp_info_badge(ticker: str, info: dict, status: dict[str, object] | None) -> str:
+    if not status:
+        return ""
+
+    days_coupon = status.get("days_coupon")
+    days_maturity = status.get("days_maturity")
+    if isinstance(days_maturity, int) and days_maturity <= 180:
+        cls, label, sort = "btp-maturity", "◆", 0
+    elif isinstance(days_coupon, int) and days_coupon <= 45:
+        cls, label, sort = "btp-coupon", "●", 1
+    else:
+        cls, label, sort = "btp-info", "●", 2
+
+    coupon_parts = []
+    if status.get("next_coupon_date") is not None:
+        coupon_parts.append(
+            f"Prossima cedola: {_fmt_date_it(status.get('next_coupon_date'))}"
+            f" ({fmt_eur_it(status.get('next_coupon_amount'), 2)})"
+        )
+    if status.get("maturity_date") is not None:
+        coupon_parts.append(
+            f"Scadenza: {_fmt_date_it(status.get('maturity_date'))}"
+            f" ({fmt_eur_it(status.get('maturity_amount'), 2)})"
+        )
+    coupon_parts.append(f"Cedole nette 12 mesi: {fmt_eur_it(status.get('coupon_12m'), 2)}")
+    if status.get("accrued_interest_net") is not None:
+        days = status.get("accrued_interest_days")
+        period_days = status.get("accrued_interest_period_days")
+        coupon_parts.append(
+            "Rateo stimato oggi: "
+            f"{fmt_eur_it(status.get('accrued_interest_net'), 2)} netto "
+            f"({fmt_eur_it(status.get('accrued_interest_gross'), 2)} lordo; {days}/{period_days} gg)"
+        )
+    else:
+        coupon_parts.append("Rateo stimato oggi: n/d")
+    cached_rateo = []
+    if info.get("rateo_netto") not in (None, ""):
+        cached_rateo.append(f"netto {info.get('rateo_netto')}/100")
+    if info.get("rateo_lordo") not in (None, ""):
+        cached_rateo.append(f"lordo {info.get('rateo_lordo')}/100")
+    if cached_rateo:
+        coupon_parts.append("Rateo cache Borsa: " + ", ".join(cached_rateo))
+    if info.get("rateo_disaggio") not in (None, ""):
+        coupon_parts.append(f"Rateo disaggio cache: {info.get('rateo_disaggio')}/100")
+    if info.get("cedola_perc") not in (None, ""):
+        coupon_parts.append(f"Cedola annua: {info.get('cedola_perc')}%")
+    title = " | ".join(str(part) for part in coupon_parts)
+    return (
+        f'<span class="btp-pill {cls}" data-sort="{sort}" '
+        f'title="{html.escape(title, quote=True)}" aria-label="Info BTP {html.escape(ticker, quote=True)}">{label}</span>'
+    )
 
 
 def _mini_sparkline_svg(
@@ -278,6 +532,76 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape')closeM();});
 """
 _MODAL_JS = _MODAL_JS.replace("#1E8449", COLORS["success"]).replace("#FF4B4B", COLORS["danger"])
 
+_NEUTRAL_COLOR = "#9CA3AF"
+_DAILY_EUR_DISPLAY_EPS = 0.005
+_DAILY_PCT_DISPLAY_EPS = 0.00005
+
+
+def _as_finite_float(value):
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _zero_for_display(value, eps):
+    if value is None:
+        return None
+    return 0.0 if abs(value) < eps else value
+
+
+def _daily_variation_color(value, eps):
+    if value is None:
+        return _NEUTRAL_COLOR
+    if value > eps:
+        return COLORS["success"]
+    if value < -eps:
+        return COLORS["danger"]
+    return _NEUTRAL_COLOR
+
+
+def _signed_state(value, eps):
+    if value is None:
+        return 0
+    if value > eps:
+        return 1
+    if value < -eps:
+        return -1
+    return 0
+
+
+def _daily_variation_colors(day_delta, day_pct):
+    delta_col = _daily_variation_color(day_delta, _DAILY_EUR_DISPLAY_EPS)
+    pct_col = _daily_variation_color(day_pct, _DAILY_PCT_DISPLAY_EPS)
+    if pct_col == _NEUTRAL_COLOR and delta_col != _NEUTRAL_COLOR and day_pct is not None:
+        pct_col = delta_col
+    return delta_col, pct_col
+
+
+def _daily_trend_from_values(day_delta, day_pct, fallback_state="flat"):
+    if day_pct is not None and abs(day_pct) >= _DAILY_PCT_DISPLAY_EPS:
+        if day_pct > 0:
+            return ("▲▲" if day_pct >= 0.03 else "▲", COLORS["success"], "up_big" if day_pct >= 0.03 else "up")
+        return ("▼▼" if day_pct <= -0.03 else "▼", COLORS["danger"], "down_big" if day_pct <= -0.03 else "down")
+    if day_delta is not None and abs(day_delta) >= _DAILY_EUR_DISPLAY_EPS:
+        if day_delta > 0:
+            return ("▲", COLORS["success"], "up")
+        return ("▼", COLORS["danger"], "down")
+
+    state = str(fallback_state or "flat")
+    if day_delta is not None or day_pct is not None:
+        state = "flat"
+    if state == "up_big":
+        return ("▲▲", COLORS["success"], state)
+    if state == "up":
+        return ("▲", COLORS["success"], state)
+    if state == "down_big":
+        return ("▼▼", COLORS["danger"], state)
+    if state == "down":
+        return ("▼", COLORS["danger"], state)
+    return ("—", _NEUTRAL_COLOR, "flat")
+
 
 def render_portfolio_table_with_popup(df, data, direction_map=None):
     """Render the portfolio table with inline popup details for each ticker.
@@ -290,6 +614,7 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
     direction_map = direction_map or {}
     info_map = {s["ticker"]: s for s in data.get("strumenti", [])}
     ticker_info = _build_ticker_info(df, data)
+    btp_badges = _build_btp_badge_map(data)
     cat_color_map = CATEGORY_COLORS
 
     def _cat_col(tipo):
@@ -334,40 +659,35 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
         # "Zero commissioni" esiste solo come campo per ETF/ETC: per le altre
         # categorie il badge non e' applicabile, non va mostrato di default.
         comm_badge = commission_badge(info.get("zero_commissioni")) if tipo_code in ("ETF", "ETC") else ""
+        btp_badge = _btp_info_badge(tk, info, btp_badges.get(tk)) if tipo_code == "GOV" else ""
+        issuer_badge_html = issuer_badge(info, ticker=tk, tipo_code=tipo_code)
         col = _cat_col(tipo)
-        sym, sym_col = _trend_sym(tk)
         direction = _direction_entry(tk)
-        state = str(direction.get("state") or "flat")
         try:
             ctv = float(row.get("Controvalore", 0) or 0)
         except Exception:
             ctv = 0.0
         weight = ctv / _total_ctv if abs(_total_ctv) > 1e-09 else 0.0
-        try:
-            day_delta = (
-                float(direction.get("delta_eur"))
-                if direction.get("delta_eur") is not None
-                else None
-            )
-        except Exception:
-            day_delta = None
-        try:
-            day_pct = (
-                float(direction.get("delta_pct"))
-                if direction.get("delta_pct") is not None
-                else None
-            )
-        except Exception:
-            day_pct = None
-        if day_delta is not None:
-            _daily_deltas.append(day_delta)
-        day_col = (
-            COLORS["success"] if (day_delta is not None and day_delta >= 0)
-            else COLORS["danger"] if day_delta is not None
-            else "#9CA3AF"
-        )
+        day_delta_raw = _as_finite_float(direction.get("delta_eur"))
+        day_pct_raw = _as_finite_float(direction.get("delta_pct"))
+        if (
+            day_pct_raw is not None
+            and abs(day_pct_raw) >= _DAILY_PCT_DISPLAY_EPS
+            and (day_delta_raw is None or abs(day_delta_raw) < _DAILY_EUR_DISPLAY_EPS)
+            and abs(1.0 + day_pct_raw) > 1e-12
+            and abs(ctv) > _DAILY_EUR_DISPLAY_EPS
+        ):
+            reconstructed_delta = ctv - (ctv / (1.0 + day_pct_raw))
+            if math.isfinite(reconstructed_delta):
+                day_delta_raw = reconstructed_delta
+        day_delta = _zero_for_display(day_delta_raw, _DAILY_EUR_DISPLAY_EPS)
+        day_pct = _zero_for_display(day_pct_raw, _DAILY_PCT_DISPLAY_EPS)
+        if day_delta_raw is not None:
+            _daily_deltas.append(day_delta_raw)
+        day_delta_col, day_pct_col = _daily_variation_colors(day_delta, day_pct)
         day_delta_str = fmt_eur_it(day_delta, 2, signed=True) if day_delta is not None else "—"
         day_pct_str = fmt_pct_it(day_pct, 2, signed=True) if day_pct is not None else "—"
+        sym, sym_col, state = _daily_trend_from_values(day_delta, day_pct, direction.get("state"))
         try:
             pl_e = float(row.get("P/L €", 0) or 0)
             pl_p = float(row.get("P/L %", 0) or 0)
@@ -376,6 +696,22 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
         pl_col = COLORS["success"] if pl_e >= 0 else COLORS["danger"]
         pl_e_str = fmt_eur_it(pl_e, 2, signed=True)
         pl_p_str = fmt_pct_it(pl_p, 2, signed=True)
+        previous_pl_e = (pl_e - day_delta_raw) if day_delta_raw is not None else None
+        pl_state_now = _signed_state(pl_e, _DAILY_EUR_DISPLAY_EPS)
+        pl_state_prev = _signed_state(previous_pl_e, _DAILY_EUR_DISPLAY_EPS)
+        pl_crossed_zero = (
+            day_delta_raw is not None
+            and abs(day_delta_raw) >= _DAILY_EUR_DISPLAY_EPS
+            and pl_state_now != pl_state_prev
+            and (pl_state_now != 0 or pl_state_prev != 0)
+        )
+        pl_flip_class = " pl-flip-pos" if pl_crossed_zero and pl_state_now >= 0 else (" pl-flip-neg" if pl_crossed_zero else "")
+        pl_flip_title = (
+            f' title="Cambio colore P/L: prima della variazione giornaliera {fmt_eur_it(previous_pl_e, 2, signed=True)}, ora {pl_e_str}."'
+            if pl_crossed_zero
+            else ""
+        )
+        pl_flip_badge = '<span class="pl-flip-marker">!</span>' if pl_crossed_zero else ""
         mini_spark_svg, mini_spark_sort = _mini_sparkline_svg(
             ticker_info.get(tk, {}).get("spark", []),
             pl_positive=pl_e >= 0,
@@ -389,20 +725,21 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
             "down_big": "4",
         }.get(state, "2")
         rows_html += (
-            f'''<tr>\n          <td data-sort="{tk}"><a class="tk-link" style="color:{col}" href="#" onclick="showModal('{tk}');return false;">{tk}</a>{comm_badge}</td>\n'''
+            f'''<tr>\n          <td data-sort="{tk}">{issuer_badge_html}<a class="tk-link" style="color:{col}" href="#" onclick="showModal('{tk}');return false;">{tk}</a>{comm_badge}</td>\n'''
             f'''          <td data-sort="{nome}" style="color:{col};max-width:112px;" title="{nome}">{nome[:21]}</td>\n'''
             f'''          <td data-sort="{tipo_code}" style="color:{col};font-weight:700;max-width:54px;" title="{tipo}">{tipo_code}</td>\n'''
             f'''          <td class="natura-cell" title="{natura_label}" style="color:{natura_color};width:20px;text-align:center;">{natura_svg}</td>\n'''
+            f'''          <td class="btp-info-cell" data-sort="{0 if btp_badge else 9}">{btp_badge}</td>\n'''
             f'''          <td class="num" data-sort="{_sort_val_num(row.get('PMC', ''))}">{fmt_eur_it(row.get('PMC', ''), 3)}</td>\n'''
             f'''          <td class="num" data-sort="{_sort_val_num(weight)}" style="font-weight:700;">{fmt_pct_it(weight, 2)}</td>\n'''
             f'''          <td class="num" data-sort="{_sort_val_num(row.get('Quote', ''))}">{fmt_num_it(row.get('Quote', ''), 3)}</td>\n'''
             f'''          <td class="num" data-sort="{_sort_val_num(row.get('Prezzo', ''))}">{fmt_eur_it(row.get('Prezzo', ''), 3)}</td>\n'''
             f'''          <td class="num" data-sort="{_sort_val_num(row.get('Controvalore', ''))}">{fmt_eur_it(row.get('Controvalore', ''), 2)}</td>\n'''
             f'''          <td class="mini-spark-cell" data-sort="{_sort_val_num(mini_spark_sort)}">{mini_spark_svg}</td>\n'''
-            f'''          <td class="num" data-sort="{_sort_val_num(pl_e)}" style="color:{pl_col};font-weight:700;">{pl_e_str}</td>\n'''
-            f'''          <td class="num" data-sort="{_sort_val_num(pl_p)}" style="color:{pl_col};font-weight:700;">{pl_p_str}</td>\n'''
-            f'''          <td class="num" data-sort="{_sort_val_num(day_delta)}" style="color:{day_col};font-weight:700;">{day_delta_str}</td>\n'''
-            f'''          <td class="num" data-sort="{_sort_val_num(day_pct)}" style="color:{day_col};font-weight:700;">{day_pct_str}</td>\n'''
+            f'''          <td class="num pl-cell{pl_flip_class}" data-sort="{_sort_val_num(pl_e)}"{pl_flip_title} style="color:{pl_col};font-weight:700;">{pl_e_str}{pl_flip_badge}</td>\n'''
+            f'''          <td class="num pl-cell{pl_flip_class}" data-sort="{_sort_val_num(pl_p)}"{pl_flip_title} style="color:{pl_col};font-weight:700;">{pl_p_str}</td>\n'''
+            f'''          <td class="num" data-sort="{_sort_val_num(day_delta)}" style="color:{day_delta_col};font-weight:700;">{day_delta_str}</td>\n'''
+            f'''          <td class="num" data-sort="{_sort_val_num(day_pct)}" style="color:{day_pct_col};font-weight:700;">{day_pct_str}</td>\n'''
             f'''          <td data-sort="{sym_sort}" style="color:{sym_col};font-weight:800;text-align:center;width:26px;">{sym}</td>\n'''
             f"""        </tr>"""
         )
@@ -417,13 +754,11 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
         if _total_day_delta is not None and abs(_total_day_base) > 1e-09
         else None
     )
-    _total_day_col = (
-        COLORS["success"] if (_total_day_delta is not None and _total_day_delta >= 0)
-        else COLORS["danger"] if _total_day_delta is not None
-        else "#9CA3AF"
-    )
+    _total_day_delta_display = _zero_for_display(_total_day_delta, _DAILY_EUR_DISPLAY_EPS)
+    _total_day_pct_display = _zero_for_display(_total_day_pct, _DAILY_PCT_DISPLAY_EPS)
+    _total_day_delta_col, _total_day_pct_col = _daily_variation_colors(_total_day_delta_display, _total_day_pct_display)
     tfoot_html = (
-        f'<tfoot><tr><td colspan="4" style="font-weight:800;font-size:0.85rem;letter-spacing:.02em;padding:9px 12px;">TOTALE</td>'
+        f'<tfoot><tr><td colspan="5" style="font-weight:800;font-size:0.85rem;letter-spacing:.02em;padding:9px 12px;">TOTALE</td>'
         f'<td></td>'
         f'<td class="num" style="font-weight:800;padding:9px 12px;">{fmt_pct_it(1.0, 2) if abs(_total_ctv) > 1e-09 else "—"}</td>'
         f'<td></td><td></td>'
@@ -431,8 +766,8 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
         f'<td></td>'
         f'<td class="num" style="color:{_total_pl_col};font-weight:800;padding:9px 12px;">{fmt_eur_it(_total_pl_e, 2, signed=True)}</td>'
         f'<td class="num" style="color:{_total_pl_col};font-weight:800;padding:9px 12px;">{fmt_pct_it(_total_pl_p, 2, signed=True)}</td>'
-        f'<td class="num" style="color:{_total_day_col};font-weight:800;padding:9px 12px;">{fmt_eur_it(_total_day_delta, 2, signed=True) if _total_day_delta is not None else "—"}</td>'
-        f'<td class="num" style="color:{_total_day_col};font-weight:800;padding:9px 12px;">{fmt_pct_it(_total_day_pct, 2, signed=True) if _total_day_pct is not None else "—"}</td>'
+        f'<td class="num" style="color:{_total_day_delta_col};font-weight:800;padding:9px 12px;">{fmt_eur_it(_total_day_delta_display, 2, signed=True) if _total_day_delta_display is not None else "—"}</td>'
+        f'<td class="num" style="color:{_total_day_pct_col};font-weight:800;padding:9px 12px;">{fmt_pct_it(_total_day_pct_display, 2, signed=True) if _total_day_pct_display is not None else "—"}</td>'
         f'<td></td></tr></tfoot>'
     )
     ticker_json = json.dumps(ticker_info, ensure_ascii=False)
@@ -452,9 +787,9 @@ thead th{{
   text-align:right;white-space:nowrap;position:relative;user-select:none;cursor:pointer;
 }}
 thead th:last-child{{border-right:none;}}
-thead th:nth-child(4),thead th:nth-child(15){{text-align:center;cursor:default;padding:8px 4px;}}
+thead th:nth-child(4),thead th:nth-child(5),thead th:nth-child(16){{text-align:center;cursor:default;padding:8px 4px;}}
 thead th:nth-child(1),thead th:nth-child(2),thead th:nth-child(3){{text-align:left;}}
-thead th:hover:not(:nth-child(4)):not(:nth-child(15)){{background:#e3e6e9;}}
+thead th:hover:not(:nth-child(4)):not(:nth-child(5)):not(:nth-child(16)){{background:#e3e6e9;}}
 thead th .sort-ind{{font-size:9px;margin-left:3px;color:#9094a3;}}
 thead th.asc .sort-ind::after{{content:'▲';color:#262730;}}
 thead th.desc .sort-ind::after{{content:'▼';color:#262730;}}
@@ -465,11 +800,20 @@ tbody tr:last-child{{border-bottom:none;}}
 tbody tr:hover{{background:#f0f2f6;}}
 tbody td{{padding:8px 7px;vertical-align:middle;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border-right:1px solid #f0f2f6;}}
 tbody td:last-child{{border-right:none;}}
-tbody td:nth-child(4),tbody td:nth-child(15){{padding:8px 4px;text-align:center;}}
+tbody td:nth-child(4),tbody td:nth-child(5),tbody td:nth-child(16){{padding:8px 4px;text-align:center;}}
 .natura-cell svg{{width:15px;height:15px;}}
+{ISSUER_BADGE_CSS}
+.btp-info-cell{{text-align:center;overflow:visible;}}
+.btp-pill{{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:999px;font-size:10px;font-weight:900;line-height:1;cursor:help;border:1px solid rgba(15,23,42,.12);box-shadow:0 0 0 2px rgba(255,255,255,.9);}}
+.btp-pill.btp-info{{background:#EFF6FF;color:#2563EB;}}
+.btp-pill.btp-coupon{{background:#ECFDF3;color:#1E8449;}}
+.btp-pill.btp-maturity{{background:#FFF7ED;color:#F59E0B;border-radius:5px;}}
 .mini-spark-cell{{text-align:center;padding:5px 4px;}}
 .mini-spark{{display:block;width:64px;height:28px;margin:0 auto;overflow:visible;max-width:100%;}}
 .mini-spark-empty{{color:#9CA3AF;font-weight:700;}}
+.pl-cell.pl-flip-pos{{background:rgba(30,132,73,0.11);box-shadow:inset 0 -2px 0 rgba(30,132,73,0.36);}}
+.pl-cell.pl-flip-neg{{background:rgba(255,75,75,0.10);box-shadow:inset 0 -2px 0 rgba(255,75,75,0.36);}}
+.pl-flip-marker{{display:inline-flex;align-items:center;justify-content:center;width:13px;height:13px;margin-left:4px;border-radius:999px;background:#374151;color:#fff;font-size:9px;font-weight:900;line-height:1;vertical-align:1px;}}
 tfoot tr{{border-top:2px solid #d1d5db;background:#f8f9fa;}}
 tfoot td{{vertical-align:middle;white-space:nowrap;border-right:1px solid #e6e9ef;}}
 tfoot td:last-child{{border-right:none;}}
@@ -480,38 +824,40 @@ tfoot td:last-child{{border-right:none;}}
 <div class="tw">
 <table id="ptf-table">
 <colgroup>
-  <col style="width:7.5%">
-  <col style="width:12%">
-  <col style="width:5%">
-  <col style="width:2.3%">
+  <col style="width:11.2%">
+  <col style="width:10.8%">
+  <col style="width:4.0%">
+  <col style="width:2.1%">
+  <col style="width:2.4%">
+  <col style="width:6.7%">
+  <col style="width:5.8%">
+  <col style="width:6.1%">
   <col style="width:7%">
-  <col style="width:6%">
-  <col style="width:6.4%">
+  <col style="width:8.4%">
+  <col style="width:6.2%">
   <col style="width:7.2%">
-  <col style="width:8.8%">
-  <col style="width:6.6%">
-  <col style="width:7.5%">
-  <col style="width:6.5%">
-  <col style="width:7.6%">
-  <col style="width:7.6%">
-  <col style="width:2%">
+  <col style="width:6.2%">
+  <col style="width:5.8%">
+  <col style="width:5.8%">
+  <col style="width:2.3%">
 </colgroup>
 <thead><tr>
   <th data-col="0">Ticker<span class="sort-ind"></span><span class="rh"></span></th>
   <th data-col="1">Strumento<span class="sort-ind"></span><span class="rh"></span></th>
   <th data-col="2">Cat.<span class="sort-ind"></span><span class="rh"></span></th>
   <th data-col="3"></th>
-  <th data-col="4">PMC<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="5">Peso %<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="6">Quote<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="7" title="Prezzo dell'ultima quotazione disponibile">Ult. quot.<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="8">Controv.<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="9">60g<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="10">P/L €<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="11">P/L %<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="12">Var gg €<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="13">Var gg %<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="14"></th>
+  <th data-col="4" title="Cedole/scadenza BTP"></th>
+  <th data-col="5">PMC<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="6">Peso %<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="7">Quote<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="8" title="Prezzo dell'ultima quotazione disponibile">Ult. quot.<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="9">Controv.<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="10">60g<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="11">P/L €<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="12">P/L %<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="13">Var gg €<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="14">Var gg %<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="15"></th>
 </tr></thead>
 <tbody id="ptf-body">{rows_html}</tbody>
 {tfoot_html}
@@ -522,7 +868,7 @@ tfoot td:last-child{{border-right:none;}}
 {_MODAL_JS}
 var _sCol=-1,_sAsc=true;
 function sortTable(col){{
-  if(col===3||col===14)return;
+  if(col===3||col===4||col===15)return;
   var tbody=document.getElementById('ptf-body');
   var rows=Array.from(tbody.querySelectorAll('tr'));
   var asc=(_sCol===col)?!_sAsc:true;_sCol=col;_sAsc=asc;
@@ -629,6 +975,7 @@ def render_weekly_pl_table(result, da, data):
         # "Zero commissioni" esiste solo come campo per ETF/ETC: per le altre
         # categorie il badge non e' applicabile, non va mostrato di default.
         comm_badge = commission_badge(info_map.get(tk, {}).get("zero_commissioni")) if tipo_code in ("ETF", "ETC") else ""
+        issuer_badge_html = issuer_badge(info_map.get(tk, {}), ticker=tk, tipo_code=tipo_code)
         cells = ""
         for i, v in enumerate(row["deltas"]):
             cell_col = COLORS["success"] if (v is not None and v >= 0) else (COLORS["danger"] if v is not None else "#9CA3AF")
@@ -646,7 +993,7 @@ def render_weekly_pl_table(result, da, data):
         row_bg = "background-color:rgba(30,132,73,0.10);" if row_all_up else ("background-color:rgba(255,75,75,0.10);" if row_all_down else "")
         rows_html += (
             f'<tr style="{row_bg}">\n'
-            f'<td data-sort="{tk}"><a class="tk-link" style="color:{col}" href="#" onclick="showModal(\'{tk}\');return false;">{tk}</a>{comm_badge}</td>\n'
+            f'<td data-sort="{tk}">{issuer_badge_html}<a class="tk-link" style="color:{col}" href="#" onclick="showModal(\'{tk}\');return false;">{tk}</a>{comm_badge}</td>\n'
             f'<td data-sort="{strumento}" style="color:{col};max-width:130px;" title="{strumento}">{strumento[:24]}</td>\n'
             f'<td data-sort="{tipo_code}" style="color:{col};">{tipo_code}</td>\n'
             f'<td class="natura-cell" title="{natura_label}" style="color:{natura_color};width:20px;text-align:center;">{natura_svg}</td>\n'
@@ -702,6 +1049,7 @@ tbody tr:hover{{background:#f0f2f6;}}
 tbody td{{padding:9px 12px;vertical-align:middle;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border-right:1px solid #f0f2f6;}}
 tbody td:last-child{{border-right:none;}}
 .natura-cell svg{{width:15px;height:15px;}}
+{ISSUER_BADGE_CSS}
 tfoot tr{{border-top:2px solid #d1d5db;background:#f8f9fa;}}
 tfoot td{{vertical-align:middle;white-space:nowrap;border-right:1px solid #e6e9ef;}}
 tfoot td:last-child{{border-right:none;}}

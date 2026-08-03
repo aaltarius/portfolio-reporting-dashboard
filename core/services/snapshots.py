@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import math
 from datetime import datetime
 from typing import Any
 
@@ -513,21 +514,21 @@ def build_comparison_summary(metrics_df: pd.DataFrame, category_df: pd.DataFrame
     if metrics_df is not None and not metrics_df.empty:
         patrimonio = metrics_df[metrics_df["Voce"] == "Patrimonio totale"]
         if not patrimonio.empty:
-            delta = float(patrimonio["Delta"].iloc[0])
+            delta = _float(patrimonio["Delta"].iloc[0])
             notes.append(f"Il patrimonio totale cambia di {delta:,.2f} EUR.")
         pl = metrics_df[metrics_df["Voce"] == "P/L"]
         if not pl.empty:
-            delta_pl = float(pl["Delta"].iloc[0])
+            delta_pl = _float(pl["Delta"].iloc[0])
             notes.append(f"Il P/L complessivo cambia di {delta_pl:,.2f} EUR.")
     if category_df is not None and not category_df.empty:
         row = category_df.iloc[category_df["Delta peso"].abs().argmax()]
-        notes.append(f"La variazione di peso piu evidente riguarda {row['Categoria']} ({float(row['Delta peso']):+.2%}).")
+        notes.append(f"La variazione di peso piu evidente riguarda {row['Categoria']} ({_float(row['Delta peso']):+.2%}).")
     if contributors_df is not None and not contributors_df.empty:
         best = contributors_df.iloc[0]
         worst = contributors_df.iloc[-1]
-        notes.append(f"Maggior contributore positivo: {best['Ticker']} ({float(best['Delta valore']):+,.2f} EUR).")
+        notes.append(f"Maggior contributore positivo: {best['Ticker']} ({_float(best['Delta valore']):+,.2f} EUR).")
         if str(best["Ticker"]) != str(worst["Ticker"]):
-            notes.append(f"Maggior contributore negativo: {worst['Ticker']} ({float(worst['Delta valore']):+,.2f} EUR).")
+            notes.append(f"Maggior contributore negativo: {worst['Ticker']} ({_float(worst['Delta valore']):+,.2f} EUR).")
     return notes
 
 
@@ -566,12 +567,15 @@ def _metric_value(snapshot: dict[str, Any], key: str) -> float:
 def _sum_col(frame: pd.DataFrame | None, col: str) -> float:
     if frame is None or frame.empty or col not in frame.columns:
         return 0.0
-    return float(pd.to_numeric(frame[col], errors="coerce").fillna(0.0).sum())
+    numeric = pd.to_numeric(frame[col], errors="coerce")
+    numeric = numeric.map(_float)
+    return float(numeric.sum())
 
 
 def _safe_ratio(num: float, den: float) -> float:
-    den = float(den or 0.0)
-    return float(num or 0.0) / den if abs(den) > 1e-12 else 0.0
+    num = _float(num)
+    den = _float(den)
+    return num / den if abs(den) > 1e-12 else 0.0
 
 
 def _price_delta_pct(price_a: float, price_b: float, qty_a: float = 0.0, qty_b: float = 0.0) -> float:
@@ -587,6 +591,8 @@ def _price_delta_pct(price_a: float, price_b: float, qty_a: float = 0.0, qty_b: 
 
 
 def _float(value: Any) -> float:
+    if isinstance(value, bool):
+        return 0.0
     if isinstance(value, str):
         text = value.strip().replace("€", "").replace("%", "").replace(" ", "")
         if "," in text and "." in text:
@@ -595,9 +601,10 @@ def _float(value: Any) -> float:
             text = text.replace(",", ".")
         value = text
     try:
-        return float(value or 0.0)
+        number = float(value or 0.0)
     except Exception:
         return 0.0
+    return number if math.isfinite(number) else 0.0
 
 
 def _holding_pl_fallback(raw_pl: Any, market_value: Any, cost: Any) -> float:

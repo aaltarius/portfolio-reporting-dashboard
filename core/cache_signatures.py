@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 from pathlib import Path
@@ -23,6 +24,16 @@ from typing import Any
 from persistence.storage import macro_cat
 
 logger = logging.getLogger("portafoglio.core.cache_signatures")
+
+
+def _normalize_positive_price(value: Any, *, digits: int) -> float | None:
+    try:
+        price = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(price) or price <= 0:
+        return None
+    return round(price, digits)
 
 
 def _safe_hash(data: Any, max_depth: int = 3) -> str:
@@ -111,11 +122,7 @@ def _normalized_instrument_signature_payload(strumenti: list[dict[str, Any]]) ->
     for item in strumenti:
         if not isinstance(item, dict):
             continue
-        prezzo = item.get("prezzo", None)
-        try:
-            prezzo = None if prezzo in (None, "") else round(float(prezzo), 4)
-        except Exception:
-            prezzo = str(prezzo or "")
+        prezzo = _normalize_positive_price(item.get("prezzo", None), digits=4)
         stato_raw = item.get("stato")
         stato_norm = "chiuso" if stato_raw in {"chiuso", "osservato"} else "aperto"
         normalized.append({
@@ -172,8 +179,8 @@ def history_span_by_ticker(storico: dict[str, Any], tickers: list[str]) -> dict[
     for day, prices in storico.items():
         if not isinstance(prices, dict):
             continue
-        for tk in prices:
-            if tk in ticker_set:
+        for tk, value in prices.items():
+            if tk in ticker_set and _normalize_positive_price(value, digits=6) is not None:
                 dates_by_ticker[tk].append(day)
     return {
         tk: {"n_dates": len(dates), "earliest": min(dates) if dates else ""}
@@ -192,17 +199,16 @@ def latest_history_point_by_ticker(storico: dict[str, Any], tickers: list[str]) 
         for tk, value in prices.items():
             if tk not in ticker_set:
                 continue
+            normalized_value = _normalize_positive_price(value, digits=6)
+            if normalized_value is None:
+                continue
             current = latest_by_ticker.get(tk)
             if current is None or day_str > current[0]:
-                latest_by_ticker[tk] = (day_str, value)
+                latest_by_ticker[tk] = (day_str, normalized_value)
 
     result: dict[str, dict[str, Any]] = {}
     for tk in ticker_set:
-        day, value = latest_by_ticker.get(tk, ("", None))
-        try:
-            normalized_value = None if value in (None, "") else round(float(value), 6)
-        except Exception:
-            normalized_value = str(value or "")
+        day, normalized_value = latest_by_ticker.get(tk, ("", None))
         result[tk] = {"latest": day, "value": normalized_value}
     return result
 
@@ -241,9 +247,27 @@ def _base_market_signature_payload(
     }
     if include_benchmark_data:
         benchmark_data = payload.get("benchmark_data", {}) if isinstance(payload.get("benchmark_data", {}), dict) else {}
+        market_live_data = payload.get("market_live_data", {}) if isinstance(payload.get("market_live_data", {}), dict) else {}
         signature_payload["benchmark_points"] = {
             str(key): len(value) if isinstance(value, dict) else 0
             for key, value in sorted(benchmark_data.items())
+        }
+        signature_payload["benchmark_latest"] = {
+            str(key): {
+                "last_date": max(value.keys(), default="") if isinstance(value, dict) else "",
+                "last_value": value.get(max(value.keys(), default="")) if isinstance(value, dict) and value else None,
+            }
+            for key, value in sorted(benchmark_data.items())
+        }
+        signature_payload["market_live"] = {
+            str(key): {
+                "price": value.get("price"),
+                "pct": value.get("pct"),
+                "price_date": value.get("price_date"),
+                "regular_market_time": value.get("regular_market_time"),
+            }
+            for key, value in sorted(market_live_data.items())
+            if isinstance(value, dict)
         }
 
     return signature_payload, strumenti, operazioni, storico, last_quotes_update

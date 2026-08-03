@@ -5,6 +5,7 @@ from typing import Any
 
 import pandas as pd
 
+from core.cache_policy import iter_prebuild_artifact_specs
 from core.render_profiler import persist_pre_render_event, record_render_event
 
 
@@ -28,7 +29,16 @@ def run_prewarm_bundle(
     data = ctx.data
     dfh = ctx.dfh_top
     dfmt = ctx.dfmt
-    stats = {"attempted": 0, "built": 0, "cache_hits": 0, "skipped": 0, "errors": 0}
+    registry_targets = tuple(spec.artifact_id for spec in iter_prebuild_artifact_specs())
+    stats = {
+        "attempted": 0,
+        "built": 0,
+        "cache_hits": 0,
+        "skipped": 0,
+        "errors": 0,
+        "registry_known_targets": list(registry_targets),
+        "registry_built_targets": [],
+    }
 
     def _record(step: str, elapsed: float, *, status: str = "OK", detail: str = "", count: int | None = None) -> None:
         try:
@@ -77,7 +87,8 @@ def run_prewarm_bundle(
         )
         elapsed = time.perf_counter() - started_at
         stats["built"] += 1
-        _record("built", elapsed, detail=f"scope=analitica_bundle | sig={prewarm_signature}")
+        stats["registry_built_targets"].append("cruscotti.analitica_bundle")
+        _record("built", elapsed, detail=f"scope=analitica_bundle | registry=cruscotti.analitica_bundle | sig={prewarm_signature}")
     except Exception as exc:
         elapsed = time.perf_counter() - started_at
         stats["errors"] += 1
@@ -101,6 +112,7 @@ def run_prewarm_bundle(
         extra_params={"items": len(da), "tv": round(tv, 2)},
         strategy=strategy,
     )
+    stats["registry_built_targets"].append("figures.plotly_cache_provider:home_concentration")
 
     write_state(time.time(), prewarm_signature)
     return stats

@@ -12,6 +12,8 @@ import logging
 import os
 import threading
 import time
+import uuid
+from contextlib import contextmanager
 from typing import Any
 
 import streamlit as st
@@ -33,6 +35,21 @@ if st.session_state.pop("_clear_streamlit_cache", False) or os.getenv("PORTFOLIO
 if 'active_tab' not in st.session_state:
     st.session_state.active_tab = 0
 
+
+def _begin_sestante_session_run() -> int:
+    """Registra un solo progressivo per script run, prima del render delle tab."""
+    try:
+        if not st.session_state.get("_sestante_session_token"):
+            st.session_state["_sestante_session_token"] = uuid.uuid4().hex[:10]
+        run_ordinal = int(st.session_state.get("_sestante_session_run_ordinal", 0) or 0) + 1
+        st.session_state["_sestante_session_run_ordinal"] = run_ordinal
+        return run_ordinal
+    except Exception:
+        return 0
+
+
+_CURRENT_SESSION_RUN_ORDINAL = _begin_sestante_session_run()
+
 # === IMPORTS ===
 from persistence.storage import (
     APP_VERSION, SCHEMA_VERSION, load_quotes_log, _data_mtime, load_settings,
@@ -42,13 +59,14 @@ from core.asset_categories import get_selected_category_codes
 from core.cache_signatures import build_portfolio_data_signature, build_portfolio_signature_components, theme_signature
 from core.state import StateManager
 from core.cache import get_portfolio_cache_bust, consume_next_render_scope
+from core.cache_policy import build_cache_artifact_signature
+from core.cache_orchestrator import get_or_build_registered_artifact
 from core.settings_profiles import (
     get_calculations_settings,
     get_pre_render_settings,
     get_runtime_ui_settings,
     get_ui_preferences,
     resolve_figure_cache_strategy,
-    resolve_page_render_mode,
 )
 from core.portfolio_metrics import (
     calcola_flussi_capitale,
@@ -70,6 +88,7 @@ from ui.pages.overview import render_overview
 from ui.pages.home import render_home
 from ui.pages.quotazioni import render_quotazioni
 from ui.pages.cruscotti import render_cruscotti
+from ui.pages.mercati import render_mercati
 from ui.pages.operazioni import render_operazioni
 from ui.pages.summary import render_summary
 from ui.pages.confronto import render_confronto
@@ -78,7 +97,7 @@ from ui.pages.ai_page import render_ai_page
 from ui.pages.impostazioni import render_impostazioni
 from ui.pages.gestione_dati import render_gestione_dati
 from ui.charts.settings import get_chart_setting
-from ui.charts.streamlit_runtime import bind_safe_plotly_chart
+from ui.charts.streamlit_runtime import bind_safe_plotly_chart, reset_plotly_auto_key_counter
 from ui.notifications import flush_toasts
 
 
@@ -183,17 +202,33 @@ inject_layout_js()
 flush_toasts()
 if not hasattr(st, "_portfolio_orig_plotly_chart"):
     st._portfolio_orig_plotly_chart = st.plotly_chart
-if not hasattr(st, "_portfolio_safe_plotly_chart"):
-    st._portfolio_safe_plotly_chart = bind_safe_plotly_chart(
-        get_chart_setting=get_chart_setting,
-        orig_plotly_chart=st._portfolio_orig_plotly_chart,
-        fallback_plotly_chart=st._portfolio_orig_plotly_chart,
-    )
+st._portfolio_safe_plotly_chart = bind_safe_plotly_chart(
+    get_chart_setting=get_chart_setting,
+    orig_plotly_chart=st._portfolio_orig_plotly_chart,
+    fallback_plotly_chart=st._portfolio_orig_plotly_chart,
+)
 if st.plotly_chart is not st._portfolio_safe_plotly_chart:
     st.plotly_chart = st._portfolio_safe_plotly_chart
+reset_plotly_auto_key_counter()
 app_logger.info("Applicazione avviata")
 app_logger.info("File di log attivo: %s", get_log_file_path(app_logger))
 app_logger.info("Working directory Streamlit: %s", os.getcwd())
+
+
+@contextmanager
+def _logged_app_phase(name: str, **details: Any):
+    """Logga le macro-fasi del rerun senza alterare il comportamento Streamlit."""
+    detail_text = " ".join(f"{key}={value}" for key, value in details.items() if value not in (None, ""))
+    suffix = f" {detail_text}" if detail_text else ""
+    t0 = time.perf_counter()
+    app_logger.info("[APP_PHASE] start %s%s", name, suffix)
+    try:
+        yield
+    except Exception:
+        app_logger.exception("[APP_PHASE] error %s elapsed=%.3fs%s", name, time.perf_counter() - t0, suffix)
+        raise
+    else:
+        app_logger.info("[APP_PHASE] end %s elapsed=%.3fs%s", name, time.perf_counter() - t0, suffix)
 
 
 # === FORM SERVER (operazioni senza rerun) ===
@@ -202,7 +237,8 @@ def _start_form_server():
     from ui.form_server import start_form_server
     start_form_server()
     return True
-_start_form_server()
+with _logged_app_phase("form_server_start"):
+    _start_form_server()
 
 
 # === INITIALIZE STATE ===
@@ -215,17 +251,18 @@ def get_state_manager(schema_version: str = _STATE_MANAGER_SCHEMA) -> StateManag
     return StateManager()
 
 
-state_manager = get_state_manager()
-if st.session_state.pop("_force_reload", 0):
-    state_manager.force_reload()
-else:
-    state_manager.reload_if_changed()
-data = state_manager.get_data()
-settings = state_manager.get_settings()
-st.session_state["_settings_runtime"] = settings
-runtime_ui_settings = get_runtime_ui_settings(settings)
-snapshots_state = state_manager.get_snapshots()
-meta_state = state_manager.get_meta()
+with _logged_app_phase("state_load"):
+    state_manager = get_state_manager()
+    if st.session_state.pop("_force_reload", 0):
+        state_manager.force_reload()
+    else:
+        state_manager.reload_if_changed()
+    data = state_manager.get_data()
+    settings = state_manager.get_settings()
+    st.session_state["_settings_runtime"] = settings
+    runtime_ui_settings = get_runtime_ui_settings(settings)
+    snapshots_state = state_manager.get_snapshots()
+    meta_state = state_manager.get_meta()
 st.session_state["_plotly_profile_enabled"] = bool(
     runtime_ui_settings.get("debug_render_monitor", False)
     or runtime_ui_settings.get("debug_render_progress", False)
@@ -245,7 +282,8 @@ try:
 except Exception:
     pass
 
-render_sidebar(data)
+with _logged_app_phase("sidebar_render"):
+    render_sidebar(data)
 
 
 data = apply_privacy_filter(data, settings)
@@ -285,13 +323,19 @@ def _runtime_settings_signature() -> str:
 
 
 def _portfolio_semantic_signature(*, include_cache_bust: bool) -> str:
-    """Firma semantica del runtime; il bust resta opzionale per distinguere cambio dati da invalidazione forzata."""
+    """Firma semantica del runtime portfolio.
+
+    I dati benchmark/mercati hanno una loro cache dedicata e possono cambiare
+    anche quando il portafoglio e' invariato. Includerli qui produce falsi
+    `signature_changed` al primo avvio e rende poco leggibile la diagnostica
+    performance. La loro variazione resta comunque visibile nel diff profiling.
+    """
     selected_categories_sig = ",".join(get_selected_category_codes(settings))
     portfolio_data_sig = build_portfolio_data_signature(
         data,
         app_version=str(APP_VERSION),
         schema_version=str(SCHEMA_VERSION),
-        include_benchmark_data=True,
+        include_benchmark_data=False,
     )
     settings_sig = _runtime_settings_signature()
     theme_sig = theme_signature(theme)
@@ -310,6 +354,12 @@ def _portfolio_cache_signature() -> str:
     return _portfolio_semantic_signature(include_cache_bust=True)
 
 
+def _profiling_persistence_enabled() -> bool:
+    """Evita che AppTest/pytest contaminino la diagnostica reale in `.data`."""
+
+    return os.getenv("PORTFOLIO_TESTING") != "1"
+
+
 def _profiling_signature_diff_lines() -> list[str]:
     """
     Diagnostica leggibile delle componenti che cambiano nella firma portfolio.
@@ -317,7 +367,8 @@ def _profiling_signature_diff_lines() -> list[str]:
     parts_file = os.path.join(os.path.dirname(__file__), ".data", ".profiling_signature_parts.json")
     current_parts = build_portfolio_signature_components(data, include_benchmark_data=True)
     previous_parts: dict[str, Any] = {}
-    if os.path.exists(parts_file):
+    persist_enabled = _profiling_persistence_enabled()
+    if persist_enabled and os.path.exists(parts_file):
         try:
             with open(parts_file, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
@@ -339,6 +390,8 @@ def _profiling_signature_diff_lines() -> list[str]:
             lines.append(f"  - {key}: {previous_parts.get(key)!r} -> {current_parts.get(key)!r}")
 
     try:
+        if not persist_enabled:
+            return lines
         os.makedirs(os.path.dirname(parts_file), exist_ok=True)
         with open(parts_file, "w", encoding="utf-8") as f:
             json.dump(current_parts, f, ensure_ascii=True, indent=2)
@@ -347,18 +400,15 @@ def _profiling_signature_diff_lines() -> list[str]:
     return lines
 
 
-def _profiling_scenario() -> str:
-    """Classifica il run per confronti omogenei di performance."""
-    cached = st.session_state.get("_profiling_scenario_current")
-    if isinstance(cached, str) and cached:
-        return cached
-
+def _profiling_scenario(*, override_scenario: str | None = None, session_run_ordinal: int | None = None) -> str:
+    """Classifica il run senza confondere stato cache e tipo di avvio."""
     # Track file per persistenza tra sessioni
     tracking_file = os.path.join(os.path.dirname(__file__), ".data", ".profiling_state")
+    persist_enabled = _profiling_persistence_enabled()
 
     current_signature = _portfolio_semantic_signature(include_cache_bust=False)
     previous_signature_file = None
-    if os.path.exists(tracking_file):
+    if persist_enabled and os.path.exists(tracking_file):
         try:
             with open(tracking_file, "r", encoding="utf-8") as f:
                 candidate = f.readline().strip()
@@ -369,32 +419,47 @@ def _profiling_scenario() -> str:
 
     force_data_change = bool(st.session_state.pop("_profiling_force_data_change", False))
     seen_before = bool(previous_signature_file)
+    signature_changed = bool(previous_signature_file and previous_signature_file != current_signature)
+    override = str(override_scenario or "").strip()
 
     if not seen_before:
+        cache_condition = "no_previous_signature"
+    elif signature_changed:
+        cache_condition = "signature_changed"
+    else:
+        cache_condition = "signature_unchanged"
+
+    if override:
+        scenario = override
+    elif not seen_before:
         scenario = "cold_start"
-    elif force_data_change and previous_signature_file != current_signature:
+    elif int(session_run_ordinal or 0) <= 1:
+        scenario = "first_session_run"
+    elif force_data_change or signature_changed:
         scenario = "post_data_change"
     else:
         scenario = "warm_rerun"
 
-    os.makedirs(os.path.dirname(tracking_file), exist_ok=True)
-    with open(tracking_file, "w", encoding="utf-8") as f:
-        f.write(f"{current_signature}\n")
+    if persist_enabled:
+        os.makedirs(os.path.dirname(tracking_file), exist_ok=True)
+        with open(tracking_file, "w", encoding="utf-8") as f:
+            f.write(f"{current_signature}\n")
 
     st.session_state["_profiling_previous_signature"] = current_signature
     st.session_state["_profiling_scenario_current"] = scenario
+    st.session_state["_profiling_cache_condition_current"] = cache_condition
     return scenario
+
+
+def _profiling_cache_condition() -> str:
+    return str(st.session_state.get("_profiling_cache_condition_current") or "n/d")
 
 
 def _profiling_cohort_signature(scenario: str | None = None) -> str:
     """Firma stabile per confrontare run comparabili senza spezzare lo storico a ogni mtime."""
-    scenario = str(scenario or _profiling_scenario())
+    scenario = str(scenario or _profiling_scenario(session_run_ordinal=_CURRENT_SESSION_RUN_ORDINAL))
     ui_mode = str(runtime_ui_settings.get("page_mode", "per_pagina"))
-    quote_render_profile = resolve_page_render_mode(
-        settings,
-        local_mode=st.session_state.get("quotazioni_view_mode_fast_v1", "Rapida"),
-    )
-    quote_mode = str(quote_render_profile.get("render_mode", "Rapida"))
+    quote_mode = "Completa"
     cache_strategy = resolve_figure_cache_strategy(settings, st.session_state)
     strumenti_count = len(data.get("strumenti", [])) if isinstance(data, dict) else 0
     storico_dates = len((data.get("storico_prezzi", {}) or {})) if isinstance(data, dict) else 0
@@ -408,16 +473,16 @@ def _profiling_cohort_signature(scenario: str | None = None) -> str:
 
 
 _CURRENT_RERUN_CONTEXT = consume_next_render_scope(default="full_tabs")
-if _CURRENT_RERUN_CONTEXT.get("scenario"):
-    st.session_state["_profiling_scenario_current"] = str(_CURRENT_RERUN_CONTEXT.get("scenario"))
-_CURRENT_PROFILING_SCENARIO = _profiling_scenario()
+_CURRENT_PROFILING_SCENARIO = _profiling_scenario(
+    override_scenario=str(_CURRENT_RERUN_CONTEXT.get("scenario") or ""),
+    session_run_ordinal=_CURRENT_SESSION_RUN_ORDINAL,
+)
+_CURRENT_PROFILING_CACHE_CONDITION = _profiling_cache_condition()
 _CURRENT_PROFILING_COHORT = _profiling_cohort_signature(_CURRENT_PROFILING_SCENARIO)
 
 
-@st.cache_data(show_spinner=False, persist="disk")
-def orchestrate_data_cached(data_signature: str) -> dict[str, Any]:
-    """Pre-compute portfolio data using pure services, cached by data signature."""
-    app_logger.debug("Inizio orchestrazione dati: signature=%s", data_signature)
+def _build_orchestration_payload() -> dict[str, Any]:
+    """Pre-compute portfolio data using pure services."""
     calculations_settings = get_calculations_settings(settings)
     return build_runtime_context_data(
         data=data,
@@ -434,8 +499,29 @@ def orchestrate_data_cached(data_signature: str) -> dict[str, Any]:
     )
 
 
-ctx = SimpleNamespace(**orchestrate_data_cached(_portfolio_cache_signature()))
-refresh_volatile_ctx_fields(ctx, fmtd=fmtd, fmtds=fmtds, fmt_dt_it=fmt_dt_it)
+def get_or_build_orchestration_payload(data_signature: str) -> dict[str, Any]:
+    """Carica o costruisce il payload runtime tramite la cache unica registrata."""
+    artifact_sig = build_cache_artifact_signature(
+        "runtime.orchestration_payload",
+        inputs={"portfolio_cache_sig": str(data_signature or "")},
+    )
+    app_logger.debug("Inizio orchestrazione dati: signature=%s artifact=%s", data_signature, artifact_sig)
+    artifact = get_or_build_registered_artifact(
+        artifact_id="runtime.orchestration_payload",
+        signature=artifact_sig,
+        builder=_build_orchestration_payload,
+        clone_on_read=True,
+        disk_codec="pickle",
+    )
+    value = artifact.value
+    return value if isinstance(value, dict) else _build_orchestration_payload()
+
+
+_portfolio_cache_sig = _portfolio_cache_signature()
+with _logged_app_phase("orchestration", signature=_portfolio_cache_sig):
+    ctx = SimpleNamespace(**get_or_build_orchestration_payload(_portfolio_cache_sig))
+with _logged_app_phase("volatile_context_refresh"):
+    refresh_volatile_ctx_fields(ctx, fmtd=fmtd, fmtds=fmtds, fmt_dt_it=fmt_dt_it)
 
 
 def _refresh_volatile_quotes_runtime(ctx_obj: SimpleNamespace) -> None:
@@ -472,100 +558,129 @@ else:
         from core.cache_prewarmer import should_prewarm, trigger_background_prewarm, compute_prewarm_signature, run_initial_prewarm, mark_prewarm_deferred
         from ui.prewarm_bundle import run_prewarm_bundle
         from core.render_profiler import persist_pre_render_event
-        _cfg_strategy = resolve_figure_cache_strategy(settings, st.session_state)
-        _pre_render_settings = get_pre_render_settings(settings)
-        _prewarm_theme = get_theme_context()
-        _prewarm_signature = compute_prewarm_signature(ctx, _prewarm_theme, settings)
-        _CURRENT_PRE_RENDER_SIGNATURE = _prewarm_signature
-        _pre_render_enabled = bool(_pre_render_settings.get("enabled", True))
-        _pre_render_cooldown_seconds = int(_pre_render_settings.get("cooldown_seconds", 1800))
-        _operational_scope = str(_CURRENT_RERUN_CONTEXT.get("render_scope") or "full_tabs")
-        _operational_reason = str(_CURRENT_RERUN_CONTEXT.get("reason") or "")
-        _operational_scenario = str(_CURRENT_RERUN_CONTEXT.get("scenario") or "")
-        _is_operational_light_rerun = _operational_scope == "current_page_only" or bool(_operational_reason)
-        if _is_operational_light_rerun:
-            # Nei rerun operativi non ricostruiamo i grafici core in pre-render.
-            # Marcando la firma come differita evitiamo che il run immediatamente
-            # successivo rilanci un pre-render sincrono pesante.
-            mark_prewarm_deferred(_prewarm_signature)
-            persist_pre_render_event(
-                _prewarm_signature,
-                "PreRender",
-                "skip_operational_rerun",
-                0.0,
-                status="SKIP",
-                detail=(
-                    f"mode=operational_rerun | render_scope={_operational_scope}"
-                    f" | scenario={_operational_scenario or 'n/d'}"
-                ),
-                reset_cycle=True,
-            )
-        elif _cfg_strategy == "disabled":
-            persist_pre_render_event(
-                _prewarm_signature,
-                "PreRender",
-                "disabled",
-                0.0,
-                status="SKIP",
-                detail="figure_cache_strategy=disabled",
-                reset_cycle=True,
-            )
-        elif not _pre_render_enabled:
-            persist_pre_render_event(
-                _prewarm_signature,
-                "PreRender",
-                "disabled",
-                0.0,
-                status="SKIP",
-                detail="ui_pre_render.enabled=false",
-                reset_cycle=True,
-            )
-        else:
-            _should_prewarm = should_prewarm(
-                signature=_prewarm_signature,
-                cooldown_seconds=_pre_render_cooldown_seconds,
-            )
-            if _should_prewarm and bool(_pre_render_settings.get("initial_complete", True)):
+        with _logged_app_phase("pre_render"):
+            _cfg_strategy = resolve_figure_cache_strategy(settings, st.session_state)
+            _pre_render_settings = get_pre_render_settings(settings)
+            _prewarm_theme = get_theme_context()
+            _prewarm_signature = compute_prewarm_signature(ctx, _prewarm_theme, settings)
+            _CURRENT_PRE_RENDER_SIGNATURE = _prewarm_signature
+            _pre_render_enabled = bool(_pre_render_settings.get("enabled", True))
+            _pre_render_cooldown_seconds = int(_pre_render_settings.get("cooldown_seconds", 1800))
+            _operational_scope = str(_CURRENT_RERUN_CONTEXT.get("render_scope") or "full_tabs")
+            _operational_reason = str(_CURRENT_RERUN_CONTEXT.get("reason") or "")
+            _operational_scenario = str(_CURRENT_RERUN_CONTEXT.get("scenario") or "")
+            _is_operational_light_rerun = _operational_scope == "current_page_only" or bool(_operational_reason)
+            if _is_operational_light_rerun:
+                # Nei rerun operativi non ricostruiamo i grafici core in pre-render.
+                # Marcando la firma come differita evitiamo che il run immediatamente
+                # successivo rilanci un pre-render sincrono pesante.
+                mark_prewarm_deferred(_prewarm_signature)
                 persist_pre_render_event(
                     _prewarm_signature,
                     "PreRender",
-                    "decision",
-                    0.0,
-                    detail="mode=initial_complete",
-                    reset_cycle=True,
-                )
-                run_initial_prewarm(ctx, _prewarm_theme, settings, prewarm_fn=run_prewarm_bundle)
-            elif _should_prewarm and bool(_pre_render_settings.get("background_enabled", True)):
-                _started = trigger_background_prewarm(ctx, _prewarm_theme, settings, prewarm_fn=run_prewarm_bundle)
-                persist_pre_render_event(
-                    _prewarm_signature,
-                    "PreRender",
-                    "background_started" if _started else "background_busy",
-                    0.0,
-                    status="OK" if _started else "SKIP",
-                    detail="mode=background",
-                    reset_cycle=True,
-                )
-            elif _should_prewarm:
-                persist_pre_render_event(
-                    _prewarm_signature,
-                    "PreRender",
-                    "deferred",
+                    "skip_operational_rerun",
                     0.0,
                     status="SKIP",
-                    detail="initial_complete=false | background_enabled=false",
+                    detail=(
+                        f"mode=operational_rerun | render_scope={_operational_scope}"
+                        f" | scenario={_operational_scenario or 'n/d'}"
+                    ),
+                    reset_cycle=True,
+                )
+            elif _cfg_strategy == "disabled":
+                persist_pre_render_event(
+                    _prewarm_signature,
+                    "PreRender",
+                    "disabled",
+                    0.0,
+                    status="SKIP",
+                    detail="figure_cache_strategy=disabled",
+                    reset_cycle=True,
+                )
+            elif not _pre_render_enabled:
+                persist_pre_render_event(
+                    _prewarm_signature,
+                    "PreRender",
+                    "disabled",
+                    0.0,
+                    status="SKIP",
+                    detail="ui_pre_render.enabled=false",
                     reset_cycle=True,
                 )
             else:
-                persist_pre_render_event(
-                    _prewarm_signature,
-                    "PreRender",
-                    "not_needed",
-                    0.0,
-                    status="SKIP",
-                    detail=f"cooldown_seconds={_pre_render_cooldown_seconds}",
-                    reset_cycle=True,
+                _should_prewarm = should_prewarm(
+                    signature=_prewarm_signature,
+                    cooldown_seconds=_pre_render_cooldown_seconds,
                 )
+                _sync_prewarm_allowed = (
+                    bool(_pre_render_settings.get("initial_complete", False))
+                    and str(_CURRENT_PROFILING_SCENARIO or "") == "cold_start"
+                )
+                _background_prewarm_allowed = (
+                    bool(_pre_render_settings.get("background_enabled", True))
+                    and str(_CURRENT_PROFILING_SCENARIO or "") == "cold_start"
+                )
+                if _should_prewarm and _sync_prewarm_allowed:
+                    persist_pre_render_event(
+                        _prewarm_signature,
+                        "PreRender",
+                        "decision",
+                        0.0,
+                        detail="mode=initial_complete | scenario=cold_start",
+                        reset_cycle=True,
+                    )
+                    run_initial_prewarm(ctx, _prewarm_theme, settings, prewarm_fn=run_prewarm_bundle)
+                elif _should_prewarm and _background_prewarm_allowed:
+                    _started = trigger_background_prewarm(ctx, _prewarm_theme, settings, prewarm_fn=run_prewarm_bundle)
+                    persist_pre_render_event(
+                        _prewarm_signature,
+                        "PreRender",
+                        "background_started" if _started else "background_busy",
+                        0.0,
+                        status="OK" if _started else "SKIP",
+                        detail=(
+                            f"mode=background | scenario={_CURRENT_PROFILING_SCENARIO}"
+                            f" | initial_complete={bool(_pre_render_settings.get('initial_complete', False))}"
+                        ),
+                        reset_cycle=True,
+                    )
+                elif _should_prewarm and bool(_pre_render_settings.get("background_enabled", True)):
+                    mark_prewarm_deferred(_prewarm_signature)
+                    persist_pre_render_event(
+                        _prewarm_signature,
+                        "PreRender",
+                        "deferred_warm_rerun",
+                        0.0,
+                        status="SKIP",
+                        detail=(
+                            f"mode=background_deferred | scenario={_CURRENT_PROFILING_SCENARIO}"
+                            " | reason=no_background_work_during_warm_rerun"
+                        ),
+                        reset_cycle=True,
+                    )
+                elif _should_prewarm:
+                    persist_pre_render_event(
+                        _prewarm_signature,
+                        "PreRender",
+                        "deferred",
+                        0.0,
+                        status="SKIP",
+                        detail=(
+                            f"initial_complete={bool(_pre_render_settings.get('initial_complete', False))}"
+                            f" | background_enabled=false | scenario={_CURRENT_PROFILING_SCENARIO}"
+                        ),
+                        reset_cycle=True,
+                    )
+                else:
+                    persist_pre_render_event(
+                        _prewarm_signature,
+                        "PreRender",
+                        "not_needed",
+                        0.0,
+                        status="SKIP",
+                        detail=f"cooldown_seconds={_pre_render_cooldown_seconds}",
+                        reset_cycle=True,
+                    )
     except Exception as exc:
         app_logger.warning("Pre-warming non eseguito: %s", exc)
 
@@ -575,9 +690,22 @@ if os.getenv("PORTFOLIO_TESTING") == "1":
 else:
     try:
         from core.infrastructure.schedule import start_benchmark_scheduler
-        start_benchmark_scheduler(data)
+        with _logged_app_phase("benchmark_scheduler_start"):
+            start_benchmark_scheduler(data)
     except Exception as exc:
         app_logger.warning("Benchmark scheduler non avviato: %s", exc)
+
+
+# === MERCATI AUTO-REFRESH SCHEDULER (background, cache only) ===
+if os.getenv("PORTFOLIO_TESTING") == "1":
+    app_logger.info("Auto-refresh Mercati disabilitato in modalita test.")
+else:
+    try:
+        from core.infrastructure.market_auto_refresh import start_market_auto_refresh_scheduler
+        with _logged_app_phase("market_auto_refresh_scheduler_start"):
+            start_market_auto_refresh_scheduler(settings)
+    except Exception as exc:
+        app_logger.warning("Auto-refresh Mercati non avviato: %s", exc)
 
 
 # === DEBUG / PERFORMANCE UI FLAGS ===
@@ -597,8 +725,12 @@ def _scenario_cache_badge_display(scenario: str) -> str:
     """Mappa lo scenario di cache a una label compatta per il banner."""
     badge_map = {
         "cold_start": ("Cold start", "#0EA5E9"),
+        "first_session_run": ("Primo run", "#6366F1"),
         "post_data_change": ("Dati aggiornati", "#F97316"),
         "warm_rerun": ("Cache calda", "#10B981"),
+        "quote_refresh": ("Quote refresh", "#F97316"),
+        "quote_refresh_noop": ("Quote invariate", "#64748B"),
+        "settings_update": ("Setup aggiornato", "#F97316"),
     }
     label, color = badge_map.get(scenario, (str(scenario or "run"), "#6B7280"))
     return (
@@ -612,7 +744,7 @@ st.markdown('<div id="page-top"></div>', unsafe_allow_html=True)
 _debug_badge = " • DEBUG" if _RENDER_DEBUG_ENABLED else ""
 _scenario_badge = _scenario_cache_badge_display(_CURRENT_PROFILING_SCENARIO)
 _cache_strategy_label = str(resolve_figure_cache_strategy(settings, st.session_state) or "auto").replace("_", " ")
-_app_title = str(t(settings, "app.title", "Sestante") or "Sestante").upper()
+_header_logo_url = f"app/static/sestante_logo_header_final.png?v={APP_VERSION}-final-logo"
 _header_date_text = str(getattr(ctx, "header_date", "") or "")
 _header_update_marker = "(ultimo aggiornamento quotazioni:"
 if _header_update_marker in _header_date_text:
@@ -623,12 +755,8 @@ else:
     _header_today_text = _header_date_text.strip() or fmtd(date.today())
     _header_update_text = fmt_dt_it(getattr(ctx, "last_quotes_update", None))
 st.markdown(f"""<div class="header-panel header-executive">
-    <div class="header-brand">
-        <div class="header-brand-mark">S</div>
-        <div class="header-brand-copy">
-            <div class="header-title">{_app_title}</div>
-            <div class="header-tagline">Portfolio Control Center</div>
-        </div>
+    <div class="header-brand header-brand-logo-wrap">
+        <img class="header-brand-logo" src="{_header_logo_url}" alt="Sestante - Gestione Portafoglio Finanziario">
     </div>
     <div class="header-right">
         <div class="header-meta">
@@ -655,14 +783,15 @@ _header_progress_host = st.empty()
 
 
 # Nota tecnica:
-# - La dashboard mantiene il pre-render completo iniziale delle schede
-#   per evitare attese quando l'utente cambia pagina.
+# - Il pre-render grafici e' asincrono nei rerun caldi: la navigazione deve
+#   restare fluida anche quando cache o firma dati richiedono aggiornamento.
 
 _PAGE_DEFS = [
     PageDef("quotazioni",     f"📈 {t(settings, 'tab.quotes', 'Quotazioni')}",          render_quotazioni),
     PageDef("portafoglio",    f"📋 {t(settings, 'tab.portfolio', 'Portafoglio')}",      render_home),
     PageDef("operazioni",     f"📒 {t(settings, 'tab.operations', 'Operazioni')}",      render_operazioni),
     PageDef("cruscotti",      f"🧭 {t(settings, 'tab.dashboards', 'Cruscotti')}",       render_cruscotti),
+    PageDef("mercati",        f"🌐 {t(settings, 'tab.markets', 'Mercati')}",            render_mercati),
     PageDef("summary",        f"📄 {t(settings, 'tab.summary', 'Summary')}",            render_summary),
     PageDef("confronto",      f"🆚 {t(settings, 'tab.comparison', 'Confronto')}",       render_confronto),
     PageDef("pianificazione", f"🎯 {t(settings, 'tab.planning', 'Pianificazione')}",    render_pianificazione),
@@ -682,35 +811,49 @@ if st.session_state.pop("goto_tab_operazioni", False):
     st.session_state.active_tab = 2
     trigger_tab_navigation()
 
-render_dashboard_tabs(
-    page_defs=_PAGE_DEFS,
-    ctx=ctx,
-    debug_enabled=_RENDER_DEBUG_ENABLED,
-    debug_progress_enabled=_RENDER_ALWAYS_PROGRESS_ENABLED,
-    debug_log_enabled=_RENDER_DEBUG_LOG_ENABLED,
-    debug_render_scope=str(runtime_ui_settings.get("debug_render_scope", "current_page")),
-    render_overview=render_overview,
-    app_logger=app_logger,
-    app_version=APP_VERSION,
-    schema_version=SCHEMA_VERSION,
-    data_mtime=_data_mtime(),
-    cache_bust=get_portfolio_cache_bust(),
-    portfolio_signature=_portfolio_cache_signature(),
-    pre_render_signature=_CURRENT_PRE_RENDER_SIGNATURE,
-    profiling_cohort=_CURRENT_PROFILING_COHORT,
-    profiling_scenario=_CURRENT_PROFILING_SCENARIO,
-    profiling_signature_diff_lines=_profiling_signature_diff_lines(),
-    operational_render_scope=str(_CURRENT_RERUN_CONTEXT.get("render_scope") or "full_tabs"),
-    operational_reason=str(_CURRENT_RERUN_CONTEXT.get("reason") or ""),
-    operational_origin_page_id=str(_CURRENT_RERUN_CONTEXT.get("origin_page_id") or ""),
-    operational_origin_page_index=int(_CURRENT_RERUN_CONTEXT.get("origin_page_index") or 0),
-    dirty_flags=dict(_CURRENT_RERUN_CONTEXT.get("dirty_flags") or {}),
-    progress_host=_header_progress_host,
-    run_started_at=_APP_RUN_STARTED_AT,
+app_logger.info(
+    "[RUN_CONTEXT] scenario=%s cache_condition=%s cohort=%s debug_progress=%s debug_log=%s debug_scope=%s render_scope=%s reason=%s",
+    _CURRENT_PROFILING_SCENARIO,
+    _CURRENT_PROFILING_CACHE_CONDITION,
+    _CURRENT_PROFILING_COHORT,
+    _RENDER_DEBUG_PROGRESS_ENABLED,
+    _RENDER_DEBUG_LOG_ENABLED,
+    str(runtime_ui_settings.get("debug_render_scope", "current_page")),
+    str(_CURRENT_RERUN_CONTEXT.get("render_scope") or "full_tabs"),
+    str(_CURRENT_RERUN_CONTEXT.get("reason") or ""),
 )
+with _logged_app_phase("dashboard_render", scenario=_CURRENT_PROFILING_SCENARIO):
+    render_dashboard_tabs(
+        page_defs=_PAGE_DEFS,
+        ctx=ctx,
+        debug_enabled=_RENDER_DEBUG_ENABLED,
+        debug_progress_enabled=_RENDER_ALWAYS_PROGRESS_ENABLED,
+        debug_log_enabled=_RENDER_DEBUG_LOG_ENABLED,
+        debug_render_scope=str(runtime_ui_settings.get("debug_render_scope", "current_page")),
+        render_overview=render_overview,
+        app_logger=app_logger,
+        app_version=APP_VERSION,
+        schema_version=SCHEMA_VERSION,
+        data_mtime=_data_mtime(),
+        cache_bust=get_portfolio_cache_bust(),
+        portfolio_signature=_portfolio_cache_sig,
+        pre_render_signature=_CURRENT_PRE_RENDER_SIGNATURE,
+        profiling_cohort=_CURRENT_PROFILING_COHORT,
+        profiling_scenario=_CURRENT_PROFILING_SCENARIO,
+        profiling_cache_condition=_CURRENT_PROFILING_CACHE_CONDITION,
+        profiling_signature_diff_lines=_profiling_signature_diff_lines(),
+        operational_render_scope=str(_CURRENT_RERUN_CONTEXT.get("render_scope") or "full_tabs"),
+        operational_reason=str(_CURRENT_RERUN_CONTEXT.get("reason") or ""),
+        operational_origin_page_id=str(_CURRENT_RERUN_CONTEXT.get("origin_page_id") or ""),
+        operational_origin_page_index=int(_CURRENT_RERUN_CONTEXT.get("origin_page_index") or 0),
+        dirty_flags=dict(_CURRENT_RERUN_CONTEXT.get("dirty_flags") or {}),
+        progress_host=_header_progress_host,
+        run_started_at=_APP_RUN_STARTED_AT,
+    )
 
 try:
     from core.figure_cache import flush_figure_cache_manifest
-    flush_figure_cache_manifest()
+    with _logged_app_phase("figure_cache_manifest_flush"):
+        flush_figure_cache_manifest()
 except Exception:
     app_logger.exception("Errore durante il flush del manifest figure cache")

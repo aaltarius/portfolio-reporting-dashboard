@@ -13,8 +13,8 @@ def refresh_volatile_ctx_fields(
 ) -> None:
     """Aggiorna i campi del context che non sopravvivono alla cache disco.
 
-    Va chiamata dopo ogni caricamento di orchestrate_data_cached, sia su hit
-    che su miss, per garantire che:
+    Va chiamata dopo ogni caricamento dell'artefatto runtime.orchestration_payload,
+    sia su hit che su miss, per garantire che:
     - header_date mostri la data di OGGI (non quella della sessione precedente)
     - fmtd/fmtds siano le funzioni correnti (non serializzate su disco)
     """

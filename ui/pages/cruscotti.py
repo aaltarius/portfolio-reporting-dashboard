@@ -12,12 +12,13 @@ from streamlit.delta_generator import DeltaGenerator
 
 from core.asset_categories import get_selected_category_codes
 from core.cache_signatures import build_historical_data_signature, build_portfolio_data_signature, charts_settings_signature, theme_signature
+from core.cache_orchestrator import get_registered_figure_cache
 from core.domain.risk import build_drawdown_series
-from core.figure_cache import CachingStrategy, get_figure_cache
+from core.figure_cache import CachingStrategy
 from core.finance import calc_positions
-from core.settings_profiles import get_effective_show_explanations, resolve_figure_cache_strategy
+from core.settings_profiles import get_effective_show_explanations, get_runtime_ui_settings, resolve_figure_cache_strategy
 from core.series_utils import get_current_position_start_dates
-from core.render_profiler import profile_step
+from core.render_profiler import profile_step, record_render_event
 from ui.components import back_to_top, kpi_card, legend_block, vertical_gap, render_styled_table, render_section_title, should_render_section, macro_legend_html
 from ui.dashboard_bundles import get_analysis_category_dashboard_bundles, get_analitica_bundle, get_summary_dataset_bundle, get_advanced_analysis_dataset_bundle
 from ui.formatting import fmt_dt_it, fmt_date_only_it, fmt_eur_it, fmt_num_it, fmt_pct_it
@@ -222,14 +223,28 @@ def _style_pl_horizon_values(row: pd.Series, numeric_values: pd.DataFrame, parti
     return styles
 
 
-def _render_pl_horizon_table(table: pd.DataFrame, accent: str, category_df: pd.DataFrame | None = None) -> None:
+def _pl_horizon_signal_style(signal: str) -> str:
+    if signal == "▲":
+        return f"color:{P['green']};font-weight:850;font-size:1.54rem;line-height:1;text-align:center;vertical-align:middle;"
+    if signal == "▼":
+        return f"color:{P['red']};font-weight:850;font-size:1.54rem;line-height:1;text-align:center;vertical-align:middle;"
+    if signal == "◆":
+        return f"color:{P['orange']};font-weight:850;font-size:1.34rem;line-height:1;text-align:center;vertical-align:middle;"
+    if signal == "→":
+        return f"color:{P['muted']};font-weight:850;font-size:1.54rem;line-height:1;text-align:center;vertical-align:middle;"
+    return f"color:{P['muted']};font-weight:700;text-align:center;vertical-align:middle;"
+
+
+def _build_pl_horizon_table_html(table: pd.DataFrame, accent: str, category_df: pd.DataFrame | None = None) -> str:
     if table is None or table.empty:
-        return
+        return ""
+
     source = table.copy()
     value_cols = [c for c in source.columns if c != "Ticker" and not str(c).startswith("_")]
     display = source[["Ticker", *value_cols]].copy()
     if "Trend" not in display.columns and {"1D", "3D", "5D"}.issubset(set(display.columns)):
         display.insert(1, "Trend", display.apply(_pl_horizon_signal, axis=1))
+
     horizon_cols = [c for c in display.columns if c not in {"Ticker", "Trend"}]
     numeric_values = pd.DataFrame(index=display.index)
     partial_flags = pd.DataFrame(False, index=display.index, columns=horizon_cols)
@@ -242,31 +257,72 @@ def _render_pl_horizon_table(table: pd.DataFrame, accent: str, category_df: pd.D
             f"{_format_pl_horizon_cell(value)}{'*' if bool(is_partial) else ''}"
             for value, is_partial in zip(numeric_values[col], partial_flags[col])
         ]
-    ticker_colors = _build_ticker_color_map(category_df, accent)
 
-    styled = (
-        display.style
-        .hide(axis="index")
-        .apply(lambda row: _style_pl_horizon_values(row, numeric_values, partial_flags), axis=1)
-        .apply(lambda row: _style_pl_horizon_ticker(row, ticker_colors, accent), axis=1)
-        .apply(_style_pl_horizon_signal, axis=1)
-        .apply(_style_pl_horizon_total, axis=1)
-        .set_properties(subset=["Ticker"], **{"font-weight": "800"})
-        .set_table_styles(
-            [
-                {"selector": "table", "props": [("table-layout", "fixed"), ("width", "100%")]},
-                {"selector": "th", "props": [("text-align", "right"), ("font-size", "0.80rem"), ("padding-left", "0.30rem"), ("padding-right", "0.30rem")]},
-                {"selector": "th:first-child", "props": [("text-align", "left"), ("width", "13%")]},
-                {"selector": "th:nth-child(2)", "props": [("text-align", "center"), ("width", "5%")]},
-                {"selector": "th:nth-child(n+3)", "props": [("width", "9.1%")]},
-                {"selector": "td", "props": [("text-align", "right"), ("font-variant-numeric", "tabular-nums"), ("font-size", "0.84rem"), ("padding-left", "0.35rem"), ("padding-right", "0.35rem"), ("white-space", "nowrap"), ("overflow", "hidden"), ("text-overflow", "ellipsis")]},
-                {"selector": "td:first-child", "props": [("text-align", "left"), ("font-weight", "900 !important"), ("font-size", "0.90rem !important"), ("-webkit-text-stroke", "0.25px currentColor"), ("text-shadow", "0 0 0 currentColor")]},
-                {"selector": "td:nth-child(2)", "props": [("text-align", "center !important"), ("vertical-align", "middle"), ("padding-left", "0.10rem"), ("padding-right", "0.10rem")]},
-            ],
-            overwrite=False,
-        )
-    )
-    render_styled_table(styled, height="content", static=True)
+    ticker_colors = _build_ticker_color_map(category_df, accent)
+    columns = list(display.columns)
+    horizon_width = max(6.0, (82.0 if "Trend" in columns else 85.0) / max(len(horizon_cols), 1))
+    col_widths = []
+    for col in columns:
+        if col == "Ticker":
+            col_widths.append("13%")
+        elif col == "Trend":
+            col_widths.append("5%")
+        else:
+            col_widths.append(f"{horizon_width:.2f}%")
+
+    parts = [
+        "<style>",
+        ".cruscotti-pl-horizon-wrap{width:100%;overflow:hidden;}",
+        ".cruscotti-pl-horizon-table{width:100%;table-layout:fixed;border-collapse:collapse;}",
+        ".cruscotti-pl-horizon-table th{font-size:.80rem;text-align:right;padding:.32rem .30rem;font-weight:750;color:var(--text-color,#31333f);}",
+        ".cruscotti-pl-horizon-table th:first-child{text-align:left;}",
+        ".cruscotti-pl-horizon-table th:nth-child(2){text-align:center;}",
+        ".cruscotti-pl-horizon-table td{font-size:.84rem;text-align:right;padding:.30rem .35rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;border-top:1px solid rgba(148,163,184,.18);}",
+        ".cruscotti-pl-horizon-table td:first-child{text-align:left;font-weight:900;font-size:.90rem;-webkit-text-stroke:.25px currentColor;text-shadow:0 0 0 currentColor;}",
+        ".cruscotti-pl-horizon-table td:nth-child(2){text-align:center;padding-left:.10rem;padding-right:.10rem;}",
+        ".cruscotti-pl-horizon-table tr.total-row td{font-weight:800;background:rgba(59,130,246,.08);border-top:2px solid rgba(59,130,246,.22);}",
+        "</style>",
+        '<div class="cruscotti-pl-horizon-wrap"><table class="cruscotti-pl-horizon-table">',
+        "<colgroup>",
+    ]
+    parts.extend(f'<col style="width:{width};">' for width in col_widths)
+    parts.append("</colgroup><thead><tr>")
+    parts.extend(f"<th>{html.escape(str(col))}</th>" for col in columns)
+    parts.append("</tr></thead><tbody>")
+
+    for idx, row in display.iterrows():
+        ticker = str(row.get("Ticker") or "")
+        is_total = ticker == "TOTALE"
+        row_class = ' class="total-row"' if is_total else ""
+        parts.append(f"<tr{row_class}>")
+        for col in columns:
+            value = row.get(col, "")
+            cell_text = html.escape(str(value))
+            style = ""
+            if col == "Ticker":
+                style = f"color:{ticker_colors.get(ticker, accent)} !important;"
+            elif col == "Trend":
+                style = _pl_horizon_signal_style(str(value or ""))
+            elif col in horizon_cols:
+                raw_value = numeric_values.loc[idx, col] if idx in numeric_values.index else None
+                style = color_pl(raw_value)
+                try:
+                    is_partial = bool(partial_flags.loc[idx, col]) if col in partial_flags.columns and idx in partial_flags.index else False
+                except Exception:
+                    is_partial = False
+                if is_partial:
+                    style = f"color:{P['muted']} !important;font-weight:650;font-style:italic;background:rgba(148,163,184,0.10);"
+            parts.append(f'<td style="{style}">{cell_text}</td>')
+        parts.append("</tr>")
+    parts.append("</tbody></table></div>")
+    return "".join(parts)
+
+
+def _render_pl_horizon_table(table: pd.DataFrame, accent: str, category_df: pd.DataFrame | None = None) -> None:
+    if table is None or table.empty:
+        return
+    with profile_step("UI/Table", "html table", count=len(table), detail="pl_horizon"):
+        st.markdown(_build_pl_horizon_table_html(table, accent, category_df), unsafe_allow_html=True)
 
 
 def _render_radar_detail_box_local(
@@ -468,29 +524,34 @@ def _render_category_dashboard(bundle: Any, show_explanations: bool) -> None:
 
 
 def _render_analitica(bundle: Any) -> None:
-    render_section_title(
-        "Analisi Trasversale del Portafoglio",
-        comment="Sette blocchi di analisi tecnica complementare: andamento del valore, scomposizione P/L, rendimento percentuale, scostamenti da target, contributo al rischio, attribution e mappa strategica.",
-        icon="analysis",
-    )
+    with profile_step("Cruscotti/AnaliticaRender", "render intro"):
+        render_section_title(
+            "Analisi Trasversale del Portafoglio",
+            comment="Sette blocchi di analisi tecnica complementare: andamento del valore, scomposizione P/L, rendimento percentuale, scostamenti da target, contributo al rischio, attribution e mappa strategica.",
+            icon="analysis",
+        )
 
-    render_section_title("Valore Patrimoniale nel Tempo", icon="portfolio")
-    st.plotly_chart(bundle.portfolio_value_figure, width="stretch")
-    legend_block("Vista patrimoniale: confronta valore di mercato, costo contabile e capitale versato. Versamenti e prelievi incidono sulle curve monetarie.", variant="bottom")
+    with profile_step("Cruscotti/AnaliticaRender", "render portfolio value chart"):
+        render_section_title("Valore Patrimoniale nel Tempo", icon="portfolio")
+        st.plotly_chart(bundle.portfolio_value_figure, width="stretch")
+        legend_block("Vista patrimoniale: confronta valore di mercato, costo contabile e capitale versato. Versamenti e prelievi incidono sulle curve monetarie.", variant="bottom")
 
-    render_section_title("Scomposizione P/L per Strumento", icon="analysis")
-    st.plotly_chart(bundle.pl_decomposition_figure, width="stretch")
-    legend_block("Rappresentazione cumulata che mostra come ciascuno strumento contribuisce al risultato totale di portafoglio nel tempo.", variant="bottom")
+    with profile_step("Cruscotti/AnaliticaRender", "render PL decomposition chart"):
+        render_section_title("Scomposizione P/L per Strumento", icon="analysis")
+        st.plotly_chart(bundle.pl_decomposition_figure, width="stretch")
+        legend_block("Rappresentazione cumulata che mostra come ciascuno strumento contribuisce al risultato totale di portafoglio nel tempo.", variant="bottom")
 
-    render_section_title("Rendimento % sul Capitale nel Tempo", icon="analysis")
-    st.markdown("<div title=\"Indicatore percentuale storico del risultato del portafoglio costruito sulla base del capitale registrato nello storico.\" style=\"margin-top:-0.45rem; margin-bottom:0.35rem; font-size:0.82rem; opacity:0.78;\">ⓘ</div>", unsafe_allow_html=True)
-    st.plotly_chart(bundle.percentage_return_figure, width="stretch")
-    legend_block("Andamento del rendimento percentuale del portafoglio nel tempo. Misura il guadagno rispetto al capitale versato.", variant="bottom")
+    with profile_step("Cruscotti/AnaliticaRender", "render percentage return chart"):
+        render_section_title("Rendimento % sul Capitale nel Tempo", icon="analysis")
+        st.markdown("<div title=\"Indicatore percentuale storico del risultato del portafoglio costruito sulla base del capitale registrato nello storico.\" style=\"margin-top:-0.45rem; margin-bottom:0.35rem; font-size:0.82rem; opacity:0.78;\">ⓘ</div>", unsafe_allow_html=True)
+        st.plotly_chart(bundle.percentage_return_figure, width="stretch")
+        legend_block("Andamento del rendimento percentuale del portafoglio nel tempo. Misura il guadagno rispetto al capitale versato.", variant="bottom")
 
-    render_section_title("Waterfall Attribution della Performance", icon="analysis")
-    st.markdown("<div title=\"Mostra il contributo al P/L per strumento sul risultato corrente del portafoglio.\" style=\"margin-top:-0.45rem; margin-bottom:0.35rem; font-size:0.82rem; opacity:0.78;\">ⓘ</div>", unsafe_allow_html=True)
-    st.plotly_chart(bundle.performance_attribution_figure, width="stretch")
-    legend_block("Waterfall che mostra il contributo di ogni strumento al P/L totale, dal maggiore al minore.", variant="bottom")
+    with profile_step("Cruscotti/AnaliticaRender", "render performance attribution chart"):
+        render_section_title("Waterfall Attribution della Performance", icon="analysis")
+        st.markdown("<div title=\"Mostra il contributo al P/L per strumento sul risultato corrente del portafoglio.\" style=\"margin-top:-0.45rem; margin-bottom:0.35rem; font-size:0.82rem; opacity:0.78;\">ⓘ</div>", unsafe_allow_html=True)
+        st.plotly_chart(bundle.performance_attribution_figure, width="stretch")
+        legend_block("Waterfall che mostra il contributo di ogni strumento al P/L totale, dal maggiore al minore.", variant="bottom")
 
     # Metriche avanzate e Tracciabilità Reporting (spostate da Summary)
     summary_payload = bundle.summary_payload or {}
@@ -518,11 +579,12 @@ def _render_analitica(bundle: Any) -> None:
          "Deviazione std. dei rendimenti in eccesso", P["muted"], None),
     ]
     if _show_advanced_metrics and any(summary_payload.get(k) is not None for k in ["sortino", "calmar", "information_ratio", "tracking_error"]):
-        render_section_title("Metriche avanzate di rischio/rendimento", icon="risk")
-        adv_cols = st.columns(4, gap="medium")
-        for _col, _item in zip(adv_cols, _adv_metrics):
-            with _col:
-                kpi_card(_item[0], _item[1], _item[2], accent=_item[3], value_color=_item[4])
+        with profile_step("Cruscotti/AnaliticaRender", "render advanced metrics cards", count=len(_adv_metrics)):
+            render_section_title("Metriche avanzate di rischio/rendimento", icon="risk")
+            adv_cols = st.columns(4, gap="medium")
+            for _col, _item in zip(adv_cols, _adv_metrics):
+                with _col:
+                    kpi_card(_item[0], _item[1], _item[2], accent=_item[3], value_color=_item[4])
         _sortino_v = summary_payload.get("sortino")
         _calmar_v = summary_payload.get("calmar")
         _ir_v = summary_payload.get("information_ratio")
@@ -554,8 +616,9 @@ def _render_analitica(bundle: Any) -> None:
             else "n/d"
         )
         if _show_commentary:
-            commentary_text = f"<div style='white-space: normal; word-wrap: break-word;'><strong>Come leggere le metriche avanzate</strong><br>• <strong>Sortino ratio {fmt_num_it(_sortino_v,2) if _sortino_v is not None else 'n/d'}</strong> — simile allo Sharpe ma penalizza solo i rendimenti negativi (non tutta la volatilità). Giudizio: {_sortino_note}.<br>• <strong>Calmar ratio {fmt_num_it(_calmar_v,2) if _calmar_v is not None else 'n/d'}</strong> — rapporto tra CAGR e massimo drawdown. Giudizio: {_calmar_note}.<br>• <strong>Information ratio {fmt_num_it(_ir_v,2) if _ir_v is not None else 'n/d'}</strong> — extra-rendimento rispetto al benchmark diviso il tracking error. Giudizio: {_ir_note}.<br>• <strong>Tracking error {fmt_pct_it(_te_v,2) if _te_v is not None else 'n/d'}</strong> — deviazione standard dei rendimenti in eccesso rispetto al benchmark. Giudizio: {_te_note}.</div>"
-            legend_block(commentary_text, variant="bottom")
+            with profile_step("Cruscotti/AnaliticaRender", "render advanced metrics commentary"):
+                commentary_text = f"<div style='white-space: normal; word-wrap: break-word;'><strong>Come leggere le metriche avanzate</strong><br>• <strong>Sortino ratio {fmt_num_it(_sortino_v,2) if _sortino_v is not None else 'n/d'}</strong> — simile allo Sharpe ma penalizza solo i rendimenti negativi (non tutta la volatilità). Giudizio: {_sortino_note}.<br>• <strong>Calmar ratio {fmt_num_it(_calmar_v,2) if _calmar_v is not None else 'n/d'}</strong> — rapporto tra CAGR e massimo drawdown. Giudizio: {_calmar_note}.<br>• <strong>Information ratio {fmt_num_it(_ir_v,2) if _ir_v is not None else 'n/d'}</strong> — extra-rendimento rispetto al benchmark diviso il tracking error. Giudizio: {_ir_note}.<br>• <strong>Tracking error {fmt_pct_it(_te_v,2) if _te_v is not None else 'n/d'}</strong> — deviazione standard dei rendimenti in eccesso rispetto al benchmark. Giudizio: {_te_note}.</div>"
+                legend_block(commentary_text, variant="bottom")
 
     # Tabella Rendimento e rischio per strumento (da quotazioni.py)
     if bundle.analysis_bundle and not bundle.analysis_bundle.dfstats.empty:
@@ -694,10 +757,11 @@ def _render_analitica(bundle: Any) -> None:
                 }
             )
 
-        render_styled_table(
-            styled_stats,
-            column_config={"Strumento": st.column_config.TextColumn("Strumento", width="small")}
-        )
+        with profile_step("Cruscotti/AnaliticaRender", "render risk return table", count=len(display_df_for_style)):
+            render_styled_table(
+                styled_stats,
+                column_config={"Strumento": st.column_config.TextColumn("Strumento", width="small")}
+            )
 
         # Spiega le regole di validazione della presentazione
         validation_explanation = (
@@ -719,32 +783,36 @@ def _render_analitica(bundle: Any) -> None:
     _mr = summary_payload.get("monthly_returns", [])
     _show_mr = bool(_mr) and (_layout_full or _layout_analytic)
     if _qr or _show_mr:
-        render_section_title("Rendimenti mensili e trimestrali - mappe di calore", icon="metrics")
-        _returns_blocks = []
-        if _show_mr:
-            _returns_blocks.append(monthly_heatmap_html(_mr, theme_obj))
-        if _qr:
-            _returns_blocks.append(quarterly_table_html(_qr, theme_obj))
-        render_html_iframe("<div style='height:22px;'></div>".join(_returns_blocks), height="content")
-        legend_block("Intensità del colore proporzionale alla dimensione del rendimento (verde positivo, rosso negativo); la legenda min/max sotto ogni tabella indica gli estremi osservati.", variant="bottom")
+        with profile_step("Cruscotti/AnaliticaRender", "render returns heatmaps", count=len(_qr) + len(_mr)):
+            render_section_title("Rendimenti mensili e trimestrali - mappe di calore", icon="metrics")
+            _returns_blocks = []
+            if _show_mr:
+                _returns_blocks.append(monthly_heatmap_html(_mr, theme_obj))
+            if _qr:
+                _returns_blocks.append(quarterly_table_html(_qr, theme_obj))
+            render_html_iframe("<div style='height:22px;'></div>".join(_returns_blocks), height="content")
+            legend_block("Intensità del colore proporzionale alla dimensione del rendimento (verde positivo, rosso negativo); la legenda min/max sotto ogni tabella indica gli estremi osservati.", variant="bottom")
 
-    render_section_title("Scostamento da Allocazione Target", icon="portfolio")
-    st.plotly_chart(bundle.target_gap_figure, width="stretch")
+    with profile_step("Cruscotti/AnaliticaRender", "render target gap chart"):
+        render_section_title("Scostamento da Allocazione Target", icon="portfolio")
+        st.plotly_chart(bundle.target_gap_figure, width="stretch")
 
-    runtime_settings = st.session_state.get("_settings_runtime", {})
-    objective = runtime_settings.get("portfolio_objective", {"core": 0.55, "difensivo": 0.25, "satellite": 0.20})
-    target_comment = (
-        f"Confronto tra composizione attuale e obiettivo di portafoglio: "
-        f"Core {fmt_pct_it(objective.get('core', 0.0), 0)} / Difensivo {fmt_pct_it(objective.get('difensivo', 0.0), 0)} / "
-        f"Satellite {fmt_pct_it(objective.get('satellite', 0.0), 0)}."
-    )
-    legend_block(target_comment, variant="bottom")
+        runtime_settings = st.session_state.get("_settings_runtime", {})
+        objective = runtime_settings.get("portfolio_objective", {"core": 0.55, "difensivo": 0.25, "satellite": 0.20})
+        target_comment = (
+            f"Confronto tra composizione attuale e obiettivo di portafoglio: "
+            f"Core {fmt_pct_it(objective.get('core', 0.0), 0)} / Difensivo {fmt_pct_it(objective.get('difensivo', 0.0), 0)} / "
+            f"Satellite {fmt_pct_it(objective.get('satellite', 0.0), 0)}."
+        )
+        legend_block(target_comment, variant="bottom")
 
-    render_section_title("Contributo al Rischio", icon="risk")
-    # Renderizza direttamente il grafico del contributo al rischio (come in analisi.py)
-    _render_risk_contribution_analitica(bundle)
+    with profile_step("Cruscotti/AnaliticaRender", "render risk contribution chart"):
+        render_section_title("Contributo al Rischio", icon="risk")
+        # Renderizza direttamente il grafico del contributo al rischio (come in analisi.py)
+        _render_risk_contribution_analitica(bundle)
     vertical_gap("sm")
-    _render_analitica_radar_section(bundle)
+    with profile_step("Cruscotti/AnaliticaRender", "render radar section"):
+        _render_analitica_radar_section(bundle)
 
 
 def _render_analitica_market_structure(ctx: SimpleNamespace, settings: dict[str, Any], theme, cache_strategy: Any) -> None:
@@ -757,7 +825,7 @@ def _render_analitica_market_structure(ctx: SimpleNamespace, settings: dict[str,
         dh_flow = pd.DataFrame()
     visible_categories = list(get_selected_category_codes(settings))
     categories_text = ", ".join(visible_categories)
-    fcache = get_figure_cache()
+    fcache = get_registered_figure_cache()
     _app_version = str(getattr(ctx, "app_version", "n/d"))
     _schema_version = str(getattr(ctx, "schema_version", "n/d"))
     # Firma storica (end-of-day only, no prezzi live): stabile durante refresh intraday.
@@ -964,7 +1032,7 @@ def _render_reddito_scadenze(ctx: SimpleNamespace, settings: dict[str, Any], the
                     _pmc_map[_t] = float(_pmc)
                 except (ValueError, TypeError):
                     pass
-    fcache = get_figure_cache()
+    fcache = get_registered_figure_cache()
     fig = fcache.get_or_build(
         chart_id="cruscotti_btp_calendar",
         data_sig=data_sig,
@@ -980,7 +1048,7 @@ def _render_reddito_scadenze(ctx: SimpleNamespace, settings: dict[str, Any], the
 
 
 def _render_flussi_acquisti(ctx: SimpleNamespace, theme, *, data_sig: str, theme_sig: str, charts_settings_sig: str, cache_strategy: Any) -> None:
-    fcache = get_figure_cache()
+    fcache = get_registered_figure_cache()
     render_section_title(
         "Flussi e Acquisti",
         comment="Lettura dei flussi di accumulo e della frequenza di acquisto degli strumenti non governativi presenti in portafoglio.",
@@ -1074,6 +1142,7 @@ def render_cruscotti(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             theme,
         )
         show_explanations = get_effective_show_explanations(settings) if isinstance(settings, dict) else True
+        runtime_ui_settings = get_runtime_ui_settings(settings) if isinstance(settings, dict) else {}
         data_sig = build_portfolio_data_signature(
             ctx.data,
             app_version=str(getattr(ctx, "app_version", "n/d")),

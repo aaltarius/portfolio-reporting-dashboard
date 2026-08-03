@@ -32,19 +32,12 @@ def build_pl_delta_series(df_history: pd.DataFrame, theme: ThemeConfig) -> dict[
     n = len(df_history)
 
     if pl_cols:
-        deltas: list[float] = [float("nan")] * n
-        for i in range(1, n):
-            curr = df_history.iloc[i]
-            prev = df_history.iloc[i - 1]
-            # Only count instruments open (non-NaN) in BOTH rows.
-            # Instruments that closed between prev and curr have NaN in curr → skipped.
-            delta = sum(
-                float(curr[col]) - float(prev[col])
-                for col in pl_cols
-                if pd.notna(curr[col]) and pd.notna(prev[col])
-            )
-            deltas[i] = delta
-        delta_prev = pd.Series(deltas, index=df_history.index, dtype=float)
+        pl_values = df_history[pl_cols].apply(pd.to_numeric, errors="coerce")
+        valid_pair = pl_values.notna() & pl_values.shift(1).notna()
+        # Stessa regola del vecchio loop, ma vettoriale: uno strumento contribuisce
+        # solo se ha P/L valido sia nel giorno corrente sia nel precedente.
+        delta_prev = pl_values.diff().where(valid_pair).sum(axis=1, min_count=0)
+        delta_prev.iloc[0] = np.nan
     else:
         delta_prev = df_history["P/L"].diff()
 

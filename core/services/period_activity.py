@@ -6,6 +6,7 @@ selected time window without mixing cash movements with performance metrics.
 """
 from __future__ import annotations
 
+import math
 from datetime import date, datetime
 from typing import Any
 
@@ -223,7 +224,7 @@ def _instrument_info_map(data: dict[str, Any] | None) -> dict[str, str]:
 
 
 def _coerce_date(value: Any) -> date | None:
-    if value in (None, ""):
+    if value is None or (isinstance(value, str) and value == ""):
         return None
     if isinstance(value, datetime):
         return value.date()
@@ -251,9 +252,12 @@ def _display_date(value: Any) -> str:
 
 
 def _float(value: Any) -> float:
+    if isinstance(value, bool):
+        return 0.0
     try:
-        if value in (None, ""):
+        if value is None or (isinstance(value, str) and value == ""):
             return 0.0
-        return float(value)
+        number = float(value)
     except Exception:
         return 0.0
+    return number if math.isfinite(number) else 0.0

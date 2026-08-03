@@ -222,6 +222,36 @@ _BUBBLE_QUADRANT_LABELS = (
 )
 _BUBBLE_DIV_THRESHOLD = 0.58
 _BUBBLE_RISK_THRESHOLD = 0.42
+_BUBBLE_AXIS_PAD = 0.10
+
+
+def _bubble_axis_range(values: pd.Series, *, lower: float = 0.0, upper: float = 1.0, pad: float = _BUBBLE_AXIS_PAD) -> list[float]:
+    numeric = pd.to_numeric(values, errors="coerce").dropna()
+    if numeric.empty:
+        return [lower - pad, upper + pad]
+    min_v = min(lower, float(numeric.min()))
+    max_v = max(upper, float(numeric.max()))
+    span = max(max_v - min_v, upper - lower, 0.25)
+    extra = max(pad, span * 0.08)
+    return [min_v - extra, max_v + extra]
+
+
+def _bubble_text_positions(x_values: pd.Series, y_values: pd.Series, x_range: list[float], y_range: list[float]) -> list[str]:
+    x_span = max(x_range[1] - x_range[0], 1e-9)
+    y_span = max(y_range[1] - y_range[0], 1e-9)
+    positions: list[str] = []
+    for x_raw, y_raw in zip(x_values, y_values):
+        x = float(x_raw)
+        y = float(y_raw)
+        vertical = "bottom" if y > y_range[1] - y_span * 0.16 else "top"
+        if x < x_range[0] + x_span * 0.13:
+            horizontal = "right"
+        elif x > x_range[1] - x_span * 0.13:
+            horizontal = "left"
+        else:
+            horizontal = "center"
+        positions.append(f"{vertical} {horizontal}")
+    return positions
 
 
 def build_next_purchase_bubble_chart(bubble_df: pd.DataFrame, theme) -> go.Figure:
@@ -233,9 +263,23 @@ def build_next_purchase_bubble_chart(bubble_df: pd.DataFrame, theme) -> go.Figur
     if bubble_df is None or bubble_df.empty:
         return finalize_chart(fig, "pianificazione_next_purchase_bubble")
     df = bubble_df.copy()
+    df["diversification_benefit"] = pd.to_numeric(df["diversification_benefit"], errors="coerce")
+    df["risk_efficiency"] = pd.to_numeric(df["risk_efficiency"], errors="coerce")
+    df["importo"] = pd.to_numeric(df["importo"], errors="coerce").fillna(0.0)
+    df = df.dropna(subset=["diversification_benefit", "risk_efficiency"])
+    if df.empty:
+        return finalize_chart(fig, "pianificazione_next_purchase_bubble")
     df["rischio"] = 1.0 - df["risk_efficiency"]
     max_importo = max(float(df["importo"].max()), 1.0)
-    df["marker_size"] = 14.0 + (df["importo"].clip(lower=0.0) / max_importo) * 26.0
+    df["marker_size"] = 16.0 + (df["importo"].clip(lower=0.0) / max_importo) * 22.0
+    x_range = _bubble_axis_range(df["diversification_benefit"])
+    y_range = _bubble_axis_range(df["rischio"])
+    df["text_position"] = _bubble_text_positions(
+        df["diversification_benefit"],
+        df["rischio"],
+        x_range,
+        y_range,
+    )
     for bucket in ("Core", "Difensivo", "Satellite"):
         sub = df[df["bucket"] == bucket]
         if sub.empty:
@@ -245,20 +289,27 @@ def build_next_purchase_bubble_chart(bubble_df: pd.DataFrame, theme) -> go.Figur
             y=sub["rischio"],
             mode="markers+text",
             text=sub["ticker"],
-            textposition="top center",
+            textposition=sub["text_position"],
             name=bucket,
+            cliponaxis=False,
             marker=dict(
                 size=sub["marker_size"],
                 color=bucket_color(bucket, theme),
                 opacity=0.82,
                 line=dict(color="rgba(17,24,39,0.28)", width=1),
             ),
-            customdata=sub[["name", "importo"]].to_numpy(),
+            customdata=sub[[
+                "name", "importo", "target_improvement_pp", "post_nature_weight",
+                "nature_cap", "data_quality_label",
+            ]].to_numpy(),
             hovertemplate=(
                 "<b>%{text}</b> — %{customdata[0]}<br>"
                 "Diversificazione: %{x:.2f}<br>"
                 "Rischio stimato: %{y:.2f}<br>"
-                "Importo proposto: € %{customdata[1]:,.0f}<extra></extra>"
+                "Importo proposto: € %{customdata[1]:,.0f}<br>"
+                "Impatto target: %{customdata[2]:+.1f} pp<br>"
+                "Natura post-acquisto: %{customdata[3]:.1%} / cap %{customdata[4]:.1%}<br>"
+                "Qualita' dati: %{customdata[5]}<extra></extra>"
             ),
         ))
     quadrants = (
@@ -273,6 +324,14 @@ def build_next_purchase_bubble_chart(bubble_df: pd.DataFrame, theme) -> go.Figur
     fig.add_hline(y=_BUBBLE_RISK_THRESHOLD, line_dash="dash", line_color="rgba(100,116,139,0.55)", line_width=1)
     for x, y, text, color in _BUBBLE_QUADRANT_LABELS:
         fig.add_annotation(x=x, y=y, text=text, showarrow=False, font=dict(size=10, color=color))
-    fig.update_xaxes(title_text="Diversificazione apportata", range=[0.0, 1.0], tickformat=".2f")
-    fig.update_yaxes(title_text="Rischio stimato", range=[0.0, 1.0], tickformat=".2f")
-    return finalize_chart(fig, "pianificazione_next_purchase_bubble")
+    fig.update_xaxes(title_text="Diversificazione apportata", range=x_range, tickformat=".2f", constrain="domain")
+    fig.update_yaxes(title_text="Rischio stimato", range=y_range, tickformat=".2f", scaleanchor=None)
+    fig = finalize_chart(fig, "pianificazione_next_purchase_bubble")
+    fig.update_layout(
+        margin=dict(l=58, r=42, t=54, b=74),
+        legend=dict(orientation="h", yanchor="top", y=-0.16, xanchor="center", x=0.5),
+        uniformtext=dict(mode="show"),
+    )
+    fig.update_xaxes(range=x_range, constrain="domain")
+    fig.update_yaxes(range=y_range, scaleanchor=None)
+    return fig

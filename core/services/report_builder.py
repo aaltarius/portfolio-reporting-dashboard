@@ -10,17 +10,32 @@ import copy
 import html
 import json
 import logging
+import math
 from datetime import date, datetime
 from typing import Any
 
 import pandas as pd
 import plotly.io as pio
 import plotly.graph_objects as go
-import numpy as np
 
+from core.domain.returns import compute_return_curve_metrics
 from core.formatting import fmt_dt_it, fmt_eur_it, fmt_num_it, fmt_pct_it, fmt_qty_it
 
 logger = logging.getLogger("portafoglio.core.services.report_builder")
+
+
+def _finite_float(value: Any, default: float = 0.0) -> float:
+    if isinstance(value, bool) or value is None or (isinstance(value, str) and value == ""):
+        return float(default)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    return number if math.isfinite(number) else float(default)
+
+
+def _finite_numeric_series(series: Any, default: float = float("nan")) -> pd.Series:
+    return pd.to_numeric(series, errors="coerce").map(lambda value: _finite_float(value, default))
 
 
 def default_report_options(settings: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -251,7 +266,7 @@ def report_payload_json(payload: dict[str, Any], options: dict[str, Any]) -> byt
 
 
 def _coerce_date(value: Any) -> date | None:
-    if value in (None, ""):
+    if value is None or (isinstance(value, str) and value == ""):
         return None
     if isinstance(value, datetime):
         return value.date()
@@ -318,11 +333,11 @@ def _history_frame(records: list[dict[str, Any]]) -> pd.DataFrame:
     if frame.empty:
         return frame
     frame["date_dt"] = pd.to_datetime(frame.get("data"), dayfirst=True, errors="coerce")
-    frame["indice"] = pd.to_numeric(frame.get("indice"), errors="coerce")
+    frame["indice"] = _finite_numeric_series(frame.get("indice"))
     if "value" in frame.columns:
-        frame["value"] = pd.to_numeric(frame["value"], errors="coerce")
+        frame["value"] = _finite_numeric_series(frame["value"])
     if "external_flow" in frame.columns:
-        frame["external_flow"] = pd.to_numeric(frame["external_flow"], errors="coerce").fillna(0.0)
+        frame["external_flow"] = _finite_numeric_series(frame["external_flow"], default=0.0)
     return frame.dropna(subset=["date_dt", "indice"]).sort_values("date_dt").reset_index(drop=True)
 
 
@@ -334,58 +349,25 @@ def _recompute_period_metrics(payload: dict[str, Any]) -> None:
             payload[key] = None
         return
 
-    idx = pd.to_numeric(hist["indice"], errors="coerce").dropna()
-    rets = idx.pct_change().dropna()
-    twr = float(idx.iloc[-1] / idx.iloc[0] - 1.0) if len(idx) >= 2 and abs(float(idx.iloc[0])) > 1e-12 else None
-    elapsed_days = max(int((hist["date_dt"].iloc[-1] - hist["date_dt"].iloc[0]).days), 1)
-    cagr = float((1.0 + twr) ** (365.25 / elapsed_days) - 1.0) if twr is not None and twr > -1.0 else None
-    cagr_real = (
-        float((1.0 + cagr) / (1.0 + payload.get("inflation_rate")) - 1.0)
-        if cagr is not None and payload.get("inflation_rate")
-        else None
+    metrics = compute_return_curve_metrics(
+        hist,
+        benchmark_curve=bench,
+        inflation_rate=payload.get("inflation_rate"),
+        max_accepted_benchmark_return=None,
     )
-    vol = float(rets.std(ddof=1) * np.sqrt(252)) if len(rets) >= 3 else None
-    running_max = idx.cummax()
-    max_dd = float((idx / running_max - 1.0).min()) if len(idx) >= 2 else None
-
-    bench_return = None
-    excess = None
-    tracking_error = None
-    information_ratio = None
-    if not bench.empty and len(bench) >= 2:
-        bidx = pd.to_numeric(bench["indice"], errors="coerce").dropna()
-        if len(bidx) >= 2 and abs(float(bidx.iloc[0])) > 1e-12:
-            bench_return = float(bidx.iloc[-1] / bidx.iloc[0] - 1.0)
-            excess = float(twr - bench_return) if twr is not None else None
-        brets = bidx.pct_change().dropna()
-        min_len = min(len(rets), len(brets))
-        if min_len >= 4:
-            ex_rets = rets.iloc[-min_len:].values - brets.iloc[-min_len:].values
-            te = float(np.std(ex_rets, ddof=1) * np.sqrt(252))
-            tracking_error = te if te > 1e-9 else None
-            if tracking_error:
-                information_ratio = float(np.mean(ex_rets) * 252 / tracking_error)
-
-    sortino = None
-    if len(rets) >= 4:
-        neg = rets[rets < 0]
-        if len(neg) >= 2 and cagr is not None:
-            downside = float(np.sqrt((neg ** 2).mean()) * np.sqrt(252))
-            sortino = float(cagr / downside) if downside > 1e-9 else None
-    calmar = float(cagr / abs(max_dd)) if cagr is not None and max_dd is not None and abs(max_dd) > 1e-9 else None
 
     payload["xirr"] = _period_xirr_from_values_and_known_flows(hist)
-    payload["twr"] = twr
-    payload["cagr"] = cagr
-    payload["cagr_real"] = cagr_real
-    payload["volatility_ann"] = vol
-    payload["max_drawdown"] = max_dd
-    payload["benchmark_return"] = bench_return
-    payload["excess_vs_benchmark"] = excess
-    payload["sortino"] = sortino
-    payload["calmar"] = calmar
-    payload["information_ratio"] = information_ratio
-    payload["tracking_error"] = tracking_error
+    payload["twr"] = metrics["twr"]
+    payload["cagr"] = metrics["cagr"]
+    payload["cagr_real"] = metrics["cagr_real"]
+    payload["volatility_ann"] = metrics["volatility_ann"]
+    payload["max_drawdown"] = metrics["max_drawdown"]
+    payload["benchmark_return"] = metrics["benchmark_return"]
+    payload["excess_vs_benchmark"] = metrics["excess_vs_benchmark"]
+    payload["sortino"] = metrics["sortino"]
+    payload["calmar"] = metrics["calmar"]
+    payload["information_ratio"] = metrics["information_ratio"]
+    payload["tracking_error"] = metrics["tracking_error"]
 
 
 def _period_xirr_from_values_and_known_flows(hist: pd.DataFrame) -> float | None:
@@ -394,15 +376,17 @@ def _period_xirr_from_values_and_known_flows(hist: pd.DataFrame) -> float | None
     try:
         from core.domain.cashflows import compute_xirr
 
-        start_value = float(hist["value"].iloc[0])
-        end_value = float(hist["value"].iloc[-1])
+        start_value = _finite_float(hist["value"].iloc[0], float("nan"))
+        end_value = _finite_float(hist["value"].iloc[-1], float("nan"))
+        if not (math.isfinite(start_value) and math.isfinite(end_value)):
+            return None
         if start_value <= 0 or end_value <= 0:
             return None
         flows = [-start_value]
         dates = [hist["date_dt"].iloc[0].date()]
         if "external_flow" in hist.columns:
             for _, row in hist.iloc[1:-1].iterrows():
-                flow = float(row.get("external_flow") or 0.0)
+                flow = _finite_float(row.get("external_flow"), 0.0)
                 if abs(flow) > 1e-9:
                     flows.append(-flow)
                     dates.append(row["date_dt"].date())
@@ -439,10 +423,11 @@ def _rebase_history_records(records: list[dict[str, Any]], cols: list[str]) -> l
     for col in cols:
         if col not in frame.columns:
             continue
-        series = pd.to_numeric(frame[col], errors="coerce")
+        series = _finite_numeric_series(frame[col])
         first = series.dropna().iloc[0] if not series.dropna().empty else None
-        if first is not None and abs(float(first)) > 1e-12:
-            frame[col] = (series / float(first) * 100.0).round(4)
+        first_value = _finite_float(first, float("nan")) if first is not None else float("nan")
+        if math.isfinite(first_value) and abs(first_value) > 1e-12:
+            frame[col] = (series / first_value * 100.0).round(4)
     return frame.to_dict("records")
 
 
@@ -536,17 +521,50 @@ def _kpi(label: str, value: str, note: str = "") -> str:
     return f"<div class='kpi'><span>{html.escape(label)}</span><strong>{value}</strong><small>{html.escape(note)}</small></div>"
 
 
+def _xirr_scope_label(payload: dict[str, Any]) -> str:
+    scope = str(payload.get("xirr_scope") or "")
+    if scope == "portfolio_external":
+        return "XIRR portafoglio"
+    if scope == "invested_assets":
+        return "XIRR strumenti"
+    return "XIRR"
+
+
+def _xirr_scope_note(payload: dict[str, Any]) -> str:
+    scope = str(payload.get("xirr_scope") or "")
+    if scope == "portfolio_external":
+        return "Flussi esterni + patrimonio finale"
+    if scope == "invested_assets":
+        return "Fallback su strumenti investiti"
+    return "Rendimento money-weighted"
+
+
+def _xirr_comparison_note(payload: dict[str, Any]) -> str:
+    portfolio_xirr = payload.get("xirr_portfolio")
+    assets_xirr = payload.get("xirr_assets")
+    if portfolio_xirr is None or assets_xirr is None:
+        return ""
+    portfolio_xirr_f = _finite_float(portfolio_xirr, float("nan"))
+    assets_xirr_f = _finite_float(assets_xirr, float("nan"))
+    if not (math.isfinite(portfolio_xirr_f) and math.isfinite(assets_xirr_f)):
+        return ""
+    if abs(portfolio_xirr_f - assets_xirr_f) < 0.000001:
+        return ""
+    return f" XIRR strumenti: {fmt_pct_it(assets_xirr, 2, signed=True)}."
+
+
 def _kpi_section(payload: dict[str, Any], liquidity: float | None) -> str:
-    total_market = float(payload.get("total_market_value") or 0.0)
-    patrimonio = total_market + float(liquidity or 0.0) if liquidity is not None else total_market
-    extra = _kpi("Liquidita", fmt_eur_it(liquidity, 2), "Disponibile") if liquidity is not None else ""
+    total_market = _finite_float(payload.get("total_market_value"))
+    liquidity_f = _finite_float(liquidity) if liquidity is not None else None
+    patrimonio = total_market + liquidity_f if liquidity_f is not None else total_market
+    extra = _kpi("Liquidita", fmt_eur_it(liquidity_f, 2), "Disponibile") if liquidity_f is not None else ""
     return f"""
     <section>
       <h2>Indicatori principali</h2>
       <div class="grid">
-        {_kpi("Valore strumenti", fmt_eur_it(payload.get('total_market_value'), 2), "Controvalore corrente")}
-        {_kpi("Costo", fmt_eur_it(payload.get('total_cost'), 2), "Costo storico")}
-        {_kpi("P/L", fmt_eur_it(payload.get('total_pl'), 2, signed=True), fmt_pct_it(payload.get('total_pl_pct'), 2, signed=True))}
+        {_kpi("Valore strumenti", fmt_eur_it(total_market, 2), "Controvalore corrente")}
+        {_kpi("Costo", fmt_eur_it(_finite_float(payload.get('total_cost')), 2), "Costo storico")}
+        {_kpi("P/L", fmt_eur_it(_finite_float(payload.get('total_pl')), 2, signed=True), fmt_pct_it(_finite_float(payload.get('total_pl_pct')), 2, signed=True))}
         {_kpi("Patrimonio", fmt_eur_it(patrimonio, 2), "Strumenti + liquidita" if liquidity is not None else "Strumenti")}
         {extra}
         {_kpi("Strumenti", fmt_num_it(payload.get('holdings_count'), 0), "Posizioni attive")}
@@ -599,7 +617,7 @@ def _performance_section(
     <section>
       <h2>Performance</h2>
       <div class="grid">
-        {_kpi("XIRR", fmt_pct_it(payload.get('xirr'), 2, signed=True), "Rendimento money-weighted")}
+        {_kpi(_xirr_scope_label(payload), fmt_pct_it(payload.get('xirr'), 2, signed=True), _xirr_scope_note(payload))}
         {_kpi("TWR proxy", fmt_pct_it(payload.get('twr'), 2, signed=True), "Storico flow-adjusted")}
         {_kpi("Volatilita", fmt_pct_it(payload.get('volatility_ann'), 2), "Annua stimata")}
         {_kpi("Max drawdown", fmt_pct_it(payload.get('max_drawdown'), 2, signed=True), "Flessione massima")}
@@ -611,7 +629,7 @@ def _performance_section(
         {_kpi("Calmar", fmt_num_it(payload.get('calmar'), 2), "CAGR / drawdown")}
         {_kpi("Tracking error", fmt_pct_it(payload.get('tracking_error'), 2), "Scarto dal benchmark")}
         {_kpi("Information ratio", fmt_num_it(payload.get('information_ratio'), 2), "Extra-rendimento / tracking error")}
-        {_kpi("Proventi netti", fmt_eur_it(payload.get('net_proventi'), 2), "Cedole e dividendi disponibili")}
+        {_kpi("Proventi netti", fmt_eur_it(_finite_float(payload.get('net_proventi')), 2), "Cedole e dividendi disponibili")}
       </div>
       {_performance_explanations_block(explanations)}
       {charts}
@@ -646,7 +664,7 @@ def _composition_section(
 
 def _category_table(rows: list[dict[str, Any]]) -> str:
     body = "".join(
-        f"<tr><td>{html.escape(str(r.get('categoria', '')))}</td><td class='num'>{fmt_pct_it(r.get('peso'), 2)}</td><td class='num'>{fmt_eur_it(r.get('controvalore'), 2)}</td></tr>"
+        f"<tr><td>{html.escape(str(r.get('categoria', '')))}</td><td class='num'>{fmt_pct_it(_finite_float(r.get('peso')), 2)}</td><td class='num'>{fmt_eur_it(_finite_float(r.get('controvalore')), 2)}</td></tr>"
         for r in rows or []
     )
     if not body:
@@ -661,13 +679,13 @@ def _holdings_section(payload: dict[str, Any]) -> str:
         f"<td>{html.escape(str(h.get('ticker', '')))}</td>"
         f"<td>{html.escape(str(h.get('strumento', '')))}</td>"
         f"<td>{html.escape(str(h.get('categoria', '')))}</td>"
-        f"<td class='num'>{fmt_qty_it(h.get('quote'), 4)}</td>"
-        f"<td class='num'>{fmt_eur_it(h.get('prezzo'), 4)}</td>"
-        f"<td class='num'>{fmt_eur_it(h.get('costo'), 2)}</td>"
-        f"<td class='num'>{fmt_pct_it(h.get('peso'), 2)}</td>"
-        f"<td class='num'>{fmt_eur_it(h.get('controvalore'), 2)}</td>"
-        f"<td class='num'>{fmt_eur_it(h.get('pl_eur'), 2, signed=True)}</td>"
-        f"<td class='num'>{fmt_pct_it(h.get('pl_pct'), 2, signed=True)}</td>"
+        f"<td class='num'>{fmt_qty_it(_finite_float(h.get('quote')), 4)}</td>"
+        f"<td class='num'>{fmt_eur_it(_finite_float(h.get('prezzo')), 4)}</td>"
+        f"<td class='num'>{fmt_eur_it(_finite_float(h.get('costo')), 2)}</td>"
+        f"<td class='num'>{fmt_pct_it(_finite_float(h.get('peso')), 2)}</td>"
+        f"<td class='num'>{fmt_eur_it(_finite_float(h.get('controvalore')), 2)}</td>"
+        f"<td class='num'>{fmt_eur_it(_finite_float(h.get('pl_eur')), 2, signed=True)}</td>"
+        f"<td class='num'>{fmt_pct_it(_finite_float(h.get('pl_pct')), 2, signed=True)}</td>"
         "</tr>"
         for h in rows
     )
@@ -778,7 +796,7 @@ def _income_section(income_items: list[dict[str, Any]], payload: dict[str, Any])
                 "Data": item.get("data") or item.get("Data") or "",
                 "Ticker": item.get("ticker") or item.get("Ticker") or "",
                 "Tipo": item.get("tipo_evento") or item.get("tipo") or "Provento",
-                "Netto": fmt_eur_it(item.get("importo_netto"), 2),
+                "Netto": fmt_eur_it(_finite_float(item.get("importo_netto")), 2),
             }
         )
     table = pd.DataFrame(rows).to_html(index=False, border=0, classes="report-table", escape=False) if rows else "<p class='note'>Nessun provento disponibile.</p>"
@@ -786,8 +804,8 @@ def _income_section(income_items: list[dict[str, Any]], payload: dict[str, Any])
     <section>
       <h2>Cedole, dividendi e proventi</h2>
       <div class="grid">
-        {_kpi("Proventi netti", fmt_eur_it(payload.get('net_proventi'), 2), "Totale disponibile")}
-        {_kpi("Proventi lordi", fmt_eur_it(payload.get('gross_proventi'), 2), "Totale disponibile")}
+        {_kpi("Proventi netti", fmt_eur_it(_finite_float(payload.get('net_proventi')), 2), "Totale disponibile")}
+        {_kpi("Proventi lordi", fmt_eur_it(_finite_float(payload.get('gross_proventi')), 2), "Totale disponibile")}
       </div>
       {table}
     </section>
@@ -798,8 +816,8 @@ def _highlights_section(payload: dict[str, Any]) -> str:
     holdings = list(payload.get("full_holdings", []) or [])
     if not holdings:
         return "<section><h2>Punti notevoli</h2><p class='note'>Nessun dato holdings disponibile.</p></section>"
-    by_value = sorted(holdings, key=lambda item: float(item.get("controvalore", 0) or 0), reverse=True)
-    by_pl = sorted(holdings, key=lambda item: float(item.get("pl_eur", 0) or 0), reverse=True)
+    by_value = sorted(holdings, key=lambda item: _finite_float(item.get("controvalore")), reverse=True)
+    by_pl = sorted(holdings, key=lambda item: _finite_float(item.get("pl_eur")), reverse=True)
     top = by_value[:5]
     best = by_pl[:5]
     worst = list(reversed(by_pl[-5:]))
@@ -819,7 +837,8 @@ def _methodology_section(payload: dict[str, Any], include_benchmark: bool) -> st
     methodology = payload.get("methodology", {}) if isinstance(payload.get("methodology", {}), dict) else {}
     rows = [
         ("Valorizzazione", methodology.get("valuation_rule", "")),
-        ("XIRR", methodology.get("money_weighted_return", "")),
+        ("XIRR portafoglio", methodology.get("money_weighted_return", "")),
+        ("XIRR strumenti", methodology.get("money_weighted_return_assets", "")),
         ("TWR proxy", methodology.get("time_weighted_proxy", "")),
     ]
     if include_benchmark:
@@ -836,7 +855,7 @@ def _category_detail_table(payload: dict[str, Any]) -> str:
     rows = list(payload.get("category_breakdown", []) or [])
     if not rows:
         return "<p class='note'>Dettaglio categorie non disponibile.</p>"
-    total_pl = float(payload.get("total_pl") or 0.0)
+    total_pl = _finite_float(payload.get("total_pl"))
     holdings = list(payload.get("full_holdings", []) or [])
     grouped = {}
     for item in holdings:
@@ -845,10 +864,10 @@ def _category_detail_table(payload: dict[str, Any]) -> str:
     body = "".join(
         "<tr>"
         f"<td>{html.escape(str(r.get('categoria', '')))}</td>"
-        f"<td class='num'>{fmt_eur_it(r.get('controvalore'), 2)}</td>"
-        f"<td class='num'>{fmt_pct_it(r.get('peso'), 2)}</td>"
+        f"<td class='num'>{fmt_eur_it(_finite_float(r.get('controvalore')), 2)}</td>"
+        f"<td class='num'>{fmt_pct_it(_finite_float(r.get('peso')), 2)}</td>"
         f"<td class='num'>{fmt_num_it(len(grouped.get(str(r.get('categoria', '')), [])), 0)}</td>"
-        f"<td>{html.escape(str(max(grouped.get(str(r.get('categoria', '')), []), key=lambda item: float(item.get('controvalore', 0) or 0)).get('ticker', 'n/d') if grouped.get(str(r.get('categoria', '')), []) else 'n/d'))}</td>"
+        f"<td>{html.escape(str(max(grouped.get(str(r.get('categoria', '')), []), key=lambda item: _finite_float(item.get('controvalore'))).get('ticker', 'n/d') if grouped.get(str(r.get('categoria', '')), []) else 'n/d'))}</td>"
         "</tr>"
         for r in rows
     )
@@ -880,7 +899,7 @@ def _mini_holdings_table(title: str, items: list[dict[str, Any]], value_key: str
     body = "".join(
         "<tr>"
         f"<td>{html.escape(str(item.get('ticker', '')))}</td>"
-        f"<td class='num'>{fmt_eur_it(item.get(value_key), 2, signed=(value_key == 'pl_eur'))}</td>"
+        f"<td class='num'>{fmt_eur_it(_finite_float(item.get(value_key)), 2, signed=(value_key == 'pl_eur'))}</td>"
         "</tr>"
         for item in items
     )
@@ -888,8 +907,10 @@ def _mini_holdings_table(title: str, items: list[dict[str, Any]], value_key: str
 
 
 def _performance_explanations(payload: dict[str, Any], include_benchmark: bool, include_risk_overview: bool) -> str:
+    xirr_label = _xirr_scope_label(payload)
+    xirr_note = _xirr_scope_note(payload)
     bits = [
-        ("XIRR", f"{fmt_pct_it(payload.get('xirr'), 2, signed=True)}. Rendimento effettivo che considera quando hai investito o incassato."),
+        (xirr_label, f"{fmt_pct_it(payload.get('xirr'), 2, signed=True)}. {xirr_note}.{_xirr_comparison_note(payload)}"),
         ("TWR proxy", f"{fmt_pct_it(payload.get('twr'), 2, signed=True)}. Misura la performance del portafoglio separandola dai tuoi versamenti."),
         ("Volatilita", f"{fmt_pct_it(payload.get('volatility_ann'), 2)}. Più e alta, piu il valore del portafoglio tende a oscillare."),
         ("Max drawdown", f"{fmt_pct_it(payload.get('max_drawdown'), 2, signed=True)}. Indica il peggior calo temporaneo dal massimo del periodo."),

@@ -15,8 +15,11 @@ Nomi e tipi ricavati direttamente dai sorgenti Java di PP:
 from __future__ import annotations
 
 import io
+import math
 import zipfile
 from typing import Any
+
+from persistence.storage import _safe_float
 
 # ─── Mapping tipo_evento → stringa esatta di PP (locale italiano) ────────────
 # Stringhe ricavate dall'errore di parsing di PP:
@@ -73,11 +76,23 @@ def _build_instrument_lookup(strumenti: list[dict]) -> dict[str, dict]:
 
 def _fmt_amount(value: float | None, decimals: int = 2) -> str:
     """Formatta un importo con virgola decimale (formato europeo atteso da PP)."""
-    if value is None or value != value:  # NaN check
+    if value is None:
         return ""
-    formatted = f"{value:.{decimals}f}"
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return ""
+    if not math.isfinite(number):
+        return ""
+    formatted = f"{number:.{decimals}f}"
     # Sostituisce il punto decimale con la virgola (locale europeo/italiano)
     return formatted.replace(".", ",")
+
+
+def _export_float(value: Any) -> float:
+    if isinstance(value, bool):
+        return 0.0
+    return _safe_float(value, 0.0)
 
 
 def build_portfolio_performance_csv(data: dict[str, Any]) -> str:
@@ -113,22 +128,23 @@ def build_portfolio_performance_csv(data: dict[str, Any]) -> str:
         isin = str(strumento.get("isin", "") or "").strip()
         nome = str(strumento.get("nome", ticker) or ticker).strip()
 
-        importo_lordo = float(ev.get("importo_lordo") or 0.0)
-        commissioni   = float(ev.get("commissioni")   or 0.0)
-        imposte       = float(ev.get("imposte")       or 0.0)
-        quantita      = float(ev.get("quantita")      or 0.0)
-        importo_netto = float(ev.get("importo_netto") or 0.0)
+        importo_lordo = _export_float(ev.get("importo_lordo"))
+        commissioni   = _export_float(ev.get("commissioni"))
+        imposte       = _export_float(ev.get("imposte"))
+        quantita      = _export_float(ev.get("quantita"))
+        importo_netto = _export_float(ev.get("importo_netto"))
 
         is_security = pp_type in _SECURITY_TYPES
-
-        # PP vuole sempre il valore come numero positivo; il segno è implicito nel Type
-        value = abs(importo_netto)
 
         # Gross Amount = importo lordo prima di fee/tasse; se zero usa quantita*prezzo
         gross = abs(importo_lordo)
         if gross == 0 and is_security:
-            prezzo = float(ev.get("prezzo_unitario") or 0.0)
+            prezzo = _export_float(ev.get("prezzo_unitario"))
             gross = abs(quantita * prezzo)
+
+        # PP vuole sempre il valore come numero positivo; il segno è implicito nel Type.
+        value_source = importo_netto if abs(importo_netto) > 1e-12 else importo_lordo
+        value = abs(value_source) if abs(value_source) > 1e-12 else gross
 
         row = [
             str(ev.get("data", "") or ""),                                  # Date
@@ -195,9 +211,8 @@ def build_portfolio_performance_prices_zip(data: dict[str, Any], tickers: list[s
         for ticker, price in day.items():
             if ticker not in target:
                 continue
-            try:
-                p = float(price)
-            except (TypeError, ValueError):
+            p = _safe_float(price, default=float("nan"))
+            if not math.isfinite(p) or p <= 0:
                 continue
             per_ticker.setdefault(ticker, []).append((date_str, p))
 

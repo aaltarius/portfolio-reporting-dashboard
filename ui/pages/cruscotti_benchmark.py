@@ -13,8 +13,9 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from core.cache import record_cache_decision
 from core.cache_signatures import build_portfolio_data_signature, charts_settings_signature, resolve_analysis_render_sig, theme_signature
-from core.frozen_analysis_cache import cached_render_value, get_frozen_analysis_cache, small_signature_part, store_frozen_analysis_cache
+from core.frozen_analysis_cache import cached_render_figure, get_frozen_analysis_cache, small_signature_part, store_frozen_analysis_cache
 from core.render_profiler import profile_step
 from core.services.benchmark import build_benchmark_transparency_payload, benchmark_explanation
 from ui.charts.benchmark import build_instrument_benchmark_scatter, build_portfolio_benchmark_comparison_chart, build_normalized_performance_chart, get_all_historical_tickers, resolve_period_start_date
@@ -515,9 +516,25 @@ def render_benchmark(ctx: SimpleNamespace, summary_bundle: Any | None = None) ->
                     settings=settings,
                     da_frame=getattr(ctx, "da", pd.DataFrame()),
                     summary_payload=summary_payload,
-                )
+            )
             entry = store_frozen_analysis_cache(BENCHMARK_PAYLOAD_CACHE_KEY, "benchmark", signature, payload)
             stale = False
+            record_cache_decision(
+                "analisi benchmark cruscotti",
+                details={
+                    "event_type": "benchmark_frozen_analysis_generate",
+                    "artifact_id": "cruscotti.benchmark_frozen_analysis",
+                    "signature": signature,
+                    "material_change": False,
+                    "changed_count": 0,
+                },
+                invalidated=False,
+                token=0,
+                force_reload=False,
+                scenario="benchmark_frozen_analysis_isolated",
+                render_scope="full_tabs",
+                dirty_flags={},
+            )
             status.update(label="Analisi benchmark aggiornata", state="complete", expanded=False)
         render_frozen_analysis_status_text(status_slot, entry, stale, entity_label="benchmark")
     elif entry is None:
@@ -538,7 +555,7 @@ def render_benchmark(ctx: SimpleNamespace, summary_bundle: Any | None = None) ->
     render_sig = resolve_analysis_render_sig(signature, entry)
     _theme_sig = theme_signature(get_theme_context())
     _settings_sig = charts_settings_signature("ui/charts/settings.py")
-    render_sig = f"{render_sig}:{_theme_sig}:{_settings_sig}"
+    render_sig = f"{render_sig}|theme:{_theme_sig}|charts:{_settings_sig}"
 
     with profile_step("Cruscotti/Benchmark", "render header KPI e spiegazione"):
         cfg = payload.get("config", {})
@@ -563,14 +580,16 @@ def render_benchmark(ctx: SimpleNamespace, summary_bundle: Any | None = None) ->
         left, right = st.columns([1.65, 1.0], gap="large")
     with left:
         history_count = _safe_count(payload.get("history"))
-        comparison_fig = cached_render_value(
-            BENCHMARK_RENDER_CACHE_KEY,
-            f"{render_sig}:confronto_benchmark",
-            lambda: build_portfolio_benchmark_comparison_chart(payload.get("history")),
+        comparison_fig = cached_render_figure(
+            chart_id="cruscotti_benchmark_comparison",
+            data_sig=render_sig,
+            theme_sig=_theme_sig,
+            charts_settings_sig=_settings_sig,
+            builder=lambda: build_portfolio_benchmark_comparison_chart(payload.get("history")),
             page_label="Cruscotti/Benchmark",
             label="confronto benchmark",
-            max_items=16,
             count=history_count,
+            extra_params={"scope": "confronto", "points": history_count},
         )
         with profile_step("Cruscotti/Benchmark", "render confronto benchmark", count=history_count):
             st.plotly_chart(comparison_fig, width="stretch")
@@ -596,14 +615,16 @@ def render_benchmark(ctx: SimpleNamespace, summary_bundle: Any | None = None) ->
             icon="analysis",
         )
         matrix_count = len(matrix) if isinstance(matrix, pd.DataFrame) else None
-        scatter_fig = cached_render_value(
-            BENCHMARK_RENDER_CACHE_KEY,
-            f"{render_sig}:scatter_coerenza",
-            lambda: build_instrument_benchmark_scatter(matrix),
+        scatter_fig = cached_render_figure(
+            chart_id="cruscotti_benchmark_scatter",
+            data_sig=render_sig,
+            theme_sig=_theme_sig,
+            charts_settings_sig=_settings_sig,
+            builder=lambda: build_instrument_benchmark_scatter(matrix),
             page_label="Cruscotti/Benchmark",
             label="scatter coerenza",
-            max_items=16,
             count=matrix_count,
+            extra_params={"scope": "scatter", "rows": matrix_count},
         )
         with profile_step("Cruscotti/Benchmark", "render scatter coerenza", count=matrix_count):
             st.plotly_chart(scatter_fig, width="stretch")

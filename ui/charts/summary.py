@@ -224,9 +224,10 @@ def build_summary_figures(summary_payload, settings=None, include_advanced=True,
 
     fcache = None
     if data_sig and theme_sig and charts_settings_sig:
-        from core.figure_cache import CachingStrategy, get_figure_cache
+        from core.cache_orchestrator import get_registered_figure_cache
+        from core.figure_cache import CachingStrategy
 
-        fcache = get_figure_cache()
+        fcache = get_registered_figure_cache()
         if cache_strategy is None:
             cache_name = get_effective_figure_cache_strategy(settings)
             cache_strategy = {
@@ -434,5 +435,4 @@ def _strip_report_time_controls(fig):
         )
     except Exception:
         pass
-
 

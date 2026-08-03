@@ -3,7 +3,10 @@ ui/sidebar.py — Sidebar Streamlit: gestione strumenti, operazioni, aggiornamen
 Richiede streamlit. Modifica data in-place e chiama st.rerun() quando necessario.
 """
 import logging
+import html
+import math
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 
 import streamlit as st
@@ -22,11 +25,146 @@ from persistence.storage import (
     save_data, save_quotes_log,
 )
 from core.market_data import deduce_type, find_name, find_ticker, get_price, get_price_details, get_isin_ticker_cache
-from core.finance import refresh_benchmark_cache
 from core.instrument_classification import is_nav_fund as _is_nav_fund
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_qty_it, fmtds
 
 logger = logging.getLogger("portafoglio.ui.sidebar")
+_QUOTE_REFRESH_MAX_WORKERS = 6
+
+
+def _render_form_server_notice(kind: str, title: str, detail: str = "", slot=None) -> None:
+    """Badge compatto per lo stato dei servizi operativi in sidebar."""
+    safe_kind = str(kind or "neutral").strip().lower()
+    safe_title = html.escape(str(title or "Servizi operativi"))
+    safe_detail = html.escape(str(detail or ""))
+    detail_html = f'<div class="sidebar-service-status__detail">{safe_detail}</div>' if safe_detail else ""
+    target = slot or st
+    target.markdown(
+        f"""
+        <style>
+        [data-testid="stSidebar"] .sidebar-service-status {{
+          --svc-tone: var(--ptf-muted);
+          position:relative;
+          display:block;
+          padding:8px 12px;
+          margin:4px 0 8px 0;
+          border-radius:10px;
+          border:1px solid color-mix(in srgb, var(--svc-tone) 22%, var(--ptf-border));
+          background:linear-gradient(135deg,
+            color-mix(in srgb, var(--svc-tone) 8%, var(--ptf-surface)),
+            color-mix(in srgb, var(--ptf-surface-2) 82%, var(--ptf-surface))
+          );
+          color:var(--ptf-text);
+          box-shadow:0 4px 10px rgba(15, 23, 42, 0.05);
+        }}
+        [data-testid="stSidebar"] .sidebar-service-status.is-success {{ --svc-tone: var(--ptf-success); }}
+        [data-testid="stSidebar"] .sidebar-service-status.is-warning {{ --svc-tone: var(--ptf-warning); }}
+        [data-testid="stSidebar"] .sidebar-service-status.is-danger {{ --svc-tone: var(--ptf-danger); }}
+        [data-testid="stSidebar"] .sidebar-service-status.is-info {{ --svc-tone: var(--ptf-primary); }}
+        [data-testid="stSidebar"] .sidebar-service-status__dot {{
+          width:7px;
+          height:7px;
+          border-radius:999px;
+          position:absolute;
+          left:10px;
+          top:50%;
+          transform:translateY(-50%);
+          background:var(--svc-tone);
+          box-shadow:0 0 0 3px color-mix(in srgb, var(--svc-tone) 15%, transparent);
+        }}
+        [data-testid="stSidebar"] .sidebar-service-status__body {{
+          display:block;
+          width:100%;
+          min-width:0;
+          line-height:1.25;
+          text-align:center;
+        }}
+        [data-testid="stSidebar"] .sidebar-service-status__title {{
+          font-size:0.76rem;
+          font-weight:800;
+          color:var(--ptf-text);
+          text-align:center;
+        }}
+        [data-testid="stSidebar"] .sidebar-service-status__detail {{
+          margin-top:2px;
+          font-size:0.70rem;
+          color:var(--ptf-muted);
+          text-align:center;
+        }}
+        </style>
+        <div class="sidebar-service-status is-{safe_kind}">
+          <span class="sidebar-service-status__dot"></span>
+          <span class="sidebar-service-status__body">
+            <div class="sidebar-service-status__title">{safe_title}</div>
+            {detail_html}
+          </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _probe_form_server_page(url: str) -> tuple[bool, str]:
+    """Verifica la pagina locale solo dopo un click operativo dalla sidebar."""
+    try:
+        from urllib.error import HTTPError, URLError
+        from urllib.request import Request, urlopen
+
+        request = Request(url, method="GET", headers={"User-Agent": "Sestante-sidebar-check"})
+        with urlopen(request, timeout=1.2) as response:
+            status_code = int(getattr(response, "status", 200) or 200)
+        if 200 <= status_code < 500:
+            return True, ""
+        return False, f"HTTP {status_code}"
+    except HTTPError as exc:
+        if 200 <= int(exc.code) < 500:
+            return True, ""
+        return False, f"HTTP {exc.code}"
+    except URLError as exc:
+        return False, str(getattr(exc, "reason", exc) or exc)
+    except TimeoutError:
+        return False, "timeout di connessione"
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _open_form_server_page(path: str, label: str) -> bool:
+    """Apre una pagina operativa standalone dopo aver verificato il form-server."""
+    import webbrowser
+
+    from ui.form_server import FORM_PORT, get_form_server_status, start_form_server
+
+    start_form_server()
+    status = get_form_server_status()
+    port = int(status.get("port") or FORM_PORT)
+    clean_path = str(path or "").strip().lstrip("/")
+    url = f"http://localhost:{port}/{clean_path}"
+    restart_hint = "Riavvia l'applicativo se il problema resta."
+
+    if not status.get("thread_alive"):
+        detail = status.get("last_error") or "servizio non avviato"
+        logger.error("Form server non disponibile per %s: %s", label, detail)
+        _render_form_server_notice(
+            "danger",
+            f"{label} non disponibile",
+            f"Porta {port} · {detail}. {restart_hint}",
+        )
+        return False
+
+    reachable, probe_detail = _probe_form_server_page(url)
+    if not reachable:
+        detail = probe_detail or "pagina locale non raggiungibile"
+        logger.error("Form server non raggiungibile per %s su %s: %s", label, url, detail)
+        title = f"{label} in avvio" if not status.get("ready") else f"{label} non disponibile"
+        _render_form_server_notice(
+            "warning",
+            title,
+            f"Porta {port} · {detail}. Riprova tra qualche secondo. {restart_hint}",
+        )
+        return False
+
+    webbrowser.open_new_tab(url)
+    return True
 
 
 def _latest_valid_price_for_ticker(data: dict, ticker: str) -> tuple[str | None, float | None]:
@@ -93,10 +231,18 @@ def _apply_price_date_entries_to_storico(
 
     Usata su weekend/festivi: i prezzi freschi hanno price_date = venerdì,
     ma ts (oggi) è sabato e wd=False quindi non verrebbero mai scritti nello storico.
-    Opera in-place; usa setdefault+update per non sovrascrivere ticker già presenti.
+    Opera in-place; aggiorna solo prezzi finiti e positivi, cosi' un valore
+    anomalo non puo' sovrascrivere una quotazione valida gia' salvata.
     """
     for price_dt, prices in entries.items():
-        storico.setdefault(price_dt, {}).update(prices)
+        day = storico.setdefault(price_dt, {})
+        for ticker, price in (prices or {}).items():
+            try:
+                price_float = float(price)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if math.isfinite(price_float) and price_float > 0:
+                day[ticker] = price_float
 
 
 def _quote_value_materially_changed(previous: object, current: object, *, decimals: int = 3) -> bool:
@@ -116,6 +262,39 @@ def _quote_value_materially_changed(previous: object, current: object, *, decima
         return round(float(previous), decimals) != round(float(current), decimals)
     except Exception:
         return str(previous) != str(current)
+
+
+def _fetch_sidebar_price_details(instrument: dict) -> tuple[str, dict]:
+    """Recupera una quotazione fuori dal thread Streamlit principale.
+
+    Il worker non tocca UI o stato Streamlit: scarica solo il prezzo e restituisce
+    al thread principale il risultato, dove resta invariata la logica di commit.
+    """
+    ticker = str(instrument.get("ticker") or "")
+    t0 = time.perf_counter()
+    try:
+        price_info = get_price_details(instrument["isin"], instrument["ticker"])
+        elapsed = time.perf_counter() - t0
+        if isinstance(price_info, dict):
+            price_info["_elapsed_seconds"] = elapsed
+        logger.info(
+            "[QUOTE_FETCH] ticker=%s status=OK source=%s price_date=%s elapsed=%.3fs",
+            ticker,
+            (price_info or {}).get("source") if isinstance(price_info, dict) else "n/d",
+            (price_info or {}).get("price_date") if isinstance(price_info, dict) else "n/d",
+            elapsed,
+        )
+        return ticker, price_info
+    except Exception as exc:
+        elapsed = time.perf_counter() - t0
+        logger.warning("Errore durante refresh quotazione: ticker=%s error=%s elapsed=%.3fs", ticker, exc, elapsed)
+        return ticker, {
+            "price": None,
+            "source": f"Errore fetch: {type(exc).__name__}",
+            "price_date": None,
+            "recent_history": {},
+            "_elapsed_seconds": elapsed,
+        }
 
 
 
@@ -141,6 +320,7 @@ def render_sidebar(data: dict) -> None:
     with _btn_area:
         # --- Aggiorna Quotazioni ---
         if st.button("🔄 Aggiorna Quotazioni", width="stretch"):
+            refresh_started_at = time.perf_counter()
             with _msg_area:
                 status_box = st.status("Aggiornamento quotazioni in corso...", expanded=True)
                 status_box.write("Recupero prezzi e riallineamento benchmark.")
@@ -179,6 +359,7 @@ def render_sidebar(data: dict) -> None:
             pending_instrument_updates: list[tuple[dict, float, str, str]] = []
             material_quote_diffs: list[str] = []
             material_quote_changes: list[dict[str, object]] = []
+            technical_price_sync_count = 0
             ticker_recent_histories: dict[str, dict[str, float]] = {}
             _ev_sb = get_registro_eventi(data)
             _rimborso_sb = {str(ev.get("ticker") or "") for ev in _ev_sb if ev.get("tipo_evento") == "RIMBORSO A SCADENZA" and str(ev.get("ticker") or "")}
@@ -189,13 +370,55 @@ def render_sidebar(data: dict) -> None:
                 and (s.get("stato") == "chiuso" or str(s.get("ticker") or "") in _rimborso_sb)
             }
             _strumenti_attivi_sb = [s for s in data["strumenti"] if str(s.get("ticker", "")) not in _chiusi_tickers_set]
-            for i, s in enumerate(_strumenti_attivi_sb):
-                pg.progress((i + 1) / max(len(_strumenti_attivi_sb), 1), text=f"{s['ticker']}...")
+            price_results: dict[str, dict] = {}
+            if _strumenti_attivi_sb:
+                max_workers = min(_QUOTE_REFRESH_MAX_WORKERS, max(len(_strumenti_attivi_sb), 1))
+                fetch_started_at = time.perf_counter()
+                logger.info(
+                    "[QUOTE_REFRESH] fetch_start strumenti_attivi=%s workers=%s",
+                    len(_strumenti_attivi_sb),
+                    max_workers,
+                )
+                with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="quotes") as executor:
+                    futures = {
+                        executor.submit(_fetch_sidebar_price_details, s): str(s.get("ticker") or "")
+                        for s in _strumenti_attivi_sb
+                    }
+                    for completed, future in enumerate(as_completed(futures), start=1):
+                        fallback_ticker = futures.get(future, "")
+                        try:
+                            fetched_ticker, price_info = future.result()
+                        except Exception as exc:
+                            fetched_ticker = fallback_ticker
+                            logger.warning("Errore worker quotazione: ticker=%s error=%s", fetched_ticker, exc)
+                            price_info = {
+                                "price": None,
+                                "source": f"Errore fetch: {type(exc).__name__}",
+                                "price_date": None,
+                                "recent_history": {},
+                            }
+                        price_results[str(fetched_ticker or fallback_ticker)] = price_info
+                        pg.progress(
+                            completed / max(len(_strumenti_attivi_sb), 1),
+                            text=f"{fetched_ticker or fallback_ticker}...",
+                        )
+                logger.info(
+                    "[QUOTE_REFRESH] fetch_end strumenti_attivi=%s elapsed=%.3fs",
+                    len(_strumenti_attivi_sb),
+                    time.perf_counter() - fetch_started_at,
+                )
+
+            for s in _strumenti_attivi_sb:
                 ticker = str(s.get("ticker", ""))
                 current_price_before = s.get("prezzo")
                 today_prices = (data.get("storico_prezzi") or {}).get(ts, {}) if wd else {}
                 current_hist_before = today_prices.get(ticker) if isinstance(today_prices, dict) else None
-                price_info = get_price_details(s["isin"], s["ticker"])
+                price_info = price_results.get(ticker) or {
+                    "price": None,
+                    "source": "Non trovato",
+                    "price_date": None,
+                    "recent_history": {},
+                }
                 pr = price_info.get("price")
                 src = price_info.get("source", "Non trovato")
                 price_date = price_info.get("price_date")
@@ -246,10 +469,17 @@ def render_sidebar(data: dict) -> None:
                         "latest_history_date": latest_hist_date,
                     })
                 elif pr:
-                    pending_instrument_updates.append((s, float(pr), src, str(price_date or ts)))
                     reference_changed = _quote_value_materially_changed(reference_px_for_change, pr)
                     instrument_changed = _quote_value_materially_changed(current_price_before, pr)
                     is_nav = _is_nav_fund(ticker, str(s.get("tipo", "")))
+                    if reference_changed:
+                        pending_instrument_updates.append((s, float(pr), src, str(price_date or ts)))
+                    elif instrument_changed:
+                        # Riallineamento tecnico: il prezzo dentro "strumenti" e' diverso
+                        # dal fetch, ma il valore economico di riferimento e' gia' uguale.
+                        # Non va contato come variazione materiale, altrimenti un refresh
+                        # innocuo cambia instruments_hash e ricostruisce Cruscotti/Report.
+                        technical_price_sync_count += 1
                     if wd and reference_changed and not is_nav:
                         try:
                             candidate_today_prices[ticker] = float(pr)
@@ -262,7 +492,7 @@ def render_sidebar(data: dict) -> None:
                             candidate_prices_by_date.setdefault(str(price_date)[:10], {})[ticker] = float(pr)
                         except Exception:
                             logger.warning("Prezzo aggiornato (per data) non convertibile in float, ticker ignorato: ticker=%s value=%r", ticker, pr, exc_info=True)
-                    if reference_changed or instrument_changed:
+                    if reference_changed:
                         quotes_data_changed = True
                         try:
                             old_float = None if reference_px_for_change in (None, "") else float(reference_px_for_change)
@@ -352,7 +582,6 @@ def render_sidebar(data: dict) -> None:
                         "price_date": price_date,
                         "latest_history_date": latest_hist_date,
                     })
-                time.sleep(0.15)
             changed_tickers = [str(item.get("ticker")) for item in material_quote_changes if item.get("ticker")]
             changed_categories = sorted({str(item.get("categoria") or "") for item in material_quote_changes if str(item.get("categoria") or "")})
             mutation_details = {
@@ -365,6 +594,7 @@ def render_sidebar(data: dict) -> None:
                 "material_quote_diffs": list(material_quote_diffs),
                 "candidate_today_prices_count": len(candidate_today_prices),
                 "pending_instrument_updates_count": len(pending_instrument_updates),
+                "technical_price_sync_count": int(technical_price_sync_count),
                 "refresh_timestamp": ts_full,
                 "history_date": ts if wd else (", ".join(sorted(candidate_prices_by_date.keys())) or "non-working-day"),
             }
@@ -411,11 +641,10 @@ def render_sidebar(data: dict) -> None:
 
             refreshed_benchmarks = 0
             if quotes_data_changed or backfill_changed:
-                try:
-                    refreshed_benchmarks = refresh_benchmark_cache(data)
-                except Exception as exc:
-                    logger.warning("Refresh benchmark non completato durante aggiornamento quotazioni: %s", exc)
-                    refreshed_benchmarks = 0
+                logger.info(
+                    "Refresh benchmark saltato nel flusso Aggiorna Quotazioni: "
+                    "benchmark e pagina Mercati restano affidati a scheduler/refresh dedicato."
+                )
             else:
                 logger.info(
                     "Benchmark non riallineati: refresh quotazioni senza variazioni effettive di prezzo"
@@ -453,6 +682,16 @@ def render_sidebar(data: dict) -> None:
                     dirty_flags={},
                 )
             ok = sum(1 for _, s, _ in res if s)
+            logger.info(
+                "[QUOTE_REFRESH] complete ok=%s/%s material_change=%s backfill=%s benchmarks=%s effective_change=%s elapsed=%.3fs",
+                ok,
+                n,
+                bool(quotes_data_changed),
+                bool(backfill_changed),
+                int(refreshed_benchmarks or 0),
+                bool(effective_data_change),
+                time.perf_counter() - refresh_started_at,
+            )
             if refreshed_benchmarks:
                 queue_success(f"{ok}/{n} aggiornati · benchmark riallineati: {refreshed_benchmarks}")
                 update_status(status_box, label="Quotazioni aggiornate e benchmark riallineati", state="complete")
@@ -471,29 +710,22 @@ def render_sidebar(data: dict) -> None:
             # update -> riavvio -> full render.
 
         if st.button("➕ Inserisci operazione", width="stretch"):
-            import webbrowser
-            webbrowser.open_new_tab("http://localhost:8502/operazioni")
+            _open_form_server_page("operazioni", "Inserisci operazione")
 
         if st.button("📌 Strumenti", width="stretch"):
-            import webbrowser
-            webbrowser.open_new_tab("http://localhost:8502/strumenti")
+            _open_form_server_page("strumenti", "Strumenti")
 
         if st.button("📝 Operazioni", width="stretch"):
-            import webbrowser
-            webbrowser.open_new_tab("http://localhost:8502/operazioni_gestione")
+            _open_form_server_page("operazioni_gestione", "Operazioni")
 
         if st.button("💵 Liquidità", width="stretch"):
-            import webbrowser
-            webbrowser.open_new_tab("http://localhost:8502/liquidita_gestione")
+            _open_form_server_page("liquidita_gestione", "Liquidita")
 
         if st.button("📊 Esporta PP", width="stretch"):
-            import webbrowser
-            webbrowser.open_new_tab("http://localhost:8502/export_pp")
+            _open_form_server_page("export_pp", "Esporta PP")
 
         if st.button("🧠 SATOR", width="stretch"):
-            import webbrowser
-            webbrowser.open_new_tab("http://localhost:8502/sator")
+            _open_form_server_page("sator", "SATOR")
 
         if st.button("🔒 Privacy", width="stretch"):
-            import webbrowser
-            webbrowser.open_new_tab("http://localhost:8502/privacy")
+            _open_form_server_page("privacy", "Privacy")

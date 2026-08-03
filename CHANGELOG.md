@@ -1,5 +1,401 @@
 # Changelog
 
+## 5.0-pre - Governo cache applicativo centralizzato
+
+- introdotto `core/cache_orchestrator.py` come ingresso canonico per gli
+  artefatti cache registrati: i moduli runtime ora chiedono un artefatto tramite
+  `artifact_id`, mentre `page_id`, `layer`, `log_page` e provider arrivano dal
+  registry centrale
+- migrate le chiamate page-cache registrate di `app.py`, Quotazioni,
+  Portafoglio, Dati, Mercati, Summary e Cruscotti su
+  `get_or_build_registered_artifact`, lasciando `core.page_cache` come provider
+  tecnico interno e non piu' come API architetturale di pagina
+- aggiunto l'adapter `RegisteredFigureCacheAdapter`: le figure Plotly usano ora
+  `get_registered_figure_cache()`/`get_or_build_registered_figure()` come
+  ingresso registry-aware, mentre `core.figure_cache.FigureCache` resta lo store
+  specializzato interno
+- migrate su adapter registrato le chiamate FigureCache di prewarm, Summary,
+  Cruscotti, Portafoglio, Quotazioni, Dati e analisi congelate
+- portato sotto orchestratore anche lo store persistente delle analisi
+  congelate: `core.frozen_analysis_cache` usa ora
+  `load_registered_analytics_entry()` e `store_registered_analytics_entry()`
+  invece di importare direttamente `core.analytics_payload_cache`
+- portate sotto orchestratore anche le cache runtime in memoria:
+  `market_data`, `cashflow_indices` e `StateManager` usano ora
+  `get_registered_runtime_cache()`, lasciando `core.runtime_cache` come provider
+  tecnico interno
+- rimosso l'ultimo uso runtime di `streamlit.components.v1.html` dal log
+  copiabile dei tempi: `ui.runtime_pages` usa ora il wrapper centrale
+  `render_html_iframe()` basato su `st.iframe`, eliminando il warning di
+  deprecazione Streamlit
+- aggiornati i test di guardia per impedire il ritorno di accessi diretti a
+  `get_or_build_page_artifact` e `get_figure_cache` nei moduli runtime gia'
+  migrati
+- rettificata la documentazione cache: la governance non viene piu' descritta
+  come cache unica pienamente completata; la fase aperta e' ora
+  l'orchestrazione concettuale unica dei provider specializzati
+- reso idempotente il componente comune delle analisi congelate:
+  Benchmark/Accumuli mostrano il pulsante solo quando manca l'analisi o quando
+  la firma e' stale; se l'artefatto e' gia' fresco, non compare piu' il vecchio
+  `Rigenera analisi ...`, evitando rebuild locali inutili a firma invariata
+- ottimizzato il wrapper centrale `render_styled_table`: le tabelle dichiarate
+  `static=True` vengono renderizzate come HTML statico dallo Styler, con fallback
+  a `st.table`, evitando widget Streamlit inutili per tabelle descrittive
+- migliorato il riepilogo storico del render log: oltre a mediana/min/max/p95
+  mostra ora anche `ultimo_run` e `delta_vs_mediana`, cosi' i run recenti piu'
+  veloci non vengono nascosti da mediane contaminate dai tempi pre-ottimizzazione
+- corretto il riepilogo storico del render log: la sezione dei colli di
+  bottiglia mostra ora solo le sotto-fasi ancora presenti nell'ultimo run,
+  evitando che step rimossi o rinominati dopo la migrazione cache, come i vecchi
+  build Mercati, restino indicati come problemi attuali
+- corretto il refresh quotazioni quando i prezzi scaricati coincidono con il
+  valore economico gia' presente nello storico: il riallineamento tecnico del
+  campo `strumento.prezzo` non viene piu' classificato come variazione materiale
+  e quindi non genera `cache_bust` globale, rebuild Cruscotti/Report o nuovo
+  `instruments_hash` senza reale delta prezzo
+- corretto il binding del wrapper Plotly: `st._portfolio_safe_plotly_chart`
+  viene ricreato a ogni script-run usando l'originale Streamlit, cosi' il reset
+  del contatore key colpisce la funzione effettivamente usata e i rerun non
+  avanzano da `plotly_97` a `plotly_193`
+- reso idempotente il salvataggio impostazioni: `save_settings()` non riscrive
+  piu' `portafoglio_settings.json` se il payload normalizzato e' identico e
+  ritorna `False`; la pagina Setup non genera piu' `cache_bust`, force reload e
+  dirty flags `cruscotti/reports/settings` quando l'utente preme Salva senza
+  cambiare davvero nulla; il render log registra invece uno scenario
+  `settings_noop` senza invalidazione
+- avviata la fase di tuning render UI senza cambiare navigazione: il wrapper
+  centrale `ui.charts.streamlit_runtime.safe_plotly_chart` prepara tema e
+  annotazioni Plotly una sola volta per oggetto figura nel processo, invece di
+  ripetere la pulizia a ogni rerun sugli stessi oggetti gia' serviti dalla cache
+- stabilizzate le key automatiche dei grafici Plotly: il contatore `plotly_N`
+  viene azzerato a inizio script-run, evitando che rerun successivi producano
+  chiavi sempre nuove (`plotly_135`, `plotly_136`, ...) e costringano Streamlit
+  a trattare gli stessi grafici come widget nuovi
+- il wrapper Plotly imposta ora una configurazione base uniforme
+  `responsive=True` e `displaylogo=False`, rispettando eventuali config locali
+  gia' passate dai singoli renderer
+- isolata la diagnostica profiling dagli smoke test Streamlit: con
+  `PORTFOLIO_TESTING=1` l'app non legge e non scrive piu' i file reali
+  `.data/.profiling_state` e `.data/.profiling_signature_parts.json`, evitando
+  falsi `signature_changed` dal micro-portafoglio di test al portafoglio reale
+- confermato dal render log 2026-08-03 00:49 che la firma reale resta stabile:
+  `profiling_cache_condition=signature_unchanged`, `signature_diff: none`,
+  `page_cache_runtime=process_entries=14; session_entries=14`; il tempo residuo
+  e' render UI completo, soprattutto Cruscotti, non rebuild cache/dati
+- aggiunto `core/runtime_cache.py`, adapter unico per cache runtime in memoria:
+  ogni cache deve essere legata a un artifact del registry, con `clear_group`,
+  statistiche, limite LRU e invalidazione controllata
+- migrate su `core.runtime_cache` le cache lookup prezzi/ISIN di
+  `core.market_data`, eliminando i dizionari globali opachi per prezzi runtime
+  e mapping ISIN->ticker
+- migrate su `core.runtime_cache` le cache degli indici cashflow intermedi in
+  `core.cashflow_indices`, mantenendo invariati calcoli e copie difensive dei
+  DataFrame
+- collegata al provider runtime registrato la cache eventi per strumento dello
+  `StateManager`, mantenendo compatibilita' con i test che la sostituiscono con
+  un dict isolato
+- riclassificate in `core/cache_policy.py` le famiglie non-page-artifact da
+  `legacy_provider` a `registered_provider`: FigureCache, derived runtime,
+  cashflow intermedi, benchmark series, market lookup e frozen payload store
+- aggiunti test di guardia per impedire il ritorno di provider legacy e per
+  verificare che le cache runtime usino l'adapter centrale
+- aggiornato `STATO_OPERATIVO_5.0_PRE.md`: la governance registry/page-cache e'
+  avanzata, ma l'orchestrazione unica resta una fase architetturale da chiudere
+  prima del tuning fine delle singole pagine
+- aggiunto
+  `docs/archivio_5_0/RIPRESA_ORCHESTRAZIONE_CACHE_2026-08-03.md` come documento
+  di continuita' per sospendere la fase cache e ripartire senza ricostruire il
+  contesto: include stato reale, provider gia' migrati, residui, divieti e
+  primo comando di indagine
+
+## 5.0-pre - Pulizia documentazione e dati non operativi
+
+- ripulita la root documentale: lasciati in evidenza solo `README.md`,
+  `CHANGELOG.md` e `STATO_OPERATIVO_5.0_PRE.md`
+- spostati i documenti storici di piano/cache/render in
+  `docs/archivio_5_0/`, con README di orientamento e regola di prevalenza dello
+  stato operativo principale
+- spostata la roadmap del progetto libro in `docs/progetti/` e il PDF sorgente
+  in `docs/fonti/`
+- ripulita `data/portfolio`: lasciati solo i file operativi
+  `portafoglio_data.json`, `portafoglio_snapshots.json` e
+  `portafoglio_sator_decisions.json`
+- spostati i backup/manuali e gli snapshot storici in
+  `data/forensic/portfolio/`, senza cancellare nulla e con README esplicativo
+- aggiornati `README.md` e `STATO_OPERATIVO_5.0_PRE.md` per riflettere la nuova
+  struttura e ridurre il rischio di usare documenti o dati non vivi
+
+## 5.0-pre - Chiusura operativa fase cache L1-L3
+
+- chiusi gli ultimi artefatti cache rimasti `planned` nel registry:
+  `mercati.live_snapshot`, `summary.report_payload`,
+  `confronto.comparison_report`, `cruscotti.benchmark_frozen_analysis`,
+  `cruscotti.accumuli_frozen_analysis` e `prebuild.registry_engine` passano a
+  contratto `pilot`
+- aggiunto `iter_prebuild_artifact_specs()` in `core/cache_policy.py` e collegato
+  `ui/prewarm_bundle.py` al registry, con distinzione fra target prebuild noti e
+  target realmente costruiti
+- aggiunti test di guardia: il registry non deve piu' contenere artefatti
+  `planned` e il prewarm deve esporre la propria copertura rispetto al registry
+- corretto il tracciamento delle azioni isolate: `Aggiorna mercati` non chiama
+  piu' `invalidate_portfolio_cache` e registra `market_refresh_isolated`;
+  `Genera report` registra `summary_report_isolated`, evitando che il render log
+  mostri una vecchia decisione cache non pertinente
+- aggiunto lo stesso tracciamento isolato alle analisi congelate Cruscotti:
+  `Analizza benchmark` registra `benchmark_frozen_analysis_isolated` e
+  `Analizza accumuli` registra `accumuli_frozen_analysis_isolated`, senza cache
+  bust globale
+- aggiunti due artefatti cache Mercati ufficiali: `mercati.overview_rows` e
+  `mercati.base100_frame`; i derivati pesanti della pagina vengono ora letti da
+  `core.page_cache` con firma Mercati e codec raw-pickle, mentre aperto/chiuso e
+  ora locale restano aggiornati live senza ricostruire i ritorni
+- rettificata la chiusura: `CHIUSURA_FASE_CACHE_5.0.md` chiude solo il pilota
+  registry/page-cache L3, non la cache unica applicativa
+- aggiunto `CACHE_UNICA_5.0_MIGRAZIONE_DEFINITIVA.md` come piano vincolante per
+  completare davvero la cache unica 5.0: censimento, registry, FigureCache,
+  derived runtime, benchmark/Mercati, frozen analysis, prewarm, diagnostica e
+  Definition of Done
+- aggiunto `tools/cache_surface_audit.py`, audit statico ripetibile che censisce
+  Streamlit cache, page artifacts, FigureCache, session cache, module cache,
+  cache persistenti, prewarm e frozen analysis
+- registrate in `core/cache_policy.py` anche le famiglie cache residue
+  (`runtime.orchestration_payload`, risorse Streamlit, FigureCache,
+  derived runtime, cashflow intermedi, benchmark series, market lookup, frozen
+  payload store e prebuild registry), portandole dentro un contratto esplicito
+  senza cambiare ancora il runtime
+- rimossa la cache privata processo/sessione dei bundle categoria Cruscotti in
+  `ui/dashboard_bundles.py`: `cruscotti.category_dashboard_bundles` usa ora solo
+  lo store ufficiale `core.page_cache` per sessione, processo, disco e build,
+  eliminando un doppio layer opaco
+- migrata la cache delle metriche categoria Cruscotti da `@st.cache_data`
+  locale a nuovo artefatto registrato `cruscotti.category_metrics`, mantenendo
+  invariata la funzione finanziaria `build_category_dashboard_metrics`
+- migrata la cache dei dataset finanziari avanzati di Analitica da
+  `@st.cache_data` locale a nuovo artefatto registrato
+  `cruscotti.advanced_analysis_data`, con lettura sessione/processo/disco/build
+  dallo store ufficiale e senza cambiare la navigazione a tab gia' pronte
+- rimossi i builder `st.cache_data` interni del bundle Quotazioni: il bundle
+  generale usa `quotazioni.dataset_bundle` e i dettagli ticker per categoria
+  usano `quotazioni.category_ticker_bundles`, entrambi via registry/page-cache
+- rimossa la cache `st.cache_data` dei dataset categoria Cruscotti in
+  `core/dashboard_datasets.py`: la cache resta governata dal bundle registrato
+  `cruscotti.category_dashboard_bundles`
+- migrato il payload condiviso Summary a `summary.dashboard_payload`, rimuovendo
+  il builder `st.cache_data` e la cache manuale `session_state` del payload
+- migrato l'export PHP remoto della pagina Dati a `dati.remote_php_export`,
+  eliminando l'ultimo `st.cache_data` locale dalla pagina Dati
+- migrata l'orchestrazione iniziale da `orchestrate_data_cached` con
+  `st.cache_data(persist="disk")` a `runtime.orchestration_payload` su
+  registry/page-cache raw-pickle, mantenendo `refresh_volatile_ctx_fields` dopo
+  il caricamento del payload
+- irrobustiti gli smoke test Streamlit: la fixture ora monta un micro-portafoglio
+  temporaneo e ripristina i file dati al termine, evitando che i test dipendano
+  dal contenuto locale corrente della copia `5.0-pre`
+- corretto `core.quotes_runtime.build_quotes_refresh_df`: anche con log
+  quotazioni vuoto o interamente filtrato restituisce uno schema colonne stabile,
+  senza far saltare l'orchestrazione iniziale
+- corretto `core.services.cruscotti.build_operations_report`: le colonne
+  opzionali delle operazioni, inclusa `note`, vengono normalizzate prima del
+  report, cosi' import storici o incompleti non generano `KeyError`
+- riallineati gli smoke test alla navigazione attuale a 11 tab native,
+  includendo la pagina `Mercati`
+- corrette le firme render delle analisi congelate Benchmark e Accumuli:
+  l'analisi finanziaria resta congelata, ma le figure vengono invalidate quando
+  cambiano tema o impostazioni grafici, evitando grafici con stile vecchio dopo
+  un cambio palette
+- aggiornati stato operativo, TODO, strategia e inventario per distinguere in
+  modo netto il pilota completato dalla migrazione cache unica ancora aperta
+- registrata in `RENDER_BASELINE_2026-08-02.md` la misura finale di chiusura
+  del log 19:43: firma invariata, 7 artefatti page-cache in sessione/processo,
+  Cruscotti raw-pickle da disco e artefatti gzip residui misurati solo in pochi
+  millisecondi
+- aggiunto test documentale per impedire che piano, strategia, TODO e chiusura
+  cache tornino a divergere
+
+## 5.0-pre - Copia di lavoro per maturazione 5.0
+
+**Baseline:**
+- copia fisica della versione funzionante `4.9.40`, creata prima degli interventi strutturali verso la 5.0
+- versione applicativa aggiornata a `5.0-pre`; schema dati invariato
+- obiettivo della copia: consolidare legacy, form-server, schema dati, cache diagnostica, setup e hardening dei calcoli senza perdere il punto stabile 4.9.40
+- aggiunto `STATO_OPERATIVO_5.0_PRE.md` come documento unico di governo: raccoglie principi, cosa e' stato fatto, stato performance, backlog ordinato e cose da non fare; `TODO_5.0.md` e' stato ripulito e ridotto alle sole attivita' aperte
+- aggiunto `ARCHITETTURA_5.0.md` come documento guida: modularita' al centro, tema unico centralizzato, formule finanziarie canoniche nel core, impostazioni grafici centralizzate e dataset condivisi prima della UI
+- aggiunto `REGOLE_NON_NEGOZIABILI.md` come documento operativo da leggere prima di modificare rendering, navigazione, cache, formule, tema o layout: sancisce il principio "preparare prima, navigare senza sorprese" e vieta render/rerun intermedi non richiesti
+- aggiunto `PIANO_UNICO_CACHE_RENDER_5.0.md`: piano operativo unico per rifondare cache, pre-render, invalidazioni e diagnostica tempi con registry centrale, store unico, prebuild coerente e migrazione graduale delle pagine senza render intermedi durante l'uso
+- avviata la Fase 1/2 del piano cache 5.0: aggiunto `CACHE_INVENTORY_5.0.md`, introdotto `core/cache_policy.py` come registry centrale degli artefatti e collegata la diagnostica Quotazioni `quotazioni.diagnostic_table` al nuovo contratto senza cambiare la resa della pagina
+- avviata la Fase 3 della cache 5.0: `core/page_cache.py` mantiene ora un manifest JSON degli artefatti pagina, espone statistiche/righe diagnostiche e clear selettivo; Dati mostra anche gli artefatti pagina accanto alla cache figure, evitando che il nuovo layer L3 resti invisibile nei render log
+- aggiunta riconciliazione automatica del manifest artefatti pagina: se Dati trova il manifest vuoto ma esistono gia' file `.pickle.gz` su disco, ricostruisce l'indice senza rigenerare gli artefatti, cosi' il KPI `Artefatti pagina` non resta falsamente a zero dopo l'introduzione del nuovo store L3
+- portato `portafoglio.positions_table` da artefatto pianificato a pilota reale: la sezione "Controvalore del Portafoglio" recupera ora da `core/page_cache.py` il payload registrato nel registry, con DataFrame posizioni, frecce giornaliere, report giornata e insight gia' pronti; la resa UI resta invariata ma il render log mostra `L3 page artifact positions_table` con sorgente `session/process/disk/build`
+- irrobustito il clone degli artefatti pagina: i payload annidati (`dict`/`list` con DataFrame o oggetti interni) vengono copiati in profondita' quando richiesto, evitando mutazioni accidentali della cache condivisa tra sessione, processo e disco
+- aggiunto il terzo pilota cache 5.0 `cruscotti.category_dashboard_bundles`: il bundle categorie dei Cruscotti passa ora dal registry e da `core/page_cache.py`, mantenendo il builder esistente e le tab Streamlit native; il render log deve mostrare `L3 page artifact category_dashboard_bundles` con sorgente `session/process/disk/build`
+- aggiunto il quarto pilota cache 5.0 `cruscotti.analitica_bundle`: il bundle Analitica dei Cruscotti passa ora dallo stesso registry/page-cache L3 dei piloti gia' attivi, riusando le figure Plotly cacheate e tracciando nel render log `L3 page artifact analitica_bundle` senza cambiare `st.tabs` o introdurre render on-demand
+- aggiunto il quinto pilota cache 5.0 `dati.quality_table`: la tabella "Qualita dati strumenti" non usa piu' una cache locale separata in Dati, ma passa dal registry e da `core/page_cache.py` con firma esplicita, clone sicuro del DataFrame e log `L3 page artifact quality_table`
+- aggiunto il sesto pilota cache 5.0 `dati.cache_diagnostics`: le statistiche cache della pagina Dati passano ora dal registry/page-cache senza finestra TTL, con invalidazione su azioni cache esplicite e lettura basata su manifest, eliminando il vecchio dizionario process locale e rendendo tracciabile `L3 page artifact cache_diagnostics`; il log pagina usa ora l'etichetta `cache diagnostics`, non piu' `build cache stats`
+- corretto il collo di bottiglia della diagnostica cache Dati emerso nel primo avvio del 02/08/2026: il payload non viene piu' invalidato solo per passaggio del tempo e non cammina piu' ricorsivamente su `data/cache` durante il render ordinario; `FigureCache.get_stats()` usa il manifest quando disponibile
+- rimossa la manutenzione automatica della cache figure dal costruttore di `FigureCache`: migrazione legacy, rimozione orfani e applicazione limiti restano disponibili tramite l'azione esplicita "Ottimizza cache", ma non vengono piu' eseguite nel percorso di avvio ordinario
+- introdotto `PROTOCOLLO_PERFORMANCE_5.0.md` e collegato ai documenti guida: ogni intervento su cache/render/prewarm/diagnostica deve ora partire da scenario misurato, ipotesi falsificabile, classificazione L0-L4, test di regressione e confronto prima/dopo
+- aggiunto `tools/perf_render_log_analyzer.py`: analizzatore offline dei render log che estrae totale, tempi pagina, gap profiling, eventi esclusivi, hit/miss cache e rebuild L3; serve come base ripetibile per valutare i prossimi interventi performance senza procedere a sensazione
+- vettorializzato `core.services.analysis.build_pl_delta_series`: la serie delta P/L giornaliera non scorre piu' riga per riga con `iloc`, ma usa `diff()`/maschera Pandas mantenendo la regola finanziaria degli strumenti validi in entrambe le date; riduce il collo `Portafoglio/UltimaGiornata / build delta series` senza cambiare numeri
+- aggiunta profilazione interna alla tabella popup Quotazioni: il prossimo render log distingue lettura strumenti freschi, build mappa holdings, raggruppamento log e render iframe dentro `render tabella diagnostica quotazioni`, cosi' si capisce dove vanno i 0,6-0,7 s residui
+- rimosso I/O improprio dal renderer popup Quotazioni: `render_quotes_table_with_popup` non richiama piu' `load_data()` durante il render ordinario, ma usa l'anagrafica gia' presente nel payload pagina; il log aveva misurato `Quotazioni/TablePopup / load fresh instruments for popup` a 0,701 s e la verifica successiva porta `render tabella diagnostica quotazioni` a 0,056 s
+- corretta la pulizia legacy del grafico Quotazioni `quotazioni_instrument_performance_time_v2`: la compatibilita' MAX/MIN resta governata dalla firma figura (`extrema_logic_version` e `portfolio_reference`), ma non viene piu' cancellata la cache disco per pattern a ogni nuova sessione, evitando il `cache_miss` ricorrente all'avvio
+- aggiunta profilazione granulare del render Cruscotti/Analitica: il prossimo report tempi separa intro, grafici principali, metriche avanzate, tabella rischio/rendimento, heatmap, target, contributo rischio e radar senza cambiare tab, cache, calcoli o navigazione
+- alleggerito il render L4 delle tabelle P/L per orizzonte in Cruscotti: le cinque tabelle categoria/Tutto non passano piu' da Pandas Styler + `st.table`, ma da un renderer HTML statico dedicato che preserva colori, frecce trend, parziali e riga totale; nessun lazy render e nessun cambio di calcolo/cache
+- stabilizzato il render delle figure congelate Benchmark/Accumuli: le analisi restano rigenerabili solo da pulsante, ma le figure derivate passano ora dalla `FigureCache` HYBRID persistente invece che da cache solo di sessione; dopo reload/process reset il sistema deve poter leggere da disco i grafici gia' costruiti e non ricostruire automaticamente prezzo vs PMC, capitale vs valore, overview accumuli, confronto benchmark e scatter coerenza
+- aggiunta diagnostica di continuita' runtime nel report rendering: ogni log mostra ora `process_pid`, `process_token`, eta' modulo runtime, `session_token`, progressivo sessione e snapshot memoria/sessione di `core.page_cache`, cosi' si distingue un vero warm rerun da un riavvio processo/sessione prima di intervenire sulle prestazioni
+- corretta la classificazione scenario del render log: il progressivo sessione viene registrato in `app.py` a inizio run e non incrementato dal log; un primo avvio di sessione/processo con firma dati gia' nota viene classificato come `first_session_run` e non come `warm_rerun`, mentre `profiling_cache_condition` separa firma assente, cambiata o invariata
+- collegato il bundle shared Quotazioni al contratto cache 5.0: nuovo artefatto `quotazioni.dataset_bundle` in `core/cache_policy.py`, wrapper `core.page_cache` dentro `core.dashboard_datasets.get_quotazioni_dataset_bundle` e log esplicito `cached bundle shared source` con sorgente `session/process/disk/build`; la UI resta completa e pre-renderizzata
+- separata la firma semantica del portafoglio dai dati benchmark/mercati: `app.py` non include piu' `include_benchmark_data=True` nella firma globale usata per classificare `signature_changed`, evitando falsi avvii freddi quando cambia solo `benchmark_points_hash`; il diff profiling continua invece a mostrare i benchmark come diagnostica separata
+- confermata dal render log 2026-08-02 17:50 la stabilizzazione della firma (`profiling_cache_condition=signature_unchanged`, `signature_diff:none`) e il recupero L3 di Quotazioni: `quotazioni.dataset_bundle source=disk` in circa 0,005 s e `load/build cached bundle shared` in circa 0,008 s; la prossima priorita' performance passa quindi a Cruscotti
+- ottimizzata la lettura disco degli artefatti Cruscotti pesanti: `core/page_cache.py` supporta ora anche codec raw-pickle opzionale, con fallback automatico dai vecchi `.pickle.gz`; `cruscotti.category_dashboard_bundles` e `cruscotti.analitica_bundle` lo usano per ridurre CPU/latenza di deserializzazione senza cambiare tab, render completo o UX
+- esteso il log degli artefatti L3 con il dettaglio codec (`codec=pickle`, `codec=gzip` o migrazione `codec=gzip->pickle`), cosi' i prossimi render log distinguono una vera lettura raw-pickle da un run di fallback/migrazione legacy
+- confermato dal render log 2026-08-02 18:43 che gli artefatti Cruscotti pesanti leggono davvero da raw-pickle (`codec=pickle`): Cruscotti scende a circa 4,882 s e il totale a circa 11,420 s; il collo residuo e' quindi render UI full-tabs, non piu' fallback/migrazione del page artifact
+- aggiunta `ANALISI_DEFINITIVA_RENDER_CACHE_5.0.md`: formalizzata la diagnosi sul limite strutturale della sola cache L1-L3 in Streamlit e definito il prossimo salto architetturale corretto, cioe' snapshot render L4 per sezioni read-only pesanti, partendo da Cruscotti
+- spostato in sperimentale il pilota L4 Render Snapshot su Cruscotti categorie dopo blocco in avvio al passo 4/11: i file sono conservati in `experimental/l4_render_snapshot_pilot/`, ma rimossi da `core/`, `ui/`, registry operativo, Setup e configurazione persistente; Cruscotti usa solo il renderer nativo finche' non esiste una pipeline di prebuild fuori-render
+- ripristinata la regola architetturale non negoziabile dopo il tentativo errato di pagina singola: la navigazione principale resta a linguette Streamlit native e pre-renderizzate, senza radio/selettori che sostituiscano le tab; Quotazioni non mostra piu' il radio Rapida/Completa e viene preparata in vista completa
+- esteso il registry cache 5.0 con il contratto per artefatti ad azione esplicita (`trigger`, `rerun_policy`, `action_scope`) e registrati come pianificati Summary report, Confronto report, Mercati live snapshot, Cruscotti Benchmark congelato e Cruscotti Accumuli congelato; questi lavori devono essere isolati dal rerun globale e riusabili dopo il click
+- aggiunto test di regressione su `core.page_cache`: un artefatto letto da disco deve essere promosso in sessione/processo e non ricaricato da disco nei recuperi successivi con la stessa firma
+- salvata la prima baseline render reale in `RENDER_BASELINE_2026-08-02.md`: warm rerun completo da 12,371s con colli di bottiglia principali Cruscotti, Dati e Quotazioni; confermato che Mercati non pesa sul flusso base e che il costo Plotly puro non e' il problema principale
+- rinominata in Dati la sezione "Arricchimento strumenti" in "Qualita dati strumenti": la tabella ora consuma il dataset centrale `core/services/instrument_quality.py`, combinando anagrafica arricchita, completezza, fonte, storico prezzi, buchi, prezzo fermo, copertura e prima azione operativa senza duplicare formule nella UI
+- resa piu' leggibile la tabella "Qualita dati strumenti": ripristinata la `ProgressColumn` Streamlit originale per la completezza di arricchimento, rimosso lo score tecnico dalla vista utente, tolte le metriche rischio/rendimento dalla tabella principale e aggiunto un commento operativo sui controlli da leggere
+- ampliato il dataset e la tabella "Qualita dati strumenti" con letture operative non finanziarie: Fonte abbreviata (`Aut`, `Pdf`, `Man`), Copertura dello storico e prima azione "Da sistemare", calcolate nel core e non nella UI
+- compattate le colonne di "Qualita dati strumenti" con larghezze numeriche in pixel invece delle classi Streamlit `small/medium`, mantenendo tutte le colonne e usando intestazioni finali piu' leggibili (`Qualita`, `Arricchito`, `Arricc. il`, `Storico`, `Azione`)
+- ottimizzato avvio e refresh quotazioni: il launcher salta `pip install` quando le librerie sono gia' presenti, i BTP non cadono piu' su Yahoo dopo un miss di Borsa Italiana e il bottone "Aggiorna Quotazioni" scarica i prezzi in parallelo mantenendo invariata la logica di commit finanziario
+- aggiunta strumentazione preliminare per il debug dei tempi: log strutturati `APP_PHASE`, `PAGE_RENDER`, `DASHBOARD_RENDER`, `QUOTE_FETCH` e `QUOTE_REFRESH`, storico render salvato anche nei run standard e sottofasi Pianificazione/SATOR profilate senza modificare calcoli o layout
+- consolidata la barra azioni del log rendering in un unico micro-componente: `Scarica log rendering .txt` e `Copia negli appunti` sono due bottoni HTML identici; lo scarico usa un `Blob` JavaScript invece di `data:` URI o widget Streamlit separati
+- corretto il funzionamento reale di `Copia negli appunti`: il micro-componente del report rendering ora usa `streamlit.components.v1.html`, che esegue JavaScript, e tenta automaticamente il fallback `execCommand` se la Clipboard API del browser viene negata
+- estesa la strumentazione tempi della pagina Dati: il report render ora distingue qualita' dati strumenti, statistiche cache, lettura log, diagnostica runtime e controlli integrita', evitando che la pagina resti una scatola nera quando pesa diversi secondi nel render complessivo
+- corretto lo storico render in modalita' debug completa: la run corrente viene salvata prima di calcolare `Storico render comparabili`, cosi' il riepilogo non resta ancorato a vecchi run piu' lenti e non contraddice il totale appena misurato
+- portato il report rendering debug a `render-log-v1+deep-v4` con riga `diagnostic_features`, cosi' e' immediato riconoscere se il log copiato arriva dal codice aggiornato o da una sessione Streamlit ancora vecchia
+- corretto l'abbinamento tra tempi pagina e sottofasi nel report rendering: tab con emoji o nomi compatti (`Dati`, `Mercati`, `Setup`, `AI`) vengono ricondotte allo stesso nome canonico usato dai `profile_step`
+- alleggerita la sezione "Qualita dati strumenti": la pagina Dati usa il dataset gia' caricato nel run e richiede al servizio centrale solo la modalita' leggera, evitando calcoli di rendimenti/volatilita'/Sharpe non mostrati in quella tabella
+- alleggerito il flusso `Aggiorna Quotazioni`: il launcher non forza piu' il profiling Plotly a ogni avvio e il click prezzi non scarica piu' anche i benchmark; benchmark e pagina Mercati restano aggiornati tramite scheduler/refresh dedicato, evitando circa 10 secondi di lavoro extra nel caso misurato del 2026-08-01
+- reso non bloccante il pre-render grafici: la configurazione corrente e il default non usano piu' `initial_complete=true`, quindi la preparazione cache parte in background quando serve invece di aggiungere tempo sincrono al caricamento; Setup ora descrive chiaramente la differenza tra background consigliato e blocco avvio tecnico
+- blindato il pre-render contro i blocchi nei rerun caldi: anche se l'opzione tecnica `initial_complete` resta attiva in una vecchia sessione, `app.py` puo' eseguire il pre-render sincrono solo su vero `cold_start`; su `warm_rerun` ora rinvia anche il background automatico e il log lo dichiara nel dettaglio
+- alleggerite le diagnostiche della pagina Dati: le statistiche cache e la scansione cartella cache sono riusate per 30 minuti in sessione, evitando I/O ripetuto nei rerun ravvicinati del report tempi
+- aggiunta diagnostica esplicita per la cache bundle di Cruscotti: il report distingue `cache hit dashboard categoria completo` e `cache miss dashboard categoria completo`, rendendo verificabile se i 2+ secondi del bundle sono build reale o perdita cache
+- irrobustita la cache del bundle categoria Cruscotti: oltre a `st.session_state` viene mantenuto un fallback leggero nel processo Streamlit, con log `source=session/process`, per evitare rebuild completi nei rerun caldi con firma dati invariata
+- preservato il comportamento pre-renderizzato di Cruscotti: le sottoschede restano `st.tabs` native e vengono preparate prima dell'uso, evitando render intermedi/rerun durante la navigazione interna; le ottimizzazioni devono agire su cache e calcolo anticipato
+- aggiunta cache persistente e profiling per le metriche KPI dei cruscotti categoria: `build_category_dashboard_metrics` resta nel core finanziario, ma la UI riusa il payload per firma dati/categoria e il render log mostra `load/build metrics`
+- alleggerita ulteriormente la pagina Dati: il dataset "Qualita dati strumenti" resta calcolato dal servizio core, ma viene riusato con `st.cache_data(persist="disk")` su firma dati/giornata; la diagnostica cache passa da 30 secondi a 30 minuti e viene invalidata solo dopo azioni cache esplicite, riducendo rebuild e scansioni disco nei rerun ravvicinati
+- reso spiegabile il tempo della sezione Qualita dati strumenti: il dataset ora usa anche cache esplicita sessione/processo e il render log indica la sorgente (`session`, `process`, `streamlit_cache`) invece di mostrare solo una firma troncata poco utile
+- raffinata la diagnostica della pagina Dati dopo il nuovo render log: sorgente qualita rinominata in `streamlit_cache`, aggiunti marker per inventario file, bonifica e generazione PHP remoto, evitato il `load_data()` ordinario nella bonifica chiusa ricaricando il JSON fresco solo quando si preme l'azione distruttiva
+- impedito l'avvio automatico del prewarm background nei `warm_rerun`: se il cooldown scade mentre l'utente sta usando l'app, il pre-render viene registrato come `deferred_warm_rerun` invece di costruire grafici in background e contendere CPU durante la navigazione
+- superato il vecchio fallback temporale per le statistiche cache della pagina Dati: la scansione `data/cache` non fa piu' parte del render ordinario e la diagnostica deve leggere manifest/cache persistente invece di dipendere da finestre da 30 minuti
+- resa la pagina Mercati on demand: nei rerun standard mostra solo un pannello leggero con stato cache e pulsante `Rigenera Mercati`; radar, mappe, tabelle e base 100 vengono costruiti solo su richiesta o subito dopo il refresh manuale Mercati, togliendo il costo della tab opzionale da avvio e aggiornamento prezzi
+- ripristinata la navigazione standard in fondo a Mercati, anche nel pannello on-demand: icone/pulsanti Precedente, Torna in cima e Successiva usano il componente condiviso `back_to_top`, coerente con il resto dell'app
+- creato rollback fisico prima della sperimentazione Pianificazione/SATOR v2: `portfolio_beta_5.0-pre_backup_before_planning_sator_v2_20260727`
+- aggiunto auto-refresh silenzioso della pagina Mercati configurabile da Setup: un worker idempotente aggiorna in background cache live e storico 6 mesi senza forzare rerun Streamlit; impostazione spenta di default, intervalli configurabili e stato interno tracciato in `data/cache/market_auto_refresh_state.json`
+- rimossa la scrollabilita' orizzontale dalle tabelle Mercati: resa statica compatta con layout fisso al 100%, indice nascosto, colonne percentuali e testi lunghi gestiti senza trascinamento laterale
+- uniformato il colore stato Mercati: `Aperto` resta verde, `Chiuso` ora viene evidenziato in rosso nella tabella Mercati e nella striscia informativa
+- aggiunto semaforo di aggiornamento nella pagina Mercati: valuta copertura prezzi, copertura live e anzianita' dell'ultimo refresh per indicare Dati freschi, Aggiornamento consigliato o Aggiorna ora accanto al pulsante
+- aggiunto l'orizzonte 3 mesi alla Mappa forza relativa Mercati: il builder calcola `ret_3m` su circa 63 sedute e la griglia mostra ora 1g, 5g, 1m, 3m e YTD senza allargare le tabelle dati
+- alleggerito il peso tipografico della pagina Mercati: mappa forza relativa, barre area, chip e label sezione non usano piu' grassetti 900/950 ovunque, mantenendo enfasi solo sui valori principali
+- compattata la Mappa forza relativa HTML in Mercati dopo verifica visiva: etichette e celle riportate a proporzioni da tabella decisionale, mantenendo leggibilita' senza ingombro eccessivo
+- sostituita la resa Plotly della Mappa forza relativa in Mercati con una griglia HTML/CSS controllata: etichette di sezioni/indici a dimensione reale, numeri delle celle a 13.5px e barre di forza per area allineate sotto, evitando autoscale e compressioni del wrapper Streamlit/Plotly
+- riequilibrata la tipografia della Mappa forza relativa in Mercati: numeri nelle celle ridotti, label indici/aree rese molto piu' leggibili tramite tick label Plotly reali, chip/sezioni HTML ampliati e test aggiornati per bloccare la gerarchia corretta
+- arricchita la card gia' esistente "Fotografia di riferimento" in Pianificazione con giudizio SATOR, uso budget e alert principali; rimossa la card pilota separata per non duplicare la mappa decisionale gia' presente
+- rivista la tabella "Ultime quotazioni aggiornate": font minimo 13px, proporzioni colonne esplicite tramite `colgroup`, layout fisso e nessuno scroll orizzontale
+- corretta la logica di `Var gg €`/`Var gg %` nella tabella "Controvalore del Portafoglio": la variazione giornaliera viene calcolata in modo coerente dalla stessa fonte prezzo e dal controvalore della riga; il renderer ricostruisce il delta economico se riceve una percentuale materiale con euro nullo, evitando combinazioni fuorvianti come percentuale negativa e importo zero
+- resa coerente la colorazione di `Var gg €` e `Var gg %` nella tabella "Controvalore del Portafoglio": quando la percentuale arrotonda a `0,00%` ma il delta economico ha segno materiale, eredita lo stesso colore; le righe in cui la variazione giornaliera fa attraversare lo zero del P/L vengono evidenziate sulle celle P/L con tooltip dedicato
+- riallineata la definizione di "ultima giornata" in Home: tabella portafoglio, sintesi, conteggio su/giu' e best/worst ora usano la stessa mappa giornaliera basata sulle due ultime date globali di mercato; i ticker con prezzo fermo a una data precedente non trascinano piu' movimenti vecchi nella giornata corrente
+- il grafico Profit/Loss dell'ultima giornata ignora eventuali righe sintetiche successive all'ultima data reale dello storico prezzi, evitando delta fittizi o confronti su giornate non quotate
+- aggiunti test di invariante contabile sulle posizioni base: `Controvalore = Quote x Prezzo`, `P/L € = Controvalore - Costo` e `P/L % = P/L € / Costo`, cosi' la suite verifica non solo la presenza delle colonne ma anche la coerenza numerica tra i campi mostrati
+- arricchito SATOR v2 con metriche post-acquisto: la classifica standalone mostra ora impatto sul target (`Imp`), stato cap di concentrazione (`Cap`) e qualita' dati (`Dato`); le stesse metriche vengono ricalcolate al salvataggio della fotografia anche se l'utente modifica manualmente le quantita'
+- aggiunta in SATOR standalone la spunta `Includi commissioni non zero`: attiva di default per preservare il comportamento precedente, ma se disattivata esclude dall'universo gli strumenti non marcati a zero commissioni invece di limitarli a una penalita' nel fattore costo
+- trasformata la classifica SATOR in una prima decision table operativa: filtri rapidi client-side per suggeriti, target migliorato, cap rispettato, dati solidi e zero commissioni; nessun rerun Streamlit per filtrare la tabella
+- aggiunto ordinamento client-side della decision table SATOR per voto, impatto target, margine cap, qualita' dati e prezzo, mantenendo il filtro attivo e le quantita' gia' inserite
+- potenziata la `Valutazione live` SATOR: oltre a budget, ripartizione e voto medio mostra ora impatto target, stato dei cap natura e qualita' media dei dati sull'ordine selezionato, ricalcolando questi valori sulle quantita' inserite manualmente
+- arricchito lo storico fotografie SATOR con confronto target/cap/dati per ogni decisione salvata e con dettaglio riga ordine che mostra impatto, margine cap e qualita' dati dello strumento
+- reso piu' leggibile lo storico decisionale SATOR: le fotografie sono raggruppate per mese con riepilogo importi/foto e, quando presente `actual_order`, viene mostrato il confronto immediato tra proposta salvata e ordine effettivo
+- aggiunta nello storico SATOR la registrazione dell'ordine effettivo: dal dettaglio di una fotografia si possono salvare quantita'/prezzi eseguiti, aggiornando solo il registro decisionale via POST nella pagina standalone, senza modificare il portafoglio e senza rerun Streamlit
+- aggiunta una sintesi di aderenza esecuzione nello storico SATOR: sulle fotografie con eseguito registrato mostra numero di foto concluse, aderenza media all'importo proposto, delta totale e strumenti saltati/aggiunti
+- aggiunta nello storico SATOR una lettura operativa di apprendimento decisionale: classifica la disciplina di esecuzione, evidenzia i ticker saltati piu' spesso e quelli aggiunti extra rispetto alla proposta, usando solo dati gia' registrati nella pagina standalone
+- aggiunta nello storico SATOR la tabella "Apprendimento per funzione": aggrega le fotografie eseguite per bucket/funzione, mostra quante proposte vengono saltate o eseguite, il target medio lasciato sul tavolo quando una riga viene saltata e segnala eventuali esecuzioni oltre cap o con dati deboli
+- portata in Pianificazione una sintesi compatta dell'apprendimento SATOR: la card "Fotografia di riferimento" mostra disciplina di esecuzione, aderenza importo, delta, scostamenti, target lasciato e ticker saltato piu' spesso quando nello storico esistono ordini effettivi registrati
+- aggiunto in Portafoglio un pannello sperimentale e reversibile "Portfolio Insights": sopra la tabella evidenzia scostamenti Core/Difensivo/Satellite, concentrazione, impatti della giornata, cambi segno P/L, qualita' dati e ultimo suggerimento SATOR, riusando la stessa mappa giornaliera della tabella per evitare discrepanze
+- rifinito il rendering del pannello Portfolio Insights: stile spostato nel CSS globale dell'app, HTML renderizzato con `st.html` quando disponibile e layout riallineato al linguaggio visuale Sestante con una priorita' principale e segnali secondari compatti
+- migliorata la leggibilita' del pannello Portfolio Insights con icone e colori per tipologia di segnale (allocazione, concentrazione, giornata, cambio segno, qualita' dati, SATOR) e sostituita la dicitura tecnica "stessi dati della tabella" con "coerente con Var gg e P/L"
+- arricchiti gli insight di Portafoglio con metadati strumento: quando il segnale riguarda un ticker, il pannello mostra badge ticker, categoria macro colorata (GOV/FND/ETF/...) e bucket strategico colorato (Core/Difensivo/Satellite)
+- riallineate le icone del pannello Portfolio Insights al sistema visuale ufficiale: rimosse le SVG locali inventate, riusate le icone di sezione esistenti e le icone natura gia' presenti in `ui/charts/natura_icons.py`, con colori categoria/bucket dalle palette centralizzate
+- corretto il resolver icone strumento del pannello Portfolio Insights: se `natura` non e' gia' salvata, viene calcolata a runtime con `core.instrument_classification.classify_natura`, la stessa logica usata per riconoscere icone in Quotazioni e Portafoglio (es. ENRG.MI -> Energia, XMME.MI -> Mercati emergenti)
+- reso coerente il pannello Portfolio Insights con lo standard visuale dell'app: rendering HTML tramite `st.markdown` per preservare le icone SVG ufficiali, blocco identita' strumento con ticker/nome colorati dalla macrocategoria, date in formato italiano e suggerimenti di allocazione collegati al ticker concreto proposto dall'ultima fotografia SATOR quando disponibile
+- riorganizzato il pannello Portfolio Insights in chiave piu' decisionale: lo strumento viene mostrato dentro il segnale che lo cita, non prima del testo; aggiunto un radar operativo nella prima colonna con peggior/miglior contributo di giornata, migliore/peggiore andamento sulle ultime sedute disponibili e segnali di cambio colore P/L, mantenendo una selezione bilanciata fra SATOR, allocazione, giornata, trend, concentrazione e qualita' dati
+- rifinito l'ordine interno dei segnali Portfolio Insights: titolo, dato numerico, azione concreta, badge categoria/bucket e solo infine riga ticker/nome strumento, cosi' l'identita' dello strumento resta agganciata al punto in cui viene citata
+- estesa la mappa "Prossimo acquisto" in Pianificazione: il tooltip delle bolle riporta impatto target, concentrazione natura post-acquisto e qualita' dello storico, leggendo i dati salvati nell'ultima fotografia SATOR
+- ottimizzata la mappa "Prossimo acquisto": assi con padding dinamico, marker non clippati, label adattive ai bordi e margini finali piu' ampi evitano che le bolle vengano tagliate o schiacciate quando i candidati sono vicini agli estremi 0/1
+- rimosso da `ui/pages/operazioni.py` il vecchio Centro Operativo Streamlit interno e il carrello/dialog legacy: la pagina Operazioni resta consultiva, mentre Inserisci/Strumenti/Operazioni/Liquidita' vivono solo nei form-server aperti dalla sidebar
+- rimosso da `ui/pages/pianificazione.py` il vecchio modulo SATOR Streamlit in-page e i suoi helper di editor/matrice/ordine manuale: Pianificazione mantiene obiettivo portafoglio, dashboard decisionale e fotografia di riferimento; SATOR operativo resta nella pagina standalone aperta dalla sidebar
+- irrobustiti i pulsanti operativi della sidebar: ogni apertura del form-server ora ritenta l'avvio, controlla thread/stato `ready`, mostra uno stato compatto su porta 8502 e segnala errori leggibili invece di aprire alla cieca una pagina non disponibile
+- sostituiti gli avvisi nativi `st.warning`/`st.error` dei servizi operativi con un badge sidebar compatto e coerente col tema, meno invasivo durante l'uso normale
+- rimosso il badge preventivo dei servizi operativi dalla sidebar: lo stato della porta 8502 viene verificato solo dopo il click su una pagina operativa; se la pagina locale non risponde, l'app mostra un avviso contestuale con il suggerimento di riprovare o riavviare l'applicativo
+- inserito il logo Sestante finale nell'header iniziale tramite nuovo asset statico (`static/sestante_logo_header_final.png`), evitando la cache dei file precedenti e mantenendo a destra KPI tecnici, data e ultimo aggiornamento
+- rifinita la barra iniziale: contenitore arrotondato con fondo chiaro discreto, nessun box separato attorno al logo e nessuna linea blu superiore
+- irrobustito il refresh manuale della pagina Mercati: lo storico benchmark usa prima la Chart API Yahoo con ticker codificati correttamente (es. `^GDAXI`, `^FTSE`) e solo dopo il fallback `yfinance`, aggiungendo proxy ETF per DAX/FTSE 100 e un report post-refresh con serie recuperate, gia' allineate e non disponibili
+- separato il refresh live della pagina Mercati dallo storico benchmark: `Aggiorna mercati` ora recupera anche quotazioni correnti Yahoo (`market_live_data`) e le usa per `Ultimo`/`Var gg`, mentre 5g/1m/YTD e grafici restano basati sulle serie daily; aggiunta persistenza del live nella cache benchmark e colonna `Fonte` per distinguere Live/Storico
+- reso il refresh Mercati indipendente dalla vista Core/Completo: il tasto alimenta sempre tutto l'universo Mercati, mentre la vista decide solo cosa mostrare; la striscia mercati ora usa prima `market_live_data` e solo in fallback `benchmark_data`
+- corretto il reload dati Mercati: `_data_mtime()` include ora `portafoglio_benchmark_cache.json` e la firma cache considera anche ultimi valori benchmark e `market_live_data`, evitando contesti Streamlit obsoleti con tabella Mercati ancora `n/d` dopo il refresh; aggiunta diagnostica di copertura dati letti nella pagina Mercati
+- corretto il caricamento effettivo della cache Mercati: `load_data()` ora considera `portafoglio_benchmark_cache.json` fonte autorevole per `benchmark_data` e `market_live_data`, ignorando eventuali campi residui/stale in `portafoglio_data.json`; `save_benchmark_data()` preserva la parte live/storica esistente quando riceve payload incompleti
+- resa la pagina Mercati indipendente dal payload orchestrato quando legge dati benchmark/live: a inizio render fonde direttamente `portafoglio_benchmark_cache.json` nel payload della pagina e mostra diagnostica `ctx/file` per distinguere cache Streamlit vecchia da cache disco aggiornata
+- rivista la leggibilita' della pagina Mercati: tabelle con `height="content"`, colonne compatte, font 13px, evidenziazione cromatica di performance/Stato/Fonte, label piu' brevi e riduzione dell'ingombro dei box regime/aree e delle mappe forza relativa
+- ampliato in modo selettivo l'universo Core Mercati: promossi Dow Jones, US 2Y, Brent ed EUR/GBP; aggiunto GBP/USD in Esteso; aumentata la leggibilita' della mappa forza relativa con font piu' grandi su celle, assi e colorbar
+- corretto errore Plotly nella mappa forza relativa: sostituito `colorbar.titlefont` non supportato con `colorbar.title.font` e aggiunto test che costruisce effettivamente la heatmap con la versione Plotly installata
+- aumentata ulteriormente la leggibilita' della mappa forza relativa: valori compattati a 1 decimale, label indici abbreviate, gap tra celle, font celle/assi a 14px e test dedicato sui parametri tipografici minimi
+- resi leggibili i nomi strumenti della mappa forza relativa: le label Y non sono piu' tick label compresse da Plotly, ma annotazioni dedicate a 15px con margine sinistro ampliato e test specifico
+- aumentate in modo netto le etichette della sezione Mappa forza relativa: aree/assi del grafico forza area a 17px/15px, label heatmap a 18px, chip/sezioni HTML a 14-15px; sostituita anche `xaxis.titlefont` con `xaxis.title.font` per compatibilita' Plotly
+- aumentate in modo netto le etichette della sezione Mappa forza relativa: aree/assi del grafico forza area a 17px/15px, label heatmap a 18px, chip/sezioni HTML a 14-15px; sostituita anche `xaxis.titlefont` con `xaxis.title.font` per compatibilita' Plotly
+- resi leggibili i nomi strumenti della mappa forza relativa: le label Y non sono piu' tick label compresse da Plotly, ma annotazioni dedicate a 15px con margine sinistro ampliato e test specifico
+- aumentata ulteriormente la leggibilita' della mappa forza relativa: valori compattati a 1 decimale, label indici abbreviate, gap tra celle, font celle/assi a 14px e test dedicato sui parametri tipografici minimi
+- corretto errore Plotly nella mappa forza relativa: sostituito `colorbar.titlefont` non supportato con `colorbar.title.font` e aggiunto test che costruisce effettivamente la heatmap con la versione Plotly installata
+- ampliato in modo selettivo l'universo Core Mercati: promossi Dow Jones, US 2Y, Brent ed EUR/GBP; aggiunto GBP/USD in Esteso; aumentata la leggibilita' della mappa forza relativa con font piu' grandi su celle, assi e colorbar
+- rivista la leggibilita' della pagina Mercati: tabelle con `height="content"`, colonne compatte, font 13px, evidenziazione cromatica di performance/Stato/Fonte, label piu' brevi e riduzione dell'ingombro dei box regime/aree e delle mappe forza relativa
+- resa la pagina Mercati indipendente dal payload orchestrato quando legge dati benchmark/live: a inizio render fonde direttamente `portafoglio_benchmark_cache.json` nel payload della pagina e mostra diagnostica `ctx/file` per distinguere cache Streamlit vecchia da cache disco aggiornata
+- corretto il caricamento effettivo della cache Mercati: `load_data()` ora considera `portafoglio_benchmark_cache.json` fonte autorevole per `benchmark_data` e `market_live_data`, ignorando eventuali campi residui/stale in `portafoglio_data.json`; `save_benchmark_data()` preserva la parte live/storica esistente quando riceve payload incompleti
+- corretto il reload dati Mercati: `_data_mtime()` include ora `portafoglio_benchmark_cache.json` e la firma cache considera anche ultimi valori benchmark e `market_live_data`, evitando contesti Streamlit obsoleti con tabella Mercati ancora `n/d` dopo il refresh; aggiunta diagnostica di copertura dati letti nella pagina Mercati
+- reso il refresh Mercati indipendente dalla vista Core/Completo: il tasto alimenta sempre tutto l'universo Mercati, mentre la vista decide solo cosa mostrare; la striscia mercati ora usa prima `market_live_data` e solo in fallback `benchmark_data`
+- separato il refresh live della pagina Mercati dallo storico benchmark: `Aggiorna mercati` ora recupera anche quotazioni correnti Yahoo (`market_live_data`) e le usa per `Ultimo`/`Var gg`, mentre 5g/1m/YTD e grafici restano basati sulle serie daily; aggiunta persistenza del live nella cache benchmark e colonna `Fonte` per distinguere Live/Storico
+- consolidata la normalizzazione schema/storage: settings, dati portafoglio, snapshot, quotes log e meta vengono riallineati alla schema corrente e recuperano payload malformati senza lasciare versioni vecchie in memoria
+- reso piu' silenzioso l'avvio del form-server: se la porta 8502 espone gia' una pagina Sestante valida, l'app la riusa invece di tentare un secondo bind Uvicorn
+- esteso il reload automatico dello StateManager a tutti i file runtime principali (`data`, `settings`, `quotes_log`, `snapshots`, `meta`): i salvataggi fatti dai form-server fuori dal rerun Streamlit non lasciano piu' impostazioni o metadati cacheati
+- centralizzato il calcolo delle metriche da curva rendimento (`TWR`, `CAGR`, `CAGR reale`, volatilita', max drawdown, Sortino, Calmar, tracking error e information ratio) in `core/domain/returns.py`, cosi' dashboard Summary e report filtrati usano la stessa formula
+- chiarito e corretto il Money Weighted Return di portafoglio: lo `XIRR` principale usa ora, quando disponibili, i flussi esterni reali (`VERSAMENTO`/`PRELIEVO`) e il patrimonio finale comprensivo di liquidita'; il precedente XIRR sugli strumenti resta salvato come `xirr_assets`
+- reso esplicito nei report il significato dello `XIRR`: le card Performance distinguono `XIRR portafoglio` da `XIRR strumenti`, mostrano l'origine del calcolo e riportano il confronto strumenti quando i due valori non coincidono
+- irrobustiti i controlli integrita' BTP: un calendario cedole malformato o privo di date valide ora produce un warning in Gestione Dati invece di poter interrompere la pagina con un errore tecnico
+- migliorate le validazioni di input: una data passata con tipo errato mostra ora un messaggio specifico invece di essere confusa con una data mancante
+- rafforzati i controlli numerici dei form: quantita', prezzi e soglie non accettano piu' valori booleani (`True`/`False`) come se fossero numeri validi
+- bloccati valori numerici non finiti (`NaN`, `inf`, `-inf`) in quantita', prezzi, soglie e import quotazioni, evitando che dati corrotti possano entrare nello storico prezzi o nei calcoli di portafoglio
+- estesa la stessa protezione allo storage centrale: `_safe_float` converte ora valori non finiti al default con warning, proteggendo anche dati gia' salvati o file legacy caricati prima delle nuove validazioni UI
+- filtrato lo storico prezzi in `build_hist_df`: prezzi non finiti, nulli o non positivi restano buchi espliciti (`NaN`) invece di alimentare grafici e calcoli con valori corrotti
+- irrobustite le fonti mercato: prezzi Yahoo/recent history/backfill non finiti o non positivi vengono scartati prima di entrare in cache runtime o nello storico prezzi
+- protetta anche la scrittura sidebar dello storico per data effettiva di mercato: un prezzo non finito/non positivo viene ignorato e non puo' sovrascrivere una quotazione valida gia' salvata
+- ampliati i controlli di integrita' in Gestione Dati: prezzi correnti non finiti/non positivi e prezzi storici inutilizzabili vengono ora evidenziati come anomalie diagnostiche
+- rese coerenti le firme cache dei grafici con la pulizia prezzi: punti storici non numerici, non finiti o non positivi non vengono piu' contati come quotazioni valide per ticker/categoria
+- estesi i controlli di integrita' sugli eventi: quantita', prezzi unitari e importi non numerici/non finiti vengono segnalati in Gestione Dati invece di rischiare errori tecnici o calcoli sporchi
+- irrobustiti i KPI di capitale e total return: valori legacy non numerici/non finiti in liquidita', capitale investito, acquisti, versamenti e prelievi vengono neutralizzati invece di propagare `NaN`/`inf`
+- irrobustita la costruzione XIRR legacy: operazioni/proventi con importi non finiti vengono scartati e loggati, e il valore terminale usa solo controvalori finiti
+- resi robusti i riepiloghi proventi e i totali Summary: cedole/dividendi legacy con importi malformati o non finiti non propagano piu' valori `NaN`/`inf` nei report
+- irrobustito l'export Portfolio Performance: importi non finiti vengono neutralizzati, gli acquisti possono ricostruire il valore da quantita' x prezzo, e lo ZIP prezzi salta quotazioni non numeriche/non finite/non positive
+- rese robuste le viste market-only di Home e Analitica: proventi legacy non numerici/non finiti non alterano piu' i grafici P/L depurati da cedole/dividendi
+- estesa la pulizia numerica ai proventi netti dei Cruscotti: valori legacy `NaN`/`inf` non possono piu' contaminare il totale cedole/dividendi mostrato nelle viste aggregate
+- resi piu' difensivi calendario BTP e YTM/duration: metadati non finiti su cedola, nominale, quantita', aliquota o prezzo vengono gestiti senza produrre timeline o rendimenti impossibili
+- irrobustiti snapshot e confronti snapshot: totali, pesi, P/L, prezzi e note automatiche usano solo valori finiti, evitando che uno snapshot legacy sporco deformi confronto storico e commenti
+- protetto il payload radar dei Cruscotti: obiettivi, cap di concentrazione, TER/duration arricchiti, controvalori e liquidita' non finiti vengono neutralizzati prima di costruire assi, pesi e confronto con target
+- rese piu' robuste le metriche categoria dei Cruscotti: investimento, controvalore, P/L, giacenza media, TWR proxy e volatilita' ignorano punti `NaN`/`inf` invece di propagare valori impossibili nelle card
+- protetti anche riepilogo macro, breakdown allocazione e card valore/P-L per categoria: somme e percentuali usano colonne numeriche sanificate prima di aggregare
+- irrobustiti i riepiloghi di attivita' periodo usati nei report: importi, quantita', commissioni e imposte non finiti vengono neutralizzati in summary, dettaglio per strumento e registro eventi
+- irrobustito il report HTML esportabile: KPI, liquidita', proventi, holdings, dettagli categoria, highlights, serie storiche ribasate e XIRR di periodo filtrano `NaN`/`inf` prima di formattare o ordinare i dati
+- irrobustito anche il payload Summary a monte del report: impostazioni metriche, liquidita', KPI, holdings, storico e breakdown categoria neutralizzano valori non finiti prima di costruire JSON/HTML
+- irrobustiti i dataset dashboard GOV/categoria/Tutto: quote, prezzi, PMC, controvalori, P/L e pesi di comparto vengono sanificati prima di somme e medie ponderate, evitando che un dato legacy `NaN`/`inf` deformi card o grafici dei Cruscotti
+- irrobustiti i calcoli what-if di Pianificazione: posizioni e liquidita' non finite vengono neutralizzate prima di allocazione, concentrazione e metriche prima/dopo, cosi' la simulazione resta leggibile anche con dati legacy sporchi
+- irrobustiti gli alert di portafoglio: soglie, risk ratio, drawdown, volatilita' e P/L non finiti non generano alert fantasma; se `P/L %` e' parziale, l'alert perdita ricostruisce il dato da `P/L € / Costo`
+- irrobustita la vista Cedole & Scadenze: importi calendario, rimborsi, valori GOV, YTM e duration non finiti vengono ignorati nei KPI e nella duration media ponderata senza cambiare la forma della tabella dettagli
+- ridotto il rumore dei log numerici: `_safe_float` tratta `NaN` come valore mancante atteso e non emette piu' warning ripetuti, mentre mantiene il warning per `inf`/`-inf` e valori non convertibili
+- aggiunto `TODO_5.0.md` con backlog esplicito per l'archivio dei report generati: salvataggio automatico HTML/JSON, manifest locale, storico in Summary, download/eliminazione e rigenerazione con stesse opzioni
+- aggiunto il primo step dell'archivio report Summary: ogni report generato viene salvato automaticamente in `data/reports/summary/` con HTML, JSON e manifest; la pagina Summary mostra gli ultimi report, consente di riprenderli nei download correnti o eliminarli
+- resa piu' stabile l'osservabilita' in test: la configurazione logging mantiene la propagazione quando l'app gira sotto pytest/modalita' test, evitando che `caplog` perda i record dopo l'import Streamlit
+- corrette le regole evento per ETF/FND/ETC obbligazionari: la presenza di parole come `obbligazionario` o `bond` nel nome non li rende piu' strumenti da cedola/rimborso a scadenza; se sono a distribuzione restano compatibili con `DIVIDENDO`
+- la validazione eventi respinge ora esplicitamente tipi evento mancanti o non supportati, invece di lasciarli passare fino al salvataggio o ai calcoli successivi
+
 ## 4.9.40 - Consolidamento sidebar, Pianificazione fluida e cache Analitica coerente
 
 **Accesso operativo definitivo dalla sidebar:**
@@ -540,7 +936,7 @@
 - `build_historical_data_signature`: 5 chart storicamente stabili (correlazione, drawdown, performance per categoria, ...) ignorano i prezzi live e restano in cache su ogni refresh intraday
 - `resolve_analysis_render_sig`: figure Benchmark e Accumuli usano firma stabile (senza prezzi live)
 - `charts_settings_signature` usa solo content hash (no `mtime`/`size`): touch del file settings non scatena più rebuild completo
-- `@st.cache_data(persist="disk")` su `orchestrate_data_cached`: dati persistono su disco tra restart; avvio caldo da ~35s+ a ~2-5s
+- storico precedente: `@st.cache_data(persist="disk")` su `orchestrate_data_cached` aveva ridotto gli avvii caldi, ma in 5.0-pre e' stato sostituito da `runtime.orchestration_payload`
 - `build_hist_df_token_for` esclude le operazioni dalla firma: insert operazione non invalida più `hist_df` (~2-5s risparmiati per ogni inserimento)
 - pre-worm `home_concentration` con parametri corretti: eliminati ~0.6s al primo accesso Home
 - rimossi 5 chart morti dal pre-worm bundle; aggiunte 5 figure Analitica corrette: primo accesso Cruscotti/Analitica da ~22s a istantaneo

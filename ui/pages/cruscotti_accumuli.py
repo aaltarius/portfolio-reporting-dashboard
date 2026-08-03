@@ -13,9 +13,10 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from core.cache import record_cache_decision
 from core.cache_signatures import build_portfolio_data_signature, charts_settings_signature, resolve_analysis_render_sig, theme_signature
 from core.constants import SOGLIA_DRAWDOWN_ALERT
-from core.frozen_analysis_cache import cached_render_value, get_frozen_analysis_cache, small_signature_part, store_frozen_analysis_cache
+from core.frozen_analysis_cache import cached_render_figure, get_frozen_analysis_cache, small_signature_part, store_frozen_analysis_cache
 from core.render_profiler import profile_step
 from core.services.accumuli import (
     build_accumuli_analysis,
@@ -541,7 +542,7 @@ def _drawdown_judgment(value: Any) -> str:
         return "Correzione rilevante"
     return "Forte drawdown"
 
-def _render_detail(row: pd.Series, detail: dict[str, Any], cache_signature: str) -> None:
+def _render_detail(row: pd.Series, detail: dict[str, Any], cache_signature: str, *, theme_sig: str, charts_settings_sig: str) -> None:
     ticker = str(row.get("ticker") or "")
     with profile_step("Cruscotti/Accumuli", f"detail {ticker}: title"):
         render_section_title(f"Dettaglio accumulo – {ticker}", icon="analysis")
@@ -619,25 +620,29 @@ def _render_detail(row: pd.Series, detail: dict[str, Any], cache_signature: str)
     with chart_col:
         series_token = _frame_token(series)
         ops_token = _frame_token(operations)
-        price_fig = cached_render_value(
-            ACCUMULI_RENDER_CACHE_KEY,
-            f"{cache_signature}:{ticker}:price_pmc:{series_token}:{ops_token}",
-            lambda: build_accumulo_price_pmc_chart(series, operations),
+        price_fig = cached_render_figure(
+            chart_id="cruscotti_accumuli_price_pmc",
+            data_sig=cache_signature,
+            theme_sig=theme_sig,
+            charts_settings_sig=charts_settings_sig,
+            builder=lambda: build_accumulo_price_pmc_chart(series, operations),
             page_label="Cruscotti/Accumuli",
             label=f"{ticker} prezzo vs PMC",
-            max_items=24,
             count=series_count,
+            extra_params={"ticker": ticker, "series": series_token, "ops": ops_token},
         )
         with profile_step("Cruscotti/Accumuli", f"detail {ticker}: render prezzo vs PMC", count=series_count):
             st.plotly_chart(price_fig, width="stretch")
-        value_fig = cached_render_value(
-            ACCUMULI_RENDER_CACHE_KEY,
-            f"{cache_signature}:{ticker}:capitale_vs_valore:{series_token}",
-            lambda: build_accumulo_value_chart(series),
+        value_fig = cached_render_figure(
+            chart_id="cruscotti_accumuli_value",
+            data_sig=cache_signature,
+            theme_sig=theme_sig,
+            charts_settings_sig=charts_settings_sig,
+            builder=lambda: build_accumulo_value_chart(series),
             page_label="Cruscotti/Accumuli",
             label=f"{ticker} capitale vs valore",
-            max_items=24,
             count=series_count,
+            extra_params={"ticker": ticker, "series": series_token},
         )
         with profile_step("Cruscotti/Accumuli", f"detail {ticker}: render capitale vs valore", count=series_count):
             st.plotly_chart(value_fig, width="stretch")
@@ -673,6 +678,22 @@ def render_accumuli(ctx: SimpleNamespace, show_explanations: bool = True) -> Non
                 result = build_accumuli_analysis(getattr(ctx, "data", {}) or {})
             entry = store_frozen_analysis_cache(ACCUMULI_ANALYSIS_CACHE_KEY, ACCUMULI_PAYLOAD_TYPE, signature, result)
             stale = False
+            record_cache_decision(
+                "analisi accumuli cruscotti",
+                details={
+                    "event_type": "accumuli_frozen_analysis_generate",
+                    "artifact_id": "cruscotti.accumuli_frozen_analysis",
+                    "signature": signature,
+                    "material_change": False,
+                    "changed_count": 0,
+                },
+                invalidated=False,
+                token=0,
+                force_reload=False,
+                scenario="accumuli_frozen_analysis_isolated",
+                render_scope="full_tabs",
+                dirty_flags={},
+            )
             status.update(label="Analisi accumuli aggiornata", state="complete", expanded=False)
         render_frozen_analysis_status_text(status_slot, entry, stale, entity_label="accumuli")
     elif entry is None:
@@ -693,7 +714,7 @@ def render_accumuli(ctx: SimpleNamespace, show_explanations: bool = True) -> Non
     render_sig = resolve_analysis_render_sig(signature, entry)
     _theme_sig = theme_signature(get_theme_context())
     _settings_sig = charts_settings_signature("ui/charts/settings.py")
-    render_sig = f"{render_sig}:{_theme_sig}:{_settings_sig}"
+    render_sig = f"{render_sig}|theme:{_theme_sig}|charts:{_settings_sig}"
 
     if result is None:
         st.info("Analisi accumuli non disponibile. Premi “Analizza accumuli” per ricostruirla.")
@@ -712,15 +733,17 @@ def render_accumuli(ctx: SimpleNamespace, show_explanations: bool = True) -> Non
         vertical_gap("xs")
 
     if not filtered.empty:
-        overview_key = f"{render_sig}:overview:{_frame_token(filtered, ['ticker', 'categoria', 'capitale', 'controvalore', 'pl_pct', 'priorita'])}"
-        overview_fig = cached_render_value(
-            ACCUMULI_RENDER_CACHE_KEY,
-            overview_key,
-            lambda: build_accumuli_overview_chart(filtered),
+        overview_token = _frame_token(filtered, ["ticker", "categoria", "capitale", "controvalore", "pl_pct", "priorita"])
+        overview_fig = cached_render_figure(
+            chart_id="cruscotti_accumuli_overview",
+            data_sig=render_sig,
+            theme_sig=_theme_sig,
+            charts_settings_sig=_settings_sig,
+            builder=lambda: build_accumuli_overview_chart(filtered),
             page_label="Cruscotti/Accumuli",
             label="overview accumuli",
-            max_items=24,
             count=len(filtered),
+            extra_params={"scope": "overview", "frame": overview_token},
         )
         with profile_step("Cruscotti/Accumuli", "render overview chart", count=len(filtered)):
             st.plotly_chart(overview_fig, width="stretch")
@@ -737,5 +760,4 @@ def render_accumuli(ctx: SimpleNamespace, show_explanations: bool = True) -> Non
         detail = result.by_ticker.get(str(selected), {})
         vertical_gap("sm")
     with profile_step("Cruscotti/Accumuli", f"render detail {selected}"):
-        _render_detail(row, detail, render_sig)
-
+        _render_detail(row, detail, render_sig, theme_sig=_theme_sig, charts_settings_sig=_settings_sig)

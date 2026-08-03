@@ -1,10 +1,21 @@
 """core/domain/bonds.py — Calcoli finanziari obbligazionari (YTM, Duration)."""
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import numpy as np
 import pandas as pd
+
+
+def _finite_float(value: Any, default: float = 0.0) -> float:
+    if isinstance(value, bool) or value in (None, ""):
+        return float(default)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    return number if math.isfinite(number) else float("nan")
 
 
 def _future_cashflows(
@@ -49,9 +60,9 @@ def calc_ytm_and_duration(
     today = pd.Timestamp.today().normalize() if today is None else pd.Timestamp(today).normalize()
 
     try:
-        prezzo = float(strumento.get("prezzo") or 0)
-        nominale = float(strumento.get("nominale") or 100)
-        cedola_perc = float(strumento.get("cedola_perc") or 0)
+        prezzo = _finite_float(strumento.get("prezzo"), 0.0)
+        nominale = _finite_float(strumento.get("nominale"), 100.0)
+        cedola_perc = _finite_float(strumento.get("cedola_perc"), 0.0)
         from core.domain.calendar import _to_ts
         scadenza_ts = _to_ts(strumento["scadenza"])
         if scadenza_ts is None:
@@ -68,6 +79,8 @@ def calc_ytm_and_duration(
     except Exception:
         return None, None
 
+    if not all(np.isfinite(v) for v in (prezzo, nominale, cedola_perc)):
+        return None, None
     if prezzo <= 0 or nominale <= 0 or cedola_perc <= 0:
         return None, None
     if scadenza <= today:

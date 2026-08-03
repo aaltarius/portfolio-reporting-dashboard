@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable
@@ -16,9 +18,12 @@ from core.render_profiler import (
     render_profile_text,
     reset_render_profile,
 )
+from ui.streamlit_compat import render_html_iframe
 
 
 _TAB_STATE_STORAGE_KEY = "sestante.activeTabIndex.v1"
+_RUNTIME_PROCESS_TOKEN = uuid.uuid4().hex[:10]
+_RUNTIME_MODULE_LOADED_AT = time.time()
 
 
 @dataclass(slots=True)
@@ -38,6 +43,200 @@ def _render_inline_script(html: str) -> None:
             return
         except Exception:
             return
+
+
+def _render_copyable_render_log(render_log_text: str, *, key: str) -> None:
+    """Mostra log tempi con azioni coerenti: copia negli appunti e download."""
+    safe_key = "".join(ch if ch.isalnum() else "-" for ch in str(key or "render-log"))
+    payload_json = json.dumps(str(render_log_text or ""))
+    filename_json = json.dumps(f"portfolio_render_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+    st.text_area("Log rendering / performance", render_log_text, height=420, key=f"{safe_key}_text")
+    render_html_iframe(
+        f"""
+        <!doctype html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <style>
+        html,body{{
+            margin:0;
+            padding:0;
+            background:transparent;
+            overflow:hidden;
+        }}
+        .render-log-actions-{safe_key}{{
+            display:grid;
+            grid-template-columns:1fr 1fr;
+            gap:8px;
+            margin:0;
+        }}
+        .render-log-action-{safe_key}{{
+            box-sizing:border-box;
+            display:inline-flex;
+            align-items:center;
+            justify-content:center;
+            width:100%;
+            min-height:38px;
+            border:1px solid rgba(49,51,63,.22);
+            border-radius:8px;
+            background:#fff;
+            color:#31333f;
+            font:600 14px/1.2 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+            padding:8px 12px;
+            cursor:pointer;
+            text-align:center;
+        }}
+        .render-log-action-{safe_key}:hover{{
+            border-color:rgba(49,51,63,.38);
+            background:#f8fafc;
+        }}
+        .render-log-status-{safe_key}{{
+            display:block;
+            min-height:16px;
+            margin-top:4px;
+            color:#64748b;
+            font:500 12px/1.2 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+            text-align:right;
+        }}
+        @media (max-width: 640px){{
+            .render-log-actions-{safe_key}{{grid-template-columns:1fr;}}
+        }}
+        </style>
+        </head>
+        <body>
+        <div class="render-log-actions-{safe_key}">
+          <button type="button" class="render-log-action-{safe_key}" id="render-log-download-{safe_key}">Scarica log rendering .txt</button>
+          <button type="button" class="render-log-action-{safe_key}" id="render-log-copy-{safe_key}">Copia negli appunti</button>
+        </div>
+        <span class="render-log-status-{safe_key}" id="render-log-status-{safe_key}"></span>
+        <script>
+        (function(){{
+          var text = {payload_json};
+          var filename = {filename_json};
+          var copyBtn = document.getElementById("render-log-copy-{safe_key}");
+          var downloadBtn = document.getElementById("render-log-download-{safe_key}");
+          var status = document.getElementById("render-log-status-{safe_key}");
+          function setStatus(msg){{ if(status) status.textContent = msg; }}
+          function fallbackCopy(){{
+            var ta = document.createElement("textarea");
+            ta.value = text;
+            ta.setAttribute("readonly", "");
+            ta.style.position = "fixed";
+            ta.style.left = "-9999px";
+            ta.style.top = "0";
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            var ok = false;
+            try {{ ok = document.execCommand("copy"); }} catch(err) {{ ok = false; }}
+            document.body.removeChild(ta);
+            return ok;
+          }}
+          function downloadTextFile(){{
+            var blob = new Blob([text], {{type: "text/plain;charset=utf-8"}});
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement("a");
+            a.href = url;
+            a.download = filename;
+            a.style.display = "none";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function(){{ URL.revokeObjectURL(url); }}, 1000);
+          }}
+          if(downloadBtn){{
+            downloadBtn.addEventListener("click", function(){{
+              try {{
+                downloadTextFile();
+                setStatus("Download avviato");
+                setTimeout(function(){{ setStatus(""); }}, 1800);
+              }} catch(err) {{
+                setStatus("Download non riuscito: usa il testo sopra");
+              }}
+            }});
+          }}
+          if(copyBtn){{
+            copyBtn.addEventListener("click", async function(){{
+              try {{
+                var copied = false;
+                if(navigator.clipboard && window.isSecureContext) {{
+                  try {{
+                    await navigator.clipboard.writeText(text);
+                    copied = true;
+                  }} catch(err) {{
+                    copied = false;
+                  }}
+                }}
+                if(!copied) copied = fallbackCopy();
+                if(!copied) throw new Error("clipboard unavailable");
+                setStatus("Copiato");
+                setTimeout(function(){{ setStatus(""); }}, 1800);
+              }} catch(err) {{
+                setStatus("Copia non riuscita: seleziona il testo sopra");
+              }}
+            }});
+          }}
+        }})();
+        </script>
+        </body>
+        </html>
+        """,
+        height=64,
+        scrolling=False,
+    )
+
+
+def _short_layers_summary(layers: dict[str, int], *, limit: int = 8) -> str:
+    if not layers:
+        return "none"
+    items = [f"{key}={value}" for key, value in sorted(layers.items())[:limit]]
+    remaining = max(0, len(layers) - limit)
+    if remaining:
+        items.append(f"+{remaining} altri")
+    return ", ".join(items)
+
+
+def _runtime_continuity_lines() -> list[str]:
+    """Righe diagnostiche per capire se il run e' davvero caldo."""
+
+    try:
+        session_token = str(st.session_state.get("_sestante_session_token") or "")
+        if not session_token:
+            session_token = uuid.uuid4().hex[:10]
+            st.session_state["_sestante_session_token"] = session_token
+        run_ordinal = int(st.session_state.get("_sestante_session_run_ordinal", 0) or 0)
+        if run_ordinal <= 0:
+            run_ordinal = 1
+            st.session_state["_sestante_session_run_ordinal"] = run_ordinal
+    except Exception:
+        session_token = "n/d"
+        run_ordinal = 0
+
+    try:
+        from core.page_cache import get_page_artifact_runtime_stats
+
+        stats = get_page_artifact_runtime_stats()
+    except Exception:
+        stats = {}
+
+    process_layers = stats.get("process_layers") if isinstance(stats.get("process_layers"), dict) else {}
+    session_layers = stats.get("session_layers") if isinstance(stats.get("session_layers"), dict) else {}
+    module_age_seconds = max(0.0, time.time() - _RUNTIME_MODULE_LOADED_AT)
+
+    return [
+        f"process_pid: {os.getpid()}",
+        f"process_token: {_RUNTIME_PROCESS_TOKEN}",
+        f"runtime_module_age_seconds: {module_age_seconds:.1f}",
+        f"session_token: {session_token}",
+        f"session_run_ordinal: {run_ordinal}",
+        (
+            "page_cache_runtime: "
+            f"process_entries={int(stats.get('process_entries', 0) or 0)}; "
+            f"session_entries={int(stats.get('session_entries', 0) or 0)}"
+        ),
+        f"page_cache_process_layers: {_short_layers_summary(process_layers)}",
+        f"page_cache_session_layers: {_short_layers_summary(session_layers)}",
+    ]
 
 
 def _install_tab_state_bridge(page_defs: list[PageDef]) -> None:
@@ -144,22 +343,6 @@ def _clamp_active_tab_index(page_defs: list[PageDef]) -> int:
     return max(0, min(index, max(len(page_defs) - 1, 0)))
 
 
-def _render_page_selector(page_defs: list[PageDef], *, active_index: int) -> int:
-    labels = [page.label for page in page_defs]
-    selected_label = st.radio(
-        "Sezione",
-        labels,
-        index=active_index,
-        horizontal=True,
-        key="dashboard_active_page_label",
-        label_visibility="collapsed",
-    )
-    try:
-        return labels.index(selected_label)
-    except ValueError:
-        return active_index
-
-
 def _format_final_progress_text(*, render_started_at: float, run_started_at: float | None) -> str:
     ui_elapsed = time.perf_counter() - render_started_at
     if run_started_at is None:
@@ -205,6 +388,19 @@ def _render_page_step(
     finally:
         elapsed = time.perf_counter() - t0
         render_steps.append((label, elapsed, step, status, error_msg))
+        if app_logger is not None:
+            try:
+                app_logger.info(
+                    "[PAGE_RENDER] step=%s/%s label=%s status=%s elapsed=%.3fs ui_elapsed=%.3fs",
+                    step,
+                    total,
+                    label,
+                    status,
+                    elapsed,
+                    time.perf_counter() - render_started_at,
+                )
+            except Exception:
+                pass
         percent_after = progress_base + int((step / max(total, 1)) * progress_span)
         elapsed_after = time.perf_counter() - render_started_at
         if render_progress is not None:
@@ -310,6 +506,7 @@ def render_dashboard_tabs(
     pre_render_signature: str | None,
     profiling_cohort: str,
     profiling_scenario: str,
+    profiling_cache_condition: str = "n/d",
     profiling_signature_diff_lines: list[str] | None = None,
     debug_render_scope: str = "current_page",
     operational_render_scope: str = "full_tabs",
@@ -322,6 +519,7 @@ def render_dashboard_tabs(
 ) -> None:
     render_started_at = time.perf_counter()
     render_steps: list[tuple[str, Any, Any]] = []
+    reset_render_profile()
     debug_full_sweep = debug_enabled and str(debug_render_scope or "current_page") == "full_sweep"
     operational_scope = str(operational_render_scope or "full_tabs")
     if operational_scope == "current_page_only":
@@ -404,6 +602,7 @@ def render_dashboard_tabs(
                 render_lines = [
                     "=== PORTFOLIO DASHBOARD — RENDER LOG ===",
                     "versione_log: render-log-v1+deep-v4",
+                    "diagnostic_features: data_page_internal_profile,copy_download_twin_actions,current_run_history",
                     "profiling_mode: operational_current_page_only",
                     f"render_scope: {operational_scope}",
                     f"operational_reason: {operational_reason or 'n/d'}",
@@ -417,6 +616,9 @@ def render_dashboard_tabs(
                     f"cache_bust: {cache_bust}",
                     f"signature: {portfolio_signature}",
                     f"profiling_cohort: {profiling_cohort}",
+                    f"profiling_scenario: {profiling_scenario or 'n/d'}",
+                    f"profiling_cache_condition: {profiling_cache_condition or 'n/d'}",
+                    *_runtime_continuity_lines(),
                     *(profiling_signature_diff_lines or []),
                     f"totale_render_secondi: {render_elapsed_total:.3f}",
                     "",
@@ -433,23 +635,16 @@ def render_dashboard_tabs(
                     "",
                         render_profile_text(min_seconds=0.0, persisted_pre_render_signature=pre_render_signature),
                         "",
-                        "--- Lettura rapida ---",
-                        "Rerun operativo leggero: dopo una mutazione viene renderizzata solo la pagina corrente.",
-                        "Le pagine saltate restano disponibili e torneranno alla modalita standard al rerun successivo.",
+                    "--- Lettura rapida ---",
+                        "Render pagina singola: viene renderizzata solo la pagina corrente selezionata dalla sidebar.",
+                        "La modalita completa resta disponibile solo per diagnostica/sweep o scelta esplicita.",
                     ]
                 )
                 render_log_text = "\n".join(render_lines)
                 if render_log is not None:
                     render_log.caption("Tempi rendering pagine — rerun operativo leggero.")
                     with st.expander("📋 Log testuale rendering / performance", expanded=False):
-                        st.text_area("Log rendering copiabile", render_log_text, height=420)
-                        st.download_button(
-                            "Scarica log rendering .txt",
-                            data=render_log_text.encode("utf-8"),
-                            file_name=f"portfolio_render_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                            mime="text/plain",
-                            key="download_render_log_txt",
-                        )
+                        _render_copyable_render_log(render_log_text, key="render_log_operational")
             except Exception as exc:
                 app_logger.warning("Impossibile mostrare log rendering operativo: %s", exc)
     elif debug_full_sweep:
@@ -481,7 +676,8 @@ def render_dashboard_tabs(
         try:
             render_lines = [
                 "=== PORTFOLIO DASHBOARD — RENDER LOG ===",
-                "versione_log: render-log-v1+deep-v3",
+                "versione_log: render-log-v1+deep-v4",
+                "diagnostic_features: data_page_internal_profile,copy_download_twin_actions,current_run_history",
                 "profiling_mode: full_sweep",
                 f"render_scope: {operational_scope}",
                 f"operational_reason: {operational_reason or 'n/d'}",
@@ -493,6 +689,9 @@ def render_dashboard_tabs(
                 f"cache_bust: {cache_bust}",
                 f"signature: {portfolio_signature}",
                 f"profiling_cohort: {profiling_cohort}",
+                f"profiling_scenario: {profiling_scenario or 'n/d'}",
+                f"profiling_cache_condition: {profiling_cache_condition or 'n/d'}",
+                *_runtime_continuity_lines(),
                 *(profiling_signature_diff_lines or []),
                 f"totale_render_secondi: {render_elapsed_total:.3f}",
                 "",
@@ -514,6 +713,7 @@ def render_dashboard_tabs(
                         "schema_version": schema_version,
                         "data_mtime": data_mtime,
                         "cache_bust": cache_bust,
+                        "profiling_cache_condition": profiling_cache_condition,
                     },
                 )
             except Exception as exc:
@@ -540,14 +740,7 @@ def render_dashboard_tabs(
             if render_log is not None:
                 render_log.caption("Tempi rendering pagine — copia il log qui sotto e incollamelo per l'analisi.")
                 with st.expander("📋 Log testuale rendering / performance", expanded=False):
-                    st.text_area("Log rendering copiabile", render_log_text, height=420)
-                    st.download_button(
-                        "Scarica log rendering .txt",
-                        data=render_log_text.encode("utf-8"),
-                        file_name=f"portfolio_render_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                        mime="text/plain",
-                        key="download_render_log_txt",
-                    )
+                    _render_copyable_render_log(render_log_text, key="render_log_full_sweep")
         except Exception as exc:
             app_logger.warning("Impossibile mostrare log rendering dettagliato: %s", exc)
     elif debug_enabled:
@@ -580,7 +773,8 @@ def render_dashboard_tabs(
             try:
                 render_lines = [
                     "=== PORTFOLIO DASHBOARD — RENDER LOG ===",
-                    "versione_log: render-log-v1+deep-v3",
+                    "versione_log: render-log-v1+deep-v4",
+                    "diagnostic_features: data_page_internal_profile,copy_download_twin_actions,current_run_history",
                     "profiling_mode: ui_full_tabs",
                     f"render_scope: {operational_scope}",
                     f"operational_reason: {operational_reason or 'n/d'}",
@@ -592,6 +786,9 @@ def render_dashboard_tabs(
                     f"cache_bust: {cache_bust}",
                     f"signature: {portfolio_signature}",
                     f"profiling_cohort: {profiling_cohort}",
+                    f"profiling_scenario: {profiling_scenario or 'n/d'}",
+                    f"profiling_cache_condition: {profiling_cache_condition or 'n/d'}",
+                    *_runtime_continuity_lines(),
                     *(profiling_signature_diff_lines or []),
                     f"totale_render_secondi: {render_elapsed_total:.3f}",
                     "",
@@ -599,6 +796,25 @@ def render_dashboard_tabs(
                 ]
                 for label, elapsed, step, status, error_msg in render_steps:
                     render_lines.append(f"{step:02d}. {label:<15} | {elapsed:8.3f}s | {status}" + (f" | {error_msg}" if error_msg else ""))
+                try:
+                    append_render_profile_run(
+                        signature=portfolio_signature,
+                        cohort=profiling_cohort,
+                        scenario=profiling_scenario,
+                        total_render_seconds=render_elapsed_total,
+                        page_steps=render_steps,
+                        persisted_pre_render_signature=pre_render_signature,
+                        metadata={
+                            "app_version": app_version,
+                            "schema_version": schema_version,
+                            "data_mtime": data_mtime,
+                            "cache_bust": cache_bust,
+                            "profiling_cache_condition": profiling_cache_condition,
+                            "profiling_mode": "ui_full_tabs",
+                        },
+                    )
+                except Exception as exc:
+                    app_logger.warning("Impossibile salvare storico render debug: %s", exc)
                 render_lines.extend(
                     [
                         "",
@@ -619,14 +835,7 @@ def render_dashboard_tabs(
                 if render_log is not None:
                     render_log.caption("Tempi rendering pagine — copia il log qui sotto e incollamelo per l'analisi.")
                     with st.expander("📋 Log testuale rendering / performance", expanded=False):
-                        st.text_area("Log rendering copiabile", render_log_text, height=420)
-                        st.download_button(
-                            "Scarica log rendering .txt",
-                            data=render_log_text.encode("utf-8"),
-                            file_name=f"portfolio_render_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                            mime="text/plain",
-                            key="download_render_log_txt",
-                        )
+                        _render_copyable_render_log(render_log_text, key="render_log_debug")
             except Exception as exc:
                 app_logger.warning("Impossibile mostrare log rendering dettagliato: %s", exc)
     else:
@@ -638,5 +847,33 @@ def render_dashboard_tabs(
             render_steps=render_steps,
             app_logger=app_logger,
         )
+        render_elapsed_total = time.perf_counter() - render_started_at
+        try:
+            append_render_profile_run(
+                signature=portfolio_signature,
+                cohort=profiling_cohort,
+                scenario=profiling_scenario,
+                total_render_seconds=render_elapsed_total,
+                page_steps=render_steps,
+                persisted_pre_render_signature=pre_render_signature,
+                metadata={
+                    "app_version": app_version,
+                    "schema_version": schema_version,
+                    "data_mtime": data_mtime,
+                    "cache_bust": cache_bust,
+                    "profiling_cache_condition": profiling_cache_condition,
+                    "profiling_mode": "standard_full_tabs",
+                },
+            )
+        except Exception as exc:
+            app_logger.warning("Impossibile salvare storico render standard: %s", exc)
+        try:
+            app_logger.info(
+                "[DASHBOARD_RENDER] mode=standard_full_tabs pages=%s elapsed=%.3fs",
+                len(render_steps),
+                render_elapsed_total,
+            )
+        except Exception:
+            pass
         if render_progress is not None:
             render_progress.progress(100, text=_format_final_progress_text(render_started_at=render_started_at, run_started_at=run_started_at))

@@ -10,6 +10,10 @@ from typing import Any
 import pandas as pd
 from persistence.storage import (
     DATA_DIR,
+    META_FILE,
+    QUOTES_LOG_FILE,
+    SETTINGS_FILE,
+    SNAPSHOTS_FILE,
     _portfolio_state_signature,
     load_data, load_settings, load_quotes_log, load_snapshots, load_meta,
     save_data, _data_mtime, _new_event_id
@@ -21,6 +25,7 @@ from core.finance import (
 from core.market_data import get_price, prime_isin_ticker_cache
 from core.price_frames import build_expanded_price_frame
 from core.cache_signatures import history_span_by_ticker
+from core.cache_orchestrator import get_registered_runtime_cache
 
 logger = logging.getLogger("portafoglio.core.state")
 _DERIVED_CACHE_DIR = os.path.join(DATA_DIR, "cache", "derived_runtime")
@@ -53,8 +58,12 @@ class StateManager:
             "market_prices": None,
         }
 
-        # Cache per strumento (ticker -> dati di posizione e eventi)
-        self._instrument_cache = {}
+        # Cache per strumento registrata nel governo cache runtime 5.0.
+        self._instrument_cache = get_registered_runtime_cache(
+            "state.derived_runtime_frames",
+            namespace="instrument_events",
+            max_entries=512,
+        )
 
         # Traccia mtime per invalidazione automatica
         self._mtime_tracker = {}
@@ -65,7 +74,7 @@ class StateManager:
 
         # Carica dati iniziali
         self._load_all()
-        self._mtime_tracker["data"] = _data_mtime()
+        self._mtime_tracker["storage"] = self._storage_mtime_snapshot()
         os.makedirs(_DERIVED_CACHE_DIR, exist_ok=True)
 
         # Pre-warming sincrono (timeout 2 secondi)
@@ -82,7 +91,10 @@ class StateManager:
 
         # Invalida tutta la cache
         self._cache = {key: None for key in self._cache}
-        self._instrument_cache = {}
+        if hasattr(self._instrument_cache, "clear"):
+            self._instrument_cache.clear()
+        else:
+            self._instrument_cache = {}
         self._portfolio_state_cache_token = None
         self._history_cache_token = None
         self._hist_df_cache_token = None
@@ -214,6 +226,22 @@ class StateManager:
             self._history_span_token(storico, strumenti),
         )
 
+    @staticmethod
+    def _safe_file_mtime(path: str) -> float:
+        try:
+            return os.path.getmtime(path) if os.path.exists(path) else 0.0
+        except Exception:
+            return 0.0
+
+    def _storage_mtime_snapshot(self) -> dict[str, float]:
+        return {
+            "data": _data_mtime(),
+            "settings": self._safe_file_mtime(SETTINGS_FILE),
+            "quotes_log": self._safe_file_mtime(QUOTES_LOG_FILE),
+            "snapshots": self._safe_file_mtime(SNAPSHOTS_FILE),
+            "meta": self._safe_file_mtime(META_FILE),
+        }
+
     def invalidate(self, keys: list[str]) -> None:
         """
         Invalida solo cache specifiche.
@@ -328,22 +356,28 @@ class StateManager:
 
     def reload_if_changed(self) -> bool:
         """
-        Controlla se file dati è cambiato.
+        Controlla se i file runtime sono cambiati.
         Se sì, ricarica e invalida cache.
         Ritorna: True se reload avvenuto, False altrimenti.
         """
-        current_mtime = _data_mtime()
-        if current_mtime != self._mtime_tracker.get("data"):
+        current_mtime = self._storage_mtime_snapshot()
+        previous_mtime = self._mtime_tracker.get("storage") or {}
+        if current_mtime != previous_mtime:
             self._load_all()
-            self._mtime_tracker["data"] = current_mtime
-            logger.info("Reload automatico eseguito per cambio mtime dati")
+            changed = [
+                key
+                for key, value in current_mtime.items()
+                if value != previous_mtime.get(key)
+            ]
+            self._mtime_tracker["storage"] = self._storage_mtime_snapshot()
+            logger.info("Reload automatico eseguito per cambio mtime runtime: %s", ",".join(changed) or "n/d")
             return True
         return False
 
     def force_reload(self) -> None:
         """Ricarica lo stato da disco e invalida tutte le cache derivate."""
         self._load_all()
-        self._mtime_tracker["data"] = _data_mtime()
+        self._mtime_tracker["storage"] = self._storage_mtime_snapshot()
         logger.info("Reload forzato eseguito")
 
     def get_instrument_events(self, ticker: str) -> list[dict[str, Any]]:
@@ -352,6 +386,16 @@ class StateManager:
         Cache a livello di strumento.
         """
         cache_key = f"events_{ticker}"
+        if hasattr(self._instrument_cache, "get") and hasattr(self._instrument_cache, "set"):
+            cached = self._instrument_cache.get(cache_key)
+            if cached is not None:
+                return cached
+            from persistence.storage import get_registro_eventi
+            registro = get_registro_eventi(self._data)
+            strumento_events = [e for e in registro if e.get("ticker") == ticker]
+            self._instrument_cache.set(cache_key, strumento_events)
+            return strumento_events
+
         if cache_key not in self._instrument_cache:
             from persistence.storage import get_registro_eventi
             registro = get_registro_eventi(self._data)

@@ -3,6 +3,7 @@ ui/pages/summary.py — Tab Summary (t5): Report generator
 Pure form-based rendering with zero video visualizations.
 Generates PDF/HTML reports for download (no KPI cards, no graphs on-screen).
 """
+import html
 import json
 from datetime import date, datetime
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ import pandas as pd
 import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
 
+from core.cache import record_cache_decision
 from core.finance import build_portfolio_summary_payload
 from core.render_profiler import profile_step
 from core.services.period_activity import build_period_activity
@@ -23,6 +25,12 @@ from core.services.report_builder import (
     default_report_options,
     report_payload_json,
     resolve_period,
+)
+from core.services.report_archive import (
+    delete_summary_report,
+    load_summary_report_manifest,
+    read_summary_report_file,
+    save_summary_report_archive,
 )
 from ui.charts.summary import build_summary_figures
 from ui.charts.tables import color_pl
@@ -91,6 +99,92 @@ def _render_page_intro(title: str, comment: str, icon: str = "default", theme=No
 
 def _section_line() -> None:
     return render_section_line_shared()
+
+
+def _fmt_archive_datetime(value: Any) -> str:
+    text = str(value or "")
+    if not text:
+        return "n/d"
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        return text
+
+
+def _fmt_archive_period(entry: dict[str, Any]) -> str:
+    label = str(entry.get("period_label") or "ALL")
+    start = str(entry.get("period_start") or "")
+    end = str(entry.get("period_end") or "")
+    if start or end:
+        return f"{label} ({start or 'inizio'} - {end or 'oggi'})"
+    return label
+
+
+def _render_report_archive() -> None:
+    reports = load_summary_report_manifest(limit=8)
+    st.markdown(
+        """
+        <style>
+        .report-archive-list { display:flex; flex-direction:column; gap:10px; margin-top:8px; }
+        .report-archive-card { padding:12px 14px; border:1px solid #d8dee8; border-radius:10px; background:#ffffff; }
+        .report-archive-title { font-weight:700; color:#111827; font-size:.93rem; }
+        .report-archive-meta { margin-top:3px; color:#64748b; font-size:.80rem; line-height:1.45; }
+        .report-archive-kpi { margin-top:6px; color:#334155; font-size:.82rem; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    if not reports:
+        st.caption("Nessun report archiviato. Il prossimo report generato verra salvato automaticamente qui.")
+        return
+
+    st.caption("Ultimi report salvati localmente. Riprendi un report per riattivare i pulsanti di download HTML/JSON.")
+    st.markdown("<div class='report-archive-list'>", unsafe_allow_html=True)
+    for entry in reports:
+        report_id = str(entry.get("id") or "")
+        title = html.escape(str(entry.get("filename") or report_id or "Report"))
+        saved_at = html.escape(_fmt_archive_datetime(entry.get("saved_at")))
+        period = html.escape(_fmt_archive_period(entry))
+        portfolio_name = html.escape(str(entry.get("portfolio_name") or "Portafoglio"))
+        total_value = fmt_eur_it(entry.get("total_market_value"), 2)
+        total_pl = fmt_eur_it(entry.get("total_pl"), 2, signed=True)
+        st.markdown(
+            f"""
+            <div class="report-archive-card">
+              <div class="report-archive-title">{title}</div>
+              <div class="report-archive-meta">{saved_at} · {portfolio_name} · Periodo: {period}</div>
+              <div class="report-archive-kpi">Valore strumenti: <strong>{total_value}</strong> · P/L: <strong>{total_pl}</strong></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        col_restore, col_delete, col_spacer = st.columns([1, 1, 4], gap="small")
+        with col_restore:
+            if st.button("Riprendi", key=f"summary_archive_restore_{report_id}", width="stretch"):
+                html_bytes = read_summary_report_file(report_id, "html")
+                json_bytes = read_summary_report_file(report_id, "json")
+                if html_bytes:
+                    st.session_state["summary_report_output"] = {
+                        "html": html_bytes,
+                        "json": json_bytes,
+                        "filename": str(entry.get("filename") or entry.get("html_file") or f"{report_id}.html"),
+                        "generated_at": _fmt_archive_datetime(entry.get("saved_at")),
+                        "archive_id": report_id,
+                    }
+                    st.success("Report ripreso dall'archivio.")
+                    st.rerun()
+                else:
+                    st.warning("File HTML non trovato per questo report archiviato.")
+        with col_delete:
+            if st.button("Elimina", key=f"summary_archive_delete_{report_id}", width="stretch"):
+                delete_summary_report(report_id)
+                current = st.session_state.get("summary_report_output") or {}
+                if current.get("archive_id") == report_id:
+                    st.session_state.pop("summary_report_output", None)
+                st.rerun()
+        with col_spacer:
+            st.empty()
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_summary(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
@@ -288,12 +382,43 @@ def render_summary(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                             else:
                                 json_period_activity[key] = value
                         json_payload["period_activity"] = json_period_activity
+                    html_bytes = html_doc.encode("utf-8")
+                    json_bytes = report_payload_json(json_payload, report_options)
+                    filename = build_report_filename(report_options, "html")
+                    archive_entry = save_summary_report_archive(
+                        html_bytes=html_bytes,
+                        json_bytes=json_bytes,
+                        filename=filename,
+                        payload=json_payload,
+                        options=report_options,
+                    )
                     st.session_state["summary_report_output"] = {
-                        "html": html_doc.encode("utf-8"),
-                        "json": report_payload_json(json_payload, report_options),
-                        "filename": build_report_filename(report_options, "html"),
+                        "html": html_bytes,
+                        "json": json_bytes,
+                        "filename": filename,
                         "generated_at": datetime.now().strftime("%d/%m/%Y %H:%M"),
+                        "archive_id": archive_entry.get("id"),
                     }
+                    record_cache_decision(
+                        "genera report summary",
+                        details={
+                            "event_type": "summary_report_generate",
+                            "report_id": archive_entry.get("id"),
+                            "filename": filename,
+                            "include_charts": bool(include_charts),
+                            "include_risk_overview": bool(include_risk_overview),
+                            "html_bytes": len(html_bytes),
+                            "json_bytes": len(json_bytes),
+                            "material_change": False,
+                            "changed_count": 0,
+                        },
+                        invalidated=False,
+                        token=0,
+                        force_reload=False,
+                        scenario="summary_report_isolated",
+                        render_scope="full_tabs",
+                        dirty_flags={},
+                    )
 
             output = st.session_state.get("summary_report_output")
             if output:
@@ -322,5 +447,14 @@ def render_summary(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                         width="stretch",
                         key="summary_download_json",
                     )
+
+        _section_line()
+        with st.container():
+            render_section_title(
+                "Archivio report",
+                comment="Ogni report generato viene salvato localmente e puo essere ripreso in seguito.",
+                gap_after="sm",
+            )
+            _render_report_archive()
 
         back_to_top()

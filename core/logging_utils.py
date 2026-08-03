@@ -46,7 +46,7 @@ def configure_logging(
     """Configura un logger applicativo con handler file e stream, in modo idempotente."""
     logger = logging.getLogger(logger_name)
     logger.setLevel(level)
-    logger.propagate = False
+    logger.propagate = bool(os.getenv("PYTEST_CURRENT_TEST")) or os.getenv("PORTFOLIO_TESTING") == "1"
 
     log_file = _resolve_log_file(log_dir)
     formatter = logging.Formatter(

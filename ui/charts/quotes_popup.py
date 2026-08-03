@@ -6,10 +6,11 @@ import re
 import pandas as pd
 
 from core.config import COLORS
+from core.render_profiler import profile_step
 from persistence.storage import macro_cat
 from core.finance import build_ptf_df
 from core.instrument_classification import is_nav_fund
-from ui.charts.instrument_badges import commission_badge
+from ui.charts.instrument_badges import ISSUER_BADGE_CSS, commission_badge, issuer_badge
 from ui.charts.natura_icons import get_natura_visual
 from ui.formatting import fmt_num_it, fmt_pct_it
 from ui.streamlit_compat import iframe_height_for_rows, iframe_scroll_for_rows, render_html_iframe
@@ -22,11 +23,12 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
 
     quotes_log = quotes_log or {}
     storico = data.get("storico_prezzi", {}) or {}
-    # Carica strumenti freschi dal disco: ctx.data è cached e non riflette enrichment recente
-    from persistence.storage import load_data as _ld_enr
-    _fresh_strumenti = _ld_enr().get("strumenti", [])
-    info_map = {s.get("ticker", ""): s for s in _fresh_strumenti}
-    holdings_df = build_ptf_df(data)
+    # Il popup non deve ricaricare il JSON da disco durante il render: se
+    # l'anagrafica cambia, deve cambiare il payload/firma della pagina a monte.
+    with profile_step("Quotazioni/TablePopup", "build instrument map for popup", count=len(data.get("strumenti", []) or [])):
+        info_map = {s.get("ticker", ""): s for s in data.get("strumenti", []) or []}
+    with profile_step("Quotazioni/TablePopup", "build holdings map for popup"):
+        holdings_df = build_ptf_df(data)
     holdings_map = {}
     if isinstance(holdings_df, pd.DataFrame) and not holdings_df.empty and "Ticker" in holdings_df.columns:
         holdings_map = {str(row.get("Ticker", "")): row for _, row in holdings_df.iterrows()}
@@ -42,13 +44,14 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
         except Exception:
             return "0"
 
-    log_items = quotes_log.get("items", []) or []
-    logs_by_ticker = {}
-    for item in log_items:
-        ticker = str(item.get("ticker") or "").strip()
-        if not ticker:
-            continue
-        logs_by_ticker.setdefault(ticker, []).append(item)
+    with profile_step("Quotazioni/TablePopup", "group quote logs for popup"):
+        log_items = quotes_log.get("items", []) or []
+        logs_by_ticker = {}
+        for item in log_items:
+            ticker = str(item.get("ticker") or "").strip()
+            if not ticker:
+                continue
+            logs_by_ticker.setdefault(ticker, []).append(item)
 
     popup_payload = {}
     rows_html = ""
@@ -84,6 +87,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
         # ui/form_server/strumenti.py): per le altre categorie il badge non è
         # applicabile, non va mostrato di default solo perché il campo manca.
         comm_badge = commission_badge(info.get("zero_commissioni")) if macro_cat(tipo) in ("ETF", "ETC") else ""
+        issuer_badge_html = issuer_badge(info, ticker=ticker, tipo_code=macro_cat(tipo))
         try:
             delta_val = float(delta) if delta is not None else 0.0
         except Exception:
@@ -144,20 +148,20 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
 
         rows_html += (
             f'<tr style="{row_background}">'
-            f'<td data-sort="{sym_sort}" style="text-align:center;padding:9px 6px;color:{sym_col};font-weight:800;">{sym}</td>'
+            f'<td data-sort="{sym_sort}" style="text-align:center;color:{sym_col};font-weight:800;">{sym}</td>'
             f'<td class="num" data-sort="{_sort_num(delta_val)}" style="color:{sym_col};font-weight:700;">{fmt_pct_it(delta, 2, signed=True)}</td>'
-            f'<td data-sort="{ticker}"><a class="tk-link" style="color:{color}" href="#" onclick="showQuoteModal(\'{ticker}\');return false;">{ticker}</a>{comm_badge}</td>'
-            f'<td data-sort="{name}" style="color:{color};max-width:115px;" title="{name}">{name[:21]}</td>'
-            f'<td data-sort="{nature_label}" style="text-align:center;width:36px;min-width:36px;max-width:36px;padding-left:4px;padding-right:4px;">'
+            f'<td data-sort="{ticker}">{issuer_badge_html}<a class="tk-link" style="color:{color}" href="#" onclick="showQuoteModal(\'{ticker}\');return false;">{ticker}</a>{comm_badge}</td>'
+            f'<td data-sort="{name}" style="color:{color};" title="{name}">{name}</td>'
+            f'<td data-sort="{nature_label}" style="text-align:center;padding-left:4px;padding-right:4px;">'
             f'<span class="type-icon" title="{nature_label}" aria-label="{nature_label}" style="color:{nature_color};">{icon_svg}</span></td>'
-            f'<td data-sort="{tipo}" style="color:{color};font-weight:700;max-width:31px;overflow:hidden;text-overflow:ellipsis;" title="{tipo}">{tipo}</td>'
-            f'<td class="num" data-sort="{_sort_num(prezzo)}" style="max-width:68px;">{fmt_num_it(prezzo, 3)}</td>'
-            f'<td class="num" data-sort="{_sort_num(prezzo_prec)}" style="max-width:68px;">{fmt_num_it(prezzo_prec, 3)}</td>'
-            f'<td class="num" data-sort="{_delta_eur_sort}" style="color:{_delta_eur_col};font-weight:700;max-width:76px;">{_delta_eur_fmt}</td>'
-            f'<td data-sort="{fonte}" style="max-width:88px;" title="{fonte}">{fonte}</td>'
-            f'<td class="num" data-sort="{_sort_dt}" style="max-width:90px;color:#6b7280;white-space:nowrap;" title="{_title_dt}">{price_date_fmt}</td>'
-            f'<td data-sort="{holding_sort}" style="text-align:center;max-width:32px;color:{holding_color};font-weight:700;">{holding_label}</td>'
-            f'<td data-sort="{esito_label}" style="color:{esito_col};font-weight:700;max-width:60px;"{esito_title_attr}>{esito_label}</td>'
+            f'<td data-sort="{tipo}" style="color:{color};font-weight:700;" title="{tipo}">{tipo}</td>'
+            f'<td class="num" data-sort="{_sort_num(prezzo)}">{fmt_num_it(prezzo, 3)}</td>'
+            f'<td class="num" data-sort="{_sort_num(prezzo_prec)}">{fmt_num_it(prezzo_prec, 3)}</td>'
+            f'<td class="num" data-sort="{_delta_eur_sort}" style="color:{_delta_eur_col};font-weight:700;">{_delta_eur_fmt}</td>'
+            f'<td data-sort="{fonte}" title="{fonte}">{fonte}</td>'
+            f'<td class="num" data-sort="{_sort_dt}" style="color:#6b7280;white-space:nowrap;" title="{_title_dt}">{price_date_fmt}</td>'
+            f'<td data-sort="{holding_sort}" style="text-align:center;color:{holding_color};font-weight:700;">{holding_label}</td>'
+            f'<td data-sort="{esito_label}" style="color:{esito_col};font-weight:700;"{esito_title_attr}>{esito_label}</td>'
             f'</tr>'
         )
 
@@ -378,28 +382,40 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
 
     payload_json = json.dumps(popup_payload, ensure_ascii=False).replace("</", "<\\/")
     compact_table = len(qdf) >= 20
-    row_height = 30 if compact_table else 39
+    row_height = 34 if compact_table else 40
     iframe_h = iframe_height_for_rows(
         len(qdf), row_height=row_height, header_height=124, padding=0, min_height=380, max_height=2000, content_until_rows=18
     )
     scrolling = iframe_scroll_for_rows(len(qdf), threshold=40)
-    head_pad = "6px 10px" if compact_table else "9px 12px"
-    first_head_pad = "6px 6px" if compact_table else "9px 6px"
-    body_pad = "5px 9px" if compact_table else "9px 12px"
-    body_font = "12.25px" if compact_table else "14px"
-    head_font = "11px" if compact_table else "12px"
+    head_pad = "7px 6px" if compact_table else "9px 8px"
+    first_head_pad = "7px 4px" if compact_table else "9px 4px"
+    body_pad = "6px 6px" if compact_table else "9px 8px"
+    body_font = "13px" if compact_table else "14px"
+    head_font = "13px"
 
     html_content = """<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
 *{box-sizing:border-box;margin:0;padding:0;}
 html,body{background:transparent;font-family:"Source Sans Pro",system-ui,-apple-system,sans-serif;font-size:__BODY_FONT__;overflow:hidden;color:#262730;}
 .tw{border:1px solid #e6e9ef;border-radius:8px;overflow:hidden;background:#fff;width:100%;}
-table{width:100%;border-collapse:collapse;table-layout:auto;}
-thead th{background:#f0f2f6;font-size:__HEAD_FONT__;font-weight:600;letter-spacing:.01em;color:#262730;padding:__HEAD_PAD__;border-bottom:1px solid #e6e9ef;border-right:1px solid #e6e9ef;text-align:right;white-space:nowrap;position:relative;user-select:none;cursor:pointer;}
+table{width:100%;border-collapse:collapse;table-layout:fixed;}
+col.c-arrow{width:3.1%;}
+col.c-var{width:6.2%;}
+col.c-ticker{width:11.6%;}
+col.c-name{width:18.8%;}
+col.c-icon{width:4.4%;}
+col.c-type{width:5.4%;}
+col.c-price{width:7.3%;}
+col.c-prev{width:7.3%;}
+col.c-delta{width:6.9%;}
+col.c-source{width:8.2%;}
+col.c-date{width:8.4%;}
+col.c-ptf{width:4.6%;}
+col.c-status{width:7.8%;}
+thead th{background:#f0f2f6;font-size:__HEAD_FONT__;font-weight:600;line-height:1.12;letter-spacing:0;color:#262730;padding:__HEAD_PAD__;border-bottom:1px solid #e6e9ef;border-right:1px solid #e6e9ef;text-align:right;white-space:nowrap;position:relative;user-select:none;cursor:pointer;overflow:hidden;text-overflow:ellipsis;}
 thead th:last-child{border-right:none;}
-thead th:nth-child(1){text-align:center;width:26px;cursor:default;padding:__FIRST_HEAD_PAD__;}
+thead th:nth-child(1){text-align:center;cursor:default;padding:__FIRST_HEAD_PAD__;}
 thead th:nth-child(3),thead th:nth-child(4),thead th:nth-child(6),thead th:nth-child(10),thead th:nth-child(13){text-align:left;}
-thead th:nth-child(7),thead th:nth-child(8){max-width:68px;}
 thead th:hover:not(:nth-child(1)){background:#e3e6e9;}
 thead th .sort-ind{font-size:9px;margin-left:3px;color:#9094a3;}
 thead th.asc .sort-ind::after{content:'▲';color:#262730;}
@@ -409,10 +425,11 @@ thead th.desc .sort-ind::after{content:'▼';color:#262730;}
 tbody tr{border-bottom:1px solid #f0f2f6;}
 tbody tr:last-child{border-bottom:none;}
 tbody tr:hover{background:#f0f2f6;}
-tbody td{padding:__BODY_PAD__;vertical-align:middle;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border-right:1px solid #f0f2f6;}
+tbody td{padding:__BODY_PAD__;vertical-align:middle;line-height:1.18;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border-right:1px solid #f0f2f6;}
 tbody td:last-child{border-right:none;}
 .type-icon{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;line-height:0;}
 .type-icon svg{width:18px;height:18px;display:block;fill:none;}
+__ISSUER_BADGE_CSS__
 .num{text-align:right;font-variant-numeric:tabular-nums;}
 a.tk-link{text-decoration:none;font-weight:700;cursor:pointer;border-bottom:1.5px dotted;transition:opacity .15s;}
 a.tk-link:hover{opacity:0.65;}
@@ -467,13 +484,28 @@ svg.spark{width:100%;height:152px;display:block;border-radius:10px;background:#f
 </style></head>
 <body>
 <div class="tw"><table id="quotes-table">
+<colgroup>
+  <col class="c-arrow">
+  <col class="c-var">
+  <col class="c-ticker">
+  <col class="c-name">
+  <col class="c-icon">
+  <col class="c-type">
+  <col class="c-price">
+  <col class="c-prev">
+  <col class="c-delta">
+  <col class="c-source">
+  <col class="c-date">
+  <col class="c-ptf">
+  <col class="c-status">
+</colgroup>
 <thead><tr>
   <th data-col="0"></th>
   <th data-col="1">Var.%<span class="sort-ind"></span><span class="rh"></span></th>
   <th data-col="2">Ticker<span class="sort-ind"></span><span class="rh"></span></th>
   <th data-col="3">Strumento<span class="sort-ind"></span><span class="rh"></span></th>
   <th data-col="4">Tipo<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="5">Tipologia<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="5">Cat.<span class="sort-ind"></span><span class="rh"></span></th>
   <th data-col="6">Prezzo<span class="sort-ind"></span><span class="rh"></span></th>
   <th data-col="7">Prec.<span class="sort-ind"></span><span class="rh"></span></th>
   <th data-col="8">Δ Prezzo<span class="sort-ind"></span><span class="rh"></span></th>
@@ -656,6 +688,7 @@ sendH(); requestAnimationFrame(sendH); setTimeout(sendH,150); setTimeout(sendH,6
 </script>
 </body></html>"""
     html_content = html_content.replace("#1E8449", COLORS["success"]).replace("#FF4B4B", COLORS["danger"])
+    html_content = html_content.replace("__ISSUER_BADGE_CSS__", ISSUER_BADGE_CSS)
     html_content = html_content.replace("__ROWS__", rows_html)
     html_content = html_content.replace("__QUOTES_JSON__", payload_json)
     html_content = html_content.replace("__BODY_FONT__", body_font)
@@ -663,4 +696,5 @@ sendH(); requestAnimationFrame(sendH); setTimeout(sendH,150); setTimeout(sendH,6
     html_content = html_content.replace("__HEAD_PAD__", head_pad)
     html_content = html_content.replace("__FIRST_HEAD_PAD__", first_head_pad)
     html_content = html_content.replace("__BODY_PAD__", body_pad)
-    render_html_iframe(html_content, height=iframe_h, scrolling=scrolling)
+    with profile_step("Quotazioni/TablePopup", "render quotes iframe", count=len(qdf)):
+        render_html_iframe(html_content, height=iframe_h, scrolling=scrolling)

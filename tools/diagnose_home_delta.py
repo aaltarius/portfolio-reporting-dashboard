@@ -10,7 +10,8 @@ if str(ROOT) not in sys.path:
 import pandas as pd
 
 from persistence.storage import load_data
-from core.finance import build_hist_df, build_portfolio_history_df
+from core.finance import build_hist_df, build_portfolio_history_df, build_ptf_df
+from ui.pages.home import _build_portfolio_table_direction_map
 
 
 def main() -> None:
@@ -65,6 +66,54 @@ def main() -> None:
     else:
         out = out.sort_values("Delta")
         print(out.to_string(index=False))
+
+    focus = ["FAM-FLEX", "FAM-EMD", "FAM-PU8", "FAM-PU6", "SWDA.MI"]
+    print("focus_compare")
+    da = build_ptf_df(data)
+    direction_map = _build_portfolio_table_direction_map(da, ptf_hist, data)
+    quote_items = {}
+    qlog = data.get("quotes_log", {}) if isinstance(data, dict) else {}
+    for item in (qlog.get("items", []) if isinstance(qlog, dict) else []):
+        tk = str(item.get("ticker") or "")
+        if tk:
+            quote_items[tk] = item
+    storico = data.get("storico_prezzi", {}) or {}
+    for tk in focus:
+        row = da[da["Ticker"].astype(str) == tk] if not da.empty and "Ticker" in da.columns else pd.DataFrame()
+        ctv = float(row["Controvalore"].iloc[0]) if not row.empty and "Controvalore" in row.columns else None
+        prezzo = float(row["Prezzo"].iloc[0]) if not row.empty and "Prezzo" in row.columns else None
+        qty = float(row["Quote"].iloc[0]) if not row.empty and "Quote" in row.columns else None
+        price_points = []
+        for day in sorted(storico.keys()):
+            vals = storico.get(day) or {}
+            if isinstance(vals, dict) and tk in vals and vals.get(tk) not in (None, ""):
+                try:
+                    price_points.append((day, float(vals.get(tk))))
+                except Exception:
+                    pass
+        hist_pair = price_points[-2:] if len(price_points) >= 2 else price_points
+        dm = direction_map.get(tk)
+        col = f"PL_{tk}"
+        pl_delta = None
+        if col in ptf_hist.columns and len(ptf_hist) >= 2:
+            a = ptf_hist.iloc[-2].get(col)
+            b = ptf_hist.iloc[-1].get(col)
+            if pd.notna(a) and pd.notna(b):
+                pl_delta = float(b) - float(a)
+        qitem = quote_items.get(tk, {})
+        print({
+            "ticker": tk,
+            "qty": qty,
+            "prezzo_da": prezzo,
+            "ctv": ctv,
+            "last_two_prices": hist_pair,
+            "direction_map": dm,
+            "dfh_pl_delta": pl_delta,
+            "quote_log_delta_pct": qitem.get("delta_pct"),
+            "quote_log_price": qitem.get("price"),
+            "quote_log_prev": qitem.get("previous_price"),
+            "quote_log_ts": qitem.get("timestamp"),
+        })
 
 
 if __name__ == "__main__":

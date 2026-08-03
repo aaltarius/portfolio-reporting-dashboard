@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 
 
@@ -52,6 +54,18 @@ def _is_btp(tipo: str) -> bool:
     return tipo_norm in {"btp", "titolo di stato"}
 
 
+def _finite_float(value, default: float = 0.0, *, zero_as_default: bool = False) -> float:
+    if isinstance(value, bool) or value in (None, ""):
+        return float(default)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    if zero_as_default and abs(number) <= 1e-12:
+        return float(default)
+    return number if math.isfinite(number) else float(default)
+
+
 def _first_purchase_date(registro_eventi: list[dict], ticker: str) -> pd.Timestamp | None:
     purchase_dates: list[pd.Timestamp] = []
     for ev in registro_eventi or []:
@@ -95,18 +109,9 @@ def build_btp_calendar(data: dict) -> pd.DataFrame:
         )
         purchase_date = purchase_date.normalize()
 
-        try:
-            cedola_perc = float(strumento.get("cedola_perc", 0) or 0)
-        except Exception:
-            cedola_perc = 0.0
-        try:
-            nominale = float(strumento.get("nominale", 100) or 100)
-        except Exception:
-            nominale = 100.0
-        try:
-            quantita = float(strumento.get("quantita", 1) or 1)
-        except Exception:
-            quantita = 1.0
+        cedola_perc = _finite_float(strumento.get("cedola_perc"), 0.0)
+        nominale = _finite_float(strumento.get("nominale"), 100.0, zero_as_default=True)
+        quantita = _finite_float(strumento.get("quantita"), 1.0, zero_as_default=True)
 
         cedola_freq = str(strumento.get("cedola_frequenza", "annuale") or "annuale").strip().lower()
         prima_cedola = (
@@ -115,10 +120,7 @@ def build_btp_calendar(data: dict) -> pd.DataFrame:
             or purchase_date
         )
         prima_cedola = prima_cedola.normalize()
-        try:
-            aliquota_cedola = float(strumento.get("aliquota_cedola", TAX_RATE_GOV_PCT) or TAX_RATE_GOV_PCT)
-        except Exception:
-            aliquota_cedola = TAX_RATE_GOV_PCT
+        aliquota_cedola = _finite_float(strumento.get("aliquota_cedola"), TAX_RATE_GOV_PCT, zero_as_default=True)
 
         rows.append(
             {
@@ -203,7 +205,4 @@ def build_btp_calendar(data: dict) -> pd.DataFrame:
 
 
 def fmt_eur_label(value: float) -> str:
-    try:
-        return f"€ {float(value):,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    except Exception:
-        return "€ 0"
+    return f"€ {_finite_float(value, 0.0):,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")

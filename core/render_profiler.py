@@ -304,9 +304,25 @@ def profile_step(page: str, step: str, *, detail: str = "", count: int | None = 
 
 def _canonical_page_name(label: str) -> str:
     raw = str(label or "").strip()
-    for known in ["Quotazioni", "Portafoglio", "Operazioni", "Cruscotti", "Summary", "Confronto", "Pianificazione", "Gestione Dati", "Impostazioni"]:
-        if known.lower() in raw.lower():
-            return known
+    known_pages = [
+        ("Quotazioni", "Quotazioni"),
+        ("Portafoglio", "Portafoglio"),
+        ("Operazioni", "Operazioni"),
+        ("Cruscotti", "Cruscotti"),
+        ("Mercati", "Mercati"),
+        ("Summary", "Summary"),
+        ("Confronto", "Confronto"),
+        ("Pianificazione", "Pianificazione"),
+        ("Gestione Dati", "Dati"),
+        ("Dati", "Dati"),
+        ("AI", "AI"),
+        ("Impostazioni", "Setup"),
+        ("Setup", "Setup"),
+    ]
+    raw_lower = raw.lower()
+    for token, canonical in known_pages:
+        if token.lower() in raw_lower:
+            return canonical
     return raw
 
 
@@ -623,10 +639,21 @@ def render_profile_history_text(*, cohort: str, limit: int = 12) -> str:
     if scenario_counts:
         scenario_txt = ", ".join(f"{k}={v}" for k, v in sorted(scenario_counts.items()))
         lines.append(f"scenari: {scenario_txt}")
+    total_median = statistics.median(totals)
+    latest_total = totals[-1] if totals else 0.0
+    latest_delta = latest_total - total_median
     lines.append(
-        f"totale_render median={statistics.median(totals):.3f}s min={min(totals_sorted):.3f}s max={max(totals_sorted):.3f}s p95={totals_sorted[p95_idx]:.3f}s"
+        f"totale_render median={total_median:.3f}s min={min(totals_sorted):.3f}s max={max(totals_sorted):.3f}s p95={totals_sorted[p95_idx]:.3f}s"
+    )
+    lines.append(
+        f"ultimo_run={latest_total:.3f}s delta_vs_mediana={latest_delta:+.3f}s"
     )
     lines.append("")
+
+    latest_run = runs[-1] if runs else {}
+    latest_event_keys: set[str] = set()
+    for event in latest_run.get("events", []) or []:
+        latest_event_keys.add(f"{str(event.get('page') or 'n/d')} / {str(event.get('step') or 'n/d')}")
 
     page_samples: dict[str, list[float]] = {}
     event_samples: dict[str, list[float]] = {}
@@ -651,9 +678,12 @@ def render_profile_history_text(*, cohort: str, limit: int = 12) -> str:
         lines.append(f"{label:<18} median={med:6.3f}s min={mn:6.3f}s max={mx:6.3f}s spread={spread:6.3f}s")
     lines.append("")
 
-    lines.append("--- Sotto-fasi ricorrenti più costose ---")
+    lines.append("--- Sotto-fasi attive più costose ---")
+    lines.append("Filtro: mostra solo eventi ancora presenti nell'ultimo run, cosi' i vecchi step rimossi non restano falsi colli di bottiglia.")
     event_rows = []
     for key, samples in event_samples.items():
+        if latest_event_keys and key not in latest_event_keys:
+            continue
         if not samples:
             continue
         med = statistics.median(samples)
@@ -663,8 +693,11 @@ def render_profile_history_text(*, cohort: str, limit: int = 12) -> str:
         if med <= 0 and mx <= 0:
             continue
         event_rows.append((med, spread, key, mn, mx))
-    for med, spread, key, mn, mx in sorted(event_rows, key=lambda x: (x[0], x[1]), reverse=True)[:12]:
-        lines.append(f"{key:<54} median={med:6.3f}s min={mn:6.3f}s max={mx:6.3f}s spread={spread:6.3f}s")
+    if event_rows:
+        for med, spread, key, mn, mx in sorted(event_rows, key=lambda x: (x[0], x[1]), reverse=True)[:12]:
+            lines.append(f"{key:<54} median={med:6.3f}s min={mn:6.3f}s max={mx:6.3f}s spread={spread:6.3f}s")
+    else:
+        lines.append("Nessuna sotto-fase attiva con tempo significativo nell'ultimo run.")
     lines.append("")
-    lines.append("Lettura: i colli di bottiglia reali sono quelli con mediana alta su più run comparabili, non quelli che spiccano in un singolo avvio.")
+    lines.append("Lettura: i colli di bottiglia reali sono quelli attivi nell'ultimo run e con mediana alta su più run comparabili.")
     return "\n".join(lines)

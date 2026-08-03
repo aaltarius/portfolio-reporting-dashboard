@@ -194,7 +194,7 @@ def render_frozen_analysis_status_text(slot, entry: dict[str, Any] | None, stale
         if stale:
             st.warning(
                 f"Sto mostrando l'ultima analisi {entity_label} disponibile in cache, generata il {created_at}. "
-                "I dati del portafoglio sono cambiati: rigenera solo se vuoi aggiornare questa lettura."
+                "I dati del portafoglio sono cambiati: aggiorna solo se vuoi ricalcolare questa lettura."
             )
             return
         source = str(entry.get("cache_source") or "cache")
@@ -211,12 +211,16 @@ def render_frozen_analysis_freeze_header(
     entity_label: str,
     key_prefix: str,
 ):
-    """Header operativo con bottone Analizza/Aggiorna/Rigenera per un'analisi congelata.
+    """Header operativo con bottone Analizza/Aggiorna per un'analisi congelata.
 
     Ritorna (refresh_requested, status_slot). Il chiamante deve richiamare
     render_frozen_analysis_status_text(status_slot, ...) con l'entry aggiornata
     dopo un eventuale refresh, per evitare che il messaggio resti di un giro
     indietro rispetto ai dati che descrive.
+
+    Se l'entry esiste ed e' fresca, non viene mostrato un pulsante di
+    rigenerazione ordinaria: premere un tasto con la stessa firma dati creava
+    un rebuild locale inutile pur senza invalidare la cache globale.
     """
     render_section_title(title, comment=comment, icon="analysis")
     status_slot = st.empty()
@@ -226,7 +230,7 @@ def render_frozen_analysis_freeze_header(
         return st.button(f"Analizza {entity_label}", type="primary", key=f"{key_prefix}_analyze_{signature}"), status_slot
     if stale:
         return st.button(f"Aggiorna analisi {entity_label}", type="primary", key=f"{key_prefix}_refresh_{signature}"), status_slot
-    return st.button(f"Rigenera analisi {entity_label}", type="secondary", key=f"{key_prefix}_regen_{signature}"), status_slot
+    return False, status_slot
 
 
 def kpi_card(
@@ -310,6 +314,20 @@ def table_base_style(styler: Any) -> Any:
     ], overwrite=False)
 
 
+def _styled_table_to_static_html(styler: Any) -> str | None:
+    """HTML statico per tabelle puramente descrittive.
+
+    Evita il widget `st.table` quando il chiamante ha gia' dichiarato
+    `static=True`: non servono sort, scroll o stato widget, quindi basta
+    renderizzare lo Styler come HTML.
+    """
+    try:
+        html_styler = styler.hide(axis="index") if hasattr(styler, "hide") else styler
+        return str(html_styler.to_html())
+    except Exception:
+        return None
+
+
 def render_styled_table(
     styler: Any,
     height: int | str = "content",
@@ -332,9 +350,24 @@ def render_styled_table(
         kwargs["column_config"] = column_config
     with profile_step("UI/Table", "table_base_style", count=row_count, detail=f"static={static}; height={height}"):
         styled = table_base_style(styler)
-    with profile_step("UI/Table", "st.table" if static else "st.dataframe", count=row_count, detail=f"height={valid_height}; columns={len(column_config or {})}"):
+    with profile_step("UI/Table", "html static table" if static else "st.dataframe", count=row_count, detail=f"height={valid_height}; columns={len(column_config or {})}"):
         if static:
-            st.table(styled)
+            html_table = _styled_table_to_static_html(styled)
+            if html_table:
+                st.markdown(
+                    (
+                        "<style>"
+                        ".static-styled-table{width:100%;overflow:hidden;}"
+                        ".static-styled-table table{width:100%;border-collapse:collapse;font-size:0.88rem;}"
+                        ".static-styled-table th,.static-styled-table td{padding:0.34rem 0.42rem;}"
+                        ".static-styled-table th{font-weight:750;}"
+                        "</style>"
+                        f'<div class="static-styled-table">{html_table}</div>'
+                    ),
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.table(styled)
         else:
             st.dataframe(styled, **kwargs)
 

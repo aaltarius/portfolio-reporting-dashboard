@@ -6,6 +6,7 @@ allocation, concentration and liquidity before a real operation is recorded.
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import pandas as pd
@@ -31,21 +32,21 @@ def build_allocation_table(
     work = _prepare_positions(positions_df)
     grouped = work.groupby("Categoria")["Controvalore"].sum() if not work.empty else pd.Series(dtype=float)
     rows = []
-    total = float(grouped.sum()) + max(0.0, float(cash_balance or 0.0))
+    cash_value = max(0.0, _float(cash_balance))
+    total = _float(grouped.sum()) + cash_value
     for cat in _resolve_planning_categories(settings):
-        value = float(grouped.get(cat, 0.0) or 0.0)
+        value = _float(grouped.get(cat, 0.0))
         rows.append({"Categoria": cat, "Valore": value, "Peso": _safe_ratio(value, total)})
-    cash_value = max(0.0, float(cash_balance or 0.0))
     rows.append({"Categoria": "Liquidita", "Valore": cash_value, "Peso": _safe_ratio(cash_value, total)})
     return pd.DataFrame(rows)
 
 
 def build_concentration_table(positions_df: pd.DataFrame, cash_balance: float = 0.0) -> pd.DataFrame:
     work = _prepare_positions(positions_df)
-    total = _sum(work, "Controvalore") + max(0.0, float(cash_balance or 0.0))
+    total = _sum(work, "Controvalore") + max(0.0, _float(cash_balance))
     if work.empty or total <= 0:
         return pd.DataFrame(columns=["Ticker", "Strumento", "Categoria", "Controvalore", "Peso"])
-    work["Peso"] = pd.to_numeric(work["Controvalore"], errors="coerce").fillna(0.0) / total
+    work["Peso"] = _numeric_series(work["Controvalore"]) / total
     return work[["Ticker", "Strumento", "Categoria", "Controvalore", "Peso"]].sort_values("Peso", ascending=False).reset_index(drop=True)
 
 
@@ -57,8 +58,10 @@ def build_simulation_metrics(
 ) -> pd.DataFrame:
     before_value = _sum(before_df, "Controvalore")
     after_value = _sum(after_df, "Controvalore")
-    before_assets = before_value + float(cash_before or 0.0)
-    after_assets = after_value + float(cash_after or 0.0)
+    cash_before = _float(cash_before)
+    cash_after = _float(cash_after)
+    before_assets = before_value + cash_before
+    after_assets = after_value + cash_after
     rows = [
         ("Valore strumenti", before_value, after_value, "eur"),
         ("Liquidita", float(cash_before or 0.0), float(cash_after or 0.0), "eur"),
@@ -114,7 +117,7 @@ def _prepare_positions(frame: pd.DataFrame | None) -> pd.DataFrame:
     for col in ("Quote", "Prezzo", "PMC", "Controvalore", "Costo", "P/L €"):
         if col not in out.columns:
             out[col] = 0.0
-        out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0)
+        out[col] = _numeric_series(out[col])
     if "Categoria" not in out.columns:
         out["Categoria"] = out["Tipo"].apply(macro_cat)
     else:
@@ -125,16 +128,26 @@ def _prepare_positions(frame: pd.DataFrame | None) -> pd.DataFrame:
 def _sum(frame: pd.DataFrame, col: str) -> float:
     if frame is None or frame.empty or col not in frame.columns:
         return 0.0
-    return float(pd.to_numeric(frame[col], errors="coerce").fillna(0.0).sum())
+    return float(_numeric_series(frame[col]).sum())
 
 
 def _float(value: Any) -> float:
     try:
-        return float(value or 0.0)
+        raw = 0.0 if value is None or (isinstance(value, str) and value.strip() == "") else value
+        result = float(raw)
     except Exception:
         return 0.0
+    return result if math.isfinite(result) else 0.0
+
+
+def _numeric_series(values: Any) -> pd.Series:
+    numeric = pd.to_numeric(values, errors="coerce")
+    if not isinstance(numeric, pd.Series):
+        numeric = pd.Series(numeric)
+    return numeric.map(_float)
 
 
 def _safe_ratio(num: float, den: float) -> float:
-    den = float(den or 0.0)
-    return float(num or 0.0) / den if abs(den) > 1e-12 else 0.0
+    den = _float(den)
+    num = _float(num)
+    return num / den if abs(den) > 1e-12 else 0.0

@@ -91,12 +91,23 @@ def build_reporting_compliance_pack(
             "total_pl": summary_payload.get("total_pl"),
             "total_pl_pct": summary_payload.get("total_pl_pct"),
             "xirr": summary_payload.get("xirr"),
+            "xirr_scope": summary_payload.get("xirr_scope"),
+            "xirr_assets": summary_payload.get("xirr_assets"),
+            "xirr_portfolio": summary_payload.get("xirr_portfolio"),
             "twr": summary_payload.get("twr"),
             "volatility_ann": summary_payload.get("volatility_ann"),
             "max_drawdown": summary_payload.get("max_drawdown"),
         },
         "compliance_note": summary_payload.get("compliance_note"),
     }
+
+
+def _fmt_xirr_scope(scope: Any) -> str:
+    if scope == "portfolio_external":
+        return "Portafoglio: flussi esterni + patrimonio finale"
+    if scope == "invested_assets":
+        return "Strumenti investiti: fallback senza flussi esterni completi"
+    return "n/d"
 
 
 def render_reporting_compliance_markdown(reporting_pack: dict[str, Any]) -> str:
@@ -176,6 +187,8 @@ def render_reporting_compliance_markdown(reporting_pack: dict[str, Any]) -> str:
         f"- P/L totale: {_fmt_num(snapshot.get('total_pl'), 2)}",
         f"- P/L %: {_fmt_num(snapshot.get('total_pl_pct'), 2, percent=True)}",
         f"- XIRR: {_fmt_num(snapshot.get('xirr'), 2, percent=True)}",
+        f"- Origine XIRR: {_fmt_xirr_scope(snapshot.get('xirr_scope'))}",
+        f"- XIRR strumenti: {_fmt_num(snapshot.get('xirr_assets'), 2, percent=True)}",
         f"- TWR proxy: {_fmt_num(snapshot.get('twr'), 2, percent=True)}",
         f"- Volatilità annua: {_fmt_num(snapshot.get('volatility_ann'), 2, percent=True)}",
         f"- Max drawdown: {_fmt_num(snapshot.get('max_drawdown'), 2, percent=True)}",

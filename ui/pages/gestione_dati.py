@@ -14,10 +14,15 @@ import streamlit as st
 
 from core.asset_categories import ASSET_CATEGORY_REGISTRY, infer_category_code
 from core.cache import invalidate_portfolio_cache
+from core.cache_policy import build_cache_artifact_signature, get_cache_artifact_spec
+from core.cache_orchestrator import get_or_build_registered_artifact
+from core.cache_signatures import build_portfolio_data_signature
+from core.page_cache import get_page_artifact_cache_stats
 from streamlit.delta_generator import DeltaGenerator
 
 from core.finance import _build_snapshot_from_data, _rebuild_cash_ledger_from_events
 from core.services.integrity import build_integrity_checks
+from core.services.instrument_quality import build_instrument_quality_dataset
 from core.settings_profiles import get_backup_settings, get_figure_cache_settings
 from core.diagnostics import (
     build_cache_chart_rows,
@@ -28,7 +33,7 @@ from core.diagnostics import (
     build_session_state_rows,
     make_arrow_safe_dataframe,
 )
-from core.render_profiler import get_render_profile_events, render_profile_text
+from core.render_profiler import get_render_profile_events, profile_step, render_profile_text
 from core.logging_utils import get_default_log_file_path, get_log_file_stats, read_log_tail
 from core.validators import validate_date, validate_quote_import, validate_selection
 from persistence.storage import (
@@ -92,6 +97,24 @@ def _scan_cache_tree(base_dir: str) -> dict[str, object]:
 def _mb_label(num_bytes: float | int) -> str:
     return f"{(float(num_bytes or 0) / (1024 * 1024)):.2f} MB"
 
+
+def _cache_tree_from_manifest_stats(figure_stats: dict, page_artifact_stats: dict) -> dict[str, object]:
+    """Sintesi leggera di data/cache senza camminare ricorsivamente sul disco."""
+    figure_files = int((figure_stats or {}).get("num_files", 0) or 0)
+    page_files = int((page_artifact_stats or {}).get("num_entries", 0) or 0)
+    figure_size = int((figure_stats or {}).get("total_size_bytes", 0) or 0)
+    page_size = int((page_artifact_stats or {}).get("total_size_bytes", 0) or 0)
+    return {
+        "exists": os.path.exists(os.path.join(DATA_DIR, "cache")),
+        "total_files": figure_files + page_files,
+        "total_size_bytes": figure_size + page_size,
+        "by_suffix": {
+            ".json.gz": {"files": int((figure_stats or {}).get("json_files", figure_files) or 0), "size_bytes": figure_size},
+            "page_artifacts": {"files": page_files, "size_bytes": page_size},
+        },
+        "scan_mode": "manifest",
+    }
+
 def _record_cache_action(action: str) -> None:
     """Registra timestamp sintetico delle ultime azioni cache in settings.json."""
     try:
@@ -100,6 +123,7 @@ def _record_cache_action(action: str) -> None:
         actions[action] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         current_settings["cache_action_log"] = actions
         save_settings(current_settings)
+        _invalidate_cache_diagnostics()
     except Exception as exc:
         logger.warning("Cache action log non aggiornato: %s", exc)
 
@@ -109,6 +133,42 @@ def _get_cache_action_log(settings: dict) -> dict:
         return dict((settings or {}).get("cache_action_log", {}) or {})
     except Exception:
         return {}
+
+
+def _invalidate_cache_diagnostics() -> None:
+    try:
+        st.session_state.pop("_data_page_cache_diagnostics_v1", None)
+    except Exception:
+        pass
+
+
+def _get_cached_cache_diagnostics(fcache, settings: dict) -> tuple[dict, dict, dict, dict, str]:
+    """Restituisce statistiche cache diagnostiche stabili tra avvii senza refresh dati."""
+    cache_actions = _get_cache_action_log(settings)
+    spec = get_cache_artifact_spec("dati.cache_diagnostics")
+    signature = build_cache_artifact_signature(
+        "dati.cache_diagnostics",
+        inputs={
+            "cache_actions": cache_actions,
+        },
+    )
+
+    def _build_cache_diagnostics_payload() -> tuple[dict, dict, dict, dict]:
+        figure_stats = fcache.get_stats()
+        page_artifact_stats = get_page_artifact_cache_stats()
+        cache_tree = _cache_tree_from_manifest_stats(figure_stats, page_artifact_stats)
+        return (figure_stats, cache_actions, cache_tree, page_artifact_stats)
+
+    artifact = get_or_build_registered_artifact(
+        artifact_id=spec.artifact_id,
+        signature=signature,
+        builder=_build_cache_diagnostics_payload,
+        clone_on_read=True,
+    )
+    payload = artifact.value
+    if isinstance(payload, tuple) and len(payload) == 4:
+        return (*payload, artifact.source)
+    return ({}, cache_actions, {}, {}, "invalid")
 
 PHP_REMOTE_TEMPLATE = '<?php\n/**\n * aggiorna_remoto.php — Aggiornamento quotazioni da remoto\n *\n * ISTRUZIONI:\n * 1. Carica questo file su una cartella con nome segreto del tuo sito (es. /privato/xk7q2/)\n * 2. Aggiorna la sezione CONFIGURAZIONE con i tuoi strumenti (usa il bottone\n *    "Aggiornamento quotazioni da remoto" nella pagina Impostazioni della dashboard)\n * 3. Visita la pagina da qualsiasi browser per scaricare il file JSON aggiornato\n * 4. Al rientro, esegui: python importa_quotazioni.py quotazioni_YYYY-MM-DD.json\n *\n * REQUISITI HOSTING: PHP 7.4+ con curl abilitato (standard su qualsiasi hosting condiviso)\n */\n\n// ============================================================\n// CONFIGURAZIONE — Aggiorna con i tuoi strumenti\n// (usa il bottone "Esporta config PHP" in Impostazioni)\n// ============================================================\n$strumenti = [\n    // ETF e fondi: usa il ticker Yahoo Finance\n    // ["ticker" => "VWCE.DE",  "isin" => "IE00BK5BQT80", "tipo" => "ETF",  "nome" => "Vanguard FTSE All-World"],\n    // BTP: usa sempre il prefisso BTP- e l\'ISIN completo\n    // ["ticker" => "BTP-8128", "isin" => "IT0005518128", "tipo" => "BTP",  "nome" => "BTP 2052"],\n];\n\n$strumenti = [\n    ["ticker" => "BTP-0826", "isin" => "IT0005454241", "tipo" => "BTP", "nome" => "BTP Tf 0% Ago 2026"],\n    ["ticker" => "XMME.MI", "isin" => "IE00BTJRMP35", "tipo" => "ETF", "nome" => "Xtrackers MSCI Emerging Markets UCITS ETF 1C"],\n    ["ticker" => "SWDA.MI", "isin" => "IE00B4L5Y983", "tipo" => "ETF", "nome" => "iShares Core MSCI World UCITS ETF USD (Acc)"],\n    ["ticker" => "ETFMIB.MI", "isin" => "FR0010010827", "tipo" => "ETF", "nome" => "Amundi FTSE MIB UCITS ETF Dist"],\n    ["ticker" => "XEON.MI", "isin" => "LU0290358497", "tipo" => "ETF", "nome" => "Xtrackers EUR Overnight Rate Swap UCITS ETF 1C"],\n    ["ticker" => "FAM-FLEX", "isin" => "IE00BDRNRJ06", "tipo" => "PAC", "nome" => "FAM Series Flexible Eq. Strategy A EUR Acc"],\n    ["ticker" => "FAM-PU6", "isin" => "IE000KTYLDC4", "tipo" => "PAC", "nome" => "Fineco AM Passive Underlyings 6 A EUR Acc"],\n    ["ticker" => "FAM-PU8", "isin" => "IE000DWG3DP6", "tipo" => "PAC", "nome" => "Fineco AM Passive Underlyings 8 A EUR Acc"],\n    ["ticker" => "FAM-EMD", "isin" => "IE00BDRMFG04", "tipo" => "PAC", "nome" => "FAM Series Emerging Markets Debt AH EUR Acc"],\n    ["ticker" => "BTP-15MZ28", "isin" => "IT0005433690", "tipo" => "BTP", "nome" => "Btp Tf 0,25% Mz28"],\n    ["ticker" => "BTP-1DC28", "isin" => "IT0005340929", "tipo" => "BTP", "nome" => "Btp Tf 2,80% Dc28"],\n    ["ticker" => "XDBC.MI", "isin" => "LU0292106167", "tipo" => "ETF", "nome" => "Xtrack Bloom Ex Agri Livest Sw Ucits Etf"],\n    ["ticker" => "ENRG.MI", "isin" => "LU1834988278", "tipo" => "ETF", "nome" => "Amundi Stoxx Europe 600 Energy Screened Ucits Etf Acc"],\n    ["ticker" => "XDWH.MI", "isin" => "IE00BM67HK77", "tipo" => "ETF", "nome" => "Xtrackers Msci World Heal Care Ucits Etf"],\n    ["ticker" => "XDRE.MI", "isin" => "IE00BN2BCY94", "tipo" => "ETF", "nome" => "Xtrackers Developed Green Real Estate Esg Ucits Etf"],\n    ["ticker" => "XAIX.MI", "isin" => "IE00BGV5VN51", "tipo" => "ETF", "nome" => "Xtrackers Art Intel &amp; Big Data Ucits Etf"],\n];\n\n// ============================================================\n// FINE CONFIGURAZIONE\n// ============================================================\n\nif (empty($strumenti)) {\n    header("Content-Type: text/html; charset=utf-8");\n    echo "<h2>aggiorna_remoto.php</h2>";\n    echo "<p><strong>Configurazione mancante.</strong> Apri la dashboard, vai in Impostazioni &rarr; ";\n    echo "\\"Aggiornamento quotazioni da remoto (PHP)\\" e copia il blocco generato in questo file.</p>";\n    exit;\n}\n\n$data_oggi = date("Y-m-d");\n$ora_gen   = date("Y-m-d H:i:s");\n$prezzi    = [];\n$log       = [];\n\n/**\n * Scarica il prezzo da Yahoo Finance (query1 + query2 come fallback).\n */\nfunction get_yahoo_price(string $ticker): ?float {\n    // Prova query1 e query2 come fallback\n    foreach (["query1", "query2"] as $host) {\n        $url = "https://{$host}.finance.yahoo.com/v8/finance/chart/"\n             . rawurlencode($ticker)\n             . "?interval=1d&range=5d";\n        $ch = curl_init($url);\n        curl_setopt_array($ch, [\n            CURLOPT_RETURNTRANSFER => true,\n            CURLOPT_TIMEOUT        => 15,\n            CURLOPT_HTTPHEADER     => [\n                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",\n                "Accept: application/json,text/plain,*/*",\n                "Accept-Language: it-IT,it;q=0.9,en;q=0.8",\n                "Referer: https://finance.yahoo.com/",\n            ],\n            CURLOPT_SSL_VERIFYPEER => false,\n            CURLOPT_FOLLOWLOCATION => true,\n        ]);\n        $resp     = curl_exec($ch);\n        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);\n        curl_close($ch);\n        if (!$resp || $httpCode >= 400) continue;\n        $js = json_decode($resp, true);\n        if (!isset($js["chart"]["result"][0])) continue;\n        $closes = $js["chart"]["result"][0]["indicators"]["quote"][0]["close"] ?? [];\n        $closes = array_values(array_filter($closes, function($v) { return $v !== null; }));\n        if (!empty($closes)) return (float) end($closes);\n    }\n    return null;\n}\n\n/**\n * Cerca il ticker Yahoo Finance tramite ISIN (utile per fondi senza ticker standard).\n * Replica get_yahoo_ticker() di core/market_data.py\n */\nfunction get_yahoo_ticker_by_isin(string $isin): ?string {\n    $url = "https://query2.finance.yahoo.com/v1/finance/search?q=" . rawurlencode($isin) . "&quotesCount=5&newsCount=0";\n    $ch = curl_init($url);\n    curl_setopt_array($ch, [\n        CURLOPT_RETURNTRANSFER => true,\n        CURLOPT_TIMEOUT        => 10,\n        CURLOPT_HTTPHEADER     => ["User-Agent: Mozilla/5.0"],\n        CURLOPT_SSL_VERIFYPEER => false,\n    ]);\n    $resp = curl_exec($ch);\n    curl_close($ch);\n    if (!$resp) return null;\n    $js     = json_decode($resp, true);\n    $quotes = $js["quotes"] ?? [];\n    // 1. Preferisce ticker .MI (Borsa Italiana)\n    foreach ($quotes as $q) {\n        $sym = $q["symbol"] ?? "";\n        if (substr(strtoupper($sym), -3) === ".MI") return $sym;\n    }\n    // 2. Qualsiasi ticker con punto ma non 0P (fondi Yahoo)\n    foreach ($quotes as $q) {\n        $sym = $q["symbol"] ?? "";\n        if (strpos($sym, "0P") !== 0 && strpos($sym, ".") !== false) return $sym;\n    }\n    // 3. Qualsiasi ticker trovato (inclusi fondi 0P...)\n    if (!empty($quotes)) return $quotes[0]["symbol"] ?? null;\n    return null;\n}\n\n/**\n * Fallback per ticker .MI (Borsa Italiana): scraping pagina ETF/fondo.\n */\nfunction get_borsaitaliana_etf_price(string $isin): ?float {\n    $urls = [\n        "https://www.borsaitaliana.it/borsa/etf/dati-completi.html?isin=" . urlencode($isin) . "&lang=it",\n        "https://www.borsaitaliana.it/borsa/fondi/etf/scheda/" . urlencode($isin) . ".html?lang=it",\n    ];\n    foreach ($urls as $url) {\n        $ch = curl_init($url);\n        curl_setopt_array($ch, [\n            CURLOPT_RETURNTRANSFER => true,\n            CURLOPT_TIMEOUT        => 15,\n            CURLOPT_HTTPHEADER     => [\n                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)",\n                "Accept-Language: it-IT,it;q=0.9",\n            ],\n            CURLOPT_SSL_VERIFYPEER => false,\n            CURLOPT_FOLLOWLOCATION => true,\n        ]);\n        $html = curl_exec($ch);\n        curl_close($ch);\n        if (!$html) continue;\n        foreach (["Prezzo Ultimo", "Ultimo Prezzo", "Prezzo di Riferimento", "Nav"] as $term) {\n            $pos = stripos($html, $term);\n            if ($pos === false) continue;\n            $chunk = strip_tags(substr($html, $pos, 400));\n            if (preg_match(\'/\\b(\\d{1,3}(?:[.,]\\d{3})*[.,]\\d{2,4})\\b/\', $chunk, $m)) {\n                // Normalizza: rimuove separatore migliaia, converte virgola decimale\n                $raw = $m[1];\n                // Se ha punto come separatore migliaia (es. 1.234,56) → rimuovi punto\n                if (preg_match(\'/\\d\\.\\d{3},/\', $raw)) {\n                    $raw = str_replace(\'.\', \'\', $raw);\n                }\n                $v = (float) str_replace(\',\', \'.\', $raw);\n                if ($v > 0.01 && $v < 100000) return $v;\n            }\n        }\n    }\n    return null;\n}\n\n/**\n * Scarica il prezzo di un BTP da Borsa Italiana via curl + regex.\n */\nfunction get_btp_price(string $isin): ?float {\n    $urls = [\n        "https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/dati-completi.html?isin=" . urlencode($isin) . "&lang=it",\n        "https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/" . urlencode($isin) . "-MOTX.html?lang=it",\n    ];\n    foreach ($urls as $url) {\n        $ch = curl_init($url);\n        curl_setopt_array($ch, [\n            CURLOPT_RETURNTRANSFER => true,\n            CURLOPT_TIMEOUT        => 15,\n            CURLOPT_HTTPHEADER     => [\n                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)",\n                "Accept-Language: it-IT,it;q=0.9",\n            ],\n            CURLOPT_SSL_VERIFYPEER => false,\n            CURLOPT_FOLLOWLOCATION => true,\n        ]);\n        $html = curl_exec($ch);\n        curl_close($ch);\n        if (!$html) continue;\n        foreach (["Prezzo Ultimo Contratto", "Prezzo di Riferimento", "prezzo_rif"] as $term) {\n            $pos = stripos($html, $term);\n            if ($pos === false) continue;\n            $chunk = substr($html, $pos, 500);\n            if (preg_match_all(\'/\\b(\\d{2,3}[,\\.]\\d{1,4})\\b/\', strip_tags($chunk), $m)) {\n                foreach ($m[1] as $raw) {\n                    $v = (float) str_replace(\',\', \'.\', str_replace(\'.\', \'\', $raw));\n                    if ($v > 30 && $v < 200) return $v;\n                }\n            }\n        }\n    }\n    return null;\n}\n\n// Raccolta prezzi\nforeach ($strumenti as $s) {\n    $tk   = $s["ticker"];\n    $isin = $s["isin"];\n    $tipo = strtoupper($s["tipo"]);\n    $nome = $s["nome"];\n\n    if (strpos($tipo, "BTP") !== false || strpos($tk, "BTP-") === 0) {\n        // ── BTP: scraping Borsa Italiana ──────────────────────────────────\n        $prezzo = get_btp_price($isin);\n        $fonte  = "Borsa Italiana";\n    } else {\n        $tkUp   = strtoupper($tk);\n        $prezzo = null;\n        $fonte  = "Non trovato";\n\n        // ── Passo 1: Yahoo Finance con il ticker configurato ──────────────\n        if ($prezzo === null) {\n            $prezzo = get_yahoo_price($tk);\n            if ($prezzo !== null) $fonte = "Yahoo Finance [{$tk}]";\n        }\n\n        // ── Passo 2: cerca ticker reale via ISIN (fondi FAM, ecc.) ────────\n        if ($prezzo === null) {\n            $autoTk = get_yahoo_ticker_by_isin($isin);\n            if ($autoTk !== null && strtoupper($autoTk) !== $tkUp) {\n                $prezzo = get_yahoo_price($autoTk);\n                if ($prezzo !== null) $fonte = "Yahoo Finance [{$autoTk}]";\n            }\n        }\n\n        // ── Passo 3: Borsa Italiana per ticker .MI o tipo PAC ─────────────\n        if ($prezzo === null && (substr($tkUp, -3) === ".MI" || strtoupper($tipo) === "PAC")) {\n            $prezzo = get_borsaitaliana_etf_price($isin);\n            if ($prezzo !== null) $fonte = "Borsa Italiana (fallback)";\n        }\n    }\n\n    if ($prezzo !== null) {\n        $prezzi[$tk] = $prezzo;\n        $log[] = ["ticker" => $tk, "nome" => $nome, "prezzo" => $prezzo, "fonte" => $fonte, "esito" => "OK"];\n    } else {\n        $log[] = ["ticker" => $tk, "nome" => $nome, "prezzo" => null, "fonte" => $fonte, "esito" => "ERRORE"];\n    }\n    usleep(200000); // 0.2 sec tra le richieste\n}\n\n$output = [\n    "data"     => $data_oggi,\n    "generato" => $ora_gen,\n    "fonte"    => "aggiorna_remoto.php",\n    "prezzi"   => $prezzi,\n    "log"      => $log,\n];\n\n$json_out = json_encode($output, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);\n$filename = "quotazioni_" . $data_oggi . ".json";\n\nheader("Content-Type: application/json; charset=utf-8");\nheader("Content-Disposition: attachment; filename=\\"$filename\\"");\nheader("Content-Length: " . strlen($json_out));\nheader("Cache-Control: no-cache, no-store, must-revalidate");\necho $json_out;\nexit;\n?>\n'
 
@@ -164,6 +224,48 @@ def _sync_remote_php_template(template: str, data: dict) -> str:
 def _build_remote_quotes_php(data: dict) -> str:
     """Restituisce aggiorna_remoto.php esistente, ma con strumenti rigenerati dai dati correnti."""
     return _sync_remote_php_template(PHP_REMOTE_TEMPLATE, data)
+
+
+def _get_remote_quotes_php(remote_sig: str, data: dict) -> tuple[str, str]:
+    spec = get_cache_artifact_spec("dati.remote_php_export")
+    signature = build_cache_artifact_signature(
+        "dati.remote_php_export",
+        inputs={"remote_sig": str(remote_sig or "")},
+    )
+    artifact = get_or_build_registered_artifact(
+        artifact_id=spec.artifact_id,
+        signature=signature,
+        builder=lambda: _build_remote_quotes_php(data),
+        clone_on_read=False,
+    )
+    return str(artifact.value or ""), artifact.source
+
+
+def _build_instrument_quality_dataset_light(quality_sig: str, raw_data: dict) -> pd.DataFrame:
+    """Builder leggero: la logica finanziaria resta nel servizio core."""
+    _ = quality_sig
+    return build_instrument_quality_dataset(raw_data, include_financial_metrics=False)
+
+
+def _get_instrument_quality_dataset(quality_sig: str, raw_data: dict) -> tuple[pd.DataFrame, str]:
+    spec = get_cache_artifact_spec("dati.quality_table")
+    signature = build_cache_artifact_signature(
+        "dati.quality_table",
+        inputs={
+            "quality_sig": str(quality_sig or ""),
+            "include_financial_metrics": False,
+        },
+    )
+    artifact = get_or_build_registered_artifact(
+        artifact_id=spec.artifact_id,
+        signature=signature,
+        builder=lambda: _build_instrument_quality_dataset_light(quality_sig, raw_data),
+        clone_on_read=True,
+    )
+    quality = artifact.value
+    if isinstance(quality, pd.DataFrame):
+        return quality, artifact.source
+    return pd.DataFrame(), "invalid"
 
 def _parse_runtime_date(value: object) -> datetime | None:
     if isinstance(value, datetime):
@@ -453,86 +555,137 @@ def _section_line() -> None:
 
 
 def _render_arricchimento(data: dict, ctx) -> None:
-    from persistence.storage import load_data, load_settings, apply_privacy_filter
+    from persistence.storage import load_settings, apply_privacy_filter
 
-    # Legge sempre dal disco (ctx.data è una copia filtrata/cached non adatta al salvataggio).
-    # Sola lettura (nessun save_data qui sotto): applichiamo comunque il filtro privacy
-    # perché questa tabella mostra ticker/nome per ogni strumento.
-    raw_data = apply_privacy_filter(load_data(), load_settings())
-    strumenti = [s for s in (raw_data.get("strumenti") or []) if str(s.get("stato", "aperto")) == "aperto"]
+    # Sola lettura: usa il dataset già caricato nel run e applica comunque
+    # il filtro privacy perché questa tabella mostra ticker/nome.
+    raw_data = apply_privacy_filter(data, getattr(ctx, "settings", None) or load_settings())
+    quality_sig = (
+        build_portfolio_data_signature(
+            raw_data,
+            app_version=str(getattr(ctx, "app_version", "n/d")),
+            schema_version=str(getattr(ctx, "schema_version", "n/d")),
+        )
+        + f"|quality_light_v2|asof={date.today().isoformat()}"
+    )
+    quality_sig_label = quality_sig.replace("|", "/")[-48:]
+    with profile_step("Dati", "load/build qualita dati dataset", detail=f"sig={quality_sig_label}"):
+        quality, quality_source = _get_instrument_quality_dataset(quality_sig, raw_data)
+    with profile_step("Dati", "qualita dati dataset source", detail=f"source={quality_source}; sig={quality_sig_label}"):
+        pass
 
-    from core.instrument_enrichment import _categoria
+    def _fmt_days(value) -> str:
+        try:
+            if pd.isna(value):
+                return "n/d"
+            return fmt_num_it(float(value), 0)
+        except Exception:
+            return "n/d"
 
-    _CORE: dict[str, list[str]] = {
-        "btp":   ["ytm_netto", "ytm_lordo", "duration_modificata", "scadenza",
-                  "cedola_annuale", "cedola_frequenza", "tipo_cedola", "rating_emittente"],
-        "etf":   ["rendimento_1a", "rendimento_3a", "ter", "benchmark",
-                  "categoria_etf", "distribuzione", "data_lancio", "rating_morningstar"],
-        "etc":   ["rendimento_1a", "rendimento_3a", "ter", "benchmark",
-                  "categoria_etf", "distribuzione", "data_lancio"],
-        "fondo": ["rendimento_ytd", "rendimento_1a", "rendimento_3a", "ter",
-                  "categoria_fam", "rating_morningstar", "data_lancio", "patrimonio"],
-    }
+    if not quality.empty:
+        display = pd.DataFrame({
+            "Ticker": quality["ticker"].astype(str),
+            "Cat": quality["category"].astype(str),
+            "Qualità dati": quality["data_quality_label"].astype(str),
+            "Arricchimento": quality["enrichment_completeness"].round().astype(int),
+            "Fonte": quality["enrichment_source_label"].astype(str),
+            "Stato": quality["enrichment_status"].astype(str),
+            "Arricchito il": quality["enriched_at"].map(lambda v: fmt_date_only_it(v) if str(v or "") else "n/d"),
+            "Data prezzo": quality["last_price_date"].map(lambda v: fmt_date_only_it(v) if str(v or "") else "n/d"),
+            "Storico": quality["history_points"].map(lambda v: fmt_num_it(v, 0)),
+            "Buchi": quality["missing_business_days"].map(lambda v: fmt_num_it(v, 0)),
+            "Prezzo fermo": quality["stagnant_days"].map(_fmt_days),
+            "Copertura": quality["history_coverage_label"].astype(str),
+            "Analisi": quality["metrics_available"].map(lambda v: "OK" if bool(v) else "Pochi dati"),
+            "Da sistemare": quality["action_required"].astype(str),
+        })
 
-    def _stato(s: dict) -> str:
-        if s.get("enrichment_error"):
-            return "⚠ errore"
-        if s.get("enriched_at"):
-            return "✓ arricchito"
-        return "— mai"
-
-    def _completezza(s: dict) -> int:
-        if not s.get("enriched_at"):
-            return 0
-        fields = _CORE.get(_categoria(s.get("tipo", "")), [])
-        if not fields:
-            return 0
-        filled = sum(1 for f in fields if s.get(f) not in (None, "", "—"))
-        return round(filled / len(fields) * 100)
-
-    _tickers_for_count = {s.get("ticker", "") for s in strumenti}
-    date_count_by_ticker: dict = dict.fromkeys(_tickers_for_count, 0)
-    for _day_prices in (raw_data.get("storico_prezzi") or {}).values():
-        if isinstance(_day_prices, dict):
-            for _tk in _day_prices:
-                if _tk in date_count_by_ticker:
-                    date_count_by_ticker[_tk] += 1
-
-    rows = [
-        {
-            "Ticker":       s.get("ticker", ""),
-            "Nome":         s.get("nome", ""),
-            "Tipo":         s.get("tipo", ""),
-            "Stato":        _stato(s),
-            "Aggiornato":   fmt_date_only_it((s.get("enriched_at") or "")[:10]) if s.get("enriched_at") else "—",
-            "%":            _completezza(s),
-            "Date storico": date_count_by_ticker.get(s.get("ticker", ""), 0),
-        }
-        for s in strumenti
-    ]
-
-    if rows:
         row_h = 35
-        table_h = 38 + len(rows) * row_h
+        table_h = 38 + len(display) * row_h
         st.dataframe(
-            rows,
+            display,
             width="stretch",
             hide_index=True,
             height=table_h,
             column_config={
-                "Ticker":       st.column_config.TextColumn("Ticker", width="small"),
-                "Nome":         st.column_config.TextColumn("Nome"),
-                "Tipo":         st.column_config.TextColumn("Tipo"),
-                "Stato":        st.column_config.TextColumn("Stato", width="small"),
-                "Aggiornato":   st.column_config.TextColumn("Aggiornato", width="small"),
-                "%":            st.column_config.ProgressColumn("Completezza", min_value=0, max_value=100, width="small", format="%d%%"),
-                "Date storico": st.column_config.NumberColumn("Date storico", width="small"),
+                "Ticker": st.column_config.TextColumn("Ticker", width=72),
+                "Cat": st.column_config.TextColumn(
+                    "Cat.",
+                    width=42,
+                    help="Categoria compatta usata nell'app: ETF, GOV, FND, ecc.",
+                ),
+                "Qualità dati": st.column_config.TextColumn(
+                    "Qualità",
+                    width=54,
+                    help="Giudizio sintetico su storico prezzi, freschezza dati, buchi e metriche disponibili.",
+                ),
+                "Arricchimento": st.column_config.ProgressColumn(
+                    "Arricchito",
+                    min_value=0,
+                    max_value=100,
+                    width=70,
+                    format="%d%%",
+                    help="Percentuale dei campi chiave compilati per la tipologia dello strumento.",
+                ),
+                "Fonte": st.column_config.TextColumn(
+                    "Fonte",
+                    width=88,
+                    help="Origine dei dati arricchiti: automatico, PDF Fineco, manuale o combinazione.",
+                ),
+                "Stato": st.column_config.TextColumn(
+                    "St.",
+                    width=38,
+                    help="OK se lo strumento ha dati arricchiti; Errore se l'ultimo arricchimento ha fallito; Mai se non è stato ancora arricchito.",
+                ),
+                "Arricchito il": st.column_config.TextColumn(
+                    "Arricc. il",
+                    width=68,
+                    help="Data dell'ultimo arricchimento anagrafico dello strumento.",
+                ),
+                "Data prezzo": st.column_config.TextColumn(
+                    "Prezzo",
+                    width=68,
+                    help="Ultima data con prezzo valido nello storico salvato.",
+                ),
+                "Storico": st.column_config.TextColumn(
+                    "Storico",
+                    width=44,
+                    help="Numero di date prezzo disponibili per lo strumento.",
+                ),
+                "Buchi": st.column_config.TextColumn(
+                    "Buchi",
+                    width=44,
+                    help="Giorni lavorativi mancanti tra prima e ultima data prezzo.",
+                ),
+                "Prezzo fermo": st.column_config.TextColumn(
+                    "Fermo",
+                    width=46,
+                    help="Giorni consecutivi in cui l'ultimo prezzo non è cambiato.",
+                ),
+                "Copertura": st.column_config.TextColumn(
+                    "Cop.",
+                    width=58,
+                    help="Lettura sintetica dello storico: Buona, Media, Debole o Assente.",
+                ),
+                "Analisi": st.column_config.TextColumn(
+                    "An.",
+                    width=50,
+                    help="OK quando ci sono abbastanza prezzi per calcolare indicatori rischio/rendimento affidabili.",
+                ),
+                "Da sistemare": st.column_config.TextColumn(
+                    "Azione",
+                    width=94,
+                    help="Prima azione consigliata per rendere lo strumento più affidabile nei controlli dell'app.",
+                ),
             },
         )
 
-    st.caption(
-        "Arricchimento automatico, import da PDF Fineco e modifica manuale dei campi si fanno tutti da "
-        "Strumenti → tab \"Arricchimento\" (sidebar) — non da qui."
+    legend_block(
+        "<b>Come leggerla:</b> Arricchimento e Fonte spiegano quanto e da dove arriva l'anagrafica; "
+        "Copertura, Buchi e Prezzo fermo misurano la qualita' dello storico; "
+        "Da sistemare ti dice la prima cosa concreta da controllare. "
+        "Per completare o correggere i dati usa Strumenti -> Arricchimento.",
+        variant="bottom",
     )
 
 
@@ -544,7 +697,8 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
 
     with tab:
 
-        _render_page_intro(t(settings, "tab.data_management", "Gestione Dati"), t(settings, "page_intro.gestione_dati.comment", "Controllo dati, backup, cache grafici, import quotazioni e log applicativo."), "gestione", theme)
+        with profile_step("Dati", "render intro"):
+            _render_page_intro(t(settings, "tab.data_management", "Gestione Dati"), t(settings, "page_intro.gestione_dati.comment", "Controllo dati, backup, cache grafici, import quotazioni e log applicativo."), "gestione", theme)
 
         # ─────────────────────────────────────────────
         # 1. Stato sintetico
@@ -555,14 +709,15 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             icon="data",
         )
 
-        log_stats = get_log_file_stats()
-        quote_timestamp = _parse_runtime_date(data.get("last_quotes_update"))
-        quote_age_days = (date.today() - quote_timestamp.date()).days if quote_timestamp else None
-        freshness_label = (
-            "Oggi" if quote_age_days == 0
-            else f"{quote_age_days} giorni" if quote_age_days is not None
-            else "n/d"
-        )
+        with profile_step("Dati", "build stato dati"):
+            log_stats = get_log_file_stats()
+            quote_timestamp = _parse_runtime_date(data.get("last_quotes_update"))
+            quote_age_days = (date.today() - quote_timestamp.date()).days if quote_timestamp else None
+            freshness_label = (
+                "Oggi" if quote_age_days == 0
+                else f"{quote_age_days} giorni" if quote_age_days is not None
+                else "n/d"
+            )
 
         s1, s2, s3, s4 = st.columns(4, gap="small")
         with s1:
@@ -577,21 +732,22 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         vertical_gap("sm")
 
         with st.expander("Inventario file dati", expanded=False):
-            storico_gz_path = os.path.join(PRICES_DIR, "portafoglio_storico_prezzi.json.gz")
-            storico_parquet_path = os.path.join(PRICES_DIR, "portafoglio_storico_prezzi.parquet")
-            files_inventory = pd.DataFrame(
-                [
-                    {"Categoria": "Configurazione", "File": "settings.json", "Presente": os.path.exists(SETTINGS_FILE), "Dimensione KB": round((os.path.getsize(SETTINGS_FILE) / 1024), 1) if os.path.exists(SETTINGS_FILE) else 0.0},
-                    {"Categoria": "Configurazione", "File": "meta.json", "Presente": os.path.exists(META_FILE), "Dimensione KB": round((os.path.getsize(META_FILE) / 1024), 1) if os.path.exists(META_FILE) else 0.0},
-                    {"Categoria": "Dati", "File": "data.json", "Presente": os.path.exists(DATA_FILE), "Dimensione KB": round((os.path.getsize(DATA_FILE) / 1024), 1) if os.path.exists(DATA_FILE) else 0.0},
-                    {"Categoria": "Dati", "File": "snapshots.json", "Presente": os.path.exists(SNAPSHOTS_FILE), "Dimensione KB": round((os.path.getsize(SNAPSHOTS_FILE) / 1024), 1) if os.path.exists(SNAPSHOTS_FILE) else 0.0},
-                    {"Categoria": "Dati", "File": "quotes_log.json", "Presente": os.path.exists(QUOTES_LOG_FILE), "Dimensione KB": round((os.path.getsize(QUOTES_LOG_FILE) / 1024), 1) if os.path.exists(QUOTES_LOG_FILE) else 0.0},
-                    {"Categoria": "Dati", "File": "benchmark_cache.json", "Presente": os.path.exists(BENCHMARK_CACHE_FILE), "Dimensione KB": round((os.path.getsize(BENCHMARK_CACHE_FILE) / 1024), 1) if os.path.exists(BENCHMARK_CACHE_FILE) else 0.0},
-                    {"Categoria": "Storico", "File": "storico_prezzi.json.gz", "Presente": os.path.exists(storico_gz_path), "Dimensione KB": round((os.path.getsize(storico_gz_path) / 1024), 1) if os.path.exists(storico_gz_path) else 0.0},
-                    {"Categoria": "Storico", "File": "storico_prezzi.parquet", "Presente": os.path.exists(storico_parquet_path), "Dimensione KB": round((os.path.getsize(storico_parquet_path) / 1024), 1) if os.path.exists(storico_parquet_path) else 0.0},
-                ]
-            )
-            render_styled_table(files_inventory.style, height="content")
+            with profile_step("Dati", "render inventario file dati"):
+                storico_gz_path = os.path.join(PRICES_DIR, "portafoglio_storico_prezzi.json.gz")
+                storico_parquet_path = os.path.join(PRICES_DIR, "portafoglio_storico_prezzi.parquet")
+                files_inventory = pd.DataFrame(
+                    [
+                        {"Categoria": "Configurazione", "File": "settings.json", "Presente": os.path.exists(SETTINGS_FILE), "Dimensione KB": round((os.path.getsize(SETTINGS_FILE) / 1024), 1) if os.path.exists(SETTINGS_FILE) else 0.0},
+                        {"Categoria": "Configurazione", "File": "meta.json", "Presente": os.path.exists(META_FILE), "Dimensione KB": round((os.path.getsize(META_FILE) / 1024), 1) if os.path.exists(META_FILE) else 0.0},
+                        {"Categoria": "Dati", "File": "data.json", "Presente": os.path.exists(DATA_FILE), "Dimensione KB": round((os.path.getsize(DATA_FILE) / 1024), 1) if os.path.exists(DATA_FILE) else 0.0},
+                        {"Categoria": "Dati", "File": "snapshots.json", "Presente": os.path.exists(SNAPSHOTS_FILE), "Dimensione KB": round((os.path.getsize(SNAPSHOTS_FILE) / 1024), 1) if os.path.exists(SNAPSHOTS_FILE) else 0.0},
+                        {"Categoria": "Dati", "File": "quotes_log.json", "Presente": os.path.exists(QUOTES_LOG_FILE), "Dimensione KB": round((os.path.getsize(QUOTES_LOG_FILE) / 1024), 1) if os.path.exists(QUOTES_LOG_FILE) else 0.0},
+                        {"Categoria": "Dati", "File": "benchmark_cache.json", "Presente": os.path.exists(BENCHMARK_CACHE_FILE), "Dimensione KB": round((os.path.getsize(BENCHMARK_CACHE_FILE) / 1024), 1) if os.path.exists(BENCHMARK_CACHE_FILE) else 0.0},
+                        {"Categoria": "Storico", "File": "storico_prezzi.json.gz", "Presente": os.path.exists(storico_gz_path), "Dimensione KB": round((os.path.getsize(storico_gz_path) / 1024), 1) if os.path.exists(storico_gz_path) else 0.0},
+                        {"Categoria": "Storico", "File": "storico_prezzi.parquet", "Presente": os.path.exists(storico_parquet_path), "Dimensione KB": round((os.path.getsize(storico_parquet_path) / 1024), 1) if os.path.exists(storico_parquet_path) else 0.0},
+                    ]
+                )
+                render_styled_table(files_inventory.style, height="content")
 
         with st.expander("Bonifica avanzata per categoria / ticker", expanded=False):
             st.caption("Strumento tecnico per ispezionare e rimuovere record di test o porzioni incoerenti dei dataset applicativi.")
@@ -599,8 +755,9 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             # in save_data() più sotto (bonifica/cancellazione record) — filtrarlo
             # cancellerebbe per sempre lo strumento nascosto al primo utilizzo di
             # questo strumento, anche su una categoria/ticker diversi.
-            raw_data = load_data()
-            category_options = [code for code in ASSET_CATEGORY_REGISTRY.keys() if code != "ALTRO"]
+            with profile_step("Dati", "build bonifica inventory"):
+                raw_data_for_inventory = data
+                category_options = [code for code in ASSET_CATEGORY_REGISTRY.keys() if code != "ALTRO"]
             cleanup_category = st.selectbox(
                 "Categoria da ispezionare",
                 options=category_options,
@@ -608,7 +765,8 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 key="datahub_cleanup_category",
                 format_func=lambda code: f"{code} - {ASSET_CATEGORY_REGISTRY.get(code, {}).get('name', code)}",
             )
-            tickers_in_category, inventory_df = _category_ticker_inventory(raw_data, cleanup_category)
+            with profile_step("Dati", "build bonifica ticker table"):
+                tickers_in_category, inventory_df = _category_ticker_inventory(raw_data_for_inventory, cleanup_category)
             selected_cleanup_tickers = st.multiselect(
                 "Ticker coinvolti",
                 options=tickers_in_category,
@@ -655,6 +813,7 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                         raise ValueError("Seleziona almeno un ticker da cancellare.")
                     if not cleanup_sections:
                         raise ValueError("Seleziona almeno una sezione JSON da ripulire.")
+                    raw_data = load_data()
                     removed = _delete_category_records(raw_data, selected_cleanup_tickers, cleanup_sections)
                     save_data(raw_data)
                     if "quotes_log" in cleanup_sections:
@@ -827,15 +986,16 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 st.info("Nessun backup disponibile.")
 
         # ─────────────────────────────────────────────
-        # 3. Arricchimento strumenti
+        # 3. Qualita dati strumenti
         # ─────────────────────────────────────────────
         _section_line()
         render_section_title(
-            "Arricchimento strumenti",
-            comment="Stato dell'arricchimento dati per strumento (YTM, TER, benchmark, composizione) e volume di storico prezzi salvato. Tutte le azioni (automatico, PDF, manuale) si eseguono da Strumenti → Arricchimento, non da qui.",
+            "Qualità dati strumenti",
+            comment="Controllo unico di anagrafica arricchita, storico prezzi, buchi, prezzi fermi e metriche rischio/rendimento disponibili per ogni strumento attivo.",
             icon="data",
         )
-        _render_arricchimento(data, ctx)
+        with profile_step("Dati", "render qualita dati strumenti"):
+            _render_arricchimento(data, ctx)
         vertical_gap("sm")
 
         # ─────────────────────────────────────────────
@@ -849,16 +1009,17 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         )
 
         try:
-            from core.figure_cache import get_figure_cache
+            from core.cache_orchestrator import get_registered_figure_cache
             from core.cache_prewarmer import get_prewarm_status, trigger_background_prewarm
             from ui.prewarm_bundle import run_prewarm_bundle
 
-            fcache = get_figure_cache()
-            fstats = fcache.get_stats()
-            current_settings_for_cache = load_settings() or settings or {}
-            cache_settings = get_figure_cache_settings(current_settings_for_cache)
-            cache_actions = _get_cache_action_log(current_settings_for_cache)
-            cache_tree = _scan_cache_tree(os.path.join(DATA_DIR, "cache"))
+            with profile_step("Dati", "cache diagnostics"):
+                fcache = get_registered_figure_cache()
+                current_settings_for_cache = load_settings() or settings or {}
+                fstats, cache_actions, cache_tree, page_artifact_stats, cache_diag_source = _get_cached_cache_diagnostics(fcache, current_settings_for_cache)
+                cache_settings = get_figure_cache_settings(current_settings_for_cache)
+            with profile_step("Dati", "cache stats source", detail=f"source={cache_diag_source}"):
+                pass
 
             strategy = str(cache_settings.get("strategy", "hybrid"))
             enabled = bool(cache_settings.get("enabled", True))
@@ -871,7 +1032,7 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             with c2:
                 kpi_card("File grafici", fmt_num_it(fstats.get("num_files", 0), 0), "JSON/legacy/pickle", accent=theme.color_green)
             with c3:
-                kpi_card("Spazio grafici", f"{float(fstats.get('total_size_mb', 0) or 0):.2f} MB", "Cache figure", accent=theme.color_orange)
+                kpi_card("Artefatti pagina", fmt_num_it(page_artifact_stats.get("num_entries", 0), 0), f"{float(page_artifact_stats.get('total_size_mb', 0) or 0):.2f} MB", accent=theme.color_orange)
             with c4:
                 kpi_card("Limite", f"{max_cache_size_mb:.0f} MB", f"Pulizia oltre {cleanup_days} gg", accent=theme.color_red)
 
@@ -939,6 +1100,7 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     cache_tree=cache_tree,
                     prewarm_status=status,
                     action_log=cache_actions,
+                    page_artifact_stats=page_artifact_stats,
                 )
                 render_styled_table(pd.DataFrame(cache_health_rows).style, height="content")
 
@@ -946,6 +1108,8 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     {"Voce": "JSON attivi", "File": int(fstats.get("json_files", 0) or 0), "Dimensione": f"{float(fstats.get('total_size_mb', 0) or 0):.2f} MB"},
                     {"Voce": "Legacy doppio suffisso", "File": int(fstats.get("legacy_double_json_files", 0) or 0), "Dimensione": "da migrare"},
                     {"Voce": "Pickle legacy", "File": int(fstats.get("pickle_files", 0) or 0), "Dimensione": "legacy"},
+                    {"Voce": "Artefatti pagina", "File": int(page_artifact_stats.get("num_entries", 0) or 0), "Dimensione": f"{float(page_artifact_stats.get('total_size_mb', 0) or 0):.2f} MB"},
+                    {"Voce": "Artefatti in processo", "File": int(page_artifact_stats.get("process_entries", 0) or 0), "Dimensione": "memoria"},
                     {"Voce": "Totale data/cache", "File": int(cache_tree.get("total_files", 0) or 0), "Dimensione": _mb_label(cache_tree.get("total_size_bytes", 0))},
                 ]
                 render_styled_table(pd.DataFrame(cache_rows).style, height="content")
@@ -962,6 +1126,7 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     figure_stats=fstats,
                     cache_tree=cache_tree,
                     render_rows=[],
+                    page_artifact_stats=page_artifact_stats,
                 )
                 st.caption("Diagnostica: " + " ".join(cache_recommendations))
 
@@ -1034,7 +1199,18 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 "Carica il file JSON scaricato dal tuo script PHP remoto. Le quotazioni vengono aggiornate nel portafoglio senza connessione internet da questa app."
             )
 
-            php_code = _build_remote_quotes_php(data)
+            remote_sig = (
+                build_portfolio_data_signature(
+                    data,
+                    app_version=str(getattr(ctx, "app_version", "n/d")),
+                    schema_version=str(getattr(ctx, "schema_version", "n/d")),
+                )
+                + "|remote_php_v1"
+            )
+            with profile_step("Dati", "build remote php export", detail=f"sig={remote_sig[-24:]}"):
+                php_code, remote_php_source = _get_remote_quotes_php(remote_sig, data)
+            with profile_step("Dati", "remote php export source", detail=f"source={remote_php_source}"):
+                pass
             st.download_button(
                 "⬇️ Scarica aggiorna_remoto.php",
                 data=php_code,
@@ -1097,38 +1273,44 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         with st.expander("Log applicativo", expanded=False):
             log_path = str(log_stats.get("path") or get_default_log_file_path())
             st.caption(f"File log: {log_path}")
-            log_tail = read_log_tail(lines=60)
+            with profile_step("Dati", "read log applicativo"):
+                log_tail = read_log_tail(lines=60)
             if log_tail:
                 st.code("".join(log_tail), language="text")
             else:
                 st.caption("Nessuna riga disponibile.")
 
         with st.expander("Diagnostica tecnica", expanded=False):
-            checks = _build_observability_checks(
-                data=data,
-                settings=settings,
-                log_stats=log_stats,
-                snapshots_state=getattr(ctx, "snapshots_state", None),
-            )
-            checks_df = pd.DataFrame(checks)
-            _render_diagnostic_table(checks_df, height="content")
+            with profile_step("Dati", "build controlli diagnostici"):
+                checks = _build_observability_checks(
+                    data=data,
+                    settings=settings,
+                    log_stats=log_stats,
+                    snapshots_state=getattr(ctx, "snapshots_state", None),
+                )
+                checks_df = pd.DataFrame(checks)
+            with profile_step("Dati", "render controlli diagnostici"):
+                _render_diagnostic_table(checks_df, height="content")
 
-            runtime_rows = build_runtime_diagnostic_rows(
-                data=data,
-                settings=settings,
-                log_stats=log_stats,
-                snapshots_state=getattr(ctx, "snapshots_state", None),
-            )
-            _render_diagnostic_table(runtime_rows, height="content")
+            with profile_step("Dati", "render runtime diagnostics"):
+                runtime_rows = build_runtime_diagnostic_rows(
+                    data=data,
+                    settings=settings,
+                    log_stats=log_stats,
+                    snapshots_state=getattr(ctx, "snapshots_state", None),
+                )
+                _render_diagnostic_table(runtime_rows, height="content")
 
-            render_events = get_render_profile_events()
-            render_rows = build_render_event_rows(render_events, limit=12, min_seconds=0.001)
-            recommendations = build_diagnostic_recommendations(
-                cache_settings=get_figure_cache_settings(settings or {}),
-                figure_stats=None,
-                cache_tree=None,
-                render_rows=render_rows,
-            )
+            with profile_step("Dati", "build render diagnostics"):
+                render_events = get_render_profile_events()
+                render_rows = build_render_event_rows(render_events, limit=12, min_seconds=0.001)
+                recommendations = build_diagnostic_recommendations(
+                    cache_settings=get_figure_cache_settings(settings or {}),
+                    figure_stats=None,
+                    cache_tree=None,
+                    render_rows=render_rows,
+                    page_artifact_stats=None,
+                )
             if recommendations:
                 st.info(" ".join(recommendations))
 
@@ -1170,11 +1352,12 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             comment="Verifica incrociata tra anagrafica, eventi, prezzi e metadati GOV/BTP. Serve a capire se il portafoglio e' leggibile correttamente prima ancora di interpretarne i risultati.",
             icon="risk",
         )
-        integrity_checks = build_integrity_checks(
-            data=data,
-            btp_calendar_df=getattr(ctx, "btp_calendar_df", pd.DataFrame()),
-        )
-        integrity_df = pd.DataFrame(integrity_checks)
+        with profile_step("Dati", "build controlli integrita"):
+            integrity_checks = build_integrity_checks(
+                data=data,
+                btp_calendar_df=getattr(ctx, "btp_calendar_df", pd.DataFrame()),
+            )
+            integrity_df = pd.DataFrame(integrity_checks)
         severity_sort = {"Errore": 0, "Warning": 1, "Info": 2, "OK": 3}
         if not integrity_df.empty and "Severita" in integrity_df.columns:
             integrity_df["_sort"] = integrity_df["Severita"].map(lambda v: severity_sort.get(str(v), 9))

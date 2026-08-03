@@ -4,22 +4,69 @@ Nessuna dipendenza da streamlit.
 """
 import json
 import logging
+import math
 import re
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import requests
 import yfinance as yf
 from bs4 import BeautifulSoup
 
-_LOOKUP_CACHE_RUNTIME: dict[str, dict[str, Any]] = {}
-_ISIN_YAHOO_TICKER_CACHE: dict[str, str] = {}
+from core.cache_orchestrator import get_registered_runtime_cache
+
+_LOOKUP_CACHE_RUNTIME = get_registered_runtime_cache("market_data.lookup_cache", namespace="prices", max_entries=512)
+_ISIN_YAHOO_TICKER_CACHE = get_registered_runtime_cache("market_data.lookup_cache", namespace="isin_ticker", max_entries=1024)
 logger = logging.getLogger("portafoglio.core.market_data")
 
 _BTP_TRADE_TIME_CACHE_FILE = Path(__file__).parent.parent / "data" / "cache" / "btp_last_trade_times.json"
+
+
+def _cache_get(cache: Any, key: str, default: Any = None, *, max_age_seconds: int | float | None = None) -> Any:
+    if hasattr(cache, "get"):
+        try:
+            if max_age_seconds is not None:
+                return cache.get(key, default, max_age_seconds=max_age_seconds)
+            return cache.get(key, default)
+        except TypeError:
+            return cache.get(key, default)
+    return default
+
+
+def _cache_set(cache: Any, key: str, value: Any) -> None:
+    if hasattr(cache, "set"):
+        cache.set(key, value)
+    elif isinstance(cache, dict):
+        cache[key] = value
+
+
+def _cache_update(cache: Any, values: dict[str, Any]) -> None:
+    if hasattr(cache, "update"):
+        cache.update(values)
+    elif isinstance(cache, dict):
+        cache.update(values)
+
+
+def _cache_as_dict(cache: Any) -> dict[str, Any]:
+    if hasattr(cache, "as_dict"):
+        return cache.as_dict()
+    if isinstance(cache, dict):
+        return dict(cache)
+    return {}
+
+
+def _coerce_positive_price(value: Any) -> float | None:
+    try:
+        price = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(price) or price <= 0:
+        return None
+    return price
 
 
 def _load_btp_trade_time_cache() -> dict[str, Any]:
@@ -97,17 +144,19 @@ def get_yahoo_price_details(tk: str) -> tuple[float | None, str | None, dict[str
         meta = result.get("meta", {})
         rmp = meta.get("regularMarketPrice")
         rmt = meta.get("regularMarketTime")
-        if rmp and float(rmp) > 0 and rmt:
-            meta_price = float(rmp)
+        parsed_meta_price = _coerce_positive_price(rmp)
+        if parsed_meta_price is not None and rmt:
+            meta_price = parsed_meta_price
             meta_date = _to_price_date(rmt)
             meta_datetime = _to_price_datetime(rmt)
         timestamps = result.get("timestamp") or []
         closes = result["indicators"]["quote"][0].get("close") or []
         for ts_val, c in zip(timestamps, closes):
-            if c is not None:
+            parsed_close = _coerce_positive_price(c)
+            if parsed_close is not None:
                 d = _to_price_date(ts_val)
                 if d:
-                    recent_history[d] = float(c)
+                    recent_history[d] = parsed_close
         if recent_history:
             hist_date = max(recent_history.keys())
             hist_price = recent_history[hist_date]
@@ -122,8 +171,9 @@ def get_yahoo_price_details(tk: str) -> tuple[float | None, str | None, dict[str
                 for idx in h.index:
                     c = h.loc[idx, "Close"]
                     d = _to_price_date(idx)
-                    if d and c == c:  # c == c esclude NaN
-                        recent_history[d] = float(c)
+                    parsed_close = _coerce_positive_price(c)
+                    if d and parsed_close is not None:
+                        recent_history[d] = parsed_close
                 if recent_history:
                     hist_date = max(recent_history.keys())
                     hist_price = recent_history[hist_date]
@@ -155,12 +205,104 @@ def get_yahoo_price_details(tk: str) -> tuple[float | None, str | None, dict[str
     # 4. Ultimo fallback: fast_info (nessuna data, nessuno storico)
     try:
         p = yf.Ticker(tk).fast_info.last_price
-        if p is not None and float(p) > 0:
-            return float(p), None, recent_history
+        parsed_price = _coerce_positive_price(p)
+        if parsed_price is not None:
+            return parsed_price, None, recent_history
     except Exception as exc:
         _log_fallback_debug("yahoo_fast_info", tk, exc)
 
     return None, None, recent_history
+
+
+def get_yahoo_live_quote(tk: str) -> dict[str, Any]:
+    """Restituisce una quotazione Yahoo il piu' possibile corrente.
+
+    La pagina Mercati usa questo dato per il movimento giornaliero: lo storico
+    daily resta invece separato e serve per trend 5g/1m/YTD e grafici.
+    """
+    symbol = str(tk or "").strip()
+    if not symbol:
+        return {}
+    try:
+        encoded_ticker = quote(symbol, safe="")
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded_ticker}?interval=1m&range=1d"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=12)
+        r.raise_for_status()
+        result = (r.json().get("chart", {}).get("result") or [None])[0]
+        if not isinstance(result, dict):
+            return {}
+
+        meta = result.get("meta") or {}
+        quote_block = ((result.get("indicators") or {}).get("quote") or [{}])[0]
+        closes = quote_block.get("close") or []
+        timestamps = result.get("timestamp") or []
+
+        price = _coerce_positive_price(meta.get("regularMarketPrice"))
+        price_ts = meta.get("regularMarketTime")
+        if price is None:
+            for ts, close in reversed(list(zip(timestamps, closes))):
+                parsed = _coerce_positive_price(close)
+                if parsed is not None:
+                    price = parsed
+                    price_ts = ts
+                    break
+
+        previous_close = _coerce_positive_price(meta.get("previousClose"))
+        if previous_close is None:
+            previous_close = _coerce_positive_price(meta.get("chartPreviousClose"))
+
+        pct = None
+        points = None
+        if price is not None and previous_close is not None and abs(previous_close) > 1e-12:
+            pct = (price / previous_close) - 1.0
+            points = price - previous_close
+
+        return {
+            "ticker": symbol,
+            "price": price,
+            "previous_close": previous_close,
+            "pct": pct,
+            "points": points,
+            "price_date": _to_price_date(price_ts),
+            "regular_market_time": int(price_ts) if isinstance(price_ts, (int, float)) else None,
+            "exchange_timezone": str(meta.get("exchangeTimezoneName") or ""),
+            "currency": str(meta.get("currency") or ""),
+            "source": "yahoo_chart_live",
+        }
+    except Exception:
+        return {}
+
+
+def _get_yahoo_chart_history(tk: str, period: str = "max") -> dict[str, float]:
+    """Recupera uno storico giornaliero dalla Chart API Yahoo.
+
+    E' piu' affidabile di yf.Ticker(...).history() per molti indici Yahoo con
+    simboli speciali, ad esempio ^GDAXI e ^FTSE.
+    """
+    history: dict[str, float] = {}
+    try:
+        encoded_ticker = quote(str(tk or "").strip(), safe="")
+        encoded_period = quote(str(period or "max").strip(), safe="")
+        if not encoded_ticker:
+            return history
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded_ticker}?interval=1d&range={encoded_period}"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=12)
+        if hasattr(r, "raise_for_status"):
+            r.raise_for_status()
+        js = r.json()
+        result = (js.get("chart", {}).get("result") or [None])[0]
+        if not isinstance(result, dict):
+            return history
+        timestamps = result.get("timestamp") or []
+        closes = ((result.get("indicators") or {}).get("quote") or [{}])[0].get("close") or []
+        for ts_val, close in zip(timestamps, closes):
+            date_key = _to_price_date(ts_val)
+            price = _coerce_positive_price(close)
+            if date_key and price is not None:
+                history[date_key] = price
+    except Exception as exc:
+        _log_fallback_debug("yahoo_chart_history", tk, exc)
+    return history
 
 
 def get_yahoo_price_history_full(tk: str, period: str = "max") -> dict[str, float]:
@@ -171,6 +313,10 @@ def get_yahoo_price_history_full(tk: str, period: str = "max") -> dict[str, floa
     disponibile su Yahoo. Serve al recupero manuale one-shot per uno strumento
     con storico troppo corto per un giudizio SATOR affidabile.
     """
+    history = _get_yahoo_chart_history(tk, period=period)
+    if history:
+        return history
+
     history: dict[str, float] = {}
     try:
         h = yf.Ticker(tk).history(period=period, auto_adjust=True, actions=False)
@@ -178,8 +324,9 @@ def get_yahoo_price_history_full(tk: str, period: str = "max") -> dict[str, floa
             for idx in h.index:
                 c = h.loc[idx, "Close"]
                 d = _to_price_date(idx)
-                if d and c == c:  # c == c esclude NaN
-                    history[d] = float(c)
+                parsed_close = _coerce_positive_price(c)
+                if d and parsed_close is not None:
+                    history[d] = parsed_close
     except Exception as exc:
         _log_fallback_debug("yahoo_history_full", tk, exc)
     return history
@@ -204,9 +351,12 @@ def backfill_storico_prezzi(
     for date_str, price in history.items():
         if since and date_str < since:
             continue
+        parsed_price = _coerce_positive_price(price)
+        if parsed_price is None:
+            continue
         day = storico.setdefault(date_str, {})
         if ticker not in day:
-            day[ticker] = price
+            day[ticker] = parsed_price
             added += 1
     return added
 
@@ -251,9 +401,10 @@ def delete_storico_prezzi_range(
 
 
 def get_yahoo_ticker(isin: str) -> str | None:
-    if isin in _ISIN_YAHOO_TICKER_CACHE:
-        logger.debug("Ticker Yahoo da cache persistente: isin=%s ticker=%s", isin, _ISIN_YAHOO_TICKER_CACHE[isin])
-        return _ISIN_YAHOO_TICKER_CACHE[isin]
+    cached_ticker = _cache_get(_ISIN_YAHOO_TICKER_CACHE, isin)
+    if cached_ticker:
+        logger.debug("Ticker Yahoo da cache persistente: isin=%s ticker=%s", isin, cached_ticker)
+        return cached_ticker
     try:
         r = requests.get(
             f"https://query2.finance.yahoo.com/v1/finance/search?q={isin}&quotesCount=5&newsCount=0",
@@ -273,7 +424,7 @@ def get_yahoo_ticker(isin: str) -> str | None:
         if not result and r.get("quotes"):
             result = r["quotes"][0].get("symbol", "")
         if result:
-            _ISIN_YAHOO_TICKER_CACHE[isin] = result
+            _cache_set(_ISIN_YAHOO_TICKER_CACHE, isin, result)
             logger.info("Ticker Yahoo risolto e messo in cache: isin=%s ticker=%s", isin, result)
         return result
     except Exception as exc:
@@ -511,32 +662,32 @@ def deduce_type(isin: str, tk: str, name: str, focus_etf: str = "") -> str:
 
 
 def _get_cached_price_record(key: str, timeout_seconds: int) -> dict[str, Any] | None:
-    cached = _LOOKUP_CACHE_RUNTIME.get(key)
-    if cached and (time.time() - cached.get("ts", 0) <= timeout_seconds):
+    cached = _cache_get(_LOOKUP_CACHE_RUNTIME, key, max_age_seconds=timeout_seconds)
+    if cached:
         return cached
     return None
 
 
 def _set_cached_price(key: str, price: float | None, source: str, price_date: str | None = None, recent_history: dict | None = None) -> None:
-    _LOOKUP_CACHE_RUNTIME[key] = {
+    _cache_set(_LOOKUP_CACHE_RUNTIME, key, {
         "price": price,
         "source": source,
         "price_date": price_date,
         "recent_history": recent_history or {},
         "ts": time.time(),
-    }
+    })
 
 
 def prime_isin_ticker_cache(cache_dict: dict) -> None:
     """Carica il mapping ISIN→ticker Yahoo dalla cache persistente (chiamare all'avvio)."""
     if isinstance(cache_dict, dict):
-        _ISIN_YAHOO_TICKER_CACHE.update({k: v for k, v in cache_dict.items() if isinstance(v, str) and v})
+        _cache_update(_ISIN_YAHOO_TICKER_CACHE, {k: v for k, v in cache_dict.items() if isinstance(v, str) and v})
         logger.debug("Cache ISIN→ticker Yahoo inizializzata: %d voci", len(_ISIN_YAHOO_TICKER_CACHE))
 
 
 def get_isin_ticker_cache() -> dict[str, str]:
     """Restituisce il mapping ISIN→ticker Yahoo corrente per la persistenza su disco."""
-    return dict(_ISIN_YAHOO_TICKER_CACHE)
+    return {str(k): str(v) for k, v in _cache_as_dict(_ISIN_YAHOO_TICKER_CACHE).items() if isinstance(v, str) and v}
 
 
 @dataclass(frozen=True)
@@ -677,12 +828,14 @@ def set_isin_ticker(isin: str, ticker: str) -> None:
     utente in fase di aggiunta strumento), cosi' un futuro refresh prezzi
     dello stesso ISIN usa direttamente questo ticker."""
     if isin and ticker:
-        _ISIN_YAHOO_TICKER_CACHE[isin] = ticker
+        _cache_set(_ISIN_YAHOO_TICKER_CACHE, isin, ticker)
 
 
 def get_price_details(isin: str, tk: str, timeout_seconds: int = 300) -> dict[str, Any]:
     """Recupera prezzo, fonte, data effettiva e storico recente (per backfill)."""
     key = f"{isin}|{tk}"
+    isin_upper = str(isin or "").strip().upper()
+    ticker_upper = str(tk or "").strip().upper()
     cached = _get_cached_price_record(key, timeout_seconds)
     if cached is not None:
         logger.debug("Prezzo servito da cache runtime: key=%s source=%s", key, cached.get("source"))
@@ -693,23 +846,25 @@ def get_price_details(isin: str, tk: str, timeout_seconds: int = 300) -> dict[st
             "recent_history": cached.get("recent_history") or {},
         }
 
-    if tk.upper().startswith("BTP"):
+    if ticker_upper.startswith("BTP") or isin_upper.startswith("IT"):
         btp = get_btp_price_details(isin)
         p, p_date = btp.get("price"), btp.get("price_date")
         if p:
             _set_cached_price(key, p, "Borsa Italiana", p_date)
             logger.info("Prezzo trovato da Borsa Italiana: key=%s datetime=%s", key, p_date)
             return {"price": p, "source": "Borsa Italiana", "price_date": p_date, "recent_history": {}}
+        logger.warning("Prezzo BTP non trovato su Borsa Italiana: key=%s", key)
+        return {"price": None, "source": "Borsa Italiana non disponibile", "price_date": p_date, "recent_history": {}}
 
-    persisted_tk = _ISIN_YAHOO_TICKER_CACHE.get(isin)
-    if persisted_tk and persisted_tk.upper() != tk.upper():
+    persisted_tk = _cache_get(_ISIN_YAHOO_TICKER_CACHE, isin)
+    if persisted_tk and persisted_tk.upper() != ticker_upper:
         p, p_date, rec_hist = get_yahoo_price_details(persisted_tk)
         if p:
             _set_cached_price(key, p, f"Yahoo [{persisted_tk}]", p_date, rec_hist)
             logger.info("Prezzo da ticker persistente: key=%s ticker=%s date=%s", key, persisted_tk, p_date)
             return {"price": p, "source": f"Yahoo [{persisted_tk}]", "price_date": p_date, "recent_history": rec_hist}
 
-    if "." in tk and not tk.upper().startswith("0P"):
+    if "." in tk and not ticker_upper.startswith("0P"):
         p, p_date, rec_hist = get_yahoo_price_details(tk)
         if p:
             _set_cached_price(key, p, f"Yahoo [{tk}]", p_date, rec_hist)
@@ -717,7 +872,7 @@ def get_price_details(isin: str, tk: str, timeout_seconds: int = 300) -> dict[st
             return {"price": p, "source": f"Yahoo [{tk}]", "price_date": p_date, "recent_history": rec_hist}
 
     auto = get_yahoo_ticker(isin)
-    if auto and auto.upper() != tk.upper():
+    if auto and auto.upper() != ticker_upper:
         p, p_date, rec_hist = get_yahoo_price_details(auto)
         if p:
             _set_cached_price(key, p, f"Yahoo [{auto}]", p_date, rec_hist)

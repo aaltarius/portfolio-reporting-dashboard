@@ -221,3 +221,140 @@ def _period_returns_from_curve(curve: pd.DataFrame, freq: str) -> list[dict[str,
             yr, month = group_key
             rows.append({"year": int(yr), "month": int(month), "ptf": ret})
     return rows
+
+
+def _empty_return_curve_metrics() -> dict[str, float | None]:
+    return {
+        "twr": None,
+        "cagr": None,
+        "cagr_real": None,
+        "volatility_ann": None,
+        "max_drawdown": None,
+        "benchmark_return": None,
+        "excess_vs_benchmark": None,
+        "sortino": None,
+        "calmar": None,
+        "information_ratio": None,
+        "tracking_error": None,
+    }
+
+
+def _coerce_curve_frame(curve: pd.DataFrame | None) -> pd.DataFrame:
+    if curve is None or curve.empty:
+        return pd.DataFrame(columns=["date_dt", "indice"])
+    work = curve.copy()
+    if "date_dt" not in work.columns or "indice" not in work.columns:
+        return pd.DataFrame(columns=["date_dt", "indice"])
+    work["date_dt"] = pd.to_datetime(work["date_dt"], errors="coerce")
+    work["indice"] = pd.to_numeric(work["indice"], errors="coerce")
+    if "ret" in work.columns:
+        work["ret"] = pd.to_numeric(work["ret"], errors="coerce")
+    return work.dropna(subset=["date_dt", "indice"]).sort_values("date_dt").reset_index(drop=True)
+
+
+def _coerce_benchmark_series(benchmark_curve: pd.DataFrame | pd.Series | None) -> pd.Series:
+    if benchmark_curve is None:
+        return pd.Series(dtype=float)
+    if isinstance(benchmark_curve, pd.Series):
+        series = pd.to_numeric(benchmark_curve, errors="coerce")
+        series.index = pd.to_datetime(series.index, errors="coerce")
+        return series.dropna().sort_index()
+    if isinstance(benchmark_curve, pd.DataFrame):
+        bench = _coerce_curve_frame(benchmark_curve)
+        if bench.empty:
+            return pd.Series(dtype=float)
+        return pd.Series(bench["indice"].values, index=bench["date_dt"]).dropna().sort_index()
+    return pd.Series(dtype=float)
+
+
+def compute_return_curve_metrics(
+    curve: pd.DataFrame | None,
+    *,
+    benchmark_curve: pd.DataFrame | pd.Series | None = None,
+    inflation_rate: float | None = None,
+    max_accepted_benchmark_return: float | None = 0.50,
+) -> dict[str, float | None]:
+    """Metriche canoniche da una curva indice/NAV flow-adjusted.
+
+    Usata sia dal payload Summary sia dal report filtrato, cosi' TWR, CAGR,
+    drawdown e ratio restano coerenti tra dashboard ed export.
+    """
+    metrics = _empty_return_curve_metrics()
+    work = _coerce_curve_frame(curve)
+    if len(work) < 2:
+        return metrics
+
+    idx = pd.Series(work["indice"].values, index=work["date_dt"]).dropna()
+    if len(idx) < 2 or not np.isfinite(float(idx.iloc[0])) or float(idx.iloc[0]) <= 0:
+        return metrics
+
+    twr = float(idx.iloc[-1] / idx.iloc[0] - 1.0)
+    elapsed_days = max(int((idx.index[-1] - idx.index[0]).days), 1)
+    cagr = float((1.0 + twr) ** (365.25 / elapsed_days) - 1.0) if twr > -1.0 else None
+    try:
+        inflation = float(inflation_rate or 0.0)
+    except Exception:
+        inflation = 0.0
+    cagr_real = (
+        float((1.0 + cagr) / (1.0 + inflation) - 1.0)
+        if cagr is not None and inflation and abs(1.0 + inflation) > 1e-12
+        else None
+    )
+
+    if "ret" in work.columns:
+        ret_series = pd.Series(work["ret"].values, index=work["date_dt"])
+        actual_returns = pd.to_numeric(ret_series.iloc[1:], errors="coerce").dropna()
+    else:
+        actual_returns = idx.pct_change().dropna()
+
+    volatility_ann = float(actual_returns.std(ddof=1) * np.sqrt(252)) if len(actual_returns) >= 2 else None
+    running_max = idx.cummax()
+    max_drawdown = float((idx / running_max - 1.0).min()) if len(idx) >= 2 else None
+
+    sortino = None
+    calmar = None
+    if len(actual_returns) >= 4:
+        negative_returns = actual_returns[actual_returns < 0]
+        if len(negative_returns) >= 2 and cagr is not None:
+            downside = float(np.sqrt((negative_returns ** 2).mean()) * np.sqrt(252))
+            sortino = float(cagr / downside) if downside > 1e-9 else None
+    if cagr is not None and max_drawdown is not None and abs(max_drawdown) > 1e-9:
+        calmar = float(cagr / abs(max_drawdown))
+
+    benchmark_return = None
+    excess_vs_benchmark = None
+    tracking_error = None
+    information_ratio = None
+    benchmark_series = _coerce_benchmark_series(benchmark_curve)
+    if not benchmark_series.empty and len(benchmark_series) >= 2 and float(benchmark_series.iloc[0]) > 0:
+        benchmark_return = float(benchmark_series.iloc[-1] / benchmark_series.iloc[0] - 1.0)
+        if max_accepted_benchmark_return is not None and benchmark_return > float(max_accepted_benchmark_return):
+            benchmark_return = None
+            benchmark_series = pd.Series(dtype=float)
+        elif twr is not None:
+            excess_vs_benchmark = float(twr - benchmark_return)
+    if not benchmark_series.empty:
+        aligned_benchmark = benchmark_series.reindex(idx.index).ffill().bfill()
+        benchmark_returns = aligned_benchmark.pct_change().dropna()
+        min_len = min(len(actual_returns), len(benchmark_returns))
+        if min_len >= 4:
+            excess_returns = actual_returns.iloc[-min_len:].values - benchmark_returns.iloc[-min_len:].values
+            te = float(np.std(excess_returns, ddof=1) * np.sqrt(252))
+            tracking_error = te if te > 1e-9 else None
+            if tracking_error:
+                information_ratio = float(np.mean(excess_returns) * 252 / tracking_error)
+
+    metrics.update({
+        "twr": twr,
+        "cagr": cagr,
+        "cagr_real": cagr_real,
+        "volatility_ann": volatility_ann,
+        "max_drawdown": max_drawdown,
+        "benchmark_return": benchmark_return,
+        "excess_vs_benchmark": excess_vs_benchmark,
+        "sortino": sortino,
+        "calmar": calmar,
+        "information_ratio": information_ratio,
+        "tracking_error": tracking_error,
+    })
+    return metrics

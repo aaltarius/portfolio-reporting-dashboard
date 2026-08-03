@@ -52,7 +52,6 @@ class FigureCache:
         """Initialize FigureCache and ensure cache directory exists."""
         self._ensure_cache_dir()
         self._sanitize_manifest()
-        self._auto_cleanup()
         logger.info("FigureCache initialized")
 
     def _ensure_cache_dir(self) -> None:
@@ -846,6 +845,51 @@ class FigureCache:
             if not self.CACHE_DIR.exists():
                 return stats
 
+            if self.MANIFEST_FILE.exists():
+                try:
+                    with self._MANIFEST_LOCK:
+                        manifest = self._load_manifest(repair_on_corruption=True)
+
+                    if manifest:
+                        timestamps = []
+                        for entry in manifest.values():
+                            if not isinstance(entry, dict):
+                                continue
+                            file_size = int(entry.get("file_size", 0) or 0)
+                            chart_id = entry.get("chart_id")
+                            timestamp = entry.get("timestamp")
+
+                            stats["num_files"] += 1
+                            stats["total_size_bytes"] += file_size
+                            if chart_id:
+                                if chart_id not in stats["charts"]:
+                                    stats["charts"].append(chart_id)
+                                stats["chart_counts"][chart_id] = stats["chart_counts"].get(chart_id, 0) + 1
+                            if timestamp:
+                                timestamps.append(timestamp)
+
+                        stats["json_files"] = stats["num_files"]
+                        stats["pickle_files"] = 0
+                        stats["legacy_double_json_files"] = 0
+                        stats["total_size_mb"] = round(stats["total_size_bytes"] / (1024 * 1024), 2)
+                        stats["scan_mode"] = "manifest"
+
+                        if timestamps:
+                            timestamps.sort()
+                            stats["oldest_timestamp"] = timestamps[0]
+                            stats["newest_timestamp"] = timestamps[-1]
+                            try:
+                                newest_dt = datetime.fromisoformat(timestamps[-1])
+                                cache_age_seconds = (datetime.now() - newest_dt).total_seconds()
+                                stats["cache_age_hours"] = max(0, int(cache_age_seconds / 3600))
+                            except Exception as e:
+                                logger.warning(f"Error calculating cache age: {e}")
+                                stats["cache_age_hours"] = 0
+                        logger.debug(f"Cache stats da manifest: {stats}")
+                        return stats
+                except Exception as e:
+                    logger.warning(f"Error reading manifest stats: {e}")
+
             # Count files and calculate size for all supported formats
             timestamps = []
             json_files = 0
@@ -869,6 +913,7 @@ class FigureCache:
             stats["json_files"] = json_files
             stats["pickle_files"] = pickle_files
             stats["legacy_double_json_files"] = legacy_double_json_files
+            stats["scan_mode"] = "disk_scan"
 
             # Convert to MB
             stats["total_size_mb"] = round(stats["total_size_bytes"] / (1024 * 1024), 2)

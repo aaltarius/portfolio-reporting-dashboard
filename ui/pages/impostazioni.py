@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pandas as pd
 import streamlit as st
 
-from core.cache import invalidate_portfolio_cache
+from core.cache import invalidate_portfolio_cache, record_cache_decision
 from core.ai_analysis import (
     GEMINI_MODELS,
     load_ai_config,
@@ -394,6 +394,18 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     key="appearance_show_explanations",
                 )
 
+                ui_show_portfolio_insights = st.checkbox("Portafoglio: mostra priorita' operative",
+                    value=bool(ui_preferences.get("show_portfolio_insights", True)),
+                    help="Mostra sopra la tabella del Portafoglio un pannello read-only con scostamenti, concentrazione, movimento giornaliero e richiamo SATOR. Disattivalo per tornare alla vista precedente.",
+                    key="appearance_show_portfolio_insights",
+                )
+
+                ui_show_market_ticker_tape = st.checkbox("Portafoglio: mostra striscia mercati",
+                    value=bool(ui_preferences.get("show_market_ticker_tape", True)),
+                    help="Mostra sotto il titolo della tabella una striscia informativa con mercati/proxy aperti o chiusi e ultima variazione disponibile in cache. Non scarica nuovi dati.",
+                    key="appearance_show_market_ticker_tape",
+                )
+
                 # --- QUOTAZIONI FULL RESOLUTION ---
                 ui_quotazioni_full_resolution = st.checkbox("Quotazioni: dettaglio giornaliero completo",
                     value=bool(ui_preferences.get("quotazioni_full_resolution", False)),
@@ -558,7 +570,7 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 st.markdown("**Cache anticipata dei grafici**")
                 st.caption(
                     "Prepara in anticipo i grafici principali dopo un cambio dati, tema o impostazioni. "
-                    "Il primo caricamento puo' durare un po' di piu', ma i passaggi successivi trovano piu' figure gia' pronte."
+                    "Modalita' consigliata: in background, cosi' l'avvio non resta bloccato."
                 )
                 pr1, pr2 = st.columns(2)
                 pre_render_enabled = pr1.checkbox(
@@ -567,17 +579,17 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     help="Consigliato: costruisce in anticipo le figure piu' costose e le salva nella cache grafici. Disattivalo solo se vuoi avvii piu' leggeri durante prove o sviluppo.",
                 )
                 pre_render_initial_complete = pr2.checkbox(
-                    "Fallo subito al primo caricamento",
-                    value=bool(pre_render_settings.get("initial_complete", True)),
+                    "Blocca l'avvio per preparare subito",
+                    value=bool(pre_render_settings.get("initial_complete", False)),
                     disabled=not pre_render_enabled,
-                    help="Se i dati o il tema sono cambiati, prepara subito i grafici principali durante il caricamento iniziale. Puo' rendere piu' lento quel caricamento, ma riduce attese successive.",
+                    help="Modalita' tecnica: se dati, tema o impostazioni sono cambiati, prepara subito le figure prima di completare il caricamento. Piu' pronta dopo, ma l'avvio puo' rallentare.",
                 )
                 pr3, pr4 = st.columns(2)
                 pre_render_background_enabled = pr3.checkbox(
-                    "Se non puo' farlo subito, fallo in background",
+                    "Prepara in background senza bloccare",
                     value=bool(pre_render_settings.get("background_enabled", True)),
                     disabled=not pre_render_enabled,
-                    help="Quando la preparazione immediata non parte, prova a preparare i grafici senza bloccare la navigazione. Utile come rete di sicurezza.",
+                    help="Scelta consigliata: prepara le figure mentre continui a usare l'app. I benefici arrivano nei rerun successivi, senza aggiungere attesa all'avvio.",
                 )
                 pre_render_cooldown_minutes = pr4.number_input(
                     "Attendi almeno (min) prima di rifarlo",
@@ -589,7 +601,52 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     help="Evita di ricostruire la cache troppo spesso. Esempio: 30 minuti significa che, a parita' di dati/tema, l'app non ripete subito la preparazione anticipata.",
                 )
                 st.caption(
-                    "In pratica: tieni attiva la cache anticipata se usi l'app normalmente. Disattivala solo per test tecnici o se vuoi capire il tempo di caricamento senza grafici pre-preparati."
+                    "In pratica: tieni attiva la cache anticipata in background. Attiva il blocco avvio solo per prove tecniche mirate."
+                )
+                st.markdown("**Aggiornamento Mercati**")
+                market_auto_refresh_settings = settings.get("market_auto_refresh", {})
+                if not isinstance(market_auto_refresh_settings, dict):
+                    market_auto_refresh_settings = {}
+                st.caption(
+                    "Scarica in background le quotazioni della pagina Mercati e aggiorna la cache senza forzare rerun. "
+                    "La pagina mostrerà i nuovi dati al prossimo cambio pagina, click o aggiornamento manuale."
+                )
+                mr1, mr2 = st.columns(2)
+                market_auto_refresh_enabled = mr1.checkbox(
+                    "Aggiorna Mercati in background",
+                    value=bool(market_auto_refresh_settings.get("enabled", False)),
+                    help="Avvia un thread leggero che aggiorna la cache Mercati a intervalli regolari. Non cambia automaticamente la pagina aperta.",
+                )
+                market_auto_refresh_open_only = mr2.checkbox(
+                    "Solo quando i mercati sono aperti",
+                    value=bool(market_auto_refresh_settings.get("only_when_markets_open", True)),
+                    disabled=not market_auto_refresh_enabled,
+                    help="Evita download nei momenti in cui nessun riferimento dell'universo Mercati risulta aperto.",
+                )
+                mr3, mr4 = st.columns(2)
+                market_auto_refresh_live_minutes = mr3.number_input(
+                    "Live ogni (min)",
+                    min_value=5,
+                    max_value=240,
+                    value=max(5, min(240, int(market_auto_refresh_settings.get("live_interval_minutes", 30) or 30))),
+                    step=5,
+                    disabled=not market_auto_refresh_enabled,
+                    help="Intervallo per prezzi correnti e variazioni giornaliere degli indici.",
+                )
+                market_auto_refresh_history_enabled = mr4.checkbox(
+                    "Aggiorna anche storico 6 mesi",
+                    value=bool(market_auto_refresh_settings.get("history_enabled", True)),
+                    disabled=not market_auto_refresh_enabled,
+                    help="Aggiorna periodicamente anche le serie usate da rendimento, mini-andamenti e mappe forza relativa.",
+                )
+                market_auto_refresh_history_minutes = st.number_input(
+                    "Storico ogni (min)",
+                    min_value=60,
+                    max_value=1440,
+                    value=max(60, min(1440, int(market_auto_refresh_settings.get("history_interval_minutes", 240) or 240))),
+                    step=30,
+                    disabled=not (market_auto_refresh_enabled and market_auto_refresh_history_enabled),
+                    help="Lo storico cambia meno spesso del live: 240 minuti è un buon compromesso tra freschezza e traffico dati.",
                 )
 
             submitted_settings = st.form_submit_button("💾 Salva impostazioni", width="stretch", type="primary")
@@ -651,6 +708,8 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 settings["ui_preferences"] = {
                     **settings.get("ui_preferences", {}),
                     "show_explanations": ui_show_explanations,
+                    "show_portfolio_insights": ui_show_portfolio_insights,
+                    "show_market_ticker_tape": ui_show_market_ticker_tape,
                     "quotazioni_full_resolution": ui_quotazioni_full_resolution,
                     "accent_variant": ui_accent_variant,
                     "font_scale": str(runtime_ui_settings.get("font_scale", "Grande")),
@@ -675,6 +734,14 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     "cooldown_seconds": int(pre_render_cooldown_minutes) * 60,
                     "scope": str(pre_render_settings.get("scope", "core_charts_v1")),
                 }
+                settings["market_auto_refresh"] = {
+                    **settings.get("market_auto_refresh", {}),
+                    "enabled": bool(market_auto_refresh_enabled),
+                    "live_interval_minutes": int(market_auto_refresh_live_minutes),
+                    "history_enabled": bool(market_auto_refresh_history_enabled),
+                    "history_interval_minutes": int(market_auto_refresh_history_minutes),
+                    "only_when_markets_open": bool(market_auto_refresh_open_only),
+                }
                 # Appearance
                 settings["operativo_mode"] = "sidebar"
                 settings["sator_mode"] = "sidebar"
@@ -688,14 +755,26 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     },
                     "visibility_mode": ui_visibility_mode,
                 }
-                save_settings(settings)
+                settings_changed = save_settings(settings)
                 logger.info(
-                    "Impostazioni salvate: benchmark=%s",
+                    "Impostazioni salvate: benchmark=%s changed=%s",
                     bench_default,
+                    settings_changed,
                 )
-                queue_success("Impostazioni salvate")
-                invalidate_portfolio_cache("impostazioni salvate")
-                st.rerun()
+                if settings_changed:
+                    queue_success("Impostazioni salvate")
+                    invalidate_portfolio_cache("impostazioni salvate")
+                    st.rerun()
+                else:
+                    record_cache_decision(
+                        "impostazioni gia' aggiornate",
+                        details={"material_change": False, "changed_count": 0},
+                        invalidated=False,
+                        scenario="settings_noop",
+                        render_scope="full_tabs",
+                        dirty_flags={},
+                    )
+                    st.info("Impostazioni gia' aggiornate: nessuna cache invalidata.")
             except ValueError as exc:
                 logger.warning("Validazione impostazioni fallita: %s", exc)
                 st.error(str(exc))

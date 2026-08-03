@@ -45,6 +45,8 @@ data/portfolio/
 data/prices/
 data/logs/
 data/ai_reports/
+data/forensic/
+data/reports/
 data/cache/
 backups/
 test_enrichment_results.json

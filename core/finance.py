@@ -54,13 +54,14 @@ from core.domain.positions import (
     get_cash_balance,
 )
 from core.series_utils import build_category_return_index, build_value_curve_frame
-from core.domain.cashflows import compute_xirr, build_xirr_flows
+from core.domain.cashflows import compute_xirr, build_xirr_flows, build_portfolio_external_xirr_flows
 from core.domain.returns import (
     business_day_deltas,
     build_analysis_returns,
     compute_instrument_stats,
     _build_summary_return_curve,
     _period_returns_from_curve,
+    compute_return_curve_metrics,
 )
 from core.domain.risk import build_drawdown_series
 
@@ -72,10 +73,12 @@ __all__ = [
     "get_cash_balance",
     "compute_xirr",
     "build_xirr_flows",
+    "build_portfolio_external_xirr_flows",
     "build_analysis_returns",
     "compute_instrument_stats",
     "_build_summary_return_curve",
     "_period_returns_from_curve",
+    "compute_return_curve_metrics",
     "build_drawdown_series",
     # Remaining unmigrated functions
     "append_evento_portafoglio",
@@ -110,10 +113,12 @@ def _build_category_value_maps(
         return macro_alloc, macro_values
 
     tmp = da_frame.copy()
+    tmp["Controvalore"] = pd.to_numeric(tmp.get("Controvalore", pd.Series(dtype=float)), errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0.0)
     tmp["Categoria"] = tmp["Tipo"].apply(macro_cat)
     macro = tmp.groupby("Categoria")["Controvalore"].sum().reindex(categories).fillna(0.0)
-    macro_values = {k: float(v) for k, v in macro.items()}
-    macro_alloc = {k: float(v / total_value) if total_value > 0 else 0.0 for k, v in macro.items()}
+    total_value = _safe_float(total_value)
+    macro_values = {k: _safe_float(v) for k, v in macro.items()}
+    macro_alloc = {k: (_safe_float(v) / total_value) if total_value > 0 else 0.0 for k, v in macro.items()}
     return macro_alloc, macro_values
 
 
@@ -124,9 +129,48 @@ def _build_category_history_records(cat_idx: pd.DataFrame, categories: list[str]
     for idx, row in cat_idx.sort_index().iterrows():
         payload = {"data": pd.to_datetime(idx).strftime("%d/%m/%Y")}
         for cat in categories:
-            payload[cat] = float(row.get(cat)) if pd.notna(row.get(cat)) else None
+            val = _safe_float(row.get(cat), default=np.nan)
+            payload[cat] = float(val) if np.isfinite(val) else None
         records.append(payload)
     return records
+
+
+def _finite_numeric_series(values: Any, default: float = 0.0) -> pd.Series:
+    """Converte una sequenza numerica neutralizzando NaN, inf e -inf."""
+    if values is None:
+        return pd.Series(dtype=float)
+    numeric = pd.to_numeric(values, errors="coerce")
+    if not isinstance(numeric, pd.Series):
+        numeric = pd.Series(numeric)
+    return numeric.map(lambda value: _safe_float(value, default=default))
+
+
+def _finite_column_sum(frame: pd.DataFrame, column: str) -> float:
+    if frame is None or frame.empty or column not in frame.columns:
+        return 0.0
+    return float(_finite_numeric_series(frame[column], default=0.0).sum())
+
+
+def _sanitize_dashboard_numeric_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return frame
+    for col in ("Quote", "Prezzo", "PMC", "Controvalore", "Costo", "P/L €", "P/L %"):
+        if col in frame.columns:
+            frame[col] = _finite_numeric_series(frame[col], default=0.0)
+    return frame
+
+
+def _weighted_average_finite(values: Any, weights: Any, default: float = np.nan) -> float:
+    vals = _finite_numeric_series(values, default=np.nan)
+    wts = _finite_numeric_series(weights, default=0.0)
+    mask = vals.notna() & wts.notna() & (wts > 0)
+    if not mask.any():
+        return default
+    try:
+        result = np.average(vals[mask], weights=wts[mask])
+    except Exception:
+        return default
+    return float(result) if np.isfinite(result) else default
 
 
 def _fmt_dt(value: Any) -> str:
@@ -207,7 +251,9 @@ def build_hist_df(data: dict[str, Any]) -> pd.DataFrame:
         for tk, val in st[d].items():
             col_j = tk_to_idx.get(tk)
             if col_j is not None and val is not None:
-                arr[row_i, col_j] = float(val)
+                price = _safe_float(val, default=np.nan)
+                if np.isfinite(price) and price > 0:
+                    arr[row_i, col_j] = price
     df = pd.DataFrame(arr, index=pd.to_datetime(sorted_dates), columns=tks)
     df.index.name = "Data"
     return df
@@ -947,8 +993,8 @@ def build_proventi_summary(proventi: list[dict[str, Any]], info_map: dict[str, d
     agg = defaultdict(lambda: {"N": 0, "Lordo": 0.0, "Ritenute": 0.0, "Netto": 0.0})
     for p in proventi:
         tk = p.get("ticker", "")
-        lordo = float(p.get("importo_lordo", 0))
-        netto = float(p.get("importo_netto", 0))
+        lordo = _safe_float(p.get("importo_lordo", 0))
+        netto = _safe_float(p.get("importo_netto", 0))
         agg[tk]["N"] += 1
         agg[tk]["Lordo"] += lordo
         agg[tk]["Ritenute"] += lordo - netto
@@ -1016,20 +1062,22 @@ def build_gov_dashboard_data(da_frame: pd.DataFrame, data: dict[str, Any]) -> tu
     gov = da_frame[da_frame["Tipo"].apply(macro_cat) == "GOV"].copy()
     if gov.empty:
         return pd.DataFrame(), {}
-    total_ptf = float(pd.to_numeric(da_frame["Controvalore"], errors="coerce").fillna(0).sum())
-    gov["Peso comparto %"] = pd.to_numeric(gov["Controvalore"], errors="coerce").fillna(0) / max(float(pd.to_numeric(gov["Controvalore"], errors="coerce").fillna(0).sum()), 1e-9)
+    gov = _sanitize_dashboard_numeric_columns(gov)
+    total_ptf = _finite_column_sum(da_frame, "Controvalore")
+    total_gov = _finite_column_sum(gov, "Controvalore")
+    gov["Peso comparto %"] = _finite_numeric_series(gov["Controvalore"], default=0.0) / max(total_gov, 1e-9)
     info_by_tk = {s.get("ticker"): s for s in data.get("strumenti", [])}
     gov["ISIN"] = gov["Ticker"].map(lambda tk: info_by_tk.get(tk, {}).get("isin", ""))
     gov["Data scadenza"] = gov["Strumento"].map(extract_gov_maturity_date)
     gov["Anno scadenza"] = gov["Data scadenza"].map(lambda x: pd.Timestamp(x).year if pd.notna(x) else np.nan)
-    weighted_cur = np.average(gov["Prezzo"], weights=np.maximum(pd.to_numeric(gov["Quote"], errors="coerce").fillna(0.0), 1e-9)) if len(gov) else np.nan
-    weighted_pmc = np.average(gov["PMC"], weights=np.maximum(pd.to_numeric(gov["Quote"], errors="coerce").fillna(0.0), 1e-9)) if len(gov) else np.nan
-    maturity_valid = pd.to_numeric(gov["Anno scadenza"], errors="coerce").dropna()
+    weighted_cur = _weighted_average_finite(gov["Prezzo"], gov["Quote"]) if len(gov) else np.nan
+    weighted_pmc = _weighted_average_finite(gov["PMC"], gov["Quote"]) if len(gov) else np.nan
+    maturity_valid = _finite_numeric_series(gov["Anno scadenza"], default=np.nan).dropna()
     summary = {
         "count": int(len(gov)),
-        "value": float(pd.to_numeric(gov["Controvalore"], errors="coerce").fillna(0).sum()),
-        "weight": float(pd.to_numeric(gov["Controvalore"], errors="coerce").fillna(0).sum()) / total_ptf if total_ptf > 0 else 0.0,
-        "pl": float(pd.to_numeric(gov["P/L €"], errors="coerce").fillna(0).sum()),
+        "value": total_gov,
+        "weight": total_gov / total_ptf if total_ptf > 0 else 0.0,
+        "pl": _finite_column_sum(gov, "P/L €"),
         "avg_price": float(weighted_cur) if np.isfinite(weighted_cur) else np.nan,
         "avg_pmc": float(weighted_pmc) if np.isfinite(weighted_pmc) else np.nan,
         "avg_maturity_year": float(maturity_valid.mean()) if not maturity_valid.empty else np.nan,
@@ -1044,16 +1092,17 @@ def build_category_dashboard_data(da_frame: pd.DataFrame, category: str) -> tupl
     df = da_frame[da_frame["Tipo"].apply(macro_cat) == category].copy()
     if df.empty:
         return pd.DataFrame(columns=empty_columns), {}
-    total_ptf = float(pd.to_numeric(da_frame["Controvalore"], errors="coerce").fillna(0).sum())
-    total_cat = float(pd.to_numeric(df["Controvalore"], errors="coerce").fillna(0).sum())
-    df["Peso comparto %"] = pd.to_numeric(df["Controvalore"], errors="coerce").fillna(0) / max(total_cat, 1e-9)
-    weighted_cur = np.average(df["Prezzo"], weights=np.maximum(pd.to_numeric(df["Quote"], errors="coerce").fillna(0.0), 1e-9)) if len(df) else np.nan
-    weighted_pmc = np.average(df["PMC"], weights=np.maximum(pd.to_numeric(df["Quote"], errors="coerce").fillna(0.0), 1e-9)) if len(df) else np.nan
+    df = _sanitize_dashboard_numeric_columns(df)
+    total_ptf = _finite_column_sum(da_frame, "Controvalore")
+    total_cat = _finite_column_sum(df, "Controvalore")
+    df["Peso comparto %"] = _finite_numeric_series(df["Controvalore"], default=0.0) / max(total_cat, 1e-9)
+    weighted_cur = _weighted_average_finite(df["Prezzo"], df["Quote"]) if len(df) else np.nan
+    weighted_pmc = _weighted_average_finite(df["PMC"], df["Quote"]) if len(df) else np.nan
     summary = {
         "count": int(len(df)),
         "value": total_cat,
         "weight": total_cat / total_ptf if total_ptf > 0 else 0.0,
-        "pl": float(pd.to_numeric(df["P/L €"], errors="coerce").fillna(0).sum()),
+        "pl": _finite_column_sum(df, "P/L €"),
         "avg_price": float(weighted_cur) if np.isfinite(weighted_cur) else np.nan,
         "avg_pmc": float(weighted_pmc) if np.isfinite(weighted_pmc) else np.nan,
     }
@@ -1065,15 +1114,16 @@ def build_tutto_portfolio_dashboard_data(da_frame: pd.DataFrame) -> tuple[pd.Dat
     if da_frame is None or da_frame.empty:
         return pd.DataFrame(), {}
     df = da_frame.copy()
-    total_ptf = float(pd.to_numeric(df["Controvalore"], errors="coerce").fillna(0).sum())
-    df["Peso comparto %"] = pd.to_numeric(df["Controvalore"], errors="coerce").fillna(0) / max(total_ptf, 1e-9)
-    weighted_cur = np.average(df["Prezzo"], weights=np.maximum(pd.to_numeric(df["Quote"], errors="coerce").fillna(0.0), 1e-9)) if len(df) else np.nan
-    weighted_pmc = np.average(df["PMC"], weights=np.maximum(pd.to_numeric(df["Quote"], errors="coerce").fillna(0.0), 1e-9)) if len(df) else np.nan
+    df = _sanitize_dashboard_numeric_columns(df)
+    total_ptf = _finite_column_sum(df, "Controvalore")
+    df["Peso comparto %"] = _finite_numeric_series(df["Controvalore"], default=0.0) / max(total_ptf, 1e-9)
+    weighted_cur = _weighted_average_finite(df["Prezzo"], df["Quote"]) if len(df) else np.nan
+    weighted_pmc = _weighted_average_finite(df["PMC"], df["Quote"]) if len(df) else np.nan
     summary = {
         "count": int(len(df)),
         "value": total_ptf,
         "weight": 1.0,
-        "pl": float(pd.to_numeric(df["P/L €"], errors="coerce").fillna(0).sum()),
+        "pl": _finite_column_sum(df, "P/L €"),
         "avg_price": float(weighted_cur) if np.isfinite(weighted_cur) else np.nan,
         "avg_pmc": float(weighted_pmc) if np.isfinite(weighted_pmc) else np.nan,
     }
@@ -1130,9 +1180,9 @@ def build_portfolio_summary_payload(
     base_currency = str(portfolio_profile.get("base_currency") or "EUR")
     reporting_currency = str(portfolio_profile.get("reporting_currency") or base_currency)
     include_proventi = bool(calculations_settings.get("include_proventi_in_total_return", settings.get("include_proventi_in_total_return", True)))
-    rolling_window_days = int(calculations_settings.get("rolling_window_days", 90))
-    inflation_rate = float(calculations_settings.get("inflation_rate", 0.0) or 0.0)
-    performance_fee_rate = float(calculations_settings.get("performance_fee_rate", 0.0) or 0.0)
+    rolling_window_days = int(max(1, _safe_float(calculations_settings.get("rolling_window_days", 90), 90.0)))
+    inflation_rate = _safe_float(calculations_settings.get("inflation_rate", 0.0))
+    performance_fee_rate = _safe_float(calculations_settings.get("performance_fee_rate", 0.0))
     _state_all = None
     _df_all = portfolio_df.copy() if portfolio_df is not None else pd.DataFrame()
     if _df_all.empty:
@@ -1141,17 +1191,19 @@ def build_portfolio_summary_payload(
     if da_frame.empty and not _df_all.empty:
         da_frame = _df_all[_df_all["Quote"] > 0.0001].copy()
     if liquidita is None:
-        liquidita = float((_state_all or compute_portfolio_state(data, include_closed=True)).get("liquidita", 0.0))
+        liquidita = _safe_float((_state_all or compute_portfolio_state(data, include_closed=True)).get("liquidita", 0.0))
+    else:
+        liquidita = _safe_float(liquidita)
     capital_flows = calcola_flussi_capitale(get_registro_eventi(data))
     kpi = calcola_kpi_principali(
         _df_all,
-        float(liquidita or 0.0),
+        liquidita,
         capitale_investito=capital_flows["cap_investito"],
     )
-    tv = float(kpi["tv"])
-    tc = float(kpi["tc"])
-    pl = float(kpi["pl_totale"])
-    pl_pct = float(kpi["pl_totale_pct"])
+    tv = _safe_float(kpi["tv"])
+    tc = _safe_float(kpi["tc"])
+    pl = _safe_float(kpi["pl_totale"])
+    pl_pct = _safe_float(kpi["pl_totale_pct"])
     holdings_count = int(len(da_frame)) if da_frame is not None else 0
     visible_categories = _resolve_finance_category_codes(settings)
     macro_alloc = {cat: 0.0 for cat in visible_categories}
@@ -1160,6 +1212,9 @@ def build_portfolio_summary_payload(
     if not da_frame.empty and tv > 0:
         macro_alloc, macro_values = _build_category_value_maps(da_frame, tv, visible_categories)
         tmp = da_frame.copy()
+        for col in ("Controvalore", "Costo", "P/L €", "P/L %", "Quote", "Prezzo"):
+            if col in tmp.columns:
+                tmp[col] = pd.to_numeric(tmp[col], errors="coerce").map(_safe_float)
         tmp["Categoria"] = tmp["Tipo"].apply(macro_cat)
         full_holdings.extend(tmp.sort_values("Controvalore", ascending=False).apply(
             lambda r: {
@@ -1167,17 +1222,18 @@ def build_portfolio_summary_payload(
                 "strumento": r.get("Strumento"),
                 "categoria": macro_cat(r.get("Tipo", "")),
                 "tipo": r.get("Tipo"),
-                "peso": float(r.get("Controvalore", 0) / tv) if tv > 0 else 0.0,
-                "controvalore": float(r.get("Controvalore", 0) or 0),
-                "costo": float(r.get("Costo", 0) or 0),
-                "pl_eur": float(r.get("P/L €", 0) or 0),
-                "pl_pct": float(r.get("P/L %", 0) or 0),
-                "quote": float(r.get("Quote", 0) or 0),
-                "prezzo": float(r.get("Prezzo", 0) or 0),
+                "peso": _safe_float(r.get("Controvalore", 0)) / tv if tv > 0 else 0.0,
+                "controvalore": _safe_float(r.get("Controvalore", 0)),
+                "costo": _safe_float(r.get("Costo", 0)),
+                "pl_eur": _safe_float(r.get("P/L €", 0)),
+                "pl_pct": _safe_float(r.get("P/L %", 0)),
+                "quote": _safe_float(r.get("Quote", 0)),
+                "prezzo": _safe_float(r.get("Prezzo", 0)),
             }, axis=1
         ).tolist())
     top_holdings = full_holdings[:15]
-    xirr = twr_simple = cagr = cagr_real = vol_ann = max_dd = benchmark_return = excess_vs_benchmark = None
+    xirr = xirr_assets = xirr_portfolio = twr_simple = cagr = cagr_real = vol_ann = max_dd = benchmark_return = excess_vs_benchmark = None
+    xirr_scope = "n/d"
     sortino_ratio = calmar_ratio = information_ratio = tracking_error_ann = None
     quarterly_returns = []
     monthly_returns = []
@@ -1187,7 +1243,18 @@ def build_portfolio_summary_payload(
     benchmark_series = None
     try:
         flows, dates = build_xirr_flows(data, da_frame, proventi, tickers=None)
-        xirr = compute_xirr(flows, dates)
+        xirr_assets = compute_xirr(flows, dates)
+        external_flows, external_dates = build_portfolio_external_xirr_flows(
+            data,
+            tv + liquidita,
+        )
+        xirr_portfolio = compute_xirr(external_flows, external_dates)
+        if xirr_portfolio is not None:
+            xirr = xirr_portfolio
+            xirr_scope = "portfolio_external"
+        else:
+            xirr = xirr_assets
+            xirr_scope = "invested_assets"
     except Exception as e:
         logger.warning("XIRR computation failed: %s", e)
     try:
@@ -1205,67 +1272,23 @@ def build_portfolio_summary_payload(
                 settings=settings,
             )
         if not return_curve.empty and len(return_curve) >= 2:
-            idx_series = pd.to_numeric(return_curve["indice"], errors="coerce").dropna()
-            ret_series = pd.to_numeric(return_curve["ret"], errors="coerce").dropna()
-
-            if len(idx_series) >= 2 and idx_series.iloc[0] > 0:
-                twr_simple = float(idx_series.iloc[-1] / idx_series.iloc[0] - 1.0)
-            else:
-                twr_simple = None
-
-            elapsed_days = max(int((return_curve["date_dt"].iloc[-1] - return_curve["date_dt"].iloc[0]).days), 1)
-            if twr_simple is not None and twr_simple > -1.0:
-                cagr = float((1.0 + twr_simple) ** (365.25 / elapsed_days) - 1.0)
-            else:
-                cagr = None
-            cagr_real = (
-                float((1.0 + cagr) / (1.0 + inflation_rate) - 1.0)
-                if cagr is not None and inflation_rate
-                else None
+            metrics = compute_return_curve_metrics(
+                return_curve,
+                benchmark_curve=benchmark_series,
+                inflation_rate=inflation_rate,
+                max_accepted_benchmark_return=0.50,
             )
-
-            if len(ret_series) >= 3:
-                vol_ann = float(ret_series.iloc[1:].std(ddof=1) * np.sqrt(252))
-            else:
-                vol_ann = None
-
-            if len(idx_series) >= 2:
-                running_max = idx_series.cummax()
-                drawdowns = idx_series / running_max - 1.0
-                max_dd = float(drawdowns.min())
-            else:
-                max_dd = None
-
-            if benchmark_series is not None and not benchmark_series.empty and len(benchmark_series) >= 2 and benchmark_series.iloc[0] > 0:
-                benchmark_return = float(benchmark_series.iloc[-1] / benchmark_series.iloc[0] - 1.0)
-                # Protezione anti-benchmark palesemente spurio/incompleto.
-                if benchmark_return > 0.50:
-                    benchmark_return = None
-                    benchmark_series = None
-                elif twr_simple is not None:
-                    excess_vs_benchmark = float(twr_simple - benchmark_return)
-
-            try:
-                _rets = ret_series.iloc[1:].dropna()
-                if len(_rets) >= 4:
-                    _neg = _rets[_rets < 0]
-                    if len(_neg) >= 2:
-                        _ds = float(np.sqrt((_neg ** 2).mean()) * np.sqrt(252))
-                        sortino_ratio = float(cagr / _ds) if cagr is not None and _ds > 1e-9 else None
-                    if cagr is not None and max_dd is not None and abs(max_dd) > 1e-9:
-                        calmar_ratio = float(cagr / abs(max_dd))
-                    if benchmark_series is not None and not benchmark_series.empty:
-                        _bv = benchmark_series.reindex(pd.to_datetime(return_curve["date_dt"])).ffill().bfill()
-                        _br = _bv.pct_change().dropna()
-                        _min_len = min(len(_rets), len(_br))
-                        if _min_len >= 4:
-                            _ex = _rets.iloc[-_min_len:].values - _br.iloc[-_min_len:].values
-                            _te = float(np.std(_ex, ddof=1) * np.sqrt(252))
-                            tracking_error_ann = _te if _te > 1e-9 else None
-                            if tracking_error_ann:
-                                information_ratio = float(_ex.mean() * 252 / _te)
-            except Exception as e:
-                logger.warning("advanced stats failed: %s", e)
+            twr_simple = metrics["twr"]
+            cagr = metrics["cagr"]
+            cagr_real = metrics["cagr_real"]
+            vol_ann = metrics["volatility_ann"]
+            max_dd = metrics["max_drawdown"]
+            benchmark_return = metrics["benchmark_return"]
+            excess_vs_benchmark = metrics["excess_vs_benchmark"]
+            sortino_ratio = metrics["sortino"]
+            calmar_ratio = metrics["calmar"]
+            information_ratio = metrics["information_ratio"]
+            tracking_error_ann = metrics["tracking_error"]
     except Exception as e:
         logger.warning("advanced stats failed: %s", e)
 
@@ -1276,12 +1299,12 @@ def build_portfolio_summary_payload(
         if not curve_for_charts.empty and len(curve_for_charts) >= 2:
             hist_payload = {
                 "data": curve_for_charts["date_dt"].dt.strftime("%d/%m/%Y"),
-                "indice": pd.to_numeric(curve_for_charts["indice"], errors="coerce").round(4),
+                "indice": pd.to_numeric(curve_for_charts["indice"], errors="coerce").replace([np.inf, -np.inf], np.nan).round(4),
             }
             if "value" in curve_for_charts.columns:
-                hist_payload["value"] = pd.to_numeric(curve_for_charts["value"], errors="coerce").round(4)
+                hist_payload["value"] = pd.to_numeric(curve_for_charts["value"], errors="coerce").replace([np.inf, -np.inf], np.nan).round(4)
             if "external_flow" in curve_for_charts.columns:
-                hist_payload["external_flow"] = pd.to_numeric(curve_for_charts["external_flow"], errors="coerce").round(4)
+                hist_payload["external_flow"] = pd.to_numeric(curve_for_charts["external_flow"], errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0.0).round(4)
             hist_df = pd.DataFrame(hist_payload).dropna(subset=["data", "indice"])
             summary_history = hist_df.to_dict("records")
             if benchmark_series is not None and not benchmark_series.empty and benchmark_series.iloc[0] > 0:
@@ -1307,13 +1330,13 @@ def build_portfolio_summary_payload(
     _prov_netto = 0.0
     _prov_lordo = 0.0
     for _p in proventi:
-        _prov_netto += float(_p.get("importo_netto", 0) or 0)
-        _prov_lordo += float(_p.get("importo_lordo", 0) or 0)
+        _prov_netto += _safe_float(_p.get("importo_netto", 0))
+        _prov_lordo += _safe_float(_p.get("importo_lordo", 0))
     category_breakdown = [
         {
             "categoria": cat,
-            "peso": float(macro_alloc.get(cat, 0.0)),
-            "controvalore": float(macro_values.get(cat, 0.0)),
+            "peso": _safe_float(macro_alloc.get(cat, 0.0)),
+            "controvalore": _safe_float(macro_values.get(cat, 0.0)),
         }
         for cat in visible_categories
     ]
@@ -1339,6 +1362,9 @@ def build_portfolio_summary_payload(
         "total_pl": pl,
         "total_pl_pct": pl_pct,
         "xirr": xirr,
+        "xirr_assets": xirr_assets,
+        "xirr_portfolio": xirr_portfolio,
+        "xirr_scope": xirr_scope,
         "twr": twr_simple,
         "cagr": cagr,
         "cagr_real": cagr_real,
@@ -1364,7 +1390,8 @@ def build_portfolio_summary_payload(
         "monthly_returns": monthly_returns,
         "methodology": {
             "valuation_rule": "Controvalore = quantità x ultimo prezzo disponibile letto o mantenuto in cache.",
-            "money_weighted_return": "XIRR calcolato sui flussi irregolari di acquisto, vendita, proventi e controvalore finale.",
+            "money_weighted_return": "XIRR del portafoglio calcolato sui flussi esterni (versamenti/prelievi) e sul patrimonio finale comprensivo di liquidita'; se non calcolabile, fallback sull'XIRR degli strumenti investiti.",
+            "money_weighted_return_assets": "XIRR strumenti calcolato sui flussi irregolari di acquisto, vendita, proventi e controvalore finale degli strumenti.",
             "time_weighted_proxy": "TWR proxy calcolato su curva NAV flow-adjusted: i flussi esterni stimati dalla variazione del capitale netto vengono neutralizzati prima di calcolare rendimento, drawdown, volatilità e rendimenti periodici.",
             "benchmark_method": (
                 "Benchmark personalizzato definito da componenti e pesi configurati nelle impostazioni, costruito come serie normalizzata a 100 dalla prima data utile."

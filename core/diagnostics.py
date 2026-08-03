@@ -74,6 +74,7 @@ def build_cache_health_rows(
     cache_tree: dict[str, Any] | None,
     prewarm_status: dict[str, Any] | None,
     action_log: dict[str, Any] | None,
+    page_artifact_stats: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Sintesi operativa della cache figure e del pre-render."""
     cache_settings = cache_settings or {}
@@ -81,6 +82,7 @@ def build_cache_health_rows(
     cache_tree = cache_tree or {}
     prewarm_status = prewarm_status or {}
     action_log = action_log or {}
+    page_artifact_stats = page_artifact_stats or {}
 
     enabled = bool(cache_settings.get("enabled", True))
     strategy = str(cache_settings.get("strategy", "hybrid"))
@@ -109,6 +111,12 @@ def build_cache_health_rows(
             "Stato": str(num_files),
             "Indicatore": f"legacy={legacy_files}",
             "Lettura": "Ottimizzazione consigliata" if legacy_files else "Nessun residuo legacy rilevato.",
+        },
+        {
+            "Area": "Artefatti pagina",
+            "Stato": str(_safe_int(page_artifact_stats.get("num_entries"))),
+            "Indicatore": f"process={_safe_int(page_artifact_stats.get('process_entries'))}",
+            "Lettura": "Cache L3 per tabelle/payload pagina governata dal registry 5.0.",
         },
         {
             "Area": "Data/cache complessiva",
@@ -235,12 +243,14 @@ def build_diagnostic_recommendations(
     figure_stats: dict[str, Any] | None,
     cache_tree: dict[str, Any] | None,
     render_rows: list[dict[str, Any]] | None,
+    page_artifact_stats: dict[str, Any] | None = None,
 ) -> list[str]:
     """Produce suggerimenti brevi e non vincolanti sulla base dei segnali tecnici."""
     cache_settings = cache_settings or {}
     figure_stats = figure_stats or {}
     cache_tree = cache_tree or {}
     render_rows = render_rows or []
+    page_artifact_stats = page_artifact_stats or {}
     suggestions: list[str] = []
 
     total_size_mb = _safe_float(figure_stats.get("total_size_mb"))
@@ -254,6 +264,9 @@ def build_diagnostic_recommendations(
 
     if _safe_int(cache_tree.get("total_files")) > 2000:
         suggestions.append("La cartella data/cache contiene molti file: una manutenzione periodica puo' ridurre i tempi di scansione.")
+
+    if _safe_int(page_artifact_stats.get("missing_files")):
+        suggestions.append("Il manifest degli artefatti pagina contiene file mancanti: una futura ottimizzazione potra' ripulirli in modo selettivo.")
 
     slow = [row for row in render_rows if _safe_float(row.get("Tempo s")) >= 1.0]
     if slow:

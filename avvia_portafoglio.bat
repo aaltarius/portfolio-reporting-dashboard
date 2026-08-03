@@ -1,6 +1,5 @@
 @echo off
 cd /d "%~dp0"
-set "PORTFOLIO_PROFILE_PLOTLY_ON_START=1"
 echo ============================================
 echo   PORTAFOGLIO TITOLI - Installazione e Avvio
 echo ============================================
@@ -16,8 +15,14 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo Python trovato. Installazione librerie...
-python -m pip install streamlit plotly yfinance pandas requests beautifulsoup4 --quiet
+echo Python trovato. Verifica librerie...
+python -c "import streamlit, plotly, yfinance, pandas, requests, bs4" >nul 2>&1
+if errorlevel 1 (
+    echo Librerie mancanti. Installazione da requirements.txt...
+    python -m pip install -r requirements.txt --quiet
+) else (
+    echo Librerie gia' presenti. Installazione saltata.
+)
 
 echo.
 echo Avvio applicazione...

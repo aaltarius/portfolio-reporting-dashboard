@@ -164,11 +164,12 @@ def _do_prewarm(ctx: Any, theme: Any, settings: dict, prewarm_fn: "Callable[...,
     qui: core/ non deve dipendere da ui/ (violazione di layering corretta
     nel Master Plan v5.0, Fase 1 Task 1.5).
     """
-    from core.figure_cache import get_figure_cache, CachingStrategy
+    from core.cache_orchestrator import get_registered_figure_cache
+    from core.figure_cache import CachingStrategy
     from core.cache_signatures import build_portfolio_data_signature, theme_signature, charts_settings_signature
 
     started_at = time.perf_counter()
-    fcache = get_figure_cache()
+    fcache = get_registered_figure_cache()
     prewarm_signature = compute_prewarm_signature(ctx, theme, settings)
 
     # Signatures

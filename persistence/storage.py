@@ -5,6 +5,7 @@ Contiene anche le funzioni di modello dati necessarie a load_data/save_data
 per evitare import circolari.
 """
 import logging
+import math
 import json, os, shutil, hashlib
 from datetime import datetime, date
 import pandas as pd
@@ -119,7 +120,7 @@ def _migrate_json_to_data_dir():
 # ---------------------------------------------------------------------------
 # Domain constants
 # ---------------------------------------------------------------------------
-APP_VERSION    = "4.9.40"
+APP_VERSION    = "5.0-pre"
 SCHEMA_VERSION = "3.3"
 
 TIPI_EVENTO_PORTAFOGLIO = [
@@ -203,7 +204,13 @@ def _safe_float(value, default=0.0):
     try:
         if value is None or value == "":
             return float(default)
-        return float(value)
+        result = float(value)
+        if math.isnan(result):
+            return float(default)
+        if not math.isfinite(result):
+            logger.warning("_safe_float: valore non finito, uso default=%s: value=%r", default, value)
+            return float(default)
+        return result
     except Exception:
         logger.warning("_safe_float: valore non convertibile in float, uso default=%s: value=%r", default, value)
         return float(default)
@@ -260,6 +267,7 @@ def default_settings():
             "selected_categories": list(DEFAULT_VISIBLE_CATEGORY_CODES),
         },
         "ui_show_explanations": True,
+        "ui_show_portfolio_insights": True,
         "ui_summary_detail_level": "Completa",
         "ui_accent_variant": "Default",
         "ui_log_level": "INFO",
@@ -319,6 +327,8 @@ def default_settings():
         },
         "ui_preferences": {
             "show_explanations": True,
+            "show_portfolio_insights": True,
+            "show_market_ticker_tape": True,
             "summary_detail_level": "Completa",
             "accent_variant": "Default",
             "font_scale": "Grande",
@@ -330,7 +340,7 @@ def default_settings():
             "debug_render_log": False,
             "debug_render_scope": "current_page",
             "show_page_mode_controls": True,
-            "page_mode": "per_pagina",
+            "page_mode": "completa",
             "quotazioni_full_resolution": False,
         },
         "auditing": {
@@ -379,6 +389,13 @@ def default_settings():
             "cooldown_seconds": 1800,
             "scope": "core_charts_v1",
         },
+        "market_auto_refresh": {
+            "enabled": False,
+            "live_interval_minutes": 30,
+            "history_enabled": True,
+            "history_interval_minutes": 240,
+            "only_when_markets_open": True,
+        },
         "sator": {
             "enabled": True,
             "budget_preset": 900.0,
@@ -421,7 +438,7 @@ def default_settings():
 def _normalize_settings_payload(settings):
     """Normalizza il payload settings e mantiene compatibilità tra chiavi flat e sezioni annidate."""
     defaults = default_settings()
-    raw_settings = settings or {}
+    raw_settings = settings if isinstance(settings, dict) else {}
 
     def _prefer_nested_value(
         section_name: str,
@@ -437,11 +454,11 @@ def _normalize_settings_payload(settings):
     # Retrocompatibilità: converti il vecchio bool ui_show_page_mode_controls al nuovo ui_page_mode
     if "ui_page_mode" not in raw_settings and "ui_show_page_mode_controls" in raw_settings:
         old_bool = raw_settings.get("ui_show_page_mode_controls", True)
-        raw_settings["ui_page_mode"] = "per_pagina" if old_bool else "rapida"
+        raw_settings["ui_page_mode"] = "completa" if old_bool else "rapida"
 
     # Assicura che ui_page_mode sia sempre presente
     if "ui_page_mode" not in raw_settings:
-        raw_settings["ui_page_mode"] = "per_pagina"  # default
+        raw_settings["ui_page_mode"] = "completa"  # default
 
     merged = _deep_merge_defaults(defaults, raw_settings)
 
@@ -454,6 +471,7 @@ def _normalize_settings_payload(settings):
     category_view = merged.setdefault("category_view", {})
     backup = merged.setdefault("backup", {})
     newsletter = merged.setdefault("newsletter", {})
+    market_auto_refresh = merged.setdefault("market_auto_refresh", {})
 
     portfolio_objective = merged.setdefault("portfolio_objective", {})
     if "portfolio_objective" not in raw_settings:
@@ -544,6 +562,12 @@ def _normalize_settings_payload(settings):
     ui_preferences["show_explanations"] = bool(
         _prefer_nested_value("ui_preferences", "show_explanations", "ui_show_explanations", ui_preferences.get("show_explanations", True))
     )
+    ui_preferences["show_portfolio_insights"] = bool(
+        _prefer_nested_value("ui_preferences", "show_portfolio_insights", "ui_show_portfolio_insights", ui_preferences.get("show_portfolio_insights", True))
+    )
+    ui_preferences["show_market_ticker_tape"] = bool(
+        _prefer_nested_value("ui_preferences", "show_market_ticker_tape", "ui_show_market_ticker_tape", ui_preferences.get("show_market_ticker_tape", True))
+    )
     ui_preferences["summary_detail_level"] = str(
         _prefer_nested_value("ui_preferences", "summary_detail_level", "ui_summary_detail_level", ui_preferences.get("summary_detail_level", "Completa"))
     )
@@ -572,7 +596,7 @@ def _normalize_settings_payload(settings):
         _prefer_nested_value("ui_preferences", "show_page_mode_controls", "ui_show_page_mode_controls", ui_preferences.get("show_page_mode_controls", True))
     )
     ui_preferences["page_mode"] = str(
-        _prefer_nested_value("ui_preferences", "page_mode", "ui_page_mode", ui_preferences.get("page_mode", "per_pagina"))
+        _prefer_nested_value("ui_preferences", "page_mode", "ui_page_mode", ui_preferences.get("page_mode", "completa"))
     )
     ui_preferences["summary_layout"] = str(
         _prefer_nested_value("ui_preferences", "summary_layout", "ui_summary_layout", ui_preferences.get("summary_layout", "GIPS Completo"))
@@ -620,6 +644,21 @@ def _normalize_settings_payload(settings):
     newsletter["max_holdings"] = int(newsletter.get("max_holdings", defaults["newsletter"]["max_holdings"]) or defaults["newsletter"]["max_holdings"])
     newsletter["subject_prefix"] = str(newsletter.get("subject_prefix", "Daily Brief") or "Daily Brief").strip() or "Daily Brief"
     newsletter["send_time_local"] = str(newsletter.get("send_time_local", "18:00") or "18:00").strip() or "18:00"
+    market_auto_refresh["enabled"] = bool(market_auto_refresh.get("enabled", defaults["market_auto_refresh"]["enabled"]))
+    market_auto_refresh["live_interval_minutes"] = max(
+        5,
+        min(240, int(_safe_float(market_auto_refresh.get("live_interval_minutes"), defaults["market_auto_refresh"]["live_interval_minutes"]))),
+    )
+    market_auto_refresh["history_enabled"] = bool(
+        market_auto_refresh.get("history_enabled", defaults["market_auto_refresh"]["history_enabled"])
+    )
+    market_auto_refresh["history_interval_minutes"] = max(
+        60,
+        min(1440, int(_safe_float(market_auto_refresh.get("history_interval_minutes"), defaults["market_auto_refresh"]["history_interval_minutes"]))),
+    )
+    market_auto_refresh["only_when_markets_open"] = bool(
+        market_auto_refresh.get("only_when_markets_open", defaults["market_auto_refresh"]["only_when_markets_open"])
+    )
     category_view["selected_categories"] = normalize_category_selection(
         category_view.get("selected_categories", defaults["category_view"]["selected_categories"])
     )
@@ -635,6 +674,8 @@ def _normalize_settings_payload(settings):
     merged["classification_mode"] = calculations["classification_mode"]
     merged["comparison_export_format_default"] = reporting["default_format"]
     merged["ui_show_explanations"] = ui_preferences["show_explanations"]
+    merged["ui_show_portfolio_insights"] = ui_preferences["show_portfolio_insights"]
+    merged["ui_show_market_ticker_tape"] = ui_preferences["show_market_ticker_tape"]
     merged["ui_summary_detail_level"] = ui_preferences["summary_detail_level"]
     merged["ui_accent_variant"] = ui_preferences["accent_variant"]
     merged["ui_font_scale"] = ui_preferences["font_scale"]
@@ -649,6 +690,7 @@ def _normalize_settings_payload(settings):
     merged["ui_summary_include_benchmark"] = reporting["include_benchmark"]
     merged["category_view"] = _deep_merge_defaults(defaults["category_view"], category_view)
     merged["backup"] = _deep_merge_defaults(defaults["backup"], backup)
+    merged["schema_version"] = SCHEMA_VERSION
 
     # Remove deprecated keys
     ui_preferences.pop("table_density", None)
@@ -661,7 +703,7 @@ def _normalize_snapshot_payload(payload):
     base = default_snapshots()
     raw = payload if isinstance(payload, dict) else {}
     normalized = {
-        "schema_version": str(raw.get("schema_version") or SCHEMA_VERSION),
+        "schema_version": SCHEMA_VERSION,
         "snapshots": [],
     }
     raw_snapshots = raw.get("snapshots", [])
@@ -729,6 +771,7 @@ def _normalize_portfolio_data_payload(payload):
     base = default_data_v33()
     raw = payload if isinstance(payload, dict) else {}
     normalized = _deep_merge_defaults(base, raw)
+    normalized["schema_version"] = SCHEMA_VERSION
     instrument_master = normalized.get("instrument_master", {})
     if isinstance(instrument_master, dict):
         for ticker, info in instrument_master.items():
@@ -756,7 +799,7 @@ def default_sator_decisions():
 
 
 def default_benchmark_cache():
-    return {"schema_version": SCHEMA_VERSION, "benchmark_data": {}}
+    return {"schema_version": SCHEMA_VERSION, "benchmark_data": {}, "market_live_data": {}}
 
 
 def default_meta():
@@ -780,6 +823,43 @@ def default_meta():
     }
 
 
+def _normalize_quotes_log_payload(payload):
+    raw = payload if isinstance(payload, dict) else {}
+    normalized = _deep_merge_defaults(default_quotes_log(), raw)
+    normalized["schema_version"] = SCHEMA_VERSION
+    if not isinstance(normalized.get("items"), list):
+        normalized["items"] = []
+    if "last_refresh" not in normalized:
+        normalized["last_refresh"] = None
+    return normalized
+
+
+def _normalize_meta_payload(payload):
+    raw = payload if isinstance(payload, dict) else {}
+    normalized = _deep_merge_defaults(default_meta(), raw)
+    normalized["schema_version"] = SCHEMA_VERSION
+
+    defaults = default_meta()
+    if not isinstance(normalized.get("migration"), dict):
+        normalized["migration"] = _deep_clone(defaults["migration"])
+    else:
+        normalized["migration"] = _deep_merge_defaults(defaults["migration"], normalized["migration"])
+
+    if not isinstance(normalized.get("runtime"), dict):
+        normalized["runtime"] = _deep_clone(defaults["runtime"])
+    else:
+        normalized["runtime"] = _deep_merge_defaults(defaults["runtime"], normalized["runtime"])
+
+    if not isinstance(normalized.get("audit"), dict):
+        normalized["audit"] = _deep_clone(defaults["audit"])
+    else:
+        normalized["audit"] = _deep_merge_defaults(defaults["audit"], normalized["audit"])
+    if not isinstance(normalized["audit"].get("events"), list):
+        normalized["audit"]["events"] = []
+
+    return normalized
+
+
 def _audit_timestamp() -> str:
     """Timestamp locale uniforme per gli eventi di audit."""
     return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -795,6 +875,7 @@ def _summarize_settings_changes(previous: dict, current: dict) -> list[str]:
         "sator",
         "reporting_export",
         "ui_preferences",
+        "market_auto_refresh",
         "backup",
         "auditing",
         "newsletter",
@@ -1103,6 +1184,9 @@ def load_settings():
 def save_settings(settings):
     previous = _normalize_settings_payload(_read_json_file(SETTINGS_FILE, default_settings()))
     normalized = _normalize_settings_payload(settings)
+    if previous == normalized:
+        logger.info("Settings invariate: scrittura saltata path=%s", SETTINGS_FILE)
+        return False
     _write_json_file(SETTINGS_FILE, normalized)
     logger.info("Settings salvate: path=%s", SETTINGS_FILE)
     auditing_cfg = normalized.get("auditing", {})
@@ -1115,19 +1199,21 @@ def save_settings(settings):
                 "portfolio_id": normalized.get("portfolio_id", "main"),
             },
         )
+    return True
 
 
 def load_quotes_log():
-    q = _read_json_file(QUOTES_LOG_FILE, default_quotes_log())
-    q.setdefault("schema_version", SCHEMA_VERSION)
-    q.setdefault("last_refresh", None)
-    q.setdefault("items", [])
-    return q
+    raw = _read_json_file(QUOTES_LOG_FILE, default_quotes_log())
+    normalized = _normalize_quotes_log_payload(raw)
+    if raw != normalized:
+        _write_json_file(QUOTES_LOG_FILE, normalized)
+    return normalized
 
 
 def save_quotes_log(q):
-    _write_json_file(QUOTES_LOG_FILE, q)
-    logger.info("Quotes log salvato: path=%s items=%s", QUOTES_LOG_FILE, len(q.get("items", [])) if isinstance(q, dict) else 0)
+    normalized = _normalize_quotes_log_payload(q)
+    _write_json_file(QUOTES_LOG_FILE, normalized)
+    logger.info("Quotes log salvato: path=%s items=%s", QUOTES_LOG_FILE, len(normalized.get("items", [])))
 
 
 def load_snapshots():
@@ -1174,16 +1260,15 @@ def remove_sator_decision(decisions: dict, decision_id: str) -> tuple[dict, bool
 
 
 def load_meta():
-    m = _read_json_file(META_FILE, default_meta())
-    m.setdefault("schema_version", SCHEMA_VERSION)
-    m.setdefault("migration", default_meta()["migration"])
-    m.setdefault("runtime", default_meta()["runtime"])
-    m.setdefault("audit", default_meta()["audit"])
-    return m
+    raw = _read_json_file(META_FILE, default_meta())
+    normalized = _normalize_meta_payload(raw)
+    if raw != normalized:
+        _write_json_file(META_FILE, normalized)
+    return normalized
 
 
 def save_meta(m):
-    _write_json_file(META_FILE, m)
+    _write_json_file(META_FILE, _normalize_meta_payload(m))
     logger.debug("Meta salvati: path=%s", META_FILE)
 
 
@@ -1217,7 +1302,11 @@ def load_data():
     base = default_data_v33()
     for k, v in base.items():
         d.setdefault(k, json.loads(json.dumps(v)))
-    d.setdefault("benchmark_data", _read_json_file(BENCHMARK_CACHE_FILE, default_benchmark_cache()).get("benchmark_data", {}))
+    benchmark_cache = _read_json_file(BENCHMARK_CACHE_FILE, default_benchmark_cache())
+    # La cache benchmark/live vive nel file dedicato: deve essere la fonte
+    # autorevole anche se portafoglio_data.json contiene vecchi campi residui.
+    d["benchmark_data"] = benchmark_cache.get("benchmark_data", {}) if isinstance(benchmark_cache.get("benchmark_data", {}), dict) else {}
+    d["market_live_data"] = benchmark_cache.get("market_live_data", {}) if isinstance(benchmark_cache.get("market_live_data", {}), dict) else {}
 
     # Load storico_prezzi with hybrid JSON-Parquet support
     d["storico_prezzi"] = load_storico_prezzi_hybrid(STORICO_PREZZI_FILE)
@@ -1259,7 +1348,18 @@ def save_data(data, *, include_storico: bool = True):
     }
     core = _normalize_portfolio_data_payload(core)
     _write_json_file(DATA_FILE, core)
-    _write_json_file(BENCHMARK_CACHE_FILE, {"schema_version": SCHEMA_VERSION, "benchmark_data": data.get("benchmark_data", {})})
+    existing_benchmark_cache = _read_json_file(BENCHMARK_CACHE_FILE, default_benchmark_cache())
+    benchmark_data = data.get("benchmark_data", {})
+    market_live_data = data.get("market_live_data", {})
+    if not isinstance(benchmark_data, dict) or not benchmark_data:
+        benchmark_data = existing_benchmark_cache.get("benchmark_data", {})
+    if not isinstance(market_live_data, dict) or not market_live_data:
+        market_live_data = existing_benchmark_cache.get("market_live_data", {})
+    _write_json_file(BENCHMARK_CACHE_FILE, {
+        "schema_version": SCHEMA_VERSION,
+        "benchmark_data": benchmark_data if isinstance(benchmark_data, dict) else {},
+        "market_live_data": market_live_data if isinstance(market_live_data, dict) else {},
+    })
     meta = load_meta()
     meta.setdefault("runtime", {})["last_successful_save"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     save_meta(meta)
@@ -1274,13 +1374,25 @@ def save_data(data, *, include_storico: bool = True):
 
 def save_benchmark_data(data):
     """Salva solo la cache benchmark evitando di riscrivere anche lo storico prezzi."""
-    _write_json_file(BENCHMARK_CACHE_FILE, {"schema_version": SCHEMA_VERSION, "benchmark_data": data.get("benchmark_data", {})})
+    existing_benchmark_cache = _read_json_file(BENCHMARK_CACHE_FILE, default_benchmark_cache())
+    benchmark_data = data.get("benchmark_data", {})
+    market_live_data = data.get("market_live_data", {})
+    if not isinstance(benchmark_data, dict) or not benchmark_data:
+        benchmark_data = existing_benchmark_cache.get("benchmark_data", {})
+    if not isinstance(market_live_data, dict) or not market_live_data:
+        market_live_data = existing_benchmark_cache.get("market_live_data", {})
+    _write_json_file(BENCHMARK_CACHE_FILE, {
+        "schema_version": SCHEMA_VERSION,
+        "benchmark_data": benchmark_data if isinstance(benchmark_data, dict) else {},
+        "market_live_data": market_live_data if isinstance(market_live_data, dict) else {},
+    })
     meta = load_meta()
     meta.setdefault("runtime", {})["last_successful_save"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     save_meta(meta)
     logger.info(
-        "Cache benchmark salvata: serie=%s",
-        len(data.get("benchmark_data", {})) if isinstance(data.get("benchmark_data", {}), dict) else 0,
+        "Cache benchmark salvata: serie=%s live=%s",
+        len(benchmark_data) if isinstance(benchmark_data, dict) else 0,
+        len(market_live_data) if isinstance(market_live_data, dict) else 0,
     )
 
 
@@ -1288,7 +1400,7 @@ def _data_mtime() -> float:
     try:
         mtimes = [
             os.path.getmtime(path)
-            for path in [DATA_FILE, SETTINGS_FILE, SNAPSHOTS_FILE, META_FILE]
+            for path in [DATA_FILE, SETTINGS_FILE, SNAPSHOTS_FILE, BENCHMARK_CACHE_FILE, META_FILE]
             if os.path.exists(path)
         ]
         return max(mtimes) if mtimes else 0.0

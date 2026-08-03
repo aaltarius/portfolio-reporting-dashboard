@@ -3,6 +3,8 @@ ui/pages/home.py — Tab Portafoglio (t1): tabella posizioni, KPI, grafici
 Pure rendering with service functions and centralized theme.
 """
 import html
+import math
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -11,19 +13,26 @@ import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
 
 from core.asset_categories import get_selected_category_codes
+from core.cache_policy import build_cache_artifact_signature, get_cache_artifact_spec
+from core.cache_orchestrator import get_or_build_registered_artifact, get_registered_figure_cache
 from core.cache_signatures import build_portfolio_data_signature, charts_settings_signature, theme_signature
 from core.config import COLORS
 from core.data_models import ThemeConfig
-from core.figure_cache import CachingStrategy, get_figure_cache
-from persistence.storage import get_proventi_normalizzati
+from core.figure_cache import CachingStrategy
+from persistence.storage import _safe_float, get_proventi_normalizzati
 from core.render_profiler import profile_step
-from core.settings_profiles import resolve_figure_cache_strategy
+from core.settings_profiles import (
+    get_effective_market_ticker_tape_enabled,
+    get_effective_portfolio_insights_enabled,
+    resolve_figure_cache_strategy,
+)
 
 from core.services import (
     build_pl_delta_series,
     build_weekly_pl_table,
 )
-from persistence.storage import macro_cat
+from core.services.portfolio_insights import build_portfolio_insights
+from persistence.storage import SATOR_DECISIONS_FILE, macro_cat
 from core.finance import build_proventi_summary
 from ui.formatting import fmt_eur_it, fmt_pct_it, fmt_num_it, fmtds
 from ui.i18n import t
@@ -46,8 +55,12 @@ from ui.charts.home import (
 )
 from ui.charts.portfolio_popup import render_portfolio_table_with_popup, render_weekly_pl_table
 from ui.charts.tables import color_pl, style_macro_cols
+from ui.insights import render_portfolio_insights
+from ui.market_tape import render_market_ticker_tape
 from ui.page_chrome import render_page_intro as render_page_intro_shared
 from ui.charts.settings import apply_settings
+
+_DAILY_EUR_DISPLAY_EPS = 0.005
 
 
 def _normalize_best_worst_name_block(name: str, companion_name: str, threshold: int = 26) -> str:
@@ -79,7 +92,7 @@ def _build_last_day_income_context(dfh: pd.DataFrame, data: dict[str, Any] | Non
         if _as_date_key(item.get("data")) != last_date_key:
             continue
         ticker = str(item.get("ticker") or "")
-        netto = float(item.get("importo_netto", 0.0) or 0.0)
+        netto = _safe_float(item.get("importo_netto", 0.0))
         if not ticker or abs(netto) <= 1e-12:
             continue
         by_ticker[ticker] = by_ticker.get(ticker, 0.0) + netto
@@ -100,7 +113,7 @@ def _build_last_day_market_only_history(
         date_key = _as_date_key(item.get("data"))
         if not date_key:
             continue
-        netto = float(item.get("importo_netto", 0.0) or 0.0)
+        netto = _safe_float(item.get("importo_netto", 0.0))
         if abs(netto) <= 1e-12:
             continue
         income_by_date[date_key] = income_by_date.get(date_key, 0.0) + netto
@@ -123,6 +136,19 @@ def _build_last_day_market_only_history(
     return adjusted
 
 
+def _trim_history_to_latest_market_date(dfh: pd.DataFrame, data: dict[str, Any] | None = None) -> pd.DataFrame:
+    """Rimuove eventuali righe sintetiche successive all'ultima data prezzi reale."""
+    if dfh is None or dfh.empty or "Data" not in dfh.columns:
+        return dfh
+    _, latest_market_date = _latest_two_market_dates((data or {}).get("storico_prezzi", {}) or {})
+    if not latest_market_date:
+        return dfh
+    latest_ts = pd.Timestamp(latest_market_date).normalize()
+    dates = pd.to_datetime(dfh["Data"], errors="coerce").dt.normalize()
+    trimmed = dfh.loc[dates <= latest_ts].copy()
+    return trimmed if len(trimmed) >= 2 else dfh
+
+
 def _build_last_day_contributors_report(
     dfh: pd.DataFrame,
     info_map: dict[str, dict[str, Any]] | None = None,
@@ -133,7 +159,6 @@ def _build_last_day_contributors_report(
         return None
 
     info_map = info_map or {}
-    price_history = (data or {}).get("storico_prezzi", {})
     last = dfh.iloc[-1]
     prev = dfh.iloc[-2]
     pl_cols = [c for c in dfh.columns if c.startswith("PL_")]
@@ -150,12 +175,6 @@ def _build_last_day_contributors_report(
                 continue
             delta = v_last - v_prev
             info = info_map.get(tk, {})
-            ticker_history: list[tuple[str, Any]] = []
-            for raw_date, values in price_history.items():
-                if not isinstance(values, dict) or tk not in values:
-                    continue
-                ticker_history.append((raw_date, values.get(tk)))
-            ticker_history.sort(key=lambda item: item[0])
             pct_change = None
             current_value = None
             if info.get("prezzo") is not None and info.get("qt") is not None:
@@ -167,14 +186,6 @@ def _build_last_day_contributors_report(
                 previous_value = current_value - delta
                 if previous_value not in (None, 0):
                     pct_change = delta / previous_value
-            elif len(ticker_history) >= 2:
-                try:
-                    prev_price = float(ticker_history[-2][1])
-                    last_price = float(ticker_history[-1][1])
-                    if prev_price != 0:
-                        pct_change = (last_price - prev_price) / prev_price
-                except (TypeError, ValueError):
-                    pct_change = None
             contributors.append(
                 {
                     "ticker": tk,
@@ -201,22 +212,216 @@ def _build_last_day_contributors_report(
     }
 
 
+def _finite_float_or_none(value: Any) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _positive_float_or_none(value: Any) -> float | None:
+    result = _finite_float_or_none(value)
+    return result if result is not None and result > 0 else None
+
+
+def _price_state_from_pct(pct: float | None) -> str:
+    if pct is None:
+        return "flat"
+    if pct > 0.03:
+        return "up_big"
+    if pct > 0:
+        return "up"
+    if pct < -0.03:
+        return "down_big"
+    if pct < 0:
+        return "down"
+    return "flat"
+
+
+def _last_two_valid_prices_for_ticker(
+    storico: dict[str, Any],
+    ticker: str,
+    *,
+    prev_date: str | None = None,
+    last_date: str | None = None,
+) -> tuple[tuple[str, float], tuple[str, float]] | None:
+    if prev_date and last_date:
+        prev_values = storico.get(prev_date) if isinstance(storico, dict) else None
+        last_values = storico.get(last_date) if isinstance(storico, dict) else None
+        if not isinstance(prev_values, dict) or not isinstance(last_values, dict):
+            return None
+        prev_price = _positive_float_or_none(prev_values.get(ticker))
+        last_price = _positive_float_or_none(last_values.get(ticker))
+        if prev_price is None or last_price is None:
+            return None
+        return (str(prev_date), prev_price), (str(last_date), last_price)
+
+    points: list[tuple[str, float]] = []
+    for raw_date in sorted((storico or {}).keys()):
+        day_values = storico.get(raw_date)
+        if not isinstance(day_values, dict) or ticker not in day_values:
+            continue
+        price = _positive_float_or_none(day_values.get(ticker))
+        if price is not None:
+            points.append((str(raw_date), price))
+    if len(points) < 2:
+        return None
+    return points[-2], points[-1]
+
+
+def _latest_two_market_dates(storico: dict[str, Any] | None) -> tuple[str | None, str | None]:
+    if not isinstance(storico, dict) or len(storico) < 2:
+        return None, None
+    valid_dates = [
+        str(day)
+        for day, values in storico.items()
+        if isinstance(values, dict) and any(_positive_float_or_none(value) is not None for value in values.values())
+    ]
+    if len(valid_dates) < 2:
+        return None, None
+    valid_dates = sorted(valid_dates)
+    return valid_dates[-2], valid_dates[-1]
+
+
+def _build_price_based_daily_variation(
+    row: pd.Series,
+    data: dict[str, Any],
+    *,
+    prev_date: str | None = None,
+    last_date: str | None = None,
+) -> dict[str, float | str] | None:
+    """Restituisce delta giornaliero coerente: stessa fonte prezzo per % ed euro."""
+    ticker = str(row.get("Ticker", "") or "")
+    if not ticker:
+        return None
+
+    pair = _last_two_valid_prices_for_ticker(
+        data.get("storico_prezzi", {}) or {},
+        ticker,
+        prev_date=prev_date,
+        last_date=last_date,
+    )
+    if pair is None:
+        return None
+    (pair_prev_date, prev_price), (pair_last_date, last_price) = pair
+    if prev_price <= 0:
+        return None
+
+    pct = (last_price - prev_price) / prev_price
+    if not math.isfinite(pct) or abs(1.0 + pct) <= 1e-12:
+        return None
+
+    current_value = _finite_float_or_none(row.get("Controvalore"))
+    if current_value is None:
+        qty = _finite_float_or_none(row.get("Quote"))
+        current_value = qty * last_price if qty is not None else None
+    if current_value is None:
+        return None
+
+    previous_value = current_value / (1.0 + pct)
+    delta_eur = current_value - previous_value
+    if not math.isfinite(delta_eur):
+        return None
+
+    return {
+        "state": _price_state_from_pct(pct),
+        "delta_eur": delta_eur,
+        "delta_pct": pct,
+        "source": "price_value",
+        "prev_date": pair_prev_date,
+        "last_date": pair_last_date,
+    }
+
+
+def _build_direction_map_contributors_report(
+    da: pd.DataFrame,
+    data: dict[str, Any],
+    direction_map: dict[str, Any],
+) -> dict[str, Any]:
+    info_map = {str(s.get("ticker", "")): s for s in data.get("strumenti", [])}
+    contributors: list[dict[str, Any]] = []
+    prev_date = None
+    last_date = None
+    if da is None or da.empty:
+        return {"up_count": 0, "down_count": 0, "best": [], "worst": [], "all": [], "prev_date": None, "last_date": None}
+
+    for _, row in da.iterrows():
+        tk = str(row.get("Ticker", "") or "")
+        raw = direction_map.get(tk)
+        if not isinstance(raw, dict):
+            continue
+        delta = _finite_float_or_none(raw.get("delta_eur"))
+        pct_change = _finite_float_or_none(raw.get("delta_pct"))
+        if delta is None:
+            continue
+        if raw.get("prev_date"):
+            prev_date = str(raw.get("prev_date"))
+        if raw.get("last_date"):
+            last_date = str(raw.get("last_date"))
+        info = info_map.get(tk, {})
+        contributors.append(
+            {
+                "ticker": tk,
+                "name": info.get("nome") or row.get("Strumento") or tk,
+                "delta": delta,
+                "pct_change": pct_change,
+                "category": macro_cat(info.get("tipo", row.get("Tipo", ""))),
+                "source": raw.get("source"),
+            }
+        )
+
+    positives = [item for item in contributors if float(item.get("delta", 0.0) or 0.0) > _DAILY_EUR_DISPLAY_EPS]
+    negatives = [item for item in contributors if float(item.get("delta", 0.0) or 0.0) < -_DAILY_EUR_DISPLAY_EPS]
+    positives.sort(key=lambda item: float(item.get("delta", 0.0) or 0.0), reverse=True)
+    negatives.sort(key=lambda item: float(item.get("delta", 0.0) or 0.0))
+    return {
+        "up_count": len(positives),
+        "down_count": len(negatives),
+        "best": positives,
+        "worst": negatives,
+        "all": contributors,
+        "prev_date": prev_date,
+        "last_date": last_date,
+    }
+
+
 def _build_portfolio_table_direction_map(
     da: pd.DataFrame,
     dfh: pd.DataFrame,
     data: dict[str, Any],
 ) -> dict[str, Any]:
-    """Arricchisce le frecce prezzo con la variazione giornaliera P/L per riga."""
+    """Costruisce variazione giornaliera coerente per riga della tabella Home."""
     base_map: dict[str, Any] = dict(build_price_direction_map(data))
-    if da is None or da.empty or dfh is None or len(dfh) < 2:
+    if da is None or da.empty:
         return base_map
 
     visible_tickers = {str(tk) for tk in da.get("Ticker", pd.Series(dtype=str)).dropna()}
+    prev_market_date, last_market_date = _latest_two_market_dates(data.get("storico_prezzi", {}) or {})
+    price_based_tickers: set[str] = set()
+    for _, row in da.iterrows():
+        tk = str(row.get("Ticker", "") or "")
+        if not tk:
+            continue
+        price_variation = _build_price_based_daily_variation(
+            row,
+            data,
+            prev_date=prev_market_date,
+            last_date=last_market_date,
+        )
+        if price_variation is None:
+            continue
+        base_map[tk] = price_variation
+        price_based_tickers.add(tk)
+
+    if dfh is None or len(dfh) < 2:
+        return base_map
+
     info_map = {str(s.get("ticker", "")): s for s in data.get("strumenti", [])}
     report = _build_last_day_contributors_report(dfh, info_map, data) or {}
     for item in report.get("all", []):
         tk = str(item.get("ticker") or "")
-        if not tk or tk not in visible_tickers:
+        if not tk or tk not in visible_tickers or tk in price_based_tickers:
             continue
         existing = base_map.get(tk, "flat")
         state = existing.get("state", "flat") if isinstance(existing, dict) else existing
@@ -224,6 +429,7 @@ def _build_portfolio_table_direction_map(
             "state": state or "flat",
             "delta_eur": item.get("delta"),
             "delta_pct": item.get("pct_change"),
+            "source": "pl_history",
         }
     return base_map
 
@@ -275,6 +481,7 @@ def _build_last_day_summary(
     info_map: dict[str, dict[str, Any]] | None = None,
     data: dict[str, Any] | None = None,
     settings: dict[str, Any] | None = None,
+    daily_report: dict[str, Any] | None = None,
 ) -> str | None:
     """Helper della Home: HTML della sintesi dell'ultima giornata disponibile."""
     if dfh is None or len(dfh) < 2:
@@ -285,13 +492,17 @@ def _build_last_day_summary(
     delta_valore = float(last["Valore"]) - float(prev["Valore"])
     theme = get_theme_context()
     # Compute delta only from instruments open in BOTH rows (avoids closing-event spikes)
-    raw_delta_pl = float(build_pl_delta_series(dfh, theme)["deltas"][-1])
+    raw_delta_pl = (
+        sum(float(item.get("delta", 0.0) or 0.0) for item in daily_report.get("all", []))
+        if daily_report is not None
+        else float(build_pl_delta_series(dfh, theme)["deltas"][-1])
+    )
     delta_capitale = float(last.get("Capitale", 0.0)) - float(prev.get("Capitale", 0.0))
     last_date = fmtds(last["Data"])
     prev_date = fmtds(prev["Data"])
     income_context = _build_last_day_income_context(dfh, data)
     day_income = float(income_context.get("total_net", 0.0) or 0.0)
-    delta_pl = raw_delta_pl - day_income
+    delta_pl = raw_delta_pl if daily_report is not None else raw_delta_pl - day_income
 
     prev_pl_value = float(prev["P/L"]) if float(prev["P/L"]) != 0 else 0.0
     pct_var = (delta_pl / prev_pl_value) if abs(prev_pl_value) > 1e-9 else 0
@@ -301,20 +512,36 @@ def _build_last_day_summary(
     sign_color_v = col_green if delta_pl >= 0 else col_red
     sign_color_pl = col_green if delta_pl >= 0 else col_red
 
-    pl_cols = [c for c in dfh.columns if c.startswith("PL_")]
-    up_count = sum(
-        1
-        for col in pl_cols
-        if pd.notna(last[col]) and pd.notna(prev[col]) and (float(last[col]) - float(prev[col])) > 0
-    )
-    down_count = sum(
-        1
-        for col in pl_cols
-        if pd.notna(last[col]) and pd.notna(prev[col]) and (float(last[col]) - float(prev[col])) < 0
-    )
-
-    category_deltas = _compute_home_category_deltas(dfh, data or {}, len(dfh) - 2)
-    report = _build_last_day_contributors_report(dfh, info_map, data) or {}
+    if daily_report is not None:
+        up_count = int(daily_report.get("up_count", 0) or 0)
+        down_count = int(daily_report.get("down_count", 0) or 0)
+        category_deltas: dict[str, dict[str, float]] = {}
+        for item in daily_report.get("all", []) or []:
+            cat = str(item.get("category") or "Altro")
+            delta = float(item.get("delta", 0.0) or 0.0)
+            if cat not in category_deltas:
+                category_deltas[cat] = {"delta_pl": 0.0, "max_pl": 0.0}
+            category_deltas[cat]["delta_pl"] += delta
+            category_deltas[cat]["max_pl"] = max(category_deltas[cat]["max_pl"], abs(delta))
+        report = daily_report
+        if daily_report.get("last_date"):
+            last_date = fmtds(daily_report.get("last_date"))
+        if daily_report.get("prev_date"):
+            prev_date = fmtds(daily_report.get("prev_date"))
+    else:
+        pl_cols = [c for c in dfh.columns if c.startswith("PL_")]
+        up_count = sum(
+            1
+            for col in pl_cols
+            if pd.notna(last[col]) and pd.notna(prev[col]) and (float(last[col]) - float(prev[col])) > 0
+        )
+        down_count = sum(
+            1
+            for col in pl_cols
+            if pd.notna(last[col]) and pd.notna(prev[col]) and (float(last[col]) - float(prev[col])) < 0
+        )
+        category_deltas = _compute_home_category_deltas(dfh, data or {}, len(dfh) - 2)
+        report = _build_last_day_contributors_report(dfh, info_map, data) or {}
     best_items = list(report.get("best", []) or [])
     worst_items = list(report.get("worst", []) or [])
     visible_categories = list(get_selected_category_codes(settings))
@@ -393,10 +620,15 @@ def _build_last_day_summary(
     return '\n'.join(html_lines)
 
 
-def _render_last_day_contributors_tables(dfh_top: pd.DataFrame, data: dict[str, Any], theme: ThemeConfig) -> None:
+def _render_last_day_contributors_tables(
+    dfh_top: pd.DataFrame,
+    data: dict[str, Any],
+    theme: ThemeConfig,
+    daily_report: dict[str, Any] | None = None,
+) -> None:
     """Mostra titoli migliori e peggiori dell'ultima giornata in due box affiancati di pari altezza."""
     info_map = {s["ticker"]: s for s in data.get("strumenti", [])}
-    report = _build_last_day_contributors_report(dfh_top, info_map, data)
+    report = daily_report if daily_report is not None else _build_last_day_contributors_report(dfh_top, info_map, data)
     if not report:
         return
 
@@ -487,8 +719,9 @@ def _render_home_andamento_clone(
     chart_loader=None,
 ) -> None:
     """Replica nella scheda Portafoglio il solo grafico Profit / Loss Complessivo."""
-    dfh_market_only = _build_last_day_market_only_history(dfh_top, data)
-    income_context = _build_last_day_income_context(dfh_top, data)
+    dfh_real_market = _trim_history_to_latest_market_date(dfh_top, data)
+    dfh_market_only = _build_last_day_market_only_history(dfh_real_market, data)
+    income_context = _build_last_day_income_context(dfh_real_market, data)
     home_pl_extra_params = {
         "rows": len(dfh_market_only),
         "market_view": "last_day_net_proventi_cumulative_v2",
@@ -524,22 +757,83 @@ def _render_home_andamento_clone(
             )
     with profile_step("Portafoglio/UltimaGiornata", "render fig portfolio pl"):
         st.plotly_chart(fig, width="stretch")
-    with profile_step("Portafoglio/UltimaGiornata", "load fig portfolio pl category", count=len(dfh_top)):
+    with profile_step("Portafoglio/UltimaGiornata", "load fig portfolio pl category", count=len(dfh_real_market)):
         fig_cat = (
-            apply_settings(build_portfolio_pl_category_chart(dfh_top, data, theme, settings=settings), 'home_portfolio_pl_category')
+            apply_settings(build_portfolio_pl_category_chart(dfh_real_market, data, theme, settings=settings), 'home_portfolio_pl_category')
             if chart_loader is None
             else chart_loader(
                 "home_portfolio_pl_category",
                 lambda: apply_settings(
-                    build_portfolio_pl_category_chart(dfh_top, data, theme, settings=settings),
+                    build_portfolio_pl_category_chart(dfh_real_market, data, theme, settings=settings),
                     'home_portfolio_pl_category',
                 ),
-                extra_params={"rows": len(dfh_top), "cats": "|".join(get_selected_category_codes(settings))},
+                extra_params={"rows": len(dfh_real_market), "cats": "|".join(get_selected_category_codes(settings))},
             )
         )
     if len(fig_cat.data) > 0:
         with profile_step("Portafoglio/UltimaGiornata", "render fig portfolio pl category"):
             st.plotly_chart(fig_cat, width="stretch")
+
+
+def _file_fingerprint(path_value: str) -> dict[str, Any]:
+    path = Path(str(path_value or ""))
+    try:
+        stat = path.stat()
+        return {
+            "exists": True,
+            "mtime": round(float(stat.st_mtime), 3),
+            "size": int(stat.st_size),
+        }
+    except Exception:
+        return {"exists": False, "mtime": 0.0, "size": 0}
+
+
+def _portfolio_table_settings_payload(settings: dict[str, Any] | None) -> dict[str, Any]:
+    settings = settings or {}
+    alerts = settings.get("alerts", {}) if isinstance(settings.get("alerts", {}), dict) else {}
+    return {
+        "selected_categories": list(get_selected_category_codes(settings)),
+        "portfolio_insights_enabled": get_effective_portfolio_insights_enabled(settings),
+        "portfolio_objective": settings.get("portfolio_objective", {}),
+        "sator": settings.get("sator", {}),
+        "concentration_threshold_pct": alerts.get("concentration_threshold_pct"),
+    }
+
+
+def _build_positions_table_payload(
+    da: pd.DataFrame,
+    dfh_top: pd.DataFrame,
+    data: dict[str, Any],
+    settings: dict[str, Any] | None,
+    *,
+    include_insights: bool,
+) -> dict[str, Any]:
+    """Payload cacheabile della sezione Controvalore del Portafoglio."""
+
+    table_df = da.copy() if isinstance(da, pd.DataFrame) else pd.DataFrame()
+    direction_map: dict[str, Any] = {}
+    daily_report: dict[str, Any] | None = None
+    insights = []
+    if not table_df.empty:
+        with profile_step("Portafoglio", "build positions table direction map", count=len(table_df)):
+            direction_map = _build_portfolio_table_direction_map(table_df, dfh_top, data)
+            daily_report = _build_direction_map_contributors_report(table_df, data, direction_map)
+        if include_insights:
+            with profile_step("Portafoglio", "build portfolio insights", count=len(table_df)):
+                insights = build_portfolio_insights(
+                    table_df,
+                    dfh_top,
+                    data,
+                    settings or {},
+                    direction_map=direction_map,
+                    daily_report=daily_report,
+                )
+    return {
+        "da": table_df,
+        "direction_map": direction_map,
+        "daily_report": daily_report,
+        "insights": insights,
+    }
 
 
 def _render_portfolio_table_section(
@@ -552,12 +846,19 @@ def _render_portfolio_table_section(
     settings: dict[str, Any] | None = None,
     macro_summary: pd.DataFrame | None = None,
     chart_loader=None,
+    direction_map: dict[str, Any] | None = None,
+    daily_report: dict[str, Any] | None = None,
 ) -> None:
     """Mostra tabella posizioni, ultimo giorno, allocazione e concentrazione."""
     settings = settings or {}
+    _price_direction_map = direction_map or {}
+    _daily_report = daily_report
     if not da.empty:
-        with profile_step("Portafoglio", "render tabella posizioni", count=len(da)):
+        if not _price_direction_map:
             _price_direction_map = _build_portfolio_table_direction_map(da, dfh_top, data)
+        if _daily_report is None:
+            _daily_report = _build_direction_map_contributors_report(da, data, _price_direction_map)
+        with profile_step("Portafoglio", "render tabella posizioni", count=len(da)):
             render_portfolio_table_with_popup(da, data, direction_map=_price_direction_map)
             legend_block(
                 """
@@ -585,7 +886,7 @@ def _render_portfolio_table_section(
                 with profile_step("Portafoglio", "render andamento ultima giornata", count=len(dfh_top)):
                     _home_info_map = {s["ticker"]: s for s in data.get("strumenti", [])}
                     with profile_step("Portafoglio/UltimaGiornata", "build sintesi html", count=len(dfh_top)):
-                        _home_last_day_html = _build_last_day_summary(dfh_top, _home_info_map, data, settings)
+                        _home_last_day_html = _build_last_day_summary(dfh_top, _home_info_map, data, settings, daily_report=_daily_report)
                     if _home_last_day_html:
                         with profile_step("Portafoglio/UltimaGiornata", "render header e html"):
                             render_section_title(
@@ -596,7 +897,7 @@ def _render_portfolio_table_section(
                             st.markdown(_home_last_day_html, unsafe_allow_html=True)
                             st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
                         with profile_step("Portafoglio/UltimaGiornata", "render tabelle best worst"):
-                            _render_last_day_contributors_tables(dfh_top, data, theme)
+                            _render_last_day_contributors_tables(dfh_top, data, theme, daily_report=_daily_report)
                         with profile_step("Portafoglio/UltimaGiornata", "render grafico andamento clone", count=len(dfh_top)):
                             st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
                             _render_home_andamento_clone(dfh_top, data, theme, settings, chart_loader=chart_loader)
@@ -927,7 +1228,7 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         cache_strategy = CachingStrategy.DISK_ONLY
     else:
         cache_strategy = CachingStrategy.HYBRID
-    fcache = get_figure_cache()
+    fcache = get_registered_figure_cache()
 
     def _chart_loader(chart_id: str, builder, *, extra_params: dict[str, Any] | None = None):
         return fcache.get_or_build(
@@ -951,15 +1252,68 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         active_count = len(da.index) if not da.empty else 0
         _chiusi_tk = getattr(ctx, "chiusi_tickers", frozenset())
         total_count = sum(1 for s in data.get("strumenti", []) if str(s.get("ticker") or "") not in _chiusi_tk)
-        suffix = f"{active_count} strumenti attivi su {total_count} censiti"
+        suffix = f"{active_count} strumenti attivi su {total_count} osservati"
         if should_render_section("Portafoglio", "Controvalore del Portafoglio", settings):
+            _portfolio_da = da
+            _portfolio_direction_map: dict[str, Any] = {}
+            _portfolio_daily_report: dict[str, Any] | None = None
+            _portfolio_insights = []
+            if not da.empty:
+                _positions_spec = get_cache_artifact_spec("portafoglio.positions_table")
+                _positions_sig = build_cache_artifact_signature(
+                    "portafoglio.positions_table",
+                    inputs={
+                        "data_sig": data_sig,
+                        "rows": len(da),
+                        "history_rows": len(dfh_top) if isinstance(dfh_top, pd.DataFrame) else 0,
+                        "settings": _portfolio_table_settings_payload(settings),
+                        "sator_decisions": _file_fingerprint(SATOR_DECISIONS_FILE),
+                    },
+                )
+                with profile_step("Portafoglio", "load/build positions table artifact", count=len(da)):
+                    _positions_artifact = get_or_build_registered_artifact(
+                        artifact_id=_positions_spec.artifact_id,
+                        signature=_positions_sig,
+                        builder=lambda: _build_positions_table_payload(
+                            da,
+                            dfh_top,
+                            data,
+                            settings,
+                            include_insights=get_effective_portfolio_insights_enabled(settings),
+                        ),
+                        clone_on_read=True,
+                    )
+                _positions_payload = _positions_artifact.value if isinstance(_positions_artifact.value, dict) else {}
+                if isinstance(_positions_payload.get("da"), pd.DataFrame):
+                    _portfolio_da = _positions_payload.get("da")
+                _portfolio_direction_map = _positions_payload.get("direction_map") or {}
+                _portfolio_daily_report = _positions_payload.get("daily_report")
+                _portfolio_insights = list(_positions_payload.get("insights") or [])
+                if get_effective_portfolio_insights_enabled(settings) and _portfolio_insights:
+                    with profile_step("Portafoglio", "render portfolio insights", count=len(_portfolio_insights)):
+                        render_portfolio_insights(_portfolio_insights, theme)
             render_section_title(
                 "Controvalore del Portafoglio",
                 subtitle=suffix,
                 icon="portfolio",
                 gap_after="xs",
             )
-            _render_portfolio_table_section(da, dfh_top, data, proventi, tv, theme, settings, macro_summary=macro_summary, chart_loader=_chart_loader)
+            if get_effective_market_ticker_tape_enabled(settings):
+                with profile_step("Portafoglio", "render striscia mercati"):
+                    render_market_ticker_tape(data, theme)
+            _render_portfolio_table_section(
+                _portfolio_da,
+                dfh_top,
+                data,
+                proventi,
+                tv,
+                theme,
+                settings,
+                macro_summary=macro_summary,
+                chart_loader=_chart_loader,
+                direction_map=_portfolio_direction_map,
+                daily_report=_portfolio_daily_report,
+            )
             _render_performance_charts(da, tv, theme, settings, chart_loader=_chart_loader)
 
         vertical_gap("md")

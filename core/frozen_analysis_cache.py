@@ -19,7 +19,12 @@ from typing import Any, Callable
 import pandas as pd
 import streamlit as st
 
-from core.analytics_payload_cache import load_entry as load_persistent_analytics_entry, store_entry as store_persistent_analytics_entry
+from core.cache_orchestrator import (
+    get_registered_figure_cache,
+    load_registered_analytics_entry,
+    store_registered_analytics_entry,
+)
+from core.figure_cache import CachingStrategy
 from core.render_profiler import profile_step
 
 
@@ -54,6 +59,45 @@ def cached_render_value(
     cache[key] = value
     prune_cache_items(cache, max_items)
     return value
+
+
+def cached_render_figure(
+    *,
+    chart_id: str,
+    data_sig: str,
+    theme_sig: str,
+    charts_settings_sig: str,
+    builder: Callable[[], Any],
+    page_label: str,
+    label: str,
+    count: int | None = None,
+    extra_params: dict[str, Any] | None = None,
+    strategy: str = CachingStrategy.HYBRID,
+) -> Any:
+    """Cache persistente per figure derivate da analisi congelate.
+
+    Le analisi Benchmark/Accumuli restano congelate e rigenerabili solo da
+    pulsante; le figure derivate, pero', devono seguire la FigureCache comune
+    invece di una cache solo di sessione, altrimenti dopo reload/process reset
+    vengono ricostruite pur avendo lo stesso payload.
+    """
+
+    def _profiled_builder() -> Any:
+        with profile_step(page_label, f"build figura {label}", count=count):
+            return builder()
+
+    params = dict(extra_params or {})
+    params.setdefault("scope", label)
+    return get_registered_figure_cache().get_or_build(
+        chart_id=chart_id,
+        data_sig=str(data_sig or "no-data-sig"),
+        theme_sig=str(theme_sig or "no-theme-sig"),
+        charts_settings_sig=str(charts_settings_sig or "no-chart-settings-sig"),
+        builder=_profiled_builder,
+        page_mode="FrozenAnalysis",
+        extra_params=params,
+        strategy=strategy,
+    )
 
 
 def small_signature_part(value: Any, dict_keys: frozenset[str]) -> Any:
@@ -95,7 +139,10 @@ def get_frozen_analysis_cache(cache_state_key: str, payload_type: str, signature
         items[signature].setdefault("cache_source", "session")
         return items[signature], False
 
-    disk_entry, disk_stale, disk_source = load_persistent_analytics_entry(payload_type, signature)
+    disk_entry, disk_stale, disk_source = load_registered_analytics_entry(
+        payload_type=payload_type,
+        signature=signature,
+    )
     if isinstance(disk_entry, dict):
         disk_signature = str(disk_entry.get("signature") or signature)
         disk_entry.setdefault("cache_source", disk_source)
@@ -131,7 +178,12 @@ def store_frozen_analysis_cache(
     }
     items[signature] = entry
     cache["latest_key"] = signature
-    store_persistent_analytics_entry(payload_type, signature, entry, max_entries=max_disk_entries)
+    store_registered_analytics_entry(
+        payload_type=payload_type,
+        signature=signature,
+        entry=entry,
+        max_entries=max_disk_entries,
+    )
     if len(items) > max_session_items:
         for old_key in list(items.keys())[:-max_session_items]:
             items.pop(old_key, None)

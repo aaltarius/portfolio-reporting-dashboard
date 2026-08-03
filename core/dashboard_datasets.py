@@ -19,6 +19,8 @@ import streamlit as st
 
 from core.asset_categories import ACTIVE_CATEGORY_CODES, get_selected_category_codes
 from core.cache_signatures import build_category_data_signature
+from core.cache_policy import build_cache_artifact_signature, get_cache_artifact_spec
+from core.cache_orchestrator import get_or_build_registered_artifact
 from core.cashflow_indices import build_group_cashflow_indices, seed_group_cashflow_indices_cache
 from core.settings_profiles import get_effective_summary_settings, get_runtime_ui_settings
 from core.services import get_valid_quote_tickers_by_category
@@ -346,28 +348,25 @@ def build_summary_dataset_signature(
     return hashlib.md5(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
-@st.cache_data(show_spinner=False, persist="disk")
-def _build_summary_payload_cached(
-    bundle_sig: str,
-    _data: dict[str, Any],
-    _da_frame: pd.DataFrame,
-    _portfolio_df: pd.DataFrame,
-    _liquidita: float,
-    _settings: dict[str, Any] | None,
-    _last_quotes_update: Any,
-    _proventi: list[dict[str, Any]] | None,
-    _dfh: pd.DataFrame,
+def _build_summary_payload_data(
+    data: dict[str, Any],
+    da_frame: pd.DataFrame,
+    portfolio_df: pd.DataFrame,
+    liquidita: float,
+    settings: dict[str, Any] | None,
+    last_quotes_update: Any,
+    proventi: list[dict[str, Any]] | None,
+    dfh: pd.DataFrame,
 ) -> dict[str, Any]:
-    _ = bundle_sig
     return build_portfolio_summary_payload(
-        _data,
-        _da_frame,
-        _settings,
-        _last_quotes_update,
-        _proventi,
-        dfh=_dfh,
-        portfolio_df=_portfolio_df,
-        liquidita=_liquidita,
+        data,
+        da_frame,
+        settings,
+        last_quotes_update,
+        proventi,
+        dfh=dfh,
+        portfolio_df=portfolio_df,
+        liquidita=liquidita,
     )
 
 
@@ -398,18 +397,16 @@ def get_summary_payload_bundle(
         charts_settings_sig=charts_settings_sig,
     )
 
-    payload_key = "dashboard_datasets.summary.payload"
-    payload_sig_key = "dashboard_datasets.summary.payload_sig"
-
-    cached_payload = st.session_state.get(payload_key)
-    must_rebuild_payload = (
-        st.session_state.get(payload_sig_key) != bundle_sig
-        or not _summary_payload_cache_is_valid(cached_payload)
+    spec = get_cache_artifact_spec("summary.dashboard_payload")
+    artifact_sig = build_cache_artifact_signature(
+        "summary.dashboard_payload",
+        inputs={"bundle_sig": bundle_sig},
     )
-    if must_rebuild_payload:
-        with profile_step("Summary", "load/build cached payload", detail=f"sig={bundle_sig}", count=len(dfh)):
-            payload = _build_summary_payload_cached(
-                bundle_sig,
+    with profile_step("Summary", "load/build summary payload", detail=f"sig={artifact_sig[-24:]}", count=len(dfh)):
+        payload_artifact = get_or_build_registered_artifact(
+            artifact_id=spec.artifact_id,
+            signature=artifact_sig,
+            builder=lambda: _build_summary_payload_data(
                 data,
                 da_frame,
                 portfolio_df,
@@ -418,19 +415,11 @@ def get_summary_payload_bundle(
                 last_quotes_update,
                 proventi,
                 dfh,
-            )
-        st.session_state[payload_key] = payload
-        st.session_state[payload_sig_key] = bundle_sig
-        for key in (
-            "dashboard_datasets.summary.figures.fast",
-            "dashboard_datasets.summary.figures.complete",
-            "dashboard_datasets.summary.figures_sig.fast",
-            "dashboard_datasets.summary.figures_sig.complete",
-        ):
-            st.session_state.pop(key, None)
-    else:
-        with profile_step("Summary", "cache hit payload", detail=f"sig={bundle_sig}"):
-            payload = cached_payload
+            ),
+            clone_on_read=True,
+            disk_codec="pickle",
+        )
+        payload = payload_artifact.value if _summary_payload_cache_is_valid(payload_artifact.value) else {}
 
     return SummaryPayloadBundle(
         payload=payload,
@@ -440,14 +429,11 @@ def get_summary_payload_bundle(
     )
 
 
-@st.cache_data(show_spinner=False, persist="disk")
-def _build_analysis_category_datasets_cached(
-    effective_sig: str,
+def _build_analysis_category_datasets_payload(
     _da: pd.DataFrame,
     _data: dict[str, Any],
     _visible_categories: tuple[str, ...],
 ) -> list[AnalysisCategoryDataset]:
-    _ = effective_sig
     category_payloads: list[tuple[str, pd.DataFrame, dict[str, Any], str, str]] = []
     for cat in _visible_categories:
         if cat == "GOV":
@@ -497,18 +483,15 @@ def get_analysis_category_datasets(
     visible_categories = _resolve_dataset_category_codes(settings)
     category_sig = "|".join(visible_categories)
     effective_sig = f"{data_sig}|cats={category_sig}"
-    with profile_step("Cruscotti", "load/build cached dashboard categoria", detail=f"sig={effective_sig}", count=len(da) if da is not None else 0):
-        return _build_analysis_category_datasets_cached(
-            effective_sig,
+    with profile_step("Cruscotti", "build dashboard categoria datasets", detail=f"sig={effective_sig}", count=len(da) if da is not None else 0):
+        return _build_analysis_category_datasets_payload(
             da,
             data,
             tuple(visible_categories),
         )
 
 
-@st.cache_data(show_spinner=False, persist="disk")
-def _build_quotazioni_category_ticker_bundles_cached(
-    category_bundle_sig: str,
+def _build_quotazioni_category_ticker_bundles_payload(
     category: str,
     _data: dict[str, Any],
     _dh_hist: pd.DataFrame,
@@ -518,12 +501,11 @@ def _build_quotazioni_category_ticker_bundles_cached(
 ) -> dict[str, Any]:
     """Dati "ticker detail chart" (serie normalizzata + benchmark) per UNA sola macro-categoria.
 
-    Estratta da _build_quotazioni_dataset_bundle_cached (V5-ROADMAP.md,
+    Estratta da _build_quotazioni_dataset_bundle_payload (V5-ROADMAP.md,
     Parte 2, item 2.7): la firma e' scoped alla categoria via
     build_category_data_signature, cosi' un aggiornamento quotazioni su
     ETF non invalida piu' anche i ticker_bundles di GOV/FND/ETC.
     """
-    _ = category_bundle_sig
     info_map = {s["ticker"]: s for s in _data.get("strumenti", [])}
     _closed_set = frozenset(_closed_tickers) if _closed_tickers else None
     valid_tickers = get_valid_quote_tickers_by_category(_data, _dh_hist, closed_tickers=_closed_set)
@@ -589,9 +571,7 @@ def _build_quotazioni_category_ticker_bundles_cached(
     return {"category_tickers": category_tickers, "ticker_bundles": ticker_bundles}
 
 
-@st.cache_data(show_spinner=False, persist="disk")
-def _build_quotazioni_dataset_bundle_cached(
-    bundle_sig: str,
+def _build_quotazioni_dataset_bundle_payload(
     _data: dict[str, Any],
     _dh_hist: pd.DataFrame,
     _dh_flow: pd.DataFrame,
@@ -601,7 +581,6 @@ def _build_quotazioni_dataset_bundle_cached(
     _include_instrument_flow_chart: bool,
     _closed_tickers: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    _ = bundle_sig
     info_map = {s["ticker"]: s for s in _data.get("strumenti", [])}
     _closed_set = frozenset(_closed_tickers) if _closed_tickers else None
     valid_tickers = get_valid_quote_tickers_by_category(_data, _dh_hist, closed_tickers=_closed_set)
@@ -706,20 +685,39 @@ def get_quotazioni_dataset_bundle(
         f"|instrument_flow={int(bool(include_instrument_flow_chart))}"
         f"|cats={category_sig}|closed={closed_tickers_sig}"
     )
+    bundle_spec = get_cache_artifact_spec("quotazioni.dataset_bundle")
+    bundle_artifact_sig = build_cache_artifact_signature(
+        "quotazioni.dataset_bundle",
+        inputs={"bundle_sig": bundle_sig},
+    )
     with profile_step("Quotazioni", "load/build cached bundle shared", detail=f"sig={bundle_sig}", count=len(getattr(dh_hist, "columns", []))):
-        cached_bundle = _build_quotazioni_dataset_bundle_cached(
-            bundle_sig,
-            data,
-            dh_hist,
-            dh_flow,
-            tuple(visible_categories),
-            bool(is_complete_view),
-            bool(include_ticker_detail_charts),
-            bool(include_instrument_flow_chart),
-            tuple(closed_tickers),
+        cached_bundle_artifact = get_or_build_registered_artifact(
+            artifact_id=bundle_spec.artifact_id,
+            signature=bundle_artifact_sig,
+            builder=lambda: _build_quotazioni_dataset_bundle_payload(
+                data,
+                dh_hist,
+                dh_flow,
+                tuple(visible_categories),
+                bool(is_complete_view),
+                bool(include_ticker_detail_charts),
+                bool(include_instrument_flow_chart),
+                tuple(closed_tickers),
+            ),
+            clone_on_read=False,
+            disk_codec="pickle",
+        )
+        cached_bundle = cached_bundle_artifact.value
+        record_render_event(
+            "Quotazioni",
+            "cached bundle shared source",
+            0.0,
+            detail=f"source={cached_bundle_artifact.source}; sig={bundle_artifact_sig}",
+            count=len(getattr(dh_hist, "columns", [])),
         )
 
     merged_ticker_bundles: list[dict[str, Any]] = []
+    category_ticker_spec = get_cache_artifact_spec("quotazioni.category_ticker_bundles")
     for category in visible_categories:
         cat_sig = build_category_data_signature(
             data, category, app_version=app_version, schema_version=schema_version,
@@ -730,16 +728,26 @@ def get_quotazioni_dataset_bundle(
             f"|ticker_details={int(bool(include_ticker_detail_charts))}"
             f"|closed={closed_tickers_sig}"
         )
-        with profile_step("Quotazioni", "load/build cached ticker_bundles categoria", detail=f"cat={category}|sig={category_bundle_sig}"):
-            cached_category = _build_quotazioni_category_ticker_bundles_cached(
-                category_bundle_sig,
-                category,
-                data,
-                dh_hist,
-                bool(is_complete_view),
-                bool(include_ticker_detail_charts),
-                tuple(closed_tickers),
+        category_artifact_sig = build_cache_artifact_signature(
+            "quotazioni.category_ticker_bundles",
+            inputs={"category_bundle_sig": category_bundle_sig},
+        )
+        with profile_step("Quotazioni", "load/build ticker_bundles categoria", detail=f"cat={category}|sig={category_artifact_sig[-24:]}"):
+            cached_category_artifact = get_or_build_registered_artifact(
+                artifact_id=category_ticker_spec.artifact_id,
+                signature=category_artifact_sig,
+                builder=lambda current_category=category: _build_quotazioni_category_ticker_bundles_payload(
+                    current_category,
+                    data,
+                    dh_hist,
+                    bool(is_complete_view),
+                    bool(include_ticker_detail_charts),
+                    tuple(closed_tickers),
+                ),
+                clone_on_read=False,
+                disk_codec="pickle",
             )
+            cached_category = cached_category_artifact.value if isinstance(cached_category_artifact.value, dict) else {}
         merged_ticker_bundles.extend(cached_category.get("ticker_bundles", []) or [])
 
     return QuotazioniDatasetBundle(

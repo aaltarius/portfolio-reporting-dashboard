@@ -3,16 +3,28 @@ core/portfolio_metrics.py -- Definizioni canoniche dei KPI di portafoglio.
 """
 
 from typing import Any
+import math
 
 import pandas as pd
 
 _EPS = 1e-9
 
 
+def _finite_float(value: Any, default: float = 0.0) -> float:
+    if isinstance(value, bool) or value in (None, ""):
+        return default
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return number if math.isfinite(number) else default
+
+
 def _sum_numeric(frame: pd.DataFrame | None, column: str) -> float:
     if frame is None or frame.empty or column not in frame.columns:
         return 0.0
-    return float(pd.to_numeric(frame[column], errors="coerce").fillna(0).sum())
+    values = pd.to_numeric(frame[column], errors="coerce").replace([float("inf"), -float("inf")], pd.NA)
+    return float(values.fillna(0).sum())
 
 
 def _split_open_closed_positions(
@@ -22,8 +34,9 @@ def _split_open_closed_positions(
         return pd.DataFrame(), pd.DataFrame()
     if "Quote" not in df_positions.columns:
         return df_positions.copy(), pd.DataFrame()
-    open_positions = df_positions[df_positions["Quote"] > 0.0001].copy()
-    closed_positions = df_positions[df_positions["Quote"] <= 0.0001].copy()
+    quote_values = pd.to_numeric(df_positions["Quote"], errors="coerce").replace([float("inf"), -float("inf")], pd.NA).fillna(0.0)
+    open_positions = df_positions[quote_values > 0.0001].copy()
+    closed_positions = df_positions[quote_values <= 0.0001].copy()
     return open_positions, closed_positions
 
 
@@ -48,6 +61,8 @@ def calcola_kpi_principali(
     - `pl_totale` e `pl_totale_pct` includono il realizzato netto di aperte e chiuse.
     """
     if df_positions is None or df_positions.empty:
+        liquidita_value = _finite_float(liquidita)
+        capitale_value = _finite_float(capitale_investito)
         return {
             "tv": 0.0,
             "tc": 0.0,
@@ -59,9 +74,9 @@ def calcola_kpi_principali(
             "pl_totale": 0.0,
             "pl_totale_pct": 0.0,
             "pp": 0.0,
-            "patrimonio_totale": float(liquidita),
-            "liquidita": float(liquidita),
-            "capitale_investito": float(capitale_investito or 0.0),
+            "patrimonio_totale": liquidita_value,
+            "liquidita": liquidita_value,
+            "capitale_investito": capitale_value,
         }
 
     open_positions, closed_positions = _split_open_closed_positions(df_positions)
@@ -75,13 +90,14 @@ def calcola_kpi_principali(
     pl_realizzato_totale = pl_realizzato_aperte + pl_realizzato_chiuse
     pl_totale = pl + pl_realizzato_totale
 
-    capital_base = float(capitale_investito or 0.0)
+    capital_base = _finite_float(capitale_investito)
     if abs(capital_base) <= _EPS:
         capital_base = tc
 
     pl_pct = (pl / abs(tc)) if abs(tc) > _EPS else 0.0
     pl_totale_pct = (pl_totale / abs(capital_base)) if abs(capital_base) > _EPS else 0.0
 
+    liquidita_value = _finite_float(liquidita)
     return {
         "tv": tv,
         "tc": tc,
@@ -93,9 +109,9 @@ def calcola_kpi_principali(
         "pl_totale": pl_totale,
         "pl_totale_pct": pl_totale_pct,
         "pp": pl_totale_pct,
-        "patrimonio_totale": tv + float(liquidita),
-        "liquidita": float(liquidita),
-        "capitale_investito": float(capitale_investito or 0.0),
+        "patrimonio_totale": tv + liquidita_value,
+        "liquidita": liquidita_value,
+        "capitale_investito": _finite_float(capitale_investito),
     }
 
 
@@ -117,25 +133,10 @@ def calcola_capitale_rientrato(
         tipo_evento = evento.get("tipo_evento")
         ticker = str(evento.get("ticker", "") or "")
 
-        try:
-            quantita = float(evento.get("quantita", 0) or 0)
-        except (ValueError, TypeError):
-            quantita = 0.0
-
-        try:
-            prezzo = float(evento.get("prezzo_unitario", 0) or 0)
-        except (ValueError, TypeError):
-            prezzo = 0.0
-
-        try:
-            commissioni = float(evento.get("commissioni", 0) or 0)
-        except (ValueError, TypeError):
-            commissioni = 0.0
-
-        try:
-            imposte = float(evento.get("imposte", 0) or 0)
-        except (ValueError, TypeError):
-            imposte = 0.0
+        quantita = _finite_float(evento.get("quantita", 0))
+        prezzo = _finite_float(evento.get("prezzo_unitario", 0))
+        commissioni = _finite_float(evento.get("commissioni", 0))
+        imposte = _finite_float(evento.get("imposte", 0))
 
         if ticker and ticker not in posizioni_rientro:
             posizioni_rientro[ticker] = {"qty": 0.0, "cost": 0.0}
@@ -162,25 +163,21 @@ def calcola_flussi_capitale(
     eventi_portafoglio: list[dict[str, Any]] | None,
 ) -> dict[str, float]:
     eventi_portafoglio = eventi_portafoglio or []
-    cap_investito = sum(
-        (
-            float(evento.get("quantita", 0) or 0) * float(evento.get("prezzo_unitario", 0) or 0)
-            + float(evento.get("commissioni", 0) or 0)
-            + float(evento.get("imposte", 0) or 0)
-        )
-        for evento in eventi_portafoglio
-        if evento.get("tipo_evento") == "ACQUISTO"
-    )
-    versamenti_netti = sum(
-        abs(float(evento.get("importo_netto", 0) or evento.get("importo_lordo", 0) or 0))
-        if evento.get("tipo_evento") == "VERSAMENTO"
-        else -(
-            abs(float(evento.get("importo_netto", 0) or evento.get("importo_lordo", 0) or 0))
-            if evento.get("tipo_evento") == "PRELIEVO"
-            else 0.0
-        )
-        for evento in eventi_portafoglio
-    )
+    cap_investito = 0.0
+    versamenti_netti = 0.0
+    for evento in eventi_portafoglio:
+        tipo_evento = evento.get("tipo_evento")
+        if tipo_evento == "ACQUISTO":
+            cap_investito += (
+                _finite_float(evento.get("quantita", 0)) * _finite_float(evento.get("prezzo_unitario", 0))
+                + _finite_float(evento.get("commissioni", 0))
+                + _finite_float(evento.get("imposte", 0))
+            )
+        elif tipo_evento in {"VERSAMENTO", "PRELIEVO"}:
+            amount = _finite_float(evento.get("importo_netto", None), default=0.0)
+            if abs(amount) <= _EPS:
+                amount = _finite_float(evento.get("importo_lordo", 0))
+            versamenti_netti += abs(amount) if tipo_evento == "VERSAMENTO" else -abs(amount)
     cap_netto = calcola_capitale_netto_versato(versamenti_netti, cap_investito)
     cap_rientrato = calcola_capitale_rientrato(eventi_portafoglio)
 
@@ -197,10 +194,11 @@ def calcola_total_return(
     proventi_netti: float,
     capitale_netto_versato: float,
 ) -> tuple[float, float]:
-    total_return = float(pl_totale) + float(proventi_netti)
+    capitale = _finite_float(capitale_netto_versato)
+    total_return = _finite_float(pl_totale) + _finite_float(proventi_netti)
     total_return_pct = (
-        total_return / float(capitale_netto_versato)
-        if abs(float(capitale_netto_versato)) > _EPS
+        total_return / capitale
+        if abs(capitale) > _EPS
         else 0.0
     )
     return total_return, total_return_pct

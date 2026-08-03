@@ -12,12 +12,9 @@ Percorsi vivi:
 - `ui/form_server/sator.py` gestisce SATOR.
 - `ui/form_server/export_pp.py` gestisce l'export Portfolio Performance.
 
-Blocchi legacy ancora nel codice sorgente, marcati con `LEGACY_REVIEW`:
+Blocchi legacy ancora nel codice sorgente, marcati con `LEGACY_REVIEW`: nessuno.
 
-- `ui/pages/operazioni.py`: vecchi dialog Streamlit del Centro Operativo interno.
-- `ui/pages/pianificazione.py`: vecchio modulo SATOR interno e helper collegati.
-
-Motivo della scelta: i blocchi sono stati commentati invece che spostati
-fisicamente per evitare un refactor grande nello stesso passaggio UI. La prossima
-revisione puo' eliminarli oppure migrare eventuali funzioni ancora utili nei
-moduli `ui/form_server/*` o `core/services/*`.
+Nota 5.0-pre: i vecchi dialog Streamlit del Centro Operativo interno sono stati
+rimossi da `ui/pages/operazioni.py`; il vecchio modulo SATOR interno e i relativi
+helper sono stati rimossi da `ui/pages/pianificazione.py`. Le funzioni operative
+vive restano nei moduli `ui/form_server/*`, aperti dalla sidebar.

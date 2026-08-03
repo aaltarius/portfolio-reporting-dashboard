@@ -108,7 +108,7 @@ def get_pre_render_settings(settings: dict[str, Any] | None) -> dict[str, Any]:
     cooldown_seconds = max(MIN_PRE_RENDER_COOLDOWN_SECONDS, cooldown_seconds)
     return {
         "enabled": bool(pre_render.get("enabled", True)) and bool(figure_cache.get("enabled", True)),
-        "initial_complete": bool(pre_render.get("initial_complete", True)),
+        "initial_complete": bool(pre_render.get("initial_complete", False)),
         "background_enabled": bool(pre_render.get("background_enabled", True)),
         "cooldown_seconds": cooldown_seconds,
         "scope": str(pre_render.get("scope", DEFAULT_PRE_RENDER_SCOPE) or DEFAULT_PRE_RENDER_SCOPE),
@@ -129,10 +129,12 @@ def get_runtime_ui_settings(settings: dict[str, Any] | None) -> dict[str, Any]:
         "debug_render_scope": _normalize_debug_render_scope(ui_preferences.get("debug_render_scope", DEBUG_RENDER_SCOPE_CURRENT)),
         "log_level": _normalize_log_level(ui_preferences.get("log_level", "INFO")),
         "font_scale": str(ui_preferences.get("font_scale", "Grande") or "Grande"),
+        "show_portfolio_insights": bool(ui_preferences.get("show_portfolio_insights", True)),
+        "show_market_ticker_tape": bool(ui_preferences.get("show_market_ticker_tape", True)),
         "figure_cache_enabled": bool(figure_cache.get("enabled", True)),
         "figure_cache_strategy": _normalize_cache_strategy(figure_cache.get("strategy", CACHE_STRATEGY_HYBRID)),
         "pre_render_enabled": bool(pre_render.get("enabled", True)),
-        "pre_render_initial_complete": bool(pre_render.get("initial_complete", True)),
+        "pre_render_initial_complete": bool(pre_render.get("initial_complete", False)),
         "pre_render_background_enabled": bool(pre_render.get("background_enabled", True)),
         "pre_render_cooldown_seconds": int(pre_render.get("cooldown_seconds", 1800)),
         "pre_render_scope": str(pre_render.get("scope", DEFAULT_PRE_RENDER_SCOPE)),
@@ -190,6 +192,14 @@ def resolve_figure_cache_strategy(
 
 def get_effective_show_explanations(settings: dict[str, Any] | None) -> bool:
     return bool(get_ui_preferences(settings).get("show_explanations", True))
+
+
+def get_effective_portfolio_insights_enabled(settings: dict[str, Any] | None) -> bool:
+    return bool(get_ui_preferences(settings).get("show_portfolio_insights", True))
+
+
+def get_effective_market_ticker_tape_enabled(settings: dict[str, Any] | None) -> bool:
+    return bool(get_ui_preferences(settings).get("show_market_ticker_tape", True))
 
 
 def get_effective_quotazioni_full_resolution(settings: dict[str, Any] | None) -> bool:

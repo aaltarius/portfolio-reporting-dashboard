@@ -159,8 +159,10 @@ class SatorContext:
     current_weights: dict[str, float]
     nature_weights: dict[str, float]
     bucket_weights: dict[str, float]
+    portfolio_value: float
     correlations: dict[str, float]
     selected_categories: tuple[str, ...]
+    include_fee_instruments: bool
     liquidita: float
     concentration_severity: float = 1.0
 
@@ -489,6 +491,7 @@ def run_sator_analysis(
     *,
     budget: float,
     selected_categories: list[str] | None = None,
+    include_fee_instruments: bool = True,
     concentration_severity: float = 1.0,
 ) -> dict[str, Any]:
     ensure_sator_metadata(data)
@@ -513,6 +516,7 @@ def run_sator_analysis(
     current_weights = _compute_current_weights(state_df)
     nature_weights = _compute_nature_weights(data, state_df, current_weights)
     bucket_weights = _compute_bucket_weights(data, state_df, current_weights)
+    portfolio_value = _compute_portfolio_value(state_df)
     portfolio_returns = _build_portfolio_return_series(returns_frame, state_df, current_weights)
     correlations = _compute_correlations(returns_frame, portfolio_returns)
 
@@ -521,8 +525,9 @@ def run_sator_analysis(
         state_df=state_df if isinstance(state_df, pd.DataFrame) else pd.DataFrame(),
         price_frame=price_frame, returns_frame=returns_frame,
         current_weights=current_weights, nature_weights=nature_weights,
-        bucket_weights=bucket_weights,
-        correlations=correlations, selected_categories=allowed, liquidita=liquidita,
+        bucket_weights=bucket_weights, portfolio_value=portfolio_value,
+        correlations=correlations, selected_categories=allowed,
+        include_fee_instruments=bool(include_fee_instruments), liquidita=liquidita,
         concentration_severity=concentration_severity,
     )
 
@@ -532,6 +537,7 @@ def run_sator_analysis(
         "budget": budget,
         "liquidita_corrente": liquidita,
         "investible_categories": list(allowed),
+        "include_fee_instruments": bool(include_fee_instruments),
         "universe_count": int(len(ranking)),
         "watchlist_count": int((ranking["state"] == "watchlist").sum()) if not ranking.empty else 0,
         "storico_incompleto": int((~ranking["storico_sufficiente"]).sum()) if not ranking.empty else 0,
@@ -567,6 +573,8 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
             continue
         category = macro_cat(str(item.get("tipo") or ""))
         if category not in ctx.selected_categories:
+            continue
+        if not ctx.include_fee_instruments and not bool(inf.get("zero_commission")):
             continue
         if state == "watchlist" and not cfg.get("include_watchlist", True):
             continue
@@ -630,6 +638,15 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
     df["score_finale"] = sum(df[k] * _safe_float(weights.get(k), PESI_DIMENSIONI[k]) for k in PESI_DIMENSIONI).clip(0.0, 1.0)
     df["voto"] = (1.0 + df["score_finale"] * 9.0).round(1)
     df["storico_sufficiente"] = df["n_punti"] >= MIN_PUNTI_STORICO
+    df["_bucket"] = df["role"].astype(str).map(_role_bucket)
+    df["bucket_weight"] = df["_bucket"].map(lambda b: _safe_float(ctx.bucket_weights.get(str(b)), 0.0))
+    df["bucket_target"] = df["_bucket"].map(
+        lambda b: _safe_float(portfolio_objective.get(_BUCKET_TO_OBJECTIVE_KEY.get(str(b), ""), 0.0), 0.0)
+    )
+    df["nature_cap"] = df["nature"].astype(str).map(lambda n: _safe_float(caps.get(n, CAP_MORBIDO_DEFAULT), CAP_MORBIDO_DEFAULT))
+    df["portfolio_value"] = float(max(0.0, _safe_float(ctx.portfolio_value, 0.0)))
+    df["data_quality_score"] = df["n_punti"].map(_data_quality_score)
+    df["data_quality_label"] = df["n_punti"].map(_data_quality_label)
 
     # classifica unica: lo stesso punteggio che si vede ordina le righe
     df = df.sort_values("score_finale", ascending=False).reset_index(drop=True)
@@ -809,6 +826,24 @@ def build_sator_matrix_frame(
             work["rango_gruppo"] = 1
     suggerite = _suggested_quotes(work, budget, max_lines=max_lines)
     ranghi = pd.to_numeric(work["rango_gruppo"], errors="coerce").fillna(0).astype(int).tolist()
+    marginal = [
+        _compute_marginal_purchase_metrics(work.iloc[i], int(suggerite[i]) * _safe_float(work.iloc[i].get("unit_price"), 0.0))
+        for i in range(len(work))
+    ]
+    decision_amounts = [
+        int(suggerite[i]) * _safe_float(work.iloc[i].get("unit_price"), 0.0)
+        if int(suggerite[i]) > 0
+        else _safe_float(work.iloc[i].get("unit_price"), 0.0)
+        for i in range(len(work))
+    ]
+    decision_scores = [
+        _purchase_decision_score(work.iloc[i], decision_amounts[i])
+        for i in range(len(work))
+    ]
+    decision_reasons = [
+        _decision_reason(work.iloc[i], decision_amounts[i])
+        for i in range(len(work))
+    ]
 
     def _semaforo(i: int) -> str:
         if int(suggerite[i]) > 0:
@@ -830,6 +865,7 @@ def build_sator_matrix_frame(
         "Div": (1.0 + pd.to_numeric(work["diversification_benefit"], errors="coerce").fillna(0.0) * 9.0).round(1),
         "Cost": (1.0 + pd.to_numeric(work["cost_efficiency"], errors="coerce").fillna(0.0) * 9.0).round(1),
         "Voto": pd.to_numeric(work["voto"], errors="coerce").fillna(0.0).round(1),
+        "Prio": (1.0 + pd.Series(decision_scores, index=work.index) * 9.0).round(1),
         "Sug": [int(q) for q in suggerite],
         "Gruppo": work["function_label"].astype(str),
         "_ticker": work["ticker"].astype(str),
@@ -838,19 +874,96 @@ def build_sator_matrix_frame(
         "_state": work["state"].astype(str),
         "_price": pd.to_numeric(work["unit_price"], errors="coerce").fillna(0.0),
         "_score": pd.to_numeric(work["score_finale"], errors="coerce").fillna(0.0),
+        "_decision_score": pd.Series(decision_scores, index=work.index).round(4),
+        "_decision_reason": pd.Series(decision_reasons, index=work.index).astype(str),
         "_fit": pd.to_numeric(work["strategic_fit"], errors="coerce").fillna(0.0),
         "_mom": pd.to_numeric(work["tactical_momentum"], errors="coerce").fillna(0.0),
         "_risk": pd.to_numeric(work["risk_efficiency"], errors="coerce").fillna(0.0),
         "_div": pd.to_numeric(work["diversification_benefit"], errors="coerce").fillna(0.0),
         "_cost": pd.to_numeric(work["cost_efficiency"], errors="coerce").fillna(0.0),
         "_rango_gruppo": pd.to_numeric(work["rango_gruppo"], errors="coerce").fillna(0).astype(int),
-        "_bucket": work["role"].astype(str).map(_role_bucket),
+        "_bucket": work.get("_bucket", work["role"].astype(str).map(_role_bucket)).astype(str),
         "_funzione": work["function_label"].astype(str),
         "_storico_ok": work["storico_sufficiente"].astype(bool),
         "_why": work["selection_reason"].astype(str),
         "_zero_commission": work["zero_commission"].astype(bool),
+        "_portfolio_value": pd.to_numeric(work.get("portfolio_value", pd.Series(0.0, index=work.index)), errors="coerce").fillna(0.0),
+        "_bucket_weight": pd.to_numeric(work.get("bucket_weight", pd.Series(0.0, index=work.index)), errors="coerce").fillna(0.0),
+        "_nature_weight": pd.to_numeric(work.get("nature_weight", pd.Series(0.0, index=work.index)), errors="coerce").fillna(0.0),
+        "_target_improvement_pp": [m["target_improvement_pp"] for m in marginal],
+        "_post_bucket_weight": [m["post_bucket_weight"] for m in marginal],
+        "_bucket_target": [m["bucket_target"] for m in marginal],
+        "_post_nature_weight": [m["post_nature_weight"] for m in marginal],
+        "_nature_cap": [m["nature_cap"] for m in marginal],
+        "_cap_headroom_after_pp": [m["cap_headroom_after_pp"] for m in marginal],
+        "_data_quality_score": pd.to_numeric(work.get("data_quality_score", pd.Series(0.0, index=work.index)), errors="coerce").fillna(0.0),
+        "_data_quality_label": work.get("data_quality_label", pd.Series("N/D", index=work.index)).fillna("N/D").astype(str),
     })
     return frame
+
+
+def _data_quality_score(n_punti: Any) -> float:
+    n = max(0.0, _safe_float(n_punti, 0.0))
+    if n >= 252:
+        return 1.0
+    if n >= 126:
+        return 0.75
+    if n >= MIN_PUNTI_STORICO:
+        return 0.55
+    if n > 0:
+        return 0.25
+    return 0.0
+
+
+def _data_quality_label(n_punti: Any) -> str:
+    n = max(0.0, _safe_float(n_punti, 0.0))
+    if n >= 252:
+        return "Alta"
+    if n >= 126:
+        return "Buona"
+    if n >= MIN_PUNTI_STORICO:
+        return "Minima"
+    if n > 0:
+        return "Debole"
+    return "Assente"
+
+
+def _compute_marginal_purchase_metrics(row: pd.Series, amount: float) -> dict[str, float]:
+    """Effetto marginale di una singola riga d'acquisto sul portafoglio attuale.
+
+    Restituisce numeri post-acquisto usati dalla tabella SATOR e dalla
+    fotografia salvata: cosi' ranking, storico e dashboard decisionale leggono
+    la stessa metrica.
+    """
+    amount = max(0.0, _safe_float(amount, 0.0))
+    portfolio_value = max(0.0, _safe_float(row.get("portfolio_value"), 0.0))
+    total_after = portfolio_value + amount
+    bucket_weight = max(0.0, _safe_float(row.get("bucket_weight"), 0.0))
+    bucket_target = max(0.0, _safe_float(row.get("bucket_target"), 0.0))
+    nature_weight = max(0.0, _safe_float(row.get("nature_weight"), 0.0))
+    nature_cap = max(0.0, _safe_float(row.get("nature_cap"), CAP_MORBIDO_DEFAULT))
+
+    if total_after > 0:
+        post_bucket_weight = ((bucket_weight * portfolio_value) + amount) / total_after
+        post_nature_weight = ((nature_weight * portfolio_value) + amount) / total_after
+    else:
+        post_bucket_weight = bucket_weight
+        post_nature_weight = nature_weight
+
+    if bucket_target > 0:
+        target_improvement = abs(bucket_weight - bucket_target) - abs(post_bucket_weight - bucket_target)
+    else:
+        target_improvement = 0.0
+    cap_headroom_after = nature_cap - post_nature_weight if nature_cap > 0 else 0.0
+
+    return {
+        "target_improvement_pp": round(target_improvement * 100.0, 2),
+        "post_bucket_weight": round(post_bucket_weight, 6),
+        "bucket_target": round(bucket_target, 6),
+        "post_nature_weight": round(post_nature_weight, 6),
+        "nature_cap": round(nature_cap, 6),
+        "cap_headroom_after_pp": round(cap_headroom_after * 100.0, 2),
+    }
 
 
 def _role_bucket(role: str) -> str:
@@ -990,7 +1103,11 @@ def build_next_purchase_bubble_frame(data: dict[str, Any]) -> tuple[pd.DataFrame
     frame per la mappa a bolle dei prossimi acquisti, piu' la lista di ticker
     esclusi per dati insufficienti (fotografia pre-esistente senza i punteggi,
     o strumento non piu' presente in data["strumenti"])."""
-    columns = ["ticker", "name", "bucket", "importo", "diversification_benefit", "risk_efficiency"]
+    columns = [
+        "ticker", "name", "bucket", "importo", "diversification_benefit", "risk_efficiency",
+        "target_improvement_pp", "post_nature_weight", "nature_cap", "cap_headroom_after_pp",
+        "data_quality_score", "data_quality_label",
+    ]
     decisions = load_sator_decisions()
     items = list((decisions or {}).get("items") or [])
     latest = latest_sator_decision(items)
@@ -1019,20 +1136,80 @@ def build_next_purchase_bubble_frame(data: dict[str, Any]) -> tuple[pd.DataFrame
             "importo": _safe_float(line.get("amount"), 0.0),
             "diversification_benefit": _safe_float(div, 0.0),
             "risk_efficiency": _safe_float(risk, 0.0),
+            "target_improvement_pp": _safe_float(line.get("target_improvement_pp"), 0.0),
+            "post_nature_weight": _safe_float(line.get("post_nature_weight"), 0.0),
+            "nature_cap": _safe_float(line.get("nature_cap"), 0.0),
+            "cap_headroom_after_pp": _safe_float(line.get("cap_headroom_after_pp"), 0.0),
+            "data_quality_score": _safe_float(line.get("data_quality_score"), 0.0),
+            "data_quality_label": str(line.get("data_quality_label") or "N/D"),
         })
     frame = pd.DataFrame(rows, columns=columns) if rows else pd.DataFrame(columns=columns)
     return frame, missing
 
 
-def _suggested_quotes(ranking_df: pd.DataFrame, budget: float, *, max_lines: int = MAX_LINEE_SUGGERITE) -> list[int]:
-    """Allocazione suggerita trasparente, a quote intere, entro budget.
+def _purchase_decision_score(row: pd.Series, amount: float) -> float:
+    """Priorita' operativa dell'acquisto, distinta dal voto dello strumento.
 
-    Logica leggibile: si scorrono le funzioni in ordine di voto e si prende il
-    miglior candidato di ciascuna (il vincitore del gruppo). Si assegna prima 1
-    quota a testa nei limiti del budget, poi si aggiungono quote ai voti piu'
-    alti senza superare il tetto per linea. NON e' obbligatorio spendere tutto:
-    il residuo resta liquido. Cosi' "quante quote" e' una conseguenza diretta e
-    spiegabile del voto, non un riempimento forzato.
+    Il voto resta un giudizio qualitativo sullo strumento. Questo punteggio
+    valuta invece se l'importo simulato e' utile adesso per il portafoglio:
+    target, cap, qualita' dati, costi e qualita' generale vengono combinati in
+    una metrica 0-1 usata solo per decidere cosa finanziare con il budget.
+    """
+    amount = max(0.0, _safe_float(amount, 0.0))
+    metrics = _compute_marginal_purchase_metrics(row, amount)
+    target_pp = _safe_float(metrics.get("target_improvement_pp"), 0.0)
+    headroom_pp = _safe_float(metrics.get("cap_headroom_after_pp"), 0.0)
+    quality = _safe_float(row.get("data_quality_score"), _data_quality_score(row.get("n_punti", 0)))
+    score = _safe_float(row.get("score_finale"), 0.0)
+    cost = _safe_float(row.get("cost_efficiency"), 0.5)
+
+    target_component = float(np.clip(0.50 + target_pp / 8.0, 0.0, 1.0))
+    cap_component = float(np.clip((headroom_pp + 2.0) / 8.0, 0.0, 1.0))
+    decision = (
+        target_component * 0.40
+        + score * 0.25
+        + cap_component * 0.15
+        + quality * 0.10
+        + cost * 0.10
+    )
+    if headroom_pp < 0:
+        decision -= min(0.25, abs(headroom_pp) / 20.0)
+    if target_pp < -0.10:
+        decision -= min(0.18, abs(target_pp) / 20.0)
+    if quality < 0.55:
+        decision -= 0.06
+    return float(np.clip(decision, 0.0, 1.0))
+
+
+def _decision_reason(row: pd.Series, amount: float) -> str:
+    metrics = _compute_marginal_purchase_metrics(row, amount)
+    target_pp = _safe_float(metrics.get("target_improvement_pp"), 0.0)
+    headroom_pp = _safe_float(metrics.get("cap_headroom_after_pp"), 0.0)
+    quality_label = str(row.get("data_quality_label") or _data_quality_label(row.get("n_punti", 0)))
+    parts: list[str] = []
+    if target_pp > 0.10:
+        parts.append(f"migliora il target di bucket di {target_pp:+.1f} pp")
+    elif target_pp < -0.10:
+        parts.append(f"peggiora il target di bucket di {target_pp:+.1f} pp")
+    else:
+        parts.append("ha impatto quasi neutro sul target di bucket")
+    if headroom_pp < 0:
+        parts.append(f"porta la natura oltre cap di {abs(headroom_pp):.1f} pp")
+    elif headroom_pp < 1.0:
+        parts.append("lascia la natura vicina al cap")
+    else:
+        parts.append(f"mantiene {headroom_pp:.1f} pp di spazio sul cap natura")
+    parts.append(f"dati {quality_label.lower()}")
+    return "; ".join(parts) + "."
+
+
+def _suggested_quotes(ranking_df: pd.DataFrame, budget: float, *, max_lines: int = MAX_LINEE_SUGGERITE) -> list[int]:
+    """Allocazione suggerita a quote intere, guidata dall'utilita' marginale.
+
+    Il voto continua a ordinare la qualita' degli strumenti, ma le quote
+    suggerite sono finanziate con un punteggio decisionale separato: ogni quota
+    simulata deve risultare utile rispetto a target, cap, dati, costi e qualita'
+    generale. Il residuo puo' restare liquido.
     """
     n = len(ranking_df)
     quote = [0] * n
@@ -1040,38 +1217,58 @@ def _suggested_quotes(ranking_df: pd.DataFrame, budget: float, *, max_lines: int
         return quote
     df = ranking_df.reset_index(drop=True)
     cap_linea = budget * 0.35
-    # un solo candidato per funzione: il migliore del gruppo. Calcolato qui,
-    # senza dipendere da colonne derivate eventualmente assenti.
+    # Un solo candidato per funzione: il piu' utile operativamente per una quota.
+    # Cosi' il suggerito non coincide per forza col voto piu' alto se peggiora
+    # target/cap o ha dati deboli.
     if "comparison_group" in df.columns:
         gruppi = df["comparison_group"].astype(str)
     else:
         gruppi = pd.Series([str(i) for i in range(n)], index=df.index)
-    migliori = df.groupby(gruppi)["score_finale"].idxmax().tolist()
+    initial_scores = pd.Series(
+        [
+            _purchase_decision_score(df.iloc[i], _safe_float(df.iloc[i].get("unit_price"), 0.0))
+            for i in range(n)
+        ],
+        index=df.index,
+    )
+    migliori = initial_scores.groupby(gruppi).idxmax().tolist()
     candidati = [
-        (int(i), _safe_float(df.loc[i, "score_finale"]), _safe_float(df.loc[i, "unit_price"]))
+        (int(i), _safe_float(initial_scores.loc[i]), _safe_float(df.loc[i, "unit_price"]))
         for i in migliori
         if 0 < _safe_float(df.loc[i, "unit_price"]) <= budget
     ]
     candidati.sort(key=lambda x: (-x[1], x[2]))
-    # equilibrio: si servono al massimo le MIGLIORI funzioni per voto, per evitare
-    # dieci righe minuscole. Il resto del budget resta liquido (residuo ammesso).
+    # equilibrio: si servono al massimo le funzioni con priorita' operativa piu'
+    # alta, per evitare troppe righe minuscole.
     candidati = candidati[: max(1, int(max_lines or MAX_LINEE_SUGGERITE))]
     speso = 0.0
-    for i, _score, price in candidati:
+    for i, dec_score, price in candidati:
+        if dec_score < 0.50:
+            continue
         if speso + price <= budget:
             quote[i] = 1
             speso += price
     progredito = True
     while progredito:
         progredito = False
+        step_scores: list[tuple[float, float, int, float]] = []
         for i, _score, price in candidati:
             if speso + price > budget:
                 continue
             if (quote[i] + 1) * price > cap_linea:
                 continue
-            quote[i] += 1
-            speso += price
-            progredito = True
+            next_amount = (quote[i] + 1) * price
+            step_score = _purchase_decision_score(df.iloc[i], next_amount)
+            if step_score < 0.50:
+                continue
+            step_scores.append((step_score, -price, i, price))
+        if not step_scores:
+            break
+        step_scores.sort(reverse=True)
+        _step_score, _neg_price, i, price = step_scores[0]
+        quote[i] += 1
+        speso += price
+        progredito = True
     return quote
 
 
@@ -1156,8 +1353,14 @@ def build_sator_decision_record(
                 entry["bucket"] = _role_bucket(str(r.get("role", "")))
                 entry["voto"] = round(float(_safe_float(r.get("voto"), 0.0)), 1)
                 entry["score_finale"] = round(float(_safe_float(r.get("score_finale"), 0.0)), 4)
+                entry["decision_score"] = round(float(_purchase_decision_score(r, _safe_float(entry.get("amount"), 0.0))), 4)
+                entry["decision_reason"] = _decision_reason(r, _safe_float(entry.get("amount"), 0.0))
                 entry["risk_efficiency"] = round(float(_safe_float(r.get("risk_efficiency"), 0.0)), 4)
                 entry["diversification_benefit"] = round(float(_safe_float(r.get("diversification_benefit"), 0.0)), 4)
+                marginal = _compute_marginal_purchase_metrics(r, _safe_float(entry.get("amount"), 0.0))
+                entry.update(marginal)
+                entry["data_quality_score"] = round(float(_safe_float(r.get("data_quality_score"), 0.0)), 4)
+                entry["data_quality_label"] = str(r.get("data_quality_label") or "N/D")
         enriched_lines.append(entry)
 
     # Ripartizione core/difensivo/satellite (importi e percentuali)
@@ -1335,10 +1538,14 @@ def _compute_correlations(returns_frame: pd.DataFrame, portfolio_returns: pd.Ser
     }
 
 
-def _compute_current_weights(state_df: pd.DataFrame) -> dict[str, float]:
+def _compute_portfolio_value(state_df: pd.DataFrame) -> float:
     if state_df is None or state_df.empty or "Controvalore" not in state_df.columns:
-        return {}
-    tot = _safe_float(pd.to_numeric(state_df["Controvalore"], errors="coerce").fillna(0.0).sum(), 0.0)
+        return 0.0
+    return max(0.0, _safe_float(pd.to_numeric(state_df["Controvalore"], errors="coerce").fillna(0.0).sum(), 0.0))
+
+
+def _compute_current_weights(state_df: pd.DataFrame) -> dict[str, float]:
+    tot = _compute_portfolio_value(state_df)
     if tot <= 0:
         return {}
     out = {}

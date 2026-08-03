@@ -28,6 +28,11 @@ from core.services.quotes import (
     get_quotazioni_stats,
     get_valid_quote_tickers_by_category,
 )
+from core.services.instrument_quality import (
+    build_instrument_quality_dataset,
+    build_price_frame_from_storico,
+    compute_trailing_risk_return_metrics,
+)
 from core.services.accumuli import (
     build_accumuli_analysis,
     simulate_next_installment,
@@ -72,6 +77,9 @@ __all__ = [
     "build_portfolio_alerts",
     "get_quotazioni_stats",
     "get_valid_quote_tickers_by_category",
+    "build_instrument_quality_dataset",
+    "build_price_frame_from_storico",
+    "compute_trailing_risk_return_metrics",
     "build_category_dashboard_metrics",
     "get_portfolio_operations",
     "get_cash_movements",

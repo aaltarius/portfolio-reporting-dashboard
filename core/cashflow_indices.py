@@ -7,27 +7,28 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from core.cache_orchestrator import get_registered_runtime_cache
 from core.cache_signatures import build_portfolio_data_signature
 from persistence.storage import APP_VERSION
 
-_INTERMEDIATE_DATA_CACHE: dict[str, tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]] = {}
-_INTERMEDIATE_DATA_CACHE_MAX = 24
-_TICKER_VALUE_FLOW_CACHE: dict[str, tuple[pd.DataFrame, pd.DataFrame]] = {}
-_TICKER_VALUE_FLOW_CACHE_MAX = 8
+_INTERMEDIATE_DATA_CACHE = get_registered_runtime_cache(
+    "cashflow.intermediate_indices",
+    namespace="group_indices",
+    max_entries=24,
+)
+_TICKER_VALUE_FLOW_CACHE = get_registered_runtime_cache(
+    "cashflow.intermediate_indices",
+    namespace="ticker_value_flow",
+    max_entries=8,
+)
 
 
 def _cache_put(key: str, value) -> None:
-    _INTERMEDIATE_DATA_CACHE[key] = value
-    while len(_INTERMEDIATE_DATA_CACHE) > _INTERMEDIATE_DATA_CACHE_MAX:
-        oldest_key = next(iter(_INTERMEDIATE_DATA_CACHE))
-        _INTERMEDIATE_DATA_CACHE.pop(oldest_key, None)
+    _INTERMEDIATE_DATA_CACHE.set(key, value)
 
 
 def _ticker_cache_put(key: str, value) -> None:
-    _TICKER_VALUE_FLOW_CACHE[key] = value
-    while len(_TICKER_VALUE_FLOW_CACHE) > _TICKER_VALUE_FLOW_CACHE_MAX:
-        oldest_key = next(iter(_TICKER_VALUE_FLOW_CACHE))
-        _TICKER_VALUE_FLOW_CACHE.pop(oldest_key, None)
+    _TICKER_VALUE_FLOW_CACHE.set(key, value)
 
 
 def _group_map_signature(group_map) -> str:

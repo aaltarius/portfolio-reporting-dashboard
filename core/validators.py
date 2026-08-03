@@ -7,12 +7,23 @@ Streamlit e possono essere testate isolatamente.
 from __future__ import annotations
 
 from datetime import date, datetime
+from math import isfinite
+from numbers import Real
 from typing import Any
+
+
+def _is_real_number(value: Any) -> bool:
+    if not isinstance(value, Real) or isinstance(value, bool):
+        return False
+    try:
+        return isfinite(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return False
 
 
 def validate_quantity(qty: float, op_type: str, available_qty: float = 0.0) -> None:
     """Valida la quantita' richiesta per un'operazione."""
-    if not isinstance(qty, (int, float)):
+    if not _is_real_number(qty):
         raise ValueError("La quantita' deve essere numerica.")
     if qty <= 0:
         raise ValueError("La quantita' deve essere maggiore di zero.")
@@ -27,7 +38,7 @@ def validate_quantity(qty: float, op_type: str, available_qty: float = 0.0) -> N
 
 def validate_price(price: float, instrument_type: str | None = None) -> None:
     """Valida il prezzo unitario per acquisto, vendita o rimborso."""
-    if not isinstance(price, (int, float)):
+    if not _is_real_number(price):
         raise ValueError("Il prezzo deve essere numerico.")
     if price <= 0:
         raise ValueError("Il prezzo deve essere maggiore di zero.")
@@ -43,7 +54,9 @@ def validate_date(date_value: str | date | datetime) -> date:
         return date_value.date()
     if isinstance(date_value, date):
         return date_value
-    if not isinstance(date_value, str) or not date_value.strip():
+    if not isinstance(date_value, str):
+        raise ValueError(f"La data deve essere una stringa o un oggetto date, ricevuto {type(date_value).__name__}.")
+    if not date_value.strip():
         raise ValueError("La data e' obbligatoria.")
 
     raw = date_value.strip()
@@ -57,7 +70,7 @@ def validate_date(date_value: str | date | datetime) -> date:
 
 def validate_number_input(value: float, min_val: float, max_val: float) -> None:
     """Valida un input numerico entro un range chiuso."""
-    if not isinstance(value, (int, float)):
+    if not _is_real_number(value):
         raise ValueError(f"Valore numerico atteso, ricevuto {type(value).__name__}.")
     if value < min_val or value > max_val:
         raise ValueError(f"Valore {value:g} fuori range [{min_val:g}, {max_val:g}].")
@@ -104,7 +117,7 @@ def validate_quote_import(quotes: Any) -> None:
                 numeric_price = float(price)
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"Ticker {ticker}: prezzo non numerico.") from exc
-            if numeric_price <= 0:
+            if not isfinite(numeric_price) or numeric_price <= 0:
                 raise ValueError(f"Ticker {ticker}: prezzo non valido.")
         return
 
@@ -122,5 +135,5 @@ def validate_quote_import(quotes: Any) -> None:
             numeric_price = float(price)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Riga quotazione {index}: prezzo non numerico.") from exc
-        if numeric_price <= 0:
+        if not isfinite(numeric_price) or numeric_price <= 0:
             raise ValueError(f"Riga quotazione {index}: prezzo non valido.")

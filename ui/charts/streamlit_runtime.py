@@ -8,6 +8,43 @@ import streamlit as st
 from core.render_profiler import record_render_event
 from ui.formatting import fmt_eur_it
 
+_PREPARED_FIGURE_IDS: set[int] = set()
+_PREPARED_FIGURE_IDS_MAX = 2048
+
+
+def _figure_runtime_prepared(fig) -> bool:
+    try:
+        return bool(getattr(fig, "_sestante_streamlit_runtime_prepared", False))
+    except Exception:
+        return id(fig) in _PREPARED_FIGURE_IDS
+
+
+def _mark_figure_runtime_prepared(fig) -> None:
+    try:
+        setattr(fig, "_sestante_streamlit_runtime_prepared", True)
+        return
+    except Exception:
+        pass
+    _PREPARED_FIGURE_IDS.add(id(fig))
+    if len(_PREPARED_FIGURE_IDS) > _PREPARED_FIGURE_IDS_MAX:
+        _PREPARED_FIGURE_IDS.clear()
+
+
+def _default_plotly_config(config):
+    payload = dict(config or {}) if isinstance(config, dict) else {}
+    payload.setdefault("responsive", True)
+    payload.setdefault("displaylogo", False)
+    return payload
+
+
+def reset_plotly_auto_key_counter() -> None:
+    """Rende stabili le key automatiche Plotly tra rerun dello stesso processo."""
+
+    try:
+        safe_plotly_chart._counter = 0
+    except Exception:
+        pass
+
 
 def clear_plotly_theme_overrides(fig):
     try:
@@ -156,17 +193,20 @@ def safe_plotly_chart(
 ):
     kwargs.setdefault("width", "stretch")
     kwargs.setdefault("theme", "streamlit")
+    kwargs["config"] = _default_plotly_config(kwargs.get("config"))
     try:
-        clear_plotly_theme_overrides(fig)
-        has_lines = any(
-            "lines" in (getattr(tr, "mode", "") or "")
-            for tr in fig.data
-            if type(tr).__name__.lower() in ("scatter", "scattergl")
-        )
-        if has_lines and (not fig.layout.annotations) and bool(
-            get_chart_setting("_default_timeseries", "auto_streamlit_extrema", False)
-        ):
-            add_min_max_annotations(fig)
+        if not _figure_runtime_prepared(fig):
+            clear_plotly_theme_overrides(fig)
+            has_lines = any(
+                "lines" in (getattr(tr, "mode", "") or "")
+                for tr in fig.data
+                if type(tr).__name__.lower() in ("scatter", "scattergl")
+            )
+            if has_lines and (not fig.layout.annotations) and bool(
+                get_chart_setting("_default_timeseries", "auto_streamlit_extrema", False)
+            ):
+                add_min_max_annotations(fig)
+            _mark_figure_runtime_prepared(fig)
     except Exception:
         pass
     if kwargs.get("key") is None:
@@ -248,5 +288,6 @@ __all__ = [
     "bind_safe_plotly_chart",
     "clear_plotly_theme_overrides",
     "count_legend_items",
+    "reset_plotly_auto_key_counter",
     "safe_plotly_chart",
 ]

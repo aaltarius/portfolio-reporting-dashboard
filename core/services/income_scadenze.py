@@ -4,6 +4,7 @@ core/services/income_scadenze.py — Income and maturity analytics for Cruscotti
 from __future__ import annotations
 
 from datetime import date
+import math
 from typing import Any
 
 import pandas as pd
@@ -11,13 +12,27 @@ import pandas as pd
 from core.domain.bonds import calc_ytm_and_duration
 
 
+def _finite_float(value: Any, default: float = 0.0) -> float:
+    try:
+        raw = default if value is None or (isinstance(value, str) and value.strip() == "") else value
+        result = float(raw)
+    except Exception:
+        return default
+    return result if math.isfinite(result) else default
+
+
+def _finite_optional(value: Any) -> float | None:
+    result = _finite_float(value, default=math.nan)
+    return result if math.isfinite(result) else None
+
+
 def _numeric_series(frame: pd.DataFrame, *column_names: str) -> pd.Series:
     if frame is None or frame.empty:
         return pd.Series(dtype="float64")
     for name in column_names:
         if name in frame.columns:
-            return pd.to_numeric(frame[name], errors="coerce").fillna(0.0)
-    return pd.Series(dtype="float64")
+            return pd.to_numeric(frame[name], errors="coerce").map(_finite_float)
+    return pd.Series(0.0, index=frame.index, dtype="float64")
 
 
 def build_income_scadenze_summary(data: dict[str, Any], da: pd.DataFrame, calendar_df: pd.DataFrame | None) -> dict[str, Any]:
@@ -37,6 +52,7 @@ def build_income_scadenze_summary(data: dict[str, Any], da: pd.DataFrame, calend
     future_df["data"] = pd.to_datetime(future_df.get("data"), errors="coerce")
     future_df = future_df.dropna(subset=["data"])
     future_df = future_df[future_df["data"] >= today].copy()
+    future_df["importo"] = _numeric_series(future_df, "importo")
 
     coupon_df = future_df[future_df.get("tipo_evento", "").astype(str).str.lower().eq("cedola")].copy()
     coupon_df["Anno"] = coupon_df["data"].dt.year
@@ -78,8 +94,8 @@ def build_income_scadenze_summary(data: dict[str, Any], da: pd.DataFrame, calend
     ].copy()
     coupon_importo_col = coupon_12m["importo"] if (not coupon_12m.empty and "importo" in coupon_12m.columns) else pd.Series(dtype="float64")
     maturity_importo_col = maturity_12m["importo"] if (not maturity_12m.empty and "importo" in maturity_12m.columns) else pd.Series(dtype="float64")
-    expected_net_income_12m = float(pd.to_numeric(coupon_importo_col, errors="coerce").fillna(0.0).sum()) if not coupon_12m.empty else 0.0
-    expected_redemptions_12m = float(pd.to_numeric(maturity_importo_col, errors="coerce").fillna(0.0).sum()) if not maturity_12m.empty else 0.0
+    expected_net_income_12m = float(pd.to_numeric(coupon_importo_col, errors="coerce").map(_finite_float).sum()) if not coupon_12m.empty else 0.0
+    expected_redemptions_12m = float(pd.to_numeric(maturity_importo_col, errors="coerce").map(_finite_float).sum()) if not maturity_12m.empty else 0.0
     yield_on_value_12m = (expected_net_income_12m / gov_market_value) if abs(gov_market_value) > 1e-9 else 0.0
 
     gov_details_df = pd.DataFrame(columns=["Ticker", "Strumento", "Valore di Mercato", "Cedole 12 mesi", "Yield su valore"])
@@ -99,12 +115,9 @@ def build_income_scadenze_summary(data: dict[str, Any], da: pd.DataFrame, calend
         for _, row in gov_df.iterrows():
             ticker = str(row.get("Ticker", "") or "")
             market_value = float(
-                pd.to_numeric(
-                    row.get("Valore di Mercato", row.get("Controvalore", 0)),
-                    errors="coerce",
-                ) or 0.0
+                _finite_float(row.get("Valore di Mercato", row.get("Controvalore", 0)))
             )
-            coupon_value = float(coupon_by_ticker.get(ticker, 0.0) or 0.0)
+            coupon_value = _finite_float(coupon_by_ticker.get(ticker, 0.0))
             strumento = strumenti_map.get(ticker, {})
             ytm, dur_mod = calc_ytm_and_duration(strumento)
             details.append({
@@ -113,8 +126,8 @@ def build_income_scadenze_summary(data: dict[str, Any], da: pd.DataFrame, calend
                 "Valore di Mercato": market_value,
                 "Cedole 12 mesi": coupon_value,
                 "Yield su valore": (coupon_value / market_value) if abs(market_value) > 1e-9 else 0.0,
-                "YTM": ytm,
-                "Duration mod.": dur_mod,
+                "YTM": _finite_optional(ytm),
+                "Duration mod.": _finite_optional(dur_mod),
             })
         gov_details_df = pd.DataFrame(details)
         if not gov_details_df.empty:
@@ -123,12 +136,15 @@ def build_income_scadenze_summary(data: dict[str, Any], da: pd.DataFrame, calend
     # Duration media ponderata per valore di mercato
     duration_media_ponderata: float | None = None
     if not gov_details_df.empty and "Duration mod." in gov_details_df.columns and "Valore di Mercato" in gov_details_df.columns:
-        valid = gov_details_df.dropna(subset=["Duration mod.", "Valore di Mercato"])
+        valid = pd.DataFrame({
+            "Duration mod.": pd.to_numeric(gov_details_df["Duration mod."], errors="coerce").map(lambda value: _finite_float(value, math.nan)),
+            "Valore di Mercato": _numeric_series(gov_details_df, "Valore di Mercato"),
+        }).dropna(subset=["Duration mod.", "Valore di Mercato"])
         valid = valid[valid["Valore di Mercato"] > 0]
         if not valid.empty:
-            total_weight = float(valid["Valore di Mercato"].sum())
+            total_weight = _finite_float(valid["Valore di Mercato"].sum())
             if total_weight > 0:
-                duration_media_ponderata = float(
+                duration_media_ponderata = _finite_optional(
                     (valid["Duration mod."] * valid["Valore di Mercato"]).sum() / total_weight
                 )
 

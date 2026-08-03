@@ -2,6 +2,22 @@
 
 `Portfolio Reporting Dashboard` is a Streamlit application for portfolio monitoring, analytics, reporting, and operational controls.
 
+## Read before changing the app
+
+Before modifying rendering, navigation, cache, financial formulas, charts, theme
+or Streamlit layout, read:
+
+- `STATO_OPERATIVO_5.0_PRE.md`
+
+This is the single operational document for the 5.0-pre workstream. Historical
+planning notes, cache audits, architecture notes and render baselines are kept in
+`docs/archivio_5_0/` only as reference material. Separate research projects and
+source documents live under `docs/progetti/` and `docs/fonti/`.
+
+The most important rule is: Sestante prepares the experience before use. Do not
+introduce intermediate reruns, page selectors or lazy rendering during navigation
+unless the user explicitly asks for that tradeoff.
+
 The project includes:
 
 - portfolio overview and market value monitoring

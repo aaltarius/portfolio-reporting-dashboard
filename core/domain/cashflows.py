@@ -12,6 +12,24 @@ from persistence.storage import _safe_float, get_registro_eventi
 logger = logging.getLogger("portafoglio.core.domain.cashflows")
 
 
+def _strict_finite_float(value: Any, default: float = 0.0) -> float:
+    if isinstance(value, bool):
+        raise ValueError("boolean value is not a financial number")
+    if value in (None, ""):
+        return default
+    number = float(value)
+    if not np.isfinite(number):
+        raise ValueError("non-finite financial number")
+    return float(number)
+
+
+def _finite_column_sum(frame: pd.DataFrame, column: str) -> float:
+    if frame is None or frame.empty or column not in frame.columns:
+        return 0.0
+    values = pd.to_numeric(frame.get(column), errors="coerce").replace([np.inf, -np.inf], np.nan)
+    return float(values.fillna(0.0).sum())
+
+
 def compute_xirr(flows: list[float], dates: list[Any]) -> float | None:
     """
     Calcola XIRR (IRR con flussi irregolari) via bisection.
@@ -77,10 +95,10 @@ def build_xirr_flows(
             continue
         try:
             d = pd.to_datetime(op["data"]).date()
-            q = float(op.get("qty", 0))
-            p = float(op.get("price", 0))
-            c = float(op.get("comm", 0))
-            tax = float(op.get("imposte", op.get("tax", 0)) or 0)
+            q = _strict_finite_float(op.get("qty", 0))
+            p = _strict_finite_float(op.get("price", 0))
+            c = _strict_finite_float(op.get("comm", 0))
+            tax = _strict_finite_float(op.get("imposte", op.get("tax", 0)))
         except Exception:
             logger.warning("build_xirr_flows: operazione scartata per dati malformati, ticker=%s data=%r", tk, op.get("data"), exc_info=True)
             continue
@@ -95,7 +113,7 @@ def build_xirr_flows(
             continue
         try:
             d = pd.to_datetime(prov["data"]).date()
-            netto = float(prov.get("importo_netto", 0))
+            netto = _strict_finite_float(prov.get("importo_netto", 0))
         except Exception:
             logger.warning("build_xirr_flows: provento scartato per dati malformati, ticker=%s data=%r", tk, prov.get("data"), exc_info=True)
             continue
@@ -106,10 +124,59 @@ def build_xirr_flows(
         work = da_frame.copy()
         if tickers is not None:
             work = work[work["Ticker"].isin(tickers)]
-        final_value = float(pd.to_numeric(work["Controvalore"], errors="coerce").fillna(0).sum())
+        final_value = _finite_column_sum(work, "Controvalore")
         if final_value > 0:
             flows.append(final_value)
             dates.append(date.today())
+    if not flows or not dates:
+        return [], []
+    paired = sorted(zip(dates, flows), key=lambda x: x[0])
+    dates_s, flows_s = zip(*paired)
+    return list(flows_s), list(dates_s)
+
+
+def build_portfolio_external_xirr_flows(
+    data: dict[str, Any],
+    final_value: float,
+    *,
+    as_of_date: date | None = None,
+) -> tuple[list[float], list[date]]:
+    """Flussi XIRR del portafoglio totale dal punto di vista dell'investitore.
+
+    A livello portafoglio, acquisti/vendite sono movimenti interni tra
+    liquidita' e strumenti. Il MWR complessivo deve usare solo flussi esterni:
+    versamenti (cash out dell'investitore), prelievi (cash in) e patrimonio
+    finale, che include strumenti e liquidita'.
+    """
+    try:
+        events = sorted(get_registro_eventi(data), key=lambda x: str(x.get("data", "")))
+    except Exception:
+        events = []
+
+    flows: list[float] = []
+    dates: list[date] = []
+    for event in events:
+        event_type = str(event.get("tipo_evento") or event.get("tipo") or "").upper()
+        if event_type not in {"VERSAMENTO", "PRELIEVO"}:
+            continue
+        try:
+            event_date = pd.to_datetime(event.get("data")).date()
+        except Exception:
+            logger.warning("build_portfolio_external_xirr_flows: evento scartato per data malformata, data=%r", event.get("data"), exc_info=True)
+            continue
+        net = _safe_float(event.get("importo_netto", 0))
+        gross = _safe_float(event.get("importo_lordo", 0))
+        amount = abs(net) if abs(net) > 1e-9 else abs(gross)
+        if amount <= 1e-9:
+            continue
+        flows.append(-amount if event_type == "VERSAMENTO" else amount)
+        dates.append(event_date)
+
+    terminal_value = _safe_float(final_value, 0.0)
+    if terminal_value > 1e-9:
+        flows.append(terminal_value)
+        dates.append(as_of_date or date.today())
+
     if not flows or not dates:
         return [], []
     paired = sorted(zip(dates, flows), key=lambda x: x[0])
@@ -174,7 +241,7 @@ def _build_xirr_flows_from_events(
         work = da_frame.copy()
         if ticker_filter is not None and "Ticker" in work.columns:
             work = work[work["Ticker"].isin(ticker_filter)]
-        final_value = float(pd.to_numeric(work.get("Controvalore"), errors="coerce").fillna(0).sum())
+        final_value = _finite_column_sum(work, "Controvalore")
         if final_value > 0:
             flows.append(final_value)
             dates.append(date.today())

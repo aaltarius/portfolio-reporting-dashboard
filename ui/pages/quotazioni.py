@@ -11,7 +11,8 @@ from streamlit.delta_generator import DeltaGenerator
 
 from core.asset_categories import get_selected_category_codes
 from core.finance import build_ptf_df
-from core.figure_cache import get_figure_cache, CachingStrategy
+from core.cache_orchestrator import get_registered_figure_cache
+from core.figure_cache import CachingStrategy
 from core.cache_signatures import (
     build_cashflow_data_signature,
     build_historical_data_signature,
@@ -21,14 +22,14 @@ from core.cache_signatures import (
     charts_settings_signature,
 )
 from core.dashboard_datasets import get_quotazioni_dataset_bundle
-from core.quotes_runtime import build_quotes_refresh_df
+from core.cache_policy import build_cache_artifact_signature, get_cache_artifact_spec
+from core.cache_orchestrator import get_or_build_registered_artifact
+from core.quotes_runtime import build_quotes_diagnostic_table
 from core.settings_profiles import (
     get_effective_quotazioni_full_resolution,
     resolve_figure_cache_strategy,
-    resolve_page_render_mode,
 )
 
-from persistence.storage import macro_cat
 from ui.formatting import (
     fmt_dt_it, fmt_num_it, fmt_eur_it, fmt_pct_it, fmt_qty_it, fmtds,
 )
@@ -66,16 +67,18 @@ _QUOTAZIONI_PERF_CACHE_CLEANUP_KEY = (
 
 
 def _clear_quotazioni_perf_legacy_cache(fcache) -> None:
-    """Rimuove una tantum le figure cacheate prima della correzione MAX/MIN."""
+    """Marca la compatibilita' legacy senza cancellare cache disco valida.
+
+    La nuova logica MAX/MIN e il riferimento portafoglio sono gia' dentro la
+    firma della figura. Cancellare per pattern a ogni nuova sessione distruggeva
+    anche il file disco corretto e causava un cache miss a ogni avvio.
+    """
+    _ = fcache
     if st.session_state.get(_QUOTAZIONI_PERF_CACHE_CLEANUP_KEY):
         return
     for key in list(st.session_state.keys()):
         if str(key).startswith(f"_fig_cache_{_QUOTAZIONI_PERF_CHART_ID}_"):
             st.session_state.pop(key, None)
-    try:
-        fcache.clear_by_pattern(_QUOTAZIONI_PERF_CHART_ID)
-    except Exception:
-        pass
     st.session_state[_QUOTAZIONI_PERF_CACHE_CLEANUP_KEY] = True
 
 
@@ -213,7 +216,7 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
     )
     _theme_sig = theme_signature(theme)
     _settings_sig = charts_settings_signature("ui/charts/settings.py")
-    fcache = get_figure_cache()
+    fcache = get_registered_figure_cache()
     _clear_quotazioni_perf_legacy_cache(fcache)
 
     # Resolve cache strategy once, reuse for all figures
@@ -239,48 +242,39 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         with profile_step("Quotazioni", "render KPI alto pagina"):
             _render_top_data_kpis(data, theme, settings, chiusi_tickers=getattr(ctx, "chiusi_tickers", frozenset()))
         vertical_gap("md")
+        _chiusi = getattr(ctx, "chiusi_tickers", frozenset())
+        _closed_tk = tuple(sorted(str(tk or "").strip() for tk in _chiusi if str(tk or "").strip()))
+        _quotes_refresh_df = getattr(ctx, "quotes_refresh_df", None)
+        _quotes_refresh_payload_sig = ""
+        if isinstance(_quotes_refresh_df, pd.DataFrame) and not _quotes_refresh_df.empty:
+            try:
+                _quotes_refresh_payload_sig = _quotes_refresh_df.to_json(orient="split", date_format="iso", default_handler=str)
+            except Exception:
+                _quotes_refresh_payload_sig = repr((_quotes_refresh_df.shape, list(_quotes_refresh_df.columns)))
+        _quotes_diag_spec = get_cache_artifact_spec("quotazioni.diagnostic_table")
+        _quotes_diag_sig = build_cache_artifact_signature(
+            "quotazioni.diagnostic_table",
+            inputs={
+                "quotes_data_sig": _quotes_data_sig,
+                "quotes_refresh_payload_sig": _quotes_refresh_payload_sig,
+                "last_refresh": str((quotes_log or {}).get("last_refresh") or ""),
+                "items_count": len((quotes_log or {}).get("items", []) or []),
+                "closed_tickers": _closed_tk,
+            },
+        )
         with profile_step("Quotazioni", "preparazione tabella diagnostica quotazioni"):
-            _chiusi = getattr(ctx, "chiusi_tickers", frozenset())
-            strumenti_attivi = [
-                item for item in (data.get("strumenti", []) or [])
-                if str(item.get("ticker") or "").strip()
-                and str(item.get("ticker") or "").strip() not in _chiusi
-            ]
-            active_tickers = [str(item.get("ticker") or "").strip() for item in strumenti_attivi]
-            qdf = getattr(ctx, "quotes_refresh_df", build_quotes_refresh_df(quotes_log, active_tickers)).copy()
-            present_tickers = {
-                str(tk or "").strip()
-                for tk in (qdf["Ticker"].tolist() if "Ticker" in qdf.columns else [])
-                if str(tk or "").strip()
-            }
-            missing_rows: list[dict[str, Any]] = []
-            for item in strumenti_attivi:
-                ticker = str(item.get("ticker") or "").strip()
-                if not ticker or ticker in present_tickers:
-                    continue
-                missing_rows.append(
-                    {
-                        "Strumento": item.get("nome") or ticker,
-                        "Ticker": ticker,
-                        "Prezzo letto": None,
-                        "Prezzo precedente": None,
-                        "Var. vs prec.": None,
-                        "Fonte": item.get("fonte") or "",
-                        "Esito": "ASSENTE",
-                        "Fallback": "No",
-                        "Nota": "Nessuna lettura disponibile nel log quotazioni",
-                        "Timestamp": "",
-                    }
-                )
-            if missing_rows:
-                qdf = pd.concat([qdf, pd.DataFrame(missing_rows)], ignore_index=True)
-                qdf = qdf.sort_values(["Strumento", "Ticker"], kind="stable").reset_index(drop=True)
-        if not qdf.empty and "Tipologia" not in qdf.columns:
-            tipo_map = {
-                str(s.get("ticker") or ""): macro_cat(s.get("tipo", ""))
-                for s in data.get("strumenti", [])
-            }
-            qdf.insert(2, "Tipologia", qdf["Ticker"].map(lambda tk: tipo_map.get(str(tk or ""), "")))
+            qdf_artifact = get_or_build_registered_artifact(
+                artifact_id=_quotes_diag_spec.artifact_id,
+                signature=_quotes_diag_sig,
+                builder=lambda: build_quotes_diagnostic_table(
+                    data=data,
+                    quotes_log=quotes_log,
+                    quotes_refresh_df=_quotes_refresh_df,
+                    closed_tickers=_closed_tk,
+                ),
+                clone_on_read=True,
+            )
+            qdf = qdf_artifact.value
         if qdf.empty:
             st.info(t(settings, "quotes.empty_log", "Nessun log quotazioni disponibile: esegui un aggiornamento per popolare la diagnostica."))
         else:
@@ -319,33 +313,8 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
 
             chart_style = "Linea"
 
-            _render_profile = resolve_page_render_mode(
-                settings,
-                local_mode=st.session_state.get("quotazioni_view_mode_fast_v1", "Rapida"),
-            )
-            _show_page_mode_controls = bool(_render_profile.get("show_controls", False))
-            if _show_page_mode_controls:
-                quick_options = ["Rapida", "Completa"]
-                quotes_view_mode = st.radio(
-                    "Modalità visualizzazione Quotazioni",
-                    quick_options,
-                    index=0,
-                    horizontal=True,
-                    key="quotazioni_view_mode_fast_v1",
-                    help=(
-                        "La vista Rapida evita il rendering iniziale di tutti i grafici per singolo strumento. "
-                        "Usa Completa solo quando vuoi analizzare nel dettaglio ogni strumento con il relativo benchmark."
-                    ),
-                )
-            else:
-                quotes_view_mode = str(_render_profile.get("render_mode", "Rapida"))
+            quotes_view_mode = "Completa"
             is_complete_view = quotes_view_mode == "Completa"
-            if not is_complete_view and _show_page_mode_controls:
-                st.info(
-                    "Vista rapida attiva: per velocizzare il caricamento iniziale vengono mostrati i riepiloghi principali "
-                    "e il grafico per macro-categoria. I grafici completi per singolo strumento e il confronto strumenti "
-                    "sono disponibili selezionando 'Completa'."
-                )
 
             show_ticker_detail_charts = True  # Abilita i grafici per strumento su 2 colonne (4.9.11)
             show_instrument_flow_chart = is_complete_view
