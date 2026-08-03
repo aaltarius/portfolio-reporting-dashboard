@@ -10,6 +10,8 @@ from typing import Any
 import pandas as pd
 
 from core.domain.bonds import calc_ytm_and_duration
+from core.domain.positions import held_tickers
+from persistence.storage import get_registro_eventi, macro_cat
 
 
 def _finite_float(value: Any, default: float = 0.0) -> float:
@@ -33,6 +35,50 @@ def _numeric_series(frame: pd.DataFrame, *column_names: str) -> pd.Series:
         if name in frame.columns:
             return pd.to_numeric(frame[name], errors="coerce").map(_finite_float)
     return pd.Series(0.0, index=frame.index, dtype="float64")
+
+
+def matured_unredeemed_gov(data: dict[str, Any], today: date | None = None) -> list[dict[str, Any]]:
+    """Titoli GOV scaduti (scadenza < oggi) con posizione ancora aperta e
+    nessun evento RIMBORSO A SCADENZA registrato: segnala un rimborso da
+    inserire manualmente, senza generare alcun evento in automatico."""
+    today = today or date.today()
+    open_tickers = held_tickers(data)
+    eventi = get_registro_eventi(data)
+    rimborso_tickers = {
+        str(ev.get("ticker") or "")
+        for ev in eventi
+        if ev.get("tipo_evento") == "RIMBORSO A SCADENZA" and str(ev.get("ticker") or "")
+    }
+
+    result: list[dict[str, Any]] = []
+    for s in data.get("strumenti") or []:
+        ticker = str(s.get("ticker") or "")
+        if not ticker or ticker not in open_tickers or ticker in rimborso_tickers:
+            continue
+        if macro_cat(str(s.get("tipo") or "")) != "GOV":
+            continue
+        scadenza_raw = s.get("scadenza")
+        if not scadenza_raw:
+            continue
+        try:
+            scadenza = pd.to_datetime(scadenza_raw).date()
+        except Exception:
+            continue
+        if scadenza >= today:
+            continue
+        quantita = sum(
+            _finite_float(ev.get("quantita", 0)) if ev.get("tipo_evento") == "ACQUISTO" else -_finite_float(ev.get("quantita", 0))
+            for ev in eventi
+            if str(ev.get("ticker") or "") == ticker and ev.get("tipo_evento") in {"ACQUISTO", "VENDITA", "RIMBORSO A SCADENZA"}
+        )
+        result.append({
+            "ticker": ticker,
+            "nome": str(s.get("nome") or ticker),
+            "scadenza": str(scadenza),
+            "giorni_scaduto": (today - scadenza).days,
+            "quantita": quantita,
+        })
+    return sorted(result, key=lambda item: item["giorni_scaduto"], reverse=True)
 
 
 def build_income_scadenze_summary(data: dict[str, Any], da: pd.DataFrame, calendar_df: pd.DataFrame | None) -> dict[str, Any]:
