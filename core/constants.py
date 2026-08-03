@@ -146,3 +146,9 @@ SOGLIA_DRAWDOWN_ALERT = -0.10
 SOGLIA_PL_NEGATIVO_ALERT = -500.0
 SOGLIA_RIBILANCIAMENTO_MINIMO = 50.0
 TOP_CONCENTRATION_POSITIONS_LIMIT = 5
+
+# Soglia unica per "posizione azzerata" (quantita' <= soglia = posizione
+# chiusa). Prima duplicata come 0.0001/1e-9/1e-12 in modo indipendente in
+# core/portfolio_metrics.py, core/services/cruscotti.py, core/services/
+# planning.py, core/services/snapshots.py, core/series_utils.py e altrove.
+QTY_ZERO_EPS = 0.0001
