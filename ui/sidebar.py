@@ -19,7 +19,6 @@ from persistence.storage import (
     APP_VERSION,
     _normalize_event_record, _rebuild_cash_ledger_from_events,
     _safe_float,
-    get_registro_eventi,
     load_quotes_log, load_settings,
     macro_cat,
     save_data, save_quotes_log,
@@ -361,15 +360,9 @@ def render_sidebar(data: dict) -> None:
             material_quote_changes: list[dict[str, object]] = []
             technical_price_sync_count = 0
             ticker_recent_histories: dict[str, dict[str, float]] = {}
-            _ev_sb = get_registro_eventi(data)
-            _rimborso_sb = {str(ev.get("ticker") or "") for ev in _ev_sb if ev.get("tipo_evento") == "RIMBORSO A SCADENZA" and str(ev.get("ticker") or "")}
-            _chiusi_tickers_set = {
-                str(s.get("ticker") or "")
-                for s in (data.get("strumenti") or [])
-                if str(s.get("ticker") or "")
-                and (s.get("stato") == "chiuso" or str(s.get("ticker") or "") in _rimborso_sb)
-            }
-            _strumenti_attivi_sb = [s for s in data["strumenti"] if str(s.get("ticker", "")) not in _chiusi_tickers_set]
+            from core.domain.instrument_status import active_fetch_tickers
+            _fetch_tickers_sb = active_fetch_tickers(data)
+            _strumenti_attivi_sb = [s for s in data["strumenti"] if str(s.get("ticker", "")) in _fetch_tickers_sb]
             price_results: dict[str, dict] = {}
             if _strumenti_attivi_sb:
                 max_workers = min(_QUOTE_REFRESH_MAX_WORKERS, max(len(_strumenti_attivi_sb), 1))
