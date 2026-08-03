@@ -16,6 +16,49 @@ from persistence.storage import (
 )
 from core.validation import validate_evento_portafoglio
 from core.domain._utils import _EPS
+from typing import NamedTuple
+
+
+class DischargeResult(NamedTuple):
+    scarico_qty: float
+    qty_dopo: float
+    costo_dopo: float
+    capitale_liberato: float
+    plusvalenza_lorda: float
+    plusvalenza_netta: float
+
+
+def discharge_lot(
+    qty_before: float,
+    cost_before: float,
+    quantita: float,
+    prezzo_unitario: float,
+    commissioni: float = 0.0,
+    imposte: float = 0.0,
+) -> DischargeResult:
+    """Scarica una quantita' da una posizione al PMC corrente.
+
+    Unica definizione canonica dello scarico PMC su VENDITA/RIMBORSO A
+    SCADENZA: separa il capitale liberato (quota di costo storico che torna
+    liquida, non e' reddito) dalla plusvalenza/minusvalenza netta
+    (commissioni e imposte pesano solo su quest'ultima). Vale sempre
+    l'invariante importo_netto == capitale_liberato + plusvalenza_netta.
+    """
+    qty_before = float(qty_before)
+    cost_before = float(cost_before)
+    scarico_qty = min(float(quantita), qty_before) if qty_before > 0 else 0.0
+    pmc = (cost_before / qty_before) if qty_before > _EPS else 0.0
+    capitale_liberato = scarico_qty * pmc
+    plusvalenza_lorda = (scarico_qty * float(prezzo_unitario)) - capitale_liberato
+    plusvalenza_netta = plusvalenza_lorda - float(commissioni) - float(imposte)
+    return DischargeResult(
+        scarico_qty=scarico_qty,
+        qty_dopo=max(0.0, qty_before - scarico_qty),
+        costo_dopo=max(0.0, cost_before - capitale_liberato),
+        capitale_liberato=capitale_liberato,
+        plusvalenza_lorda=plusvalenza_lorda,
+        plusvalenza_netta=plusvalenza_netta,
+    )
 
 
 def _fmt_dt(value: Any) -> str:
