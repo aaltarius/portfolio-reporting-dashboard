@@ -978,6 +978,9 @@ def _normalize_event_record(ev):
         "aliquota": _safe_float(ev.get("aliquota", 0)),
         "note": ev.get("note", ""),
     }
+    for _split_field in ("capitale_liberato", "plusvalenza_lorda", "plusvalenza_netta"):
+        if _split_field in ev:
+            out[_split_field] = _safe_float(ev.get(_split_field), 0.0)
     if out["importo_netto"] in (None, ""):
         if tipo in {"ACQUISTO", "COMMISSIONE", "IMPOSTA", "PRELIEVO"}:
             if tipo == "ACQUISTO":
