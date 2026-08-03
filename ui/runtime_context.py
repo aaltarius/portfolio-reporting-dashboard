@@ -194,6 +194,7 @@ def build_runtime_context_data(
         "btp_calendar_df": btp_calendar_df,
         "tv": tv,
         "tc": tc,
+        "capitale_versato_residuo": kpi["capitale_versato_residuo"],
         "tcm": tcm,
         "pl": pl,
         "pl_totale": pl_totale,

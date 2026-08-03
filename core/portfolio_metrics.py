@@ -79,6 +79,7 @@ def calcola_kpi_principali(
             "patrimonio_totale": liquidita_value,
             "liquidita": liquidita_value,
             "capitale_investito": capitale_value,
+            "capitale_versato_residuo": 0.0,
         }
 
     open_positions, closed_positions = _split_open_closed_positions(df_positions)
@@ -114,6 +115,7 @@ def calcola_kpi_principali(
         "patrimonio_totale": tv + liquidita_value,
         "liquidita": liquidita_value,
         "capitale_investito": _finite_float(capitale_investito),
+        "capitale_versato_residuo": tc,
     }
 
 
