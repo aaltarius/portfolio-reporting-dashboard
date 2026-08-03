@@ -104,6 +104,11 @@ def _fs_delete_event(data: dict, event_id: str) -> bool:
         _fs_reopen_instruments(data)
     except Exception as exc:
         logger.error("_fs_reopen_instruments fallita: %s", exc, exc_info=True)
+    try:
+        from core.domain.positions import sync_realized_split_fields
+        sync_realized_split_fields(data)
+    except Exception as exc:
+        logger.error("sync_realized_split_fields fallita: %s", exc, exc_info=True)
     save_data(data)
     return True
 
@@ -134,6 +139,11 @@ def _fs_update_event(data: dict, event_id: str, updates: dict) -> bool:
                 _fs_rebuild_registers(data)
             except Exception as exc:
                 logger.error("_fs_rebuild_registers fallita: %s", exc, exc_info=True)
+            try:
+                from core.domain.positions import sync_realized_split_fields
+                sync_realized_split_fields(data)
+            except Exception as exc:
+                logger.error("sync_realized_split_fields fallita: %s", exc, exc_info=True)
             save_data(data)
             return True
     return False
