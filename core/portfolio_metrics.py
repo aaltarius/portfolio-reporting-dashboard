@@ -7,6 +7,8 @@ import math
 
 import pandas as pd
 
+from core.domain.positions import discharge_lot
+
 _EPS = 1e-9
 
 
@@ -145,16 +147,13 @@ def calcola_capitale_rientrato(
             posizioni_rientro[ticker]["qty"] += quantita
             posizioni_rientro[ticker]["cost"] += quantita * prezzo + commissioni + imposte
         elif tipo_evento in {"VENDITA", "RIMBORSO A SCADENZA"} and ticker:
-            qty_before = posizioni_rientro[ticker]["qty"]
-            cost_before = posizioni_rientro[ticker]["cost"]
-            scarico_qty = min(quantita, qty_before) if qty_before > 0 else 0.0
-            pmc = (cost_before / qty_before) if qty_before > _EPS else 0.0
-            scarico_cost = scarico_qty * pmc
-
-            capitale_rientrato_totale += scarico_cost
-
-            posizioni_rientro[ticker]["qty"] = max(0.0, qty_before - scarico_qty)
-            posizioni_rientro[ticker]["cost"] = max(0.0, cost_before - scarico_cost)
+            result = discharge_lot(
+                posizioni_rientro[ticker]["qty"], posizioni_rientro[ticker]["cost"],
+                quantita, prezzo, commissioni, imposte,
+            )
+            capitale_rientrato_totale += result.capitale_liberato
+            posizioni_rientro[ticker]["qty"] = result.qty_dopo
+            posizioni_rientro[ticker]["cost"] = result.costo_dopo
 
     return float(capitale_rientrato_totale)
 
