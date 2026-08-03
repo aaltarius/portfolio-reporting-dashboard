@@ -103,6 +103,7 @@ def compute_portfolio_state(
                 "df": df_cached,
                 "liquidita": _safe_float(cache_bucket.get("liquidita", 0)),
                 "eventi": get_registro_eventi(data),
+                "eventi_arricchiti": [],
             }
         except Exception:
             pass
@@ -110,6 +111,7 @@ def compute_portfolio_state(
     eventi = get_registro_eventi(data)
     stato = {}
     liquidita = 0.0
+    eventi_arricchiti: list[dict[str, Any]] = []
     for ev in eventi:
         tipo = ev.get("tipo_evento")
         tk = ev.get("ticker", "")
@@ -140,21 +142,23 @@ def compute_portfolio_state(
             liquidita += netto
         elif tipo in {"VENDITA", "RIMBORSO A SCADENZA"} and tk:
             stp = stato[tk]
-            qty_before = _safe_float(stp.get("qty", 0))
-            cost_before = _safe_float(stp.get("cost", 0))
-            scarico_qty = min(qty, qty_before) if qty_before > 0 else 0.0
-            pmc = (cost_before / qty_before) if qty_before > _EPS else 0.0
-            cost_scaricato = scarico_qty * pmc
-            realiz_lordo = (scarico_qty * prezzo) - cost_scaricato
-            realiz_netto = realiz_lordo - comm - imp
-            stp["qty"] = max(0.0, qty_before - scarico_qty)
-            stp["cost"] = max(0.0, cost_before - cost_scaricato)
+            result = discharge_lot(
+                stp.get("qty", 0.0), stp.get("cost", 0.0), qty, prezzo, comm, imp
+            )
+            stp["qty"] = result.qty_dopo
+            stp["cost"] = result.costo_dopo
             stp["comm"] += comm
             stp["tax"] += imp
-            stp["realized_gross"] += realiz_lordo
-            stp["realized_net"] += realiz_netto
+            stp["realized_gross"] += result.plusvalenza_lorda
+            stp["realized_net"] += result.plusvalenza_netta
             stp["ultimo_evento"] = ev.get("data")
             liquidita += netto
+            eventi_arricchiti.append({
+                **ev,
+                "capitale_liberato": result.capitale_liberato,
+                "plusvalenza_lorda": result.plusvalenza_lorda,
+                "plusvalenza_netta": result.plusvalenza_netta,
+            })
         elif tipo in {"CEDOLA", "DIVIDENDO"}:
             if tk:
                 stp = stato.setdefault(tk, {
@@ -213,7 +217,7 @@ def compute_portfolio_state(
         "rows": _serialize_df_for_cache(df),
         "updated_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
     }
-    return {"df": df, "liquidita": liquidita, "eventi": eventi}
+    return {"df": df, "liquidita": liquidita, "eventi": eventi, "eventi_arricchiti": eventi_arricchiti}
 
 
 def calc_positions(data: dict[str, Any]) -> dict[str, dict[str, float]]:
