@@ -4,9 +4,9 @@ gestione" del form-server (route /operazioni_gestione, /liquidita_gestione).
 Estratto da form_server.py. Condivide la stessa pipeline di storage dell'app
 principale: nessuna logica duplicata.
 
-Nota: le funzioni _fs_rebuild_registers/_fs_reopen_instruments/_fs_delete_event/
-_fs_update_event qui sotto sono la superficie operativa definitiva aperta dalla
-sidebar. La pagina Operazioni dell'app principale resta un registro consultivo.
+Nota: le funzioni _fs_rebuild_registers/_fs_delete_event/_fs_update_event qui
+sotto sono la superficie operativa definitiva aperta dalla sidebar. La pagina
+Operazioni dell'app principale resta un registro consultivo.
 """
 from __future__ import annotations
 
@@ -66,26 +66,6 @@ def _fs_rebuild_registers(data: dict) -> None:
     data["registro_liquidita"] = _rebuild_cash_ledger_from_events(get_registro_eventi(data))
 
 
-def _fs_reopen_instruments(data: dict) -> None:
-    qty_map: dict = {}
-    for ev in data.get("registro_eventi", []):
-        tk = str(ev.get("ticker", "") or "")
-        tipo = str(ev.get("tipo_evento", "") or "").upper()
-        q = float(ev.get("quantita", 0) or 0)
-        if not tk:
-            continue
-        if tipo == "ACQUISTO":
-            qty_map[tk] = qty_map.get(tk, 0.0) + q
-        elif tipo in {"VENDITA", "RIMBORSO A SCADENZA"}:
-            qty_map[tk] = qty_map.get(tk, 0.0) - q
-    for s in data.get("strumenti", []):
-        tk = str(s.get("ticker", "") or "")
-        if s.get("stato") not in {"aperto"} and qty_map.get(tk, 0.0) > 1e-9:
-            s["stato"] = "aperto"
-            s["data_chiusura"] = None
-            s["motivo_chiusura"] = None
-
-
 def _fs_delete_event(data: dict, event_id: str) -> bool:
     from persistence.storage import _normalize_event_record, save_data
     event_id = str(event_id or "")
@@ -100,10 +80,6 @@ def _fs_delete_event(data: dict, event_id: str) -> bool:
         _fs_rebuild_registers(data)
     except Exception as exc:
         logger.error("_fs_rebuild_registers fallita: %s", exc, exc_info=True)
-    try:
-        _fs_reopen_instruments(data)
-    except Exception as exc:
-        logger.error("_fs_reopen_instruments fallita: %s", exc, exc_info=True)
     try:
         from core.domain.positions import sync_realized_split_fields
         sync_realized_split_fields(data)

@@ -388,7 +388,9 @@ def _render_strumenti_page(
     cerca_isin: str = "", candidati: "list | None" = None, selected_ticker: str = "",
 ) -> str:
     strumenti = data.get("strumenti", [])
-    chiusi = [s for s in strumenti if s.get("stato", "aperto") == "chiuso"]
+    from core.domain.instrument_status import compute_instrument_statuses
+    _statuses = compute_instrument_statuses(data)
+    chiusi = [s for s in strumenti if str(s.get("ticker") or "") in _statuses and not _statuses[str(s.get("ticker") or "")].is_open]
 
     from persistence.storage import get_registro_eventi
     from core.formatting import fmt_date_only_it
@@ -468,16 +470,34 @@ def _render_strumenti_page(
     strumento_arricchimento = next((s for s in strumenti if s.get("ticker", "") == selected_ticker), None) if selected_ticker else None
 
     if chiusi:
-        rows = "".join(
-            f'<tr><td>{escape(s.get("ticker",""))}</td><td>{escape(str(s.get("nome",""))[:45])}</td>'
-            f'<td>{escape(str(s.get("tipo","")))}</td><td>{escape(fmt_date_only_it(s.get("data_chiusura")) if s.get("data_chiusura") else "—")}</td>'
-            f'<td>{escape(str(s.get("motivo_chiusura","") or ""))}</td></tr>'
-            for s in chiusi
-        )
+        rows = []
+        for s in chiusi:
+            tk = str(s.get("ticker") or "")
+            status = _statuses.get(tk)
+            is_terminal = bool(status and status.is_terminal)
+            osserva = bool(status and status.osserva_prezzo)
+            if is_terminal:
+                toggle_cell = "<span class='hint'>rimborsato — n/d</span>"
+            else:
+                azione = "osserva_prezzo_off" if osserva else "osserva_prezzo_on"
+                label = "🔕 Disattiva" if osserva else "🔔 Osserva prezzo"
+                toggle_cell = (
+                    f'<form method="POST" action="/strumenti" style="display:inline">'
+                    f'<input type="hidden" name="azione" value="{azione}">'
+                    f'<input type="hidden" name="ticker" value="{escape(tk)}">'
+                    f'<button type="submit" class="btn-sm">{label}</button></form>'
+                )
+            rows.append(
+                f'<tr><td>{escape(tk)}</td><td>{escape(str(s.get("nome",""))[:45])}</td>'
+                f'<td>{escape(str(s.get("tipo","")))}</td>'
+                f'<td>{escape(status.closed_date if status and status.closed_date else "—")}</td>'
+                f'<td>{escape(status.closing_event_type if status and status.closing_event_type else "—")}</td>'
+                f'<td>{toggle_cell}</td></tr>'
+            )
         chiusi_html = (
             '<table class="table-simple"><thead><tr>'
-            '<th>Ticker</th><th>Nome</th><th>Tipo</th><th>Chiuso il</th><th>Motivo</th>'
-            f'</tr></thead><tbody>{rows}</tbody></table>'
+            '<th>Ticker</th><th>Nome</th><th>Tipo</th><th>Chiuso il</th><th>Motivo</th><th>Osservazione prezzo</th>'
+            f'</tr></thead><tbody>{"".join(rows)}</tbody></table>'
         )
     else:
         chiusi_html = '<div class="cart-empty">Nessuno strumento chiuso.</div>'
@@ -876,6 +896,23 @@ async def post_strumenti(
             from urllib.parse import quote as urlquote
             return RedirectResponse(f"/strumenti?tab=del&ok={urlquote(msg)}", status_code=303)
         return err_page(msg, "del")
+
+    elif azione in {"osserva_prezzo_on", "osserva_prezzo_off"}:
+        ticker = ticker.strip()
+        if not ticker:
+            return err_page("Ticker non specificato.", "closed")
+        try:
+            d = _ld()
+        except Exception as exc:
+            return err_page(str(exc), "closed")
+        se = next((s for s in d.get("strumenti", []) if s.get("ticker") == ticker), None)
+        if se is None:
+            return err_page("Strumento non trovato.", "closed")
+        se["osserva_prezzo"] = azione == "osserva_prezzo_on"
+        save_data(d)
+        from urllib.parse import quote as urlquote
+        msg = "Osservazione prezzo attivata." if se["osserva_prezzo"] else "Osservazione prezzo disattivata."
+        return RedirectResponse(f"/strumenti?tab=closed&ok={urlquote(msg)}", status_code=303)
 
     elif azione == "recupera_storico":
         ticker = ticker.strip()
