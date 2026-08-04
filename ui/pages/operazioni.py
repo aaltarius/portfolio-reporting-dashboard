@@ -59,7 +59,7 @@ def _build_strumenti_chiusi_section(data: dict[str, Any]) -> None:
     if df_chiusi_pos.empty:
         return
     statuses = compute_instrument_statuses(data)
-    chiusi_tickers = {tk for tk, status in statuses.items() if not status.is_open}
+    chiusi_tickers = {tk for tk, status in statuses.items() if not status.is_open and status.has_any_event}
     chiusi = [s for s in data.get("strumenti", []) if s.get("ticker") in chiusi_tickers]
     if not chiusi:
         return

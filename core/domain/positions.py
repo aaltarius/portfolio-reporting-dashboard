@@ -16,6 +16,7 @@ from persistence.storage import (
 )
 from core.validation import validate_evento_portafoglio
 from core.domain._utils import _EPS
+from core.constants import QTY_ZERO_EPS
 from typing import NamedTuple
 
 
@@ -302,4 +303,4 @@ def held_tickers(data: dict[str, Any]) -> frozenset[str]:
     if df.empty or "Ticker" not in df.columns or "Quote" not in df.columns:
         return frozenset()
     qty = pd.to_numeric(df["Quote"], errors="coerce").fillna(0.0)
-    return frozenset(df.loc[qty > _EPS, "Ticker"].astype(str))
+    return frozenset(df.loc[qty > QTY_ZERO_EPS, "Ticker"].astype(str))

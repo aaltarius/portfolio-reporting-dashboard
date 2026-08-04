@@ -20,20 +20,29 @@ class InstrumentStatus(NamedTuple):
     closing_event_type: str | None
     osserva_prezzo: bool
     should_track_price: bool
+    has_any_event: bool
 
 
 def compute_instrument_statuses(data: dict[str, Any]) -> dict[str, InstrumentStatus]:
     """Calcola lo stato di ogni strumento in portafoglio (aperto/chiuso/
     terminale/osservato). Unica fonte per capire se un ticker va ancora
     tracciato per prezzo, sostituisce ogni lettura diretta di strumento['stato'].
-    """
+
+    Uno strumento senza alcun evento registrato (es. inserito da
+    form-server prima del primo ACQUISTO) non e' "aperto" ne' "chiuso": e'
+    semplicemente "non ancora iniziato". Va trattato come aperto ai fini del
+    tracciamento prezzo (should_track_price) e va escluso dagli elenchi UI
+    degli strumenti chiusi (has_any_event=False lo segnala ai chiamanti)."""
     open_tickers = held_tickers(data)
     eventi = get_registro_eventi(data)
 
     last_closing_event: dict[str, dict[str, Any]] = {}
+    tickers_with_events: set[str] = set()
     for ev in eventi:
         tk = str(ev.get("ticker") or "")
         tipo = str(ev.get("tipo_evento") or "")
+        if tk:
+            tickers_with_events.add(tk)
         if tk and tipo in {"VENDITA", "RIMBORSO A SCADENZA"}:
             last_closing_event[tk] = ev  # eventi gia' ordinati cronologicamente da get_registro_eventi
 
@@ -43,13 +52,14 @@ def compute_instrument_statuses(data: dict[str, Any]) -> dict[str, InstrumentSta
         if not tk:
             continue
         is_open = tk in open_tickers
+        has_any_event = tk in tickers_with_events
         closing_ev = last_closing_event.get(tk)
         closing_event_type = str(closing_ev.get("tipo_evento")) if closing_ev else None
         closed_date = str(closing_ev.get("data")) if closing_ev else None
         category = macro_cat(str(s.get("tipo") or ""))
         is_terminal = (not is_open) and category == "GOV" and closing_event_type == "RIMBORSO A SCADENZA"
         osserva_prezzo = bool(s.get("osserva_prezzo", False))
-        should_track_price = is_open or ((not is_terminal) and osserva_prezzo)
+        should_track_price = is_open or (not has_any_event) or ((not is_terminal) and osserva_prezzo)
         statuses[tk] = InstrumentStatus(
             ticker=tk,
             is_open=is_open,
@@ -58,6 +68,7 @@ def compute_instrument_statuses(data: dict[str, Any]) -> dict[str, InstrumentSta
             closing_event_type=closing_event_type if not is_open else None,
             osserva_prezzo=osserva_prezzo,
             should_track_price=should_track_price,
+            has_any_event=has_any_event,
         )
     return statuses
 

@@ -131,6 +131,7 @@ def _normalized_instrument_signature_payload(strumenti: list[dict[str, Any]]) ->
             "tipo": str(item.get("tipo", "")).strip(),
             "prezzo": prezzo,
             "stato": stato_norm,
+            "osserva_prezzo": bool(item.get("osserva_prezzo", False)),
         })
     return sorted(normalized, key=lambda row: (row["ticker"], row["isin"], row["tipo"]))
 

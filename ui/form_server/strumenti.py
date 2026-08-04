@@ -390,7 +390,12 @@ def _render_strumenti_page(
     strumenti = data.get("strumenti", [])
     from core.domain.instrument_status import compute_instrument_statuses
     _statuses = compute_instrument_statuses(data)
-    chiusi = [s for s in strumenti if str(s.get("ticker") or "") in _statuses and not _statuses[str(s.get("ticker") or "")].is_open]
+    chiusi = [
+        s for s in strumenti
+        if str(s.get("ticker") or "") in _statuses
+        and not _statuses[str(s.get("ticker") or "")].is_open
+        and _statuses[str(s.get("ticker") or "")].has_any_event
+    ]
 
     from persistence.storage import get_registro_eventi
     from core.formatting import fmt_date_only_it
