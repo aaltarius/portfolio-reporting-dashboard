@@ -27,6 +27,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from core.constants import QTY_ZERO_EPS
 from core.finance import build_ptf_df, compute_portfolio_state
 from core.price_frames import build_expanded_price_frame
 from persistence.storage import load_sator_decisions, macro_cat
@@ -578,7 +579,7 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
             continue
         if state == "watchlist" and not cfg.get("include_watchlist", True):
             continue
-        in_ptf = _safe_float(positions_map.get(ticker, {}).get("Quote"), 0.0) > 1e-9
+        in_ptf = _safe_float(positions_map.get(ticker, {}).get("Quote"), 0.0) > QTY_ZERO_EPS
         if in_ptf and not cfg.get("include_portfolio", True):
             continue
 
@@ -1634,7 +1635,7 @@ def _tickers_posseduti(positions: pd.DataFrame) -> set[str]:
     return {
         str(row.get("Ticker") or "").strip().upper()
         for _, row in positions.iterrows()
-        if _safe_float(row.get("Quote"), 0.0) > 1e-9
+        if _safe_float(row.get("Quote"), 0.0) > QTY_ZERO_EPS
     }
 
 

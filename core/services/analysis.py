@@ -8,6 +8,7 @@ from typing import Any, List, Dict
 import numpy as np
 import pandas as pd
 from core.asset_categories import ACTIVE_CATEGORY_CODES, get_selected_category_codes
+from core.constants import QTY_ZERO_EPS
 from core.data_models import ThemeConfig
 from core.domain.risk import build_drawdown_series, build_category_drawdown_series
 
@@ -371,7 +372,7 @@ def build_advanced_analysis_data(
         s["ticker"] for s in strumenti
         if s["ticker"] in dh.columns
         and dh[s["ticker"]].notna().sum() >= 3
-        and positions.get(s["ticker"], {}).get("qty", 0) > 0.0001
+        and positions.get(s["ticker"], {}).get("qty", 0) > QTY_ZERO_EPS
     ]
 
     if not ta:

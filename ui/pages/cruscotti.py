@@ -12,6 +12,7 @@ from streamlit.delta_generator import DeltaGenerator
 
 from core.asset_categories import get_selected_category_codes
 from core.cache_signatures import build_historical_data_signature, build_portfolio_data_signature, charts_settings_signature, theme_signature
+from core.constants import QTY_ZERO_EPS
 from core.cache_orchestrator import get_registered_figure_cache
 from core.domain.risk import build_drawdown_series
 from core.figure_cache import CachingStrategy
@@ -871,7 +872,7 @@ def _render_analitica_market_structure(ctx: SimpleNamespace, settings: dict[str,
             qty_col = "Quote" if "Quote" in da_frame.columns else ("Quantita" if "Quantita" in da_frame.columns else None)
             work_positions = da_frame.copy()
             if qty_col is not None:
-                work_positions = work_positions[pd.to_numeric(work_positions[qty_col], errors="coerce").fillna(0.0) > 0.0001]
+                work_positions = work_positions[pd.to_numeric(work_positions[qty_col], errors="coerce").fillna(0.0) > QTY_ZERO_EPS]
             valid_tickers = [
                 str(tk or "").strip()
                 for tk in work_positions["Ticker"].astype(str).tolist()
