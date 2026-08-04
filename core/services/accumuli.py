@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from core.domain.positions import discharge_lot
 from persistence.storage import macro_cat
 
 
@@ -351,10 +352,16 @@ def _build_ticker_series(ticker: str, ops: pd.DataFrame, prices: pd.DataFrame, c
                 invested += total_cost
                 invested_ex_fees += gross
             elif op.get("tipo") in {"VENDITA", "RIMBORSO A SCADENZA"} and op_qty > 0 and qty > 0:
-                reduction = min(op_qty / qty, 1.0)
-                invested *= max(0.0, 1.0 - reduction)
-                invested_ex_fees *= max(0.0, 1.0 - reduction)
-                qty = max(0.0, qty - op_qty)
+                # Scarico PMC via discharge_lot() (unica definizione canonica, vedi
+                # core/domain/positions.py): due chiamate parallele sulla stessa
+                # qty_before/scarico_qty, una per ciascuna delle due basi di costo
+                # tracciate qui (con e senza commissioni). Non servono P&L, quindi
+                # prezzo/commissioni/imposte sono passati a zero.
+                result = discharge_lot(qty, invested, op_qty, 0.0, 0.0, 0.0)
+                result_ex_fees = discharge_lot(qty, invested_ex_fees, op_qty, 0.0, 0.0, 0.0)
+                invested = result.costo_dopo
+                invested_ex_fees = result_ex_fees.costo_dopo
+                qty = result.qty_dopo
         pmc = invested / qty if qty > 0 else np.nan
         pmc_exec = invested_ex_fees / qty if qty > 0 else np.nan
         value = qty * float(price) if qty > 0 else 0.0
