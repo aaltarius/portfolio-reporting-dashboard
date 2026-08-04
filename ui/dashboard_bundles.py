@@ -833,15 +833,18 @@ def _build_analitica_bundle(
     )
 
     with profile_step("Cruscotti/Analitica", "build portfolio value figure"):
-        portfolio_value_fig = fcache.get_or_build(
-            chart_id="andamento_portfolio_value",
-            data_sig=data_sig,
-            theme_sig=theme_sig,
-            charts_settings_sig=charts_settings_sig,
-            builder=lambda: build_portfolio_value_time_chart(dfh_top, dfmt, theme),
-            page_mode="Completa",
-            strategy=cache_strategy,
-        )
+        if dfh_top is None or dfh_top.empty:
+            portfolio_value_fig = empty_chart("andamento_portfolio_value")
+        else:
+            portfolio_value_fig = fcache.get_or_build(
+                chart_id="andamento_portfolio_value",
+                data_sig=data_sig,
+                theme_sig=theme_sig,
+                charts_settings_sig=charts_settings_sig,
+                builder=lambda: build_portfolio_value_time_chart(dfh_top, dfmt, theme),
+                page_mode="Completa",
+                strategy=cache_strategy,
+            )
 
     with profile_step("Cruscotti/Analitica", "build PL decomposition figure"):
         pl_cols = [c for c in dfh_market_only.columns if c.startswith("PL_")]
@@ -861,16 +864,19 @@ def _build_analitica_bundle(
         pct_cap = pct_data["pct_cap"]
         pct_cost = pct_data["pct_cost"]
         pl_total_market_only = float(pd.to_numeric(dfh_market_only["P/L"], errors="coerce").iloc[-1] or 0.0) if dfh_market_only is not None and not dfh_market_only.empty else float(pl_totale or 0.0)
-        percentage_return_fig = fcache.get_or_build(
-            chart_id="andamento_percentage_return",
-            data_sig=data_sig,
-            theme_sig=theme_sig,
-            charts_settings_sig=charts_settings_sig,
-            builder=lambda: build_percentage_return_time_chart(dfh_market_only, pct_cap, pct_cost, pl_color, pl_total_market_only, dfmt, theme),
-            page_mode="Completa",
-            extra_params={"return_alignment": "current_pl_v2", "income_mode": "market_only_v1"},
-            strategy=cache_strategy,
-        )
+        if dfh_market_only is None or dfh_market_only.empty:
+            percentage_return_fig = empty_chart("andamento_percentage_return")
+        else:
+            percentage_return_fig = fcache.get_or_build(
+                chart_id="andamento_percentage_return",
+                data_sig=data_sig,
+                theme_sig=theme_sig,
+                charts_settings_sig=charts_settings_sig,
+                builder=lambda: build_percentage_return_time_chart(dfh_market_only, pct_cap, pct_cost, pl_color, pl_total_market_only, dfmt, theme),
+                page_mode="Completa",
+                extra_params={"return_alignment": "current_pl_v2", "income_mode": "market_only_v1"},
+                strategy=cache_strategy,
+            )
 
     with profile_step("Cruscotti/Analitica", "build target gap figure"):
         if da is None or da.empty:
