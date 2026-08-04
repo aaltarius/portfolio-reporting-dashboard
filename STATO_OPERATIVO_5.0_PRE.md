@@ -104,6 +104,44 @@ riguardano solo `5.0-pre`.
 - Aggiunto `tools/perf_render_log_analyzer.py` come base per leggere i render
   log in modo ripetibile.
 
+### Strumenti chiusi, coerenza dati e KPI (2026-08-03/05)
+
+- Unificata la gestione degli strumenti chiusi: stato aperto/chiuso/terminale
+  sempre calcolato dal registro eventi (mai dal campo `stato`, morto). Nuovo
+  `core/domain/instrument_status.py` con `active_fetch_tickers()` come unico
+  filtro fetch quotazioni. Spec e piano completi in
+  `docs/superpowers/specs/2026-08-03-strumenti-chiusi-design.md` e
+  `docs/superpowers/plans/2026-08-03-strumenti-chiusi.md` (23 task, eseguiti
+  con subagent-driven-development).
+- `discharge_lot()` come unica definizione dello scarico PMC su
+  vendita/rimborso, al posto di quattro implementazioni indipendenti; soglia
+  posizione azzerata unificata su `QTY_ZERO_EPS`.
+- Chiusa una classe di bug ricorrente (trovata e corretta sei volte in punti
+  diversi): uno strumento chiuso/rimborsato che restava conteggiato o perdeva
+  contributo storico perche' un punto di aggregazione non passava dal filtro
+  canonico. Corretti: KPI "Letture OK/Warning/Errori" Quotazioni e toast
+  sidebar (denominatore), tabella diagnostica quotazioni (riga stantia),
+  grafico "P/L per Categoria" (perdeva tutto lo storico del chiuso, non solo
+  post-chiusura), tabella "Andamento ultima settimana" (chiuso spariva dal
+  totale), firma cache Cruscotti per categoria (mai invalidata su eventi),
+  calendario BTP (stime sintetiche invece dei dati fiscali reali registrati).
+- Aggiunta sezione "Posizioni Chiuse" in Portafoglio (capitale liberato, P/L
+  realizzato lordo/netto, commissioni, imposte, rendimento %); rimossa la
+  sezione duplicata in Operazioni.
+- Aggiunte etichette esplicite sui grafici P/L di Portafoglio e
+  Cruscotti/Analitica per chiarire il perimetro (storico completo incl.
+  chiusi vs. sole posizioni aperte oggi).
+- Corretto un incidente di perdita dati (storico prezzi ridotto da 830 a 14
+  giorni) causato da `tests/conftest.py` che scriveva sui file reali con
+  restore in `finally`; fixture riscritta con `monkeypatch` per isolare
+  interamente i path (`DATA_DIR`, `PRICES_DIR`, ecc.) su `tmp_path`. Dati di
+  scarto dell'incidente conservati in
+  `data/forensic/portfolio/recovery_20260804_081005/`.
+- Verificato: backup automatico prima di ogni `save_data()` gia' attivo e
+  funzionante (`backup.enabled=True`, `backup_before_save=True`, 20 backup
+  conservati) — non e' la causa dell'incidente sopra (il test scriveva fuori
+  da `save_data()`).
+
 ### Cache e performance
 
 - Introdotto `core/cache_policy.py` come registry centrale degli artefatti.
@@ -431,6 +469,28 @@ Ordine consigliato, non urgente:
 3. Mappa AI strumenti / clustering.
 4. Explainability SATOR.
 5. Storico decisionale con valutazione ex-post.
+
+### Priorita 8 - Irrobustimento e maturazione 5.0
+
+Traccia parallela alla chiusura cache/performance: qualita, difensivita e
+documentazione prima di taggare una 5.0 definitiva.
+
+1. Audit difensivo dei chart builder (`ui/charts/`): il crash
+   `KeyError: 'Data'` gia' corretto era un gap isolato preesistente; verificare
+   che tutti i builder abbiano guardie coerenti per dati vuoti, singolo
+   giorno o strumento appena aperto (`empty_chart()` o equivalente), invece
+   di scoprirli uno alla volta in produzione.
+2. `CLAUDE.md` in root: introduzione rapida per un agente AI che riprende il
+   lavoro, che rimanda a questo documento come fonte primaria invece di
+   duplicarne il contenuto.
+3. Review complessiva del branch (es. `/code-review ultra`) prima di taggare
+   la 5.0 definitiva, per catturare quanto l'ispezione manuale punto-per-punto
+   puo' aver perso.
+4. Test/CI: decisione presa il 2026-08-05 di lasciare `tests/` locale ed
+   effimero (mai versionato, per scelta esplicita gia' vigente), senza CI.
+   Punto riaperto in futuro solo su richiesta esplicita: se riaperto, il repo
+   GitHub e' privato, quindi versionare test con dati sintetici non
+   esporrebbe dati reali.
 
 ---
 
