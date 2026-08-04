@@ -25,7 +25,6 @@ from ui.dashboard_bundles import get_analysis_category_dashboard_bundles, get_an
 from ui.formatting import fmt_dt_it, fmt_date_only_it, fmt_eur_it, fmt_num_it, fmt_pct_it
 from ui.i18n import t
 from ui.theme import P, get_theme_context, macro_color
-from ui.charts.analisi import build_risk_contribution_chart
 from ui.charts.home import build_category_allocation_pie_chart, build_category_bar_chart
 from ui.charts.analisi import build_correlation_heatmap, build_instrument_drawdown_time_chart
 from ui.charts.quotazioni import build_category_performance_comparison_time_chart
