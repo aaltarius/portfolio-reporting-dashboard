@@ -71,7 +71,7 @@ def _first_purchase_date(registro_eventi: list[dict], ticker: str) -> pd.Timesta
     for ev in registro_eventi or []:
         if str(ev.get("ticker") or "").strip() != ticker:
             continue
-        if str(ev.get("tipo") or "").strip().upper() != "ACQUISTO":
+        if str(ev.get("tipo_evento") or "").strip().upper() != "ACQUISTO":
             continue
         ts = _to_ts(ev.get("data"))
         if ts is not None:
@@ -79,6 +79,47 @@ def _first_purchase_date(registro_eventi: list[dict], ticker: str) -> pd.Timesta
     if not purchase_dates:
         return None
     return min(purchase_dates)
+
+
+def _real_events_by_type(registro_eventi: list[dict], ticker: str, tipo_evento: str) -> list[dict]:
+    """Eventi realmente registrati (non stimati) per ticker+tipo, ordinati per data.
+
+    Usati per sostituire, riga per riga, la proiezione sintetica del
+    calendario (basata su cedola_perc/aliquota fissa) con gli importi
+    davvero incassati — incluse le imposte effettivamente pagate, che il
+    modello sintetico non conosce."""
+    matches = [
+        ev for ev in (registro_eventi or [])
+        if str(ev.get("ticker") or "").strip() == ticker
+        and str(ev.get("tipo_evento") or "").strip().upper() == tipo_evento
+    ]
+    matches.sort(key=lambda ev: str(ev.get("data") or ""))
+    return matches
+
+
+def _match_real_event(real_events: list[dict], target_date: pd.Timestamp, used: set[int], tolerance_days: int = 45) -> dict | None:
+    """Trova, tra gli eventi reali non ancora usati, quello con data piu'
+    vicina a target_date entro tolerance_days (le date di pagamento reali
+    possono scostarsi di qualche giorno dal calendario teorico per motivi di
+    valuta/settlement)."""
+    best_idx = None
+    best_delta = None
+    for idx, ev in enumerate(real_events):
+        if idx in used:
+            continue
+        ev_date = _to_ts(ev.get("data"))
+        if ev_date is None:
+            continue
+        delta = abs((ev_date.normalize() - target_date).days)
+        if delta > tolerance_days:
+            continue
+        if best_delta is None or delta < best_delta:
+            best_delta = delta
+            best_idx = idx
+    if best_idx is None:
+        return None
+    used.add(best_idx)
+    return real_events[best_idx]
 
 
 def build_btp_calendar(data: dict) -> pd.DataFrame:
@@ -138,22 +179,40 @@ def build_btp_calendar(data: dict) -> pd.DataFrame:
             }
         )
 
+        # Un rimborso realmente registrato porta con se' le imposte davvero
+        # pagate (persistite da discharge_lot al momento dell'evento) — la
+        # proiezione sintetica sotto non le conosce affatto, quindi va usata
+        # solo finche' l'operatore non registra l'evento vero.
+        real_rimborsi = _real_events_by_type(registro_eventi, ticker, "RIMBORSO A SCADENZA")
+        real_rimborso = real_rimborsi[0] if real_rimborsi else None
+
         importo_rimborso = nominale * quantita
-        rows.append(
-            {
-                "ticker": ticker,
-                "nome": str(strumento.get("nome") or ticker),
-                "importo_label": fmt_eur_label(importo_rimborso),
-                "tipo_riga": "evento",
-                "data_inizio": purchase_date,
-                "data_fine": scadenza,
-                "data": scadenza,
-                "importo": importo_rimborso,
-                "importo_lordo": importo_rimborso,
-                "tipo_evento": "scadenza",
-                "stato_evento": "incassata" if scadenza <= today else "futura",
-            }
-        )
+        scadenza_row: dict = {
+            "ticker": ticker,
+            "nome": str(strumento.get("nome") or ticker),
+            "importo_label": fmt_eur_label(importo_rimborso),
+            "tipo_riga": "evento",
+            "data_inizio": purchase_date,
+            "data_fine": scadenza,
+            "data": scadenza,
+            "importo": importo_rimborso,
+            "importo_lordo": importo_rimborso,
+            "imposte": None,
+            "tipo_evento": "scadenza",
+            "stato_evento": "incassata" if scadenza <= today else "futura",
+        }
+        if real_rimborso is not None:
+            real_lordo = _finite_float(real_rimborso.get("importo_lordo"), importo_rimborso)
+            real_imposte = _finite_float(real_rimborso.get("imposte"), 0.0)
+            real_netto = _finite_float(real_rimborso.get("importo_netto"), real_lordo - real_imposte)
+            scadenza_row.update({
+                "importo_label": fmt_eur_label(real_netto),
+                "importo": real_netto,
+                "importo_lordo": real_lordo,
+                "imposte": real_imposte,
+                "stato_evento": "incassata",
+            })
+        rows.append(scadenza_row)
 
         if cedola_perc <= 0:
             continue
@@ -163,24 +222,40 @@ def build_btp_calendar(data: dict) -> pd.DataFrame:
         cedola_amount_lordo = cedola_per_quota * quantita
         cedola_amount_netto = cedola_amount_lordo * (1.0 - aliquota_cedola / 100.0)
 
+        real_cedole = _real_events_by_type(registro_eventi, ticker, "CEDOLA")
+        used_real_cedole: set[int] = set()
+
         current = prima_cedola
         while current <= scadenza:
             current_day = pd.Timestamp(current).normalize()
-            rows.append(
-                {
-                    "ticker": ticker,
-                    "nome": str(strumento.get("nome") or ticker),
-                    "importo_label": fmt_eur_label(cedola_amount_netto),
-                    "tipo_riga": "evento",
-                    "data_inizio": purchase_date,
-                    "data_fine": scadenza,
-                    "data": current_day,
-                    "importo": cedola_amount_netto,
-                    "importo_lordo": cedola_amount_lordo,
-                    "tipo_evento": "cedola",
-                    "stato_evento": "incassata" if current_day <= today else "futura",
-                }
-            )
+            cedola_row: dict = {
+                "ticker": ticker,
+                "nome": str(strumento.get("nome") or ticker),
+                "importo_label": fmt_eur_label(cedola_amount_netto),
+                "tipo_riga": "evento",
+                "data_inizio": purchase_date,
+                "data_fine": scadenza,
+                "data": current_day,
+                "importo": cedola_amount_netto,
+                "importo_lordo": cedola_amount_lordo,
+                "imposte": None,
+                "tipo_evento": "cedola",
+                "stato_evento": "incassata" if current_day <= today else "futura",
+            }
+            real_cedola = None
+            if current_day <= today:
+                real_cedola = _match_real_event(real_cedole, current_day, used_real_cedole)
+            if real_cedola is not None:
+                real_lordo = _finite_float(real_cedola.get("importo_lordo"), cedola_amount_lordo)
+                real_imposte = _finite_float(real_cedola.get("imposte"), 0.0)
+                real_netto = _finite_float(real_cedola.get("importo_netto"), real_lordo - real_imposte)
+                cedola_row.update({
+                    "importo_label": fmt_eur_label(real_netto),
+                    "importo": real_netto,
+                    "importo_lordo": real_lordo,
+                    "imposte": real_imposte,
+                })
+            rows.append(cedola_row)
             current = current + pd.DateOffset(months=CEDOLA_FREQ_MONTHS.get(cedola_freq, 12))
 
     df = pd.DataFrame(
@@ -194,6 +269,7 @@ def build_btp_calendar(data: dict) -> pd.DataFrame:
             "data",
             "importo",
             "importo_lordo",
+            "imposte",
             "importo_label",
             "tipo_evento",
             "stato_evento",

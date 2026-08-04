@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from core.asset_categories import get_selected_category_codes
+from persistence.storage import macro_cat
 from ui.charts.extrema import add_extrema_markers
 from ui.charts.runtime import finalize_chart
 from ui.charts.settings import apply_settings
@@ -62,16 +63,30 @@ def _uirevision_key(view: str, dates: pd.Series, values: pd.Series) -> str:
     return f"pl-home-v34-{view}-{len(values)}-{last_date}-{round(last_value, 2)}"
 
 
-def build_overview_time_chart(dfh_top, da_frame, view, pl_color, pl_total, chart_bg, dfmt, theme, settings=None, total_return=None):
+def build_overview_time_chart(dfh_top, da_frame, view, pl_color, pl_total, chart_bg, dfmt, theme, settings=None, total_return=None, data=None):
     """Build the selected overview chart shown above the main tabs.
 
     chart_id runtime: overview_pl_portafoglio / overview_pl_categoria
-    chiamato da: ui/pages/overview.py
+    chiamato da: ui/pages/overview.py, ui/pages/home.py
+
+    data (il dict portafoglio completo) e' opzionale ma necessario per
+    "P/L per Categoria": senza, uno strumento chiuso durante lo storico non
+    ha mai una categoria assegnata (non e' in da_frame, che contiene solo le
+    posizioni aperte), e il suo intero contributo PL_<ticker> sparirebbe dal
+    grafico impilato invece di confluire nella sua categoria per i giorni in
+    cui era ancora aperto.
     """
     _ = chart_bg, dfmt
     if view == "P/L per Categoria":
         visible_categories = list(get_selected_category_codes(settings))
-        cat_map = da_frame.set_index("Ticker")["Categoria"].to_dict() if da_frame is not None and (not da_frame.empty) else {}
+        cat_map: dict[str, str] = {}
+        if da_frame is not None and not da_frame.empty:
+            cat_map.update(da_frame.set_index("Ticker")["Categoria"].to_dict())
+        if isinstance(data, dict):
+            for s in data.get("strumenti", []) or []:
+                tk = str(s.get("ticker") or "")
+                if tk:
+                    cat_map.setdefault(tk, macro_cat(str(s.get("tipo") or "")))
         pl_cols = [c for c in dfh_top.columns if c.startswith("PL_")]
         fig = go.Figure()
         for cat in visible_categories:

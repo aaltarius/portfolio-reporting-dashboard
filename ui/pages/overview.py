@@ -156,30 +156,6 @@ def render_overview(container: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 value_color=P_dict["gray"]
             )
         with pk2:
-            kpi_card(
-                "Controvalore<br>Attuale",
-                fmt_eur_it(tv, 2),
-                valore_attuale_sub,
-                accent=P_dict["blue"],
-                value_color=P_dict["blue"]
-            )
-        with pk3:
-            kpi_card(
-                "Proventi<br>Netti",
-                fmt_eur_it(proventi_netti_totali, 2),
-                proventi_sub,
-                accent=P_dict["green"],
-                value_color=P_dict["green"]
-            )
-        with pk4:
-            kpi_card(
-                "Liquidità<br>Disponibile",
-                fmt_eur_it(liquidita_attuale, 2),
-                liquidita_sub,
-                accent=P_dict["blue"],
-                value_color=P_dict["blue"]
-            )
-        with pk5:
             capitale_versato_residuo_sub = (
                 f"<span style='{_formula_style}'>capitale versato − capitale rientrato</span>"
             )
@@ -189,4 +165,28 @@ def render_overview(container: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 "quota di capitale ancora investita nelle posizioni aperte" + capitale_versato_residuo_sub,
                 accent=P_dict["gray"],
                 value_color=P_dict["gray"]
+            )
+        with pk3:
+            kpi_card(
+                "Controvalore<br>Attuale",
+                fmt_eur_it(tv, 2),
+                valore_attuale_sub,
+                accent=P_dict["blue"],
+                value_color=P_dict["blue"]
+            )
+        with pk4:
+            kpi_card(
+                "Proventi<br>Netti",
+                fmt_eur_it(proventi_netti_totali, 2),
+                proventi_sub,
+                accent=P_dict["green"],
+                value_color=P_dict["green"]
+            )
+        with pk5:
+            kpi_card(
+                "Liquidità<br>Disponibile",
+                fmt_eur_it(liquidita_attuale, 2),
+                liquidita_sub,
+                accent=P_dict["blue"],
+                value_color=P_dict["blue"]
             )

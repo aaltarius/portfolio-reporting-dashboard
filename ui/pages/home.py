@@ -40,7 +40,8 @@ from ui.theme import CATEGORY_COLORS, get_theme_context, instrument_color, macro
 from ui.components import (
     macro_legend_html,
     legend_block, kpi_card, build_price_direction_map,
-    render_styled_table, back_to_top, vertical_gap, should_render_section, render_section_title,
+    render_styled_table, render_closed_positions_table,
+    back_to_top, vertical_gap, should_render_section, render_section_title,
 )
 from ui.charts.axes import zero_aligned_ranges
 from ui.charts.overview import build_overview_time_chart
@@ -757,6 +758,12 @@ def _render_home_andamento_clone(
             )
     with profile_step("Portafoglio/UltimaGiornata", "render fig portfolio pl"):
         st.plotly_chart(fig, width="stretch")
+        legend_block(
+            "Profit/Loss Complessivo: vista storica (non le sole posizioni aperte oggi). Variazione "
+            "giornaliera del risultato non realizzato sommata su tutti gli strumenti che hanno avuto un "
+            "movimento quel giorno, inclusi quelli successivamente chiusi o rimborsati per i giorni in cui "
+            "erano ancora aperti."
+        )
     with profile_step("Portafoglio/UltimaGiornata", "load fig portfolio pl category", count=len(dfh_real_market)):
         fig_cat = (
             apply_settings(build_portfolio_pl_category_chart(dfh_real_market, data, theme, settings=settings), 'home_portfolio_pl_category')
@@ -773,6 +780,12 @@ def _render_home_andamento_clone(
     if len(fig_cat.data) > 0:
         with profile_step("Portafoglio/UltimaGiornata", "render fig portfolio pl category"):
             st.plotly_chart(fig_cat, width="stretch")
+            legend_block(
+                "Composizione % del movimento P/L giornaliero per categoria (barre impilate al 100%). Diversa "
+                "dal grafico sopra: qui la lettura è \"quanto pesa ciascuna categoria sul movimento del "
+                "giorno\", non il valore assoluto. Anche questa vista considera qualunque strumento con un "
+                "movimento quel giorno, aperto o chiuso durante il periodo."
+            )
 
 
 def _file_fingerprint(path_value: str) -> dict[str, Any]:
@@ -916,7 +929,10 @@ def _render_portfolio_table_section(
                         "P/L giornaliero per strumento negli ultimi giorni di quotazione disponibili, calcolato come "
                         "variazione del risultato non realizzato (quantità × prezzo − costo) rispetto al giorno "
                         "precedente. La colonna P/L totale è la somma dei giorni mostrati in tabella, non il P/L "
-                        "complessivo dello strumento. Celle vuote: strumento non ancora in portafoglio in quella data."
+                        "complessivo dello strumento. Celle vuote: strumento non ancora in portafoglio in quella data. "
+                        "Il badge \"chiuso\" segnala uno strumento venduto o rimborsato durante la finestra osservata: "
+                        "il suo P/L per i giorni in cui era ancora aperto resta incluso nel totale, la quantità non è "
+                        "più significativa (posizione chiusa)."
                     )
 
         if should_render_section("Portafoglio", "P/L per Categoria", settings):
@@ -929,19 +945,21 @@ def _render_portfolio_table_section(
                     )
                     if chart_loader is None:
                         fig_cat_history = build_overview_time_chart(
-                            dfh_top, da, "P/L per Categoria", None, 0.0, None, None, theme, settings=settings, total_return=None
+                            dfh_top, da, "P/L per Categoria", None, 0.0, None, None, theme, settings=settings, total_return=None, data=data
                         )
                     else:
                         fig_cat_history = chart_loader(
                             "overview_pl_categoria",
                             lambda: build_overview_time_chart(
-                                dfh_top, da, "P/L per Categoria", None, 0.0, None, None, theme, settings=settings, total_return=None
+                                dfh_top, da, "P/L per Categoria", None, 0.0, None, None, theme, settings=settings, total_return=None, data=data
                             ),
                             extra_params={"rows": len(dfh_top), "cats": "|".join(get_selected_category_codes(settings))},
                         )
                     st.plotly_chart(fig_cat_history, width="stretch")
                     legend_block(
-                        "Andamento storico del P/L delle categorie visibili, sovrapposte (area impilata)."
+                        "Vista storica (non le sole posizioni aperte oggi): andamento del P/L delle categorie "
+                        "visibili nel tempo, sovrapposte (area impilata). Include il contributo di strumenti "
+                        "successivamente chiusi o rimborsati per il periodo in cui sono stati detenuti."
                     )
 
         if should_render_section("Portafoglio", "Proventi per strumento", settings):
@@ -955,7 +973,10 @@ def _render_portfolio_table_section(
             )
         with profile_step("Portafoglio", "render sintesi allocazione", count=len(macro_summary) if isinstance(macro_summary, pd.DataFrame) else 0):
             legend_block(
-                "Riepilogo rapido di peso, risultato e concentrazione. Il peso percentuale aiuta a capire quanto ogni area influenzi il portafoglio complessivo, mentre la concentrazione evidenzia se pochi strumenti incidono in modo dominante."
+                "Vista sulle sole posizioni aperte oggi (a differenza del grafico storico sopra): riepilogo "
+                "rapido di peso, risultato e concentrazione. Il peso percentuale aiuta a capire quanto ogni "
+                "area influenzi il portafoglio attuale; gli strumenti chiusi/rimborsati non pesano più su "
+                "questa allocazione. La concentrazione evidenzia se pochi strumenti incidono in modo dominante."
             )
 
             # Use service to build macro summary
@@ -1142,6 +1163,88 @@ def _render_category_analysis(
                 st.plotly_chart(fig, width="stretch")
 
 
+def _render_closed_positions_section(data: dict[str, Any], theme, settings: dict[str, Any] | None) -> None:
+    """Riepilogo delle posizioni chiuse (vendute o rimborsate a scadenza):
+    quante sono, capitale liberato, P/L realizzato, imposte pagate e
+    rendimento % complessivi, dettaglio per strumento con la scomposizione
+    lordo/commissioni/imposte/netto. Stessa fonte dati e stesso rendering
+    della sezione "Strumenti chiusi" di Operazioni — nessuna logica
+    duplicata, vedi core/services/closed_positions.py."""
+    from core.services.closed_positions import build_closed_positions_table, summarize_closed_positions
+
+    df_chiusi = build_closed_positions_table(data)
+    if df_chiusi.empty:
+        return
+
+    with profile_step("Portafoglio", "render posizioni chiuse", count=len(df_chiusi)):
+        render_section_title(
+            "Posizioni Chiuse",
+            comment=(
+                "Strumenti che hanno concluso il loro ciclo di vita nel portafoglio (venduti o rimborsati a "
+                "scadenza). I totali e il dettaglio si riferiscono all'intero periodo di detenzione. La tabella "
+                "sotto scompone il risultato in modo verificabile: P/L Lordo − Commissioni − Imposte = P/L Realizzato."
+            ),
+            icon="portfolio",
+        )
+        summary = summarize_closed_positions(df_chiusi)
+        s1, s2, s3, s4, s5 = st.columns(5)
+        with s1:
+            kpi_card(
+                "Posizioni Chiuse",
+                fmt_num_it(summary["n_posizioni"], 0),
+                "strumenti venduti o rimborsati",
+                accent=theme.color_gray,
+                value_color=theme.color_gray,
+            )
+        with s2:
+            kpi_card(
+                "Capitale<br>Liberato",
+                fmt_eur_it(summary["capitale_liberato_totale"], 2),
+                "quota di costo storico rientrata",
+                accent=theme.color_gray,
+                value_color=theme.color_gray,
+            )
+        with s3:
+            v = summary["pl_realizzato_totale"]
+            kpi_card(
+                "P/L Realizzato<br>Totale",
+                fmt_eur_it(v, 2, signed=True),
+                "gia' al netto di commissioni e imposte",
+                accent=theme.color_green if v >= 0 else theme.color_red,
+                value_color=theme.color_green if v >= 0 else theme.color_red,
+            )
+        with s4:
+            kpi_card(
+                "Imposte<br>Pagate",
+                fmt_eur_it(summary["imposte_totali"], 2),
+                "su cedole, dividendi e plusvalenze",
+                accent=theme.color_orange,
+                value_color=theme.color_orange,
+            )
+        with s5:
+            r = summary["rendimento_pct_medio"]
+            r_color = theme.color_gray if r is None else (theme.color_green if r >= 0 else theme.color_red)
+            kpi_card(
+                "Rendimento %<br>su Capitale Liberato",
+                fmt_pct_it(r, 2, signed=True) if r is not None else "—",
+                "P/L realizzato ÷ capitale liberato",
+                accent=r_color,
+                value_color=r_color,
+            )
+        vertical_gap("sm")
+        render_closed_positions_table(df_chiusi, theme)
+        legend_block(
+            "Capitale Liberato = quota di costo storico (comprensiva delle commissioni pagate all'acquisto) "
+            "rientrata in liquidità con la chiusura. P/L Lordo = ricavo di vendita/rimborso meno il capitale "
+            "liberato. Le Commissioni qui mostrate sono quelle pagate in chiusura (vendita/rimborso), non "
+            "quelle di acquisto: gia' incluse nel Capitale Liberato, non vanno sottratte due volte. "
+            "P/L Realizzato = P/L Lordo − Commissioni − Imposte. Return Totale include anche cedole e "
+            "dividendi netti incassati nel periodo di detenzione. Rendimento % = P/L Realizzato ÷ Capitale "
+            "Liberato. Il dettaglio per strumento, incluso il toggle \"osserva prezzo\", resta consultabile "
+            "anche nella pagina Operazioni."
+        )
+
+
 def _flow_card(title: str, rows: list[tuple[str, str]], total_label: str, total_val: str, total_ok: bool) -> str:
     """HTML card per il flowchart finanziario. rows = [(label, valore_formattato), ...]"""
     tot_color = COLORS["success"] if total_ok else COLORS["danger"]
@@ -1319,5 +1422,8 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         vertical_gap("md")
         if should_render_section("Portafoglio", "Analisi per Macro-Categoria", settings):
             _render_category_analysis(da, getattr(ctx, "category_breakdown", None), settings, chart_loader=_chart_loader)
+            vertical_gap("md")
+        if should_render_section("Portafoglio", "Posizioni Chiuse", settings):
+            _render_closed_positions_section(data, theme, settings)
             vertical_gap("md")
         back_to_top(show_prev=True, show_next=True, nav_key="portafoglio")

@@ -1,5 +1,59 @@
 # Changelog
 
+## 5.0-pre - Coerenza dati posizioni chiuse, KPI Quotazioni e sezione Posizioni Chiuse
+
+- corretto il conteggio KPI "Letture OK/Warning/Errori" in Quotazioni: una
+  lettura stantia di uno strumento chiuso/rimborsato (fetch avvenuto prima
+  della registrazione dell'evento di chiusura) veniva ricontata ad ogni
+  refresh perche' `_refresh_volatile_quotes_runtime()` in `app.py` costruiva
+  l'elenco strumenti da tutti quelli in portafoglio invece che dal solo
+  sottoinsieme attivo (`ctx.chiusi_tickers`); stesso bug corretto nel toast
+  "N/M aggiornati" della sidebar (`ui/sidebar.py`), che usava
+  `len(data["strumenti"])` come denominatore invece del numero di strumenti
+  effettivamente idonei al fetch
+- rafforzato `build_quotes_diagnostic_table` (`core/quotes_runtime.py`):
+  quando riceve un `quotes_refresh_df` gia' costruito (come fa sempre la
+  pagina Quotazioni), `closed_tickers` ora filtra anche le righe gia'
+  presenti, non solo il calcolo delle righe mancanti — uno strumento
+  chiuso/terminale con una lettura ancora nel log non resta piu' visibile
+  indefinitamente
+- corretto il grafico "P/L per Categoria" (`ui/charts/overview.py`,
+  `build_overview_time_chart`): la mappa categoria/ticker veniva costruita
+  solo da `da` (posizioni aperte), quindi uno strumento chiuso perdeva
+  l'intero contributo storico dal grafico impilato per categoria, per tutta
+  la serie storica e non solo dopo la chiusura; aggiunto parametro `data`
+  opzionale con fallback su `macro_cat()` per i ticker assenti da `da`
+- corretta la tabella "Andamento dell'ultima settimana"
+  (`core/services/analysis.py::build_weekly_pl_table`): gli strumenti chiusi
+  durante la finestra di calcolo non comparivano piu' e il loro contributo
+  spariva dal totale settimanale; aggiunta una seconda passata che recupera
+  dalle colonne `PL_<ticker>` gli strumenti chiusi con storico valido,
+  marcati con badge "chiuso" nel renderer (`ui/charts/portfolio_popup.py`)
+- collegato il calendario scadenze BTP (`core/domain/calendar.py`,
+  `ui/charts/calendario_btp.py`) ai dati fiscali reali del registro eventi:
+  le righe "scadenza"/"cedola" ora usano `importo_lordo`/`imposte`/
+  `importo_netto` degli eventi RIMBORSO A SCADENZA/CEDOLA effettivamente
+  registrati (match per data entro 45 giorni) invece di una stima sintetica
+  per aliquota, quando l'evento reale esiste
+- corretta la firma di cache per-categoria (`core/cache_signatures.py`,
+  `build_category_data_signature`): il conteggio operazioni era
+  hardcodato a zero, quindi la cache dei Cruscotti per categoria non si
+  invalidava mai all'aggiunta/rimozione di un evento (es. RIMBORSO); corretta
+  anche la pseudo-categoria "Tutto", che non intercettava mai nessuno
+  strumento
+- aggiunta la sezione "Posizioni Chiuse" in Portafoglio
+  (`ui/pages/home.py`, `ui/components.py`,
+  nuovo `core/services/closed_positions.py`): tabella con capitale liberato,
+  P/L realizzato lordo/netto, commissioni, imposte, rendimento % e
+  cedole/dividendi netti per ogni posizione chiusa, sommando gli eventi di
+  chiusura anche in caso di vendite parziali; rimossa la sezione duplicata
+  precedentemente presente in Operazioni
+- riordinato il KPI "Capitale Versato Residuo" in Overview (spostato da
+  ultima a seconda posizione nella riga KPI)
+- aggiunte etichette esplicite ai grafici P/L di Portafoglio e
+  Cruscotti/Analitica per chiarire l'ambito temporale/perimetro (storico
+  completo incluse posizioni chiuse, vs. sole posizioni aperte oggi)
+
 ## 5.0-pre - Governo cache applicativo centralizzato
 
 - unificata la gestione degli strumenti chiusi (rimborsati a scadenza o

@@ -372,6 +372,80 @@ def render_styled_table(
             st.dataframe(styled, **kwargs)
 
 
+def render_closed_positions_table(df_chiusi: pd.DataFrame, theme: Any) -> None:
+    """Rendering condiviso della tabella "posizioni chiuse": scomposizione
+    completa e verificabile del risultato (Capitale Liberato, P/L Lordo,
+    Commissioni, Imposte, P/L Realizzato netto, Cedole/Div., Rendimento %).
+    Consumato sia da ui/pages/operazioni.py sia da ui/pages/home.py: stile e
+    formattazione definiti una sola volta, i dati arrivano gia' pronti da
+    core/services/closed_positions.py::build_closed_positions_table.
+
+    Colonne "Nome"/"Aperto il"/"Return Totale €" sono nel DataFrame
+    (disponibili a chi consuma build_closed_positions_table direttamente,
+    es. per i KPI di riepilogo) ma non vengono mostrate in tabella per
+    restare entro la larghezza dello schermo senza scroll orizzontale:
+    Nome e' ridondante col Ticker, Return Totale = P/L Realizzato + Cedole/
+    Div. gia' visibili colonna per colonna."""
+    if df_chiusi is None or df_chiusi.empty:
+        return
+
+    display_cols = [
+        "Ticker", "Tipo", "Chiuso il", "Motivo",
+        "Capitale Liberato €", "P/L Lordo €", "Commissioni €", "Imposte €",
+        "P/L Realizzato €", "Cedole/Div. netti €", "Rendimento %", "Osserva prezzo",
+    ]
+    df_display = df_chiusi[[c for c in display_cols if c in df_chiusi.columns]]
+
+    def _style_chiusi(row):
+        styles = []
+        for col in row.index:
+            s = ""
+            if col == "Tipo":
+                s = f"color:{macro_color(str(row['Tipo'] or ''))};font-weight:700;"
+            elif col == "Rendimento %":
+                try:
+                    v = float(row[col])
+                    c = theme.color_green if v >= 0 else theme.color_red
+                    s = f"color:{c};font-weight:700;"
+                except (TypeError, ValueError):
+                    pass
+            elif col in {"P/L Lordo €", "P/L Realizzato €", "Cedole/Div. netti €"}:
+                try:
+                    v = float(row[col])
+                    c = theme.color_green if v >= 0 else theme.color_red
+                    s = f"color:{c};font-weight:600;"
+                except (TypeError, ValueError):
+                    pass
+            styles.append(s)
+        return styles
+
+    styled = df_display.style.format({
+        "Capitale Liberato €": lambda v: fmt_eur_it(v, 0),
+        "P/L Lordo €": lambda v: fmt_eur_it(v, 0, signed=True),
+        "Commissioni €": lambda v: fmt_eur_it(v, 2),
+        "Imposte €": lambda v: fmt_eur_it(v, 2),
+        "P/L Realizzato €": lambda v: fmt_eur_it(v, 0, signed=True),
+        "Cedole/Div. netti €": lambda v: fmt_eur_it(v, 0, signed=True),
+        "Rendimento %": lambda v: fmt_pct_it(v, 1, signed=True),
+    }).apply(_style_chiusi, axis=1)
+
+    column_config = {
+        "Ticker": st.column_config.TextColumn(width="small"),
+        "Tipo": st.column_config.TextColumn(width="small"),
+        "Chiuso il": st.column_config.TextColumn(width="small"),
+        "Motivo": st.column_config.TextColumn(width="small"),
+        "Capitale Liberato €": st.column_config.NumberColumn(width="small"),
+        "P/L Lordo €": st.column_config.NumberColumn(width="small"),
+        "Commissioni €": st.column_config.NumberColumn(width="small"),
+        "Imposte €": st.column_config.NumberColumn(width="small"),
+        "P/L Realizzato €": st.column_config.NumberColumn(width="small"),
+        "Cedole/Div. netti €": st.column_config.NumberColumn(width="small"),
+        "Rendimento %": st.column_config.NumberColumn(width="small"),
+        "Osserva prezzo": st.column_config.TextColumn(width="small"),
+    }
+    render_styled_table(styled, height="content", column_config=column_config)
+
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Navigazione

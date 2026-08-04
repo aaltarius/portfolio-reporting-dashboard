@@ -533,10 +533,11 @@ def _refresh_volatile_quotes_runtime(ctx_obj: SimpleNamespace) -> None:
     correttamente portafoglio_quotes_log.json.
     """
     try:
+        _chiusi = getattr(ctx_obj, "chiusi_tickers", None) or frozenset()
         active_tickers = [
             str(item.get("ticker") or "")
             for item in (getattr(ctx_obj, "data", {}) or {}).get("strumenti", [])
-            if str(item.get("ticker") or "")
+            if str(item.get("ticker") or "") and str(item.get("ticker") or "") not in _chiusi
         ]
     except Exception:
         active_tickers = []

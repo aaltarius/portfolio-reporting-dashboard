@@ -991,9 +991,18 @@ def render_weekly_pl_table(result, da, data):
         row_all_up = n_days == 7 and all(d is not None and d > 0 for d in row["deltas"])
         row_all_down = n_days == 7 and all(d is not None and d < 0 for d in row["deltas"])
         row_bg = "background-color:rgba(30,132,73,0.10);" if row_all_up else ("background-color:rgba(255,75,75,0.10);" if row_all_down else "")
+        # Strumento chiuso (venduto/rimborsato) durante o poco prima della
+        # finestra osservata: il P/L dei giorni in cui era ancora aperto
+        # resta nel totale (vedi build_weekly_pl_table), ma la riga va
+        # segnalata come tale — niente Quote attuale, e' storia, non posizione.
+        chiuso_badge = (
+            '<span style="font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;'
+            'background:rgba(107,114,128,0.16);color:#6b7280;margin-left:4px;">chiuso</span>'
+            if row.get("chiuso") else ""
+        )
         rows_html += (
             f'<tr style="{row_bg}">\n'
-            f'<td data-sort="{tk}">{issuer_badge_html}<a class="tk-link" style="color:{col}" href="#" onclick="showModal(\'{tk}\');return false;">{tk}</a>{comm_badge}</td>\n'
+            f'<td data-sort="{tk}">{issuer_badge_html}<a class="tk-link" style="color:{col}" href="#" onclick="showModal(\'{tk}\');return false;">{tk}</a>{comm_badge}{chiuso_badge}</td>\n'
             f'<td data-sort="{strumento}" style="color:{col};max-width:130px;" title="{strumento}">{strumento[:24]}</td>\n'
             f'<td data-sort="{tipo_code}" style="color:{col};">{tipo_code}</td>\n'
             f'<td class="natura-cell" title="{natura_label}" style="color:{natura_color};width:20px;text-align:center;">{natura_svg}</td>\n'

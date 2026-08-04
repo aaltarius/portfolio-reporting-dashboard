@@ -11,11 +11,10 @@ import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
 
 from persistence.storage import (
-    macro_cat, _safe_float,
+    macro_cat,
     get_registro_eventi,
 )
 from core.domain.calendar import TAX_RATE_GOV_PCT, TAX_RATE_OTHER_PCT
-from core.finance import compute_portfolio_state
 from core.services import (
     get_portfolio_operations,
     get_cash_movements,
@@ -25,7 +24,7 @@ from ui.formatting import (
     fmt_eur_it, fmt_qty_it, fmtds,
 )
 from ui.components import (
-    macro_color, legend_block, back_to_top,
+    macro_color, back_to_top,
     render_styled_table,
     render_section_title, should_render_section,
 )
@@ -44,128 +43,6 @@ def _default_tax_rate_pct(evento: str, ticker: str, info_map: dict[str, dict[str
         return TAX_RATE_OTHER_PCT
     instrument_type = info_map.get(ticker, {}).get("tipo", "")
     return TAX_RATE_GOV_PCT if macro_cat(instrument_type) == "GOV" else TAX_RATE_OTHER_PCT
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-def _build_strumenti_chiusi_section(data: dict[str, Any]) -> None:
-    """Renders closed-instrument summary at the bottom of the Operazioni page."""
-    from core.constants import QTY_ZERO_EPS
-    from core.domain.instrument_status import compute_instrument_statuses
-
-    df_positions = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
-    if df_positions.empty:
-        return
-    df_chiusi_pos = df_positions[df_positions["Quote"] <= QTY_ZERO_EPS]
-    if df_chiusi_pos.empty:
-        return
-    statuses = compute_instrument_statuses(data)
-    chiusi_tickers = {tk for tk, status in statuses.items() if not status.is_open and status.has_any_event}
-    chiusi = [s for s in data.get("strumenti", []) if s.get("ticker") in chiusi_tickers]
-    if not chiusi:
-        return
-
-    render_section_title(
-        "Strumenti chiusi",
-        comment=(
-            "Riepilogo degli strumenti che hanno concluso il loro ciclo di vita nel portafoglio. "
-            "I dati si riferiscono all'intero periodo di detenzione: "
-            "P/L realizzato, cedole e dividendi incassati, imposte pagate, return totale."
-        ),
-        gap_after="xs",
-    )
-
-    # Derive first buy and closing event dates from the event log
-    first_buy: dict[str, str] = {}
-    last_close: dict[str, str] = {}
-    close_motivo: dict[str, str] = {}
-    for ev in get_registro_eventi(data):
-        tk = str(ev.get("ticker", "") or "")
-        tipo_ev = str(ev.get("tipo_evento", "") or "")
-        if tipo_ev == "ACQUISTO" and tk and tk not in first_buy:
-            first_buy[tk] = str(ev.get("data", "") or "")
-        elif tipo_ev in ("VENDITA", "RIMBORSO A SCADENZA") and tk:
-            last_close[tk] = str(ev.get("data", "") or "")
-            close_motivo[tk] = tipo_ev
-
-    theme = get_theme_context()
-    rows = []
-    for s in chiusi:
-        ticker = str(s.get("ticker", "") or "")
-        status = statuses.get(ticker)
-        nome = str(s.get("nome", ticker) or ticker)
-        tipo = macro_cat(str(s.get("tipo", "") or ""))
-        data_apertura = fmtds(first_buy.get(ticker, "")) if first_buy.get(ticker) else "—"
-        _close_date = last_close.get(ticker) or str(s.get("data_chiusura", "") or "")
-        data_chius = fmtds(_close_date) if _close_date else "—"
-        motivo = close_motivo.get(ticker) or str(s.get("motivo_chiusura", "") or "—")
-
-        pos_row = df_positions[df_positions["Ticker"] == ticker] if not df_positions.empty else pd.DataFrame()
-        if pos_row.empty:
-            pl_netto = cedole = dividendi = imposte = 0.0
-        else:
-            r = pos_row.iloc[0]
-            pl_netto = _safe_float(r.get("P/L Realizzato Netto", 0.0))
-            cedole = _safe_float(r.get("Cedole nette", 0.0))
-            dividendi = _safe_float(r.get("Dividendi netti", 0.0))
-            imposte = _safe_float(r.get("Imposte €", 0.0))
-
-        return_totale = pl_netto + cedole + dividendi
-        rows.append({
-            "Ticker": ticker,
-            "Nome": nome,
-            "Tipo": tipo,
-            "Aperto il": data_apertura,
-            "Chiuso il": data_chius,
-            "Motivo": motivo,
-            "P/L Realizzato €": pl_netto,
-            "Cedole/Div. netti €": cedole + dividendi,
-            "Imposte €": imposte,
-            "Return Totale €": return_totale,
-            "Osserva prezzo": "—" if (status and status.is_terminal) else ("Sì" if (status and status.osserva_prezzo) else "No"),
-        })
-
-    if not rows:
-        return
-
-    df_chiusi = pd.DataFrame(rows)
-
-    def _style_chiusi(row):
-        styles = []
-        for col in row.index:
-            s = ""
-            if col == "Tipo":
-                s = f"color:{macro_color(str(row['Tipo'] or ''))};font-weight:700;"
-            elif col == "Return Totale €":
-                try:
-                    v = float(row[col])
-                    c = theme.color_green if v >= 0 else theme.color_red
-                    s = f"color:{c};font-weight:700;"
-                except (TypeError, ValueError):
-                    pass
-            elif col in {"P/L Realizzato €", "Cedole/Div. netti €"}:
-                try:
-                    v = float(row[col])
-                    c = theme.color_green if v >= 0 else theme.color_red
-                    s = f"color:{c};font-weight:600;"
-                except (TypeError, ValueError):
-                    pass
-            styles.append(s)
-        return styles
-
-    styled = df_chiusi.style.format({
-        "P/L Realizzato €": lambda v: fmt_eur_it(v, 2, signed=True),
-        "Cedole/Div. netti €": lambda v: fmt_eur_it(v, 2, signed=True),
-        "Imposte €": lambda v: fmt_eur_it(v, 2),
-        "Return Totale €": lambda v: fmt_eur_it(v, 2, signed=True),
-    }).apply(_style_chiusi, axis=1)
-
-    render_styled_table(styled, height="content")
-    legend_block(
-        "P/L Realizzato = differenza tra prezzo di rimborso/vendita e prezzo medio di carico, al netto di commissioni. "
-        "Return Totale include anche cedole e dividendi netti incassati nel periodo di detenzione. "
-        "Per attivare/disattivare l'osservazione prezzo di uno strumento chiuso (non applicabile ai titoli di Stato "
-        "rimborsati a scadenza, che cessano di esistere) usa la sezione Strumenti del pannello operativo."
-    )
 
 
 def render_operazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
@@ -315,8 +192,5 @@ def render_operazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             render_styled_table(styled_cash, height=520)
         else:
             st.info(t(settings, "operations.cash_empty", "Nessun movimento di liquidità registrato."))
-
-        # ─── Strumenti chiusi ──────────────────────────────────────
-        _build_strumenti_chiusi_section(data)
 
         back_to_top(show_prev=True, show_next=True, nav_key="operazioni")

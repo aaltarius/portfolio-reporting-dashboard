@@ -329,7 +329,6 @@ def render_sidebar(data: dict) -> None:
             ts_full = now_ts.strftime("%Y-%m-%d %H:%M:%S")
             wd = date.today().weekday() < 5
             res = []
-            n = len(data["strumenti"])
             quotes_data_changed = False
             prev_prices = {}
             try:
@@ -363,6 +362,7 @@ def render_sidebar(data: dict) -> None:
             from core.domain.instrument_status import active_fetch_tickers
             _fetch_tickers_sb = active_fetch_tickers(data)
             _strumenti_attivi_sb = [s for s in data["strumenti"] if str(s.get("ticker", "")) in _fetch_tickers_sb]
+            n = len(_strumenti_attivi_sb)
             price_results: dict[str, dict] = {}
             if _strumenti_attivi_sb:
                 max_workers = min(_QUOTE_REFRESH_MAX_WORKERS, max(len(_strumenti_attivi_sb), 1))

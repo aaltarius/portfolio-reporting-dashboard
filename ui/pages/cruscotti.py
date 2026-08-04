@@ -535,12 +535,12 @@ def _render_analitica(bundle: Any) -> None:
     with profile_step("Cruscotti/AnaliticaRender", "render portfolio value chart"):
         render_section_title("Valore Patrimoniale nel Tempo", icon="portfolio")
         st.plotly_chart(bundle.portfolio_value_figure, width="stretch")
-        legend_block("Vista patrimoniale: confronta valore di mercato, costo contabile e capitale versato. Versamenti e prelievi incidono sulle curve monetarie.", variant="bottom")
+        legend_block("Vista patrimoniale storica: confronta valore di mercato, costo contabile e capitale versato lungo tutto il periodo di detenzione. Include il contributo di strumenti chiusi/rimborsati per il tempo in cui sono stati in portafoglio; il ricavato di una vendita o di un rimborso confluisce in liquidità, quindi il totale resta continuo.", variant="bottom")
 
     with profile_step("Cruscotti/AnaliticaRender", "render PL decomposition chart"):
         render_section_title("Scomposizione P/L per Strumento", icon="analysis")
         st.plotly_chart(bundle.pl_decomposition_figure, width="stretch")
-        legend_block("Rappresentazione cumulata che mostra come ciascuno strumento contribuisce al risultato totale di portafoglio nel tempo.", variant="bottom")
+        legend_block("Vista storica (non le sole posizioni aperte oggi): rappresentazione cumulata che mostra come ciascuno strumento, anche se successivamente chiuso o rimborsato, ha contribuito al risultato totale di portafoglio nel tempo.", variant="bottom")
 
     with profile_step("Cruscotti/AnaliticaRender", "render percentage return chart"):
         render_section_title("Rendimento % sul Capitale nel Tempo", icon="analysis")
@@ -552,7 +552,7 @@ def _render_analitica(bundle: Any) -> None:
         render_section_title("Waterfall Attribution della Performance", icon="analysis")
         st.markdown("<div title=\"Mostra il contributo al P/L per strumento sul risultato corrente del portafoglio.\" style=\"margin-top:-0.45rem; margin-bottom:0.35rem; font-size:0.82rem; opacity:0.78;\">ⓘ</div>", unsafe_allow_html=True)
         st.plotly_chart(bundle.performance_attribution_figure, width="stretch")
-        legend_block("Waterfall che mostra il contributo di ogni strumento al P/L totale, dal maggiore al minore.", variant="bottom")
+        legend_block("Vista sulle sole posizioni aperte oggi (a differenza del grafico storico sopra): waterfall che mostra il contributo di ogni strumento attualmente in portafoglio al P/L totale corrente, dal maggiore al minore. Non include il P/L gia' realizzato su strumenti chiusi/rimborsati.", variant="bottom")
 
     # Metriche avanzate e Tracciabilità Reporting (spostate da Summary)
     summary_payload = bundle.summary_payload or {}
@@ -801,7 +801,8 @@ def _render_analitica(bundle: Any) -> None:
         runtime_settings = st.session_state.get("_settings_runtime", {})
         objective = runtime_settings.get("portfolio_objective", {"core": 0.55, "difensivo": 0.25, "satellite": 0.20})
         target_comment = (
-            f"Confronto tra composizione attuale e obiettivo di portafoglio: "
+            f"Vista sulle sole posizioni aperte oggi: confronto tra composizione attuale e obiettivo di portafoglio "
+            f"(gli strumenti chiusi/rimborsati non pesano piu' su questa allocazione). "
             f"Core {fmt_pct_it(objective.get('core', 0.0), 0)} / Difensivo {fmt_pct_it(objective.get('difensivo', 0.0), 0)} / "
             f"Satellite {fmt_pct_it(objective.get('satellite', 0.0), 0)}."
         )

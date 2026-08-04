@@ -105,6 +105,15 @@ def build_quotes_diagnostic_table(
         qdf = build_quotes_refresh_df(quotes_log, active_tickers)
     else:
         qdf = quotes_refresh_df.copy()
+        # closed_tickers e' la fonte autorevole per "chi va mostrato", non solo
+        # per calcolare le righe mancanti sotto: un quotes_refresh_df passato
+        # dall'esterno (es. ctx.quotes_refresh_df, costruito altrove) potrebbe
+        # non essere gia' filtrato — senza questo, uno strumento chiuso/
+        # terminale con una lettura ancora presente nel log (es. un fetch
+        # avvenuto prima che l'evento di chiusura fosse registrato) resterebbe
+        # visibile indefinitamente, anche dopo l'esclusione dal fetch attivo.
+        if closed and "Ticker" in qdf.columns:
+            qdf = qdf[~qdf["Ticker"].astype(str).str.strip().isin(closed)].copy()
 
     present_tickers = {
         str(tk or "").strip()

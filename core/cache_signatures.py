@@ -21,7 +21,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from persistence.storage import macro_cat
+from persistence.storage import macro_cat, get_registro_eventi
 
 logger = logging.getLogger("portafoglio.core.cache_signatures")
 
@@ -345,10 +345,16 @@ def build_category_data_signature(
     if not isinstance(strumenti, list):
         strumenti = []
 
-    cat_strumenti = [
-        s for s in strumenti
-        if isinstance(s, dict) and macro_cat(s.get("tipo", "")) == category
-    ]
+    # "Tutto" e' uno pseudo-categoria che aggrega ogni strumento: macro_cat()
+    # non restituisce mai letteralmente "Tutto", quindi il confronto diretto
+    # lascerebbe cat_strumenti sempre vuoto per questo caso.
+    if category == "Tutto":
+        cat_strumenti = [s for s in strumenti if isinstance(s, dict)]
+    else:
+        cat_strumenti = [
+            s for s in strumenti
+            if isinstance(s, dict) and macro_cat(s.get("tipo", "")) == category
+        ]
 
     storico = payload.get("storico_prezzi", {})
     if not isinstance(storico, dict):
@@ -364,16 +370,27 @@ def build_category_data_signature(
         for s in cat_strumenti
         if isinstance(s, dict) and str(s.get("ticker", "")).strip()
     })
+    cat_ticker_set = set(cat_tickers)
+    # Il registro eventi e' l'unica fonte di verita' per stato aperto/chiuso
+    # (vedi core/domain/instrument_status.py): senza questo, un rimborso o
+    # una vendita totale non cambia ne' strumenti[] ne' storico_prezzi, e la
+    # firma resterebbe identica prima e dopo — i grafici di categoria
+    # continuerebbero a mostrare la composizione pre-evento indefinitamente.
+    cat_eventi = [
+        ev for ev in get_registro_eventi(payload)
+        if str(ev.get("ticker") or "").strip() in cat_ticker_set
+    ]
     signature_payload: dict[str, Any] = {
         "category": category,
         "instruments": _normalized_instrument_signature_payload(cat_strumenti),
         "history_span_by_ticker": history_span_by_ticker(storico, cat_tickers),
         "latest_history_point_by_ticker": latest_history_point_by_ticker(storico, cat_tickers),
+        "category_events": _normalized_operation_signature_payload(cat_eventi),
     }
     cat_hash = _safe_hash(signature_payload)
     return data_signature(
         n_instruments=len(cat_strumenti),
-        n_operations=0,
+        n_operations=len(cat_eventi),
         last_quotes_update=last_quotes_update,
         portfolio_data_hash=cat_hash,
         app_version=str(app_version),

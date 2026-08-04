@@ -67,11 +67,20 @@ def build_weekly_pl_table(
     """Per-instrument daily P/L deltas for the last `max_days` real trading days.
 
     Same PL_<ticker> delta methodology as build_pl_delta_series, broken out
-    per instrument (rows of `da`) instead of summed across the portfolio.
-    Drops a trailing synthetic "today" row (added by build_portfolio_history_df
-    on non-trading days) that isn't backed by a real storico_prezzi date.
-    """
-    if da is None or da.empty or dfh_top is None or len(dfh_top) < 2:
+    per instrument instead of summed across the portfolio. Drops a trailing
+    synthetic "today" row (added by build_portfolio_history_df on non-trading
+    days) that isn't backed by a real storico_prezzi date.
+
+    `da` (posizioni APERTE oggi) da' nome/tipo/quote per la maggior parte
+    delle righe, ma NON basta da sola per i totali: uno strumento chiuso
+    (venduto o rimborsato) DENTRO la finestra osservata ha comunque generato
+    P/L nei giorni in cui era ancora aperto, e quel contributo deve restare
+    nel totale — altrimenti "Andamento dell'ultima settimana" mostrerebbe un
+    totale che non include un movimento reale avvenuto in quei giorni. Per
+    questo si aggiunge una riga anche per ogni ticker con una colonna
+    PL_<ticker> valida nella finestra ma assente da `da` (chiuso durante o
+    poco prima della finestra), pescando nome/tipo da data["strumenti"]."""
+    if da is None or dfh_top is None or len(dfh_top) < 2:
         return None
 
     window_source = dfh_top
@@ -98,12 +107,7 @@ def build_weekly_pl_table(
         for i in range(n_days)
     ]
 
-    rows: list[dict[str, Any]] = []
-    day_totals = [0.0] * n_days
-    grand_total = 0.0
-    for _, pos in da.iterrows():
-        tk = str(pos.get("Ticker", ""))
-        col = f"PL_{tk}"
+    def _compute_deltas(col: str) -> tuple[list[float | None], float]:
         deltas: list[float | None] = []
         totale = 0.0
         for i in range(n_days):
@@ -116,18 +120,59 @@ def build_weekly_pl_table(
                 delta = float(curr_v) - float(prev_v)
                 deltas.append(delta)
                 totale += delta
-                day_totals[i] += delta
             else:
                 deltas.append(None)
+        return deltas, totale
+
+    rows: list[dict[str, Any]] = []
+    day_totals = [0.0] * n_days
+    grand_total = 0.0
+    open_tickers: set[str] = set()
+    if da is not None and not da.empty:
+        for _, pos in da.iterrows():
+            tk = str(pos.get("Ticker", ""))
+            open_tickers.add(tk)
+            deltas, totale = _compute_deltas(f"PL_{tk}")
+            for i, delta in enumerate(deltas):
+                if delta is not None:
+                    day_totals[i] += delta
+            grand_total += totale
+            rows.append({
+                "ticker": tk,
+                "strumento": str(pos.get("Strumento", tk)),
+                "tipo": str(pos.get("Tipo", "")),
+                "quote": float(pos.get("Quote", 0) or 0),
+                "chiuso": False,
+                "deltas": deltas,
+                "totale": totale,
+            })
+
+    info_map = {str(s.get("ticker") or ""): s for s in (data or {}).get("strumenti", []) or []}
+    pl_cols_in_window = [c for c in window.columns if c.startswith("PL_")]
+    for col in pl_cols_in_window:
+        tk = col[len("PL_"):]
+        if not tk or tk in open_tickers:
+            continue
+        deltas, totale = _compute_deltas(col)
+        if not any(d is not None for d in deltas):
+            continue
+        strumento_info = info_map.get(tk, {})
+        for i, delta in enumerate(deltas):
+            if delta is not None:
+                day_totals[i] += delta
         grand_total += totale
         rows.append({
             "ticker": tk,
-            "strumento": str(pos.get("Strumento", tk)),
-            "tipo": str(pos.get("Tipo", "")),
-            "quote": float(pos.get("Quote", 0) or 0),
+            "strumento": str(strumento_info.get("nome") or tk),
+            "tipo": str(strumento_info.get("tipo") or ""),
+            "quote": 0.0,
+            "chiuso": True,
             "deltas": deltas,
             "totale": totale,
         })
+
+    if not rows:
+        return None
 
     return {
         "days": days,
