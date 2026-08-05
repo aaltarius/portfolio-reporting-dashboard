@@ -12,7 +12,7 @@ negoziabili, architettura, strategia cache) e a `TODO_5.0.md`.
 1. Leggi `STATO_OPERATIVO_5.0_PRE.md` — stato reale, cosa e' stato fatto,
    cosa resta, cosa non fare.
 2. Se tocchi layout/navigazione/cache/render, leggi anche
-   `docs/archivio_5_0/REGOLE_NON_NEGOZIABILI.md`: la regola madre e' che
+   `docs/archivio_5_0/01_REGOLE_NON_NEGOZIABILI.md`: la regola madre e' che
    Sestante prepara tutto prima dell'uso, mai render o rerun a sorpresa
    durante la navigazione.
 3. Se tocchi formule finanziarie, cerca prima se esistono gia' in `core/`:
@@ -49,7 +49,7 @@ negoziabili, architettura, strategia cache) e a `TODO_5.0.md`.
   `docs/superpowers/specs/` e `docs/superpowers/plans/`; lo storico di
   esecuzione in `.superpowers/sdd/<piano>/`.
 
-## Cosa non fare (ribadito da REGOLE_NON_NEGOZIABILI.md)
+## Cosa non fare (ribadito da 01_REGOLE_NON_NEGOZIABILI.md)
 
 - Niente radio/selectbox/selector per sostituire le tab principali gia'
   pronte.

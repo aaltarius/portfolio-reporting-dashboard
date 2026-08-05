@@ -3,38 +3,62 @@
 Questo e' il documento unico da leggere per riprendere il lavoro sulla copia
 `5.0-pre` senza perdere il filo.
 
-Documenti visibili in root:
+Sequenza di lettura, in ordine (il numero nel nome del file e' l'ordine
+consigliato, leggibile direttamente dalla cartella senza aprire nulla):
 
-- `README.md`: avvio rapido e orientamento repository.
-- `CHANGELOG.md`: diario storico delle modifiche.
-- `STATO_OPERATIVO_5.0_PRE.md`: questo documento, fonte operativa principale.
+Root:
 
-Documenti separati dal percorso ordinario:
+1. `README.md`: avvio rapido e orientamento repository.
+2. `CLAUDE.md`: introduzione rapida per un agente AI, rimanda qui.
+3. `STATO_OPERATIVO_5.0_PRE.md`: questo documento, fonte operativa
+   principale — se un altro documento e' in contrasto, vince questo.
+4. `CHANGELOG.md`: diario storico cronologico delle modifiche gia' fatte.
+5. `TODO_5.0.md`: elenco attuale delle cose aperte, deve rispecchiare la
+   sezione 5 di questo documento.
+
+Governance vincolante, `docs/archivio_5_0/` (da leggere prima di ogni
+modifica a rendering, navigazione, cache, grafici, formule o UI Streamlit):
+
+- `01_REGOLE_NON_NEGOZIABILI.md`: vincoli da non violare.
+- `02_ARCHITETTURA_5.0.md`: principi modulari e finanziari.
+- `03_PROTOCOLLO_PERFORMANCE_5.0.md`: metodo per interventi su
+  tempi/cache/render.
+
+Cache, dettaglio tecnico in ordine cronologico/di dipendenza,
+`docs/archivio_5_0/` (restano consultabili, ma non sono la fonte primaria se
+in contrasto con questo file):
+
+- `04_CACHE_STRATEGY_5.0.md`: policy e livelli L0-L4, definizione tecnica
+  ancora valida.
+- `05_PIANO_UNICO_CACHE_RENDER_5.0.md`: piano operativo originale a fasi; la
+  sua tabella di stato interna e' superata dai due punti seguenti.
+- `06_CACHE_INVENTORY_5.0.md`: fotografia iniziale delle cache censite,
+  baseline storica.
+- `07_CHIUSURA_FASE_CACHE_5.0.md`: chiusura del solo pilota
+  registry/page-cache L3, non della cache unica applicativa.
+- `08_CACHE_UNICA_5.0_MIGRAZIONE_DEFINITIVA.md`: piano corretto e vincolante
+  per portare tutte le cache residue sotto un unico contratto.
+- `09_RIPRESA_ORCHESTRAZIONE_CACHE_2026-08-03.md`: punto di ripresa
+  operativo della fase cache sospesa, con stato reale, completato, residui e
+  primo comando da eseguire alla ripartenza. Leggere questo per sapere
+  esattamente da dove riprendere.
+- `10_RENDER_BASELINE_2026-08-02.md`: baseline performance storica, log
+  misure non un piano.
+- `old/`: documenti di questo archivio interamente superati (proposta
+  tentata e ritirata), non piu' citati da questa mappa; conservati solo per
+  ricostruire perche' una strada e' stata scartata.
+
+Refactor gia' eseguiti, con spec/piano tracciati, `docs/superpowers/`:
+
+- `specs/2026-08-03-strumenti-chiusi-design.md` e
+  `plans/2026-08-03-strumenti-chiusi.md`: spec e piano a 23 task del refactor
+  "gestione unificata strumenti chiusi", gia' completato ed eseguito.
+
+Fuori dal percorso ordinario, non prioritario:
 
 - `docs/progetti/ROADMAP_AI_FINANZA_LIBRO.md`: progetto separato ispirato al
   libro, non prioritario nel percorso ordinario.
 - `docs/fonti/PYTHON-per-l'AI-e-la-Finanza.pdf`: fonte PDF del progetto libro.
-
-Gli altri documenti di piano/analisi sono stati archiviati in
-`docs/archivio_5_0/`. Restano consultabili, ma non sono la fonte primaria se in
-contrasto con questo file:
-
-- `docs/archivio_5_0/REGOLE_NON_NEGOZIABILI.md`: vincoli da non violare.
-- `docs/archivio_5_0/ARCHITETTURA_5.0.md`: principi modulari e finanziari.
-- `docs/archivio_5_0/PROTOCOLLO_PERFORMANCE_5.0.md`: metodo per interventi su
-  tempi/cache/render.
-- `docs/archivio_5_0/CACHE_STRATEGY_5.0.md`,
-  `docs/archivio_5_0/PIANO_UNICO_CACHE_RENDER_5.0.md`,
-  `docs/archivio_5_0/CACHE_INVENTORY_5.0.md`: dettagli tecnici cache.
-- `docs/archivio_5_0/CHIUSURA_FASE_CACHE_5.0.md`: chiusura del solo pilota
-  registry/page-cache L3, non della cache unica applicativa.
-- `docs/archivio_5_0/CACHE_UNICA_5.0_MIGRAZIONE_DEFINITIVA.md`: piano corretto
-  e vincolante per portare tutte le cache residue sotto un unico contratto.
-- `docs/archivio_5_0/RIPRESA_ORCHESTRAZIONE_CACHE_2026-08-03.md`: punto di
-  ripresa operativo della fase cache sospesa, con stato reale, completato,
-  residui e primo comando da eseguire alla ripartenza.
-- `docs/archivio_5_0/RENDER_BASELINE_2026-08-02.md`: baseline performance
-  storica.
 
 File dati vivi:
 
@@ -90,17 +114,17 @@ riguardano solo `5.0-pre`.
 
 ### Governo e architettura
 
-- Creati i documenti guida `REGOLE_NON_NEGOZIABILI.md` e
-  `ARCHITETTURA_5.0.md`.
+- Creati i documenti guida `01_REGOLE_NON_NEGOZIABILI.md` e
+  `02_ARCHITETTURA_5.0.md`.
 - Riordinata la documentazione: root ridotta ai documenti vivi, piani e analisi
   storiche spostati in `docs/archivio_5_0/`.
 - Ripulita `data/portfolio`: lasciati solo i file operativi, backup manuali e
   snapshot storici spostati in `data/forensic/portfolio/`.
 - Fissata la centralita' di modularita', tema unico, formule finanziarie nel
   core, impostazioni grafici centralizzate e dataset condivisi prima della UI.
-- Creati `PROTOCOLLO_PERFORMANCE_5.0.md`,
-  `PIANO_UNICO_CACHE_RENDER_5.0.md`, `CACHE_STRATEGY_5.0.md` e
-  `CACHE_INVENTORY_5.0.md`.
+- Creati `03_PROTOCOLLO_PERFORMANCE_5.0.md`,
+  `05_PIANO_UNICO_CACHE_RENDER_5.0.md`, `04_CACHE_STRATEGY_5.0.md` e
+  `06_CACHE_INVENTORY_5.0.md`.
 - Aggiunto `tools/perf_render_log_analyzer.py` come base per leggere i render
   log in modo ripetibile.
 
