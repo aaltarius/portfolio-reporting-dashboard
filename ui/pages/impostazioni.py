@@ -482,14 +482,12 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 inflation_rate = c79.number_input("Inflazione annua %", min_value=0.0, max_value=50.0, value=float(calculations_settings.get("inflation_rate", 0.0)) * 100.0, step=0.25, format="%.2f")
                 st.markdown(f"**{t(settings, 'settings.subsection.alerts', 'Avvisi e soglie')}**")
                 legend_block("Configura gli alert automatici più immediati: concentrazione eccessiva, perdite oltre soglia e squilibri tra rischio e peso. In questo primo blocco gli avvisi vengono mostrati nella parte alta della dashboard.")
-                al1, al2, al3 = st.columns(3)
+                al1, al2 = st.columns(2)
                 alerts_enabled = al1.checkbox("Alert attivi", value=bool(alerts_settings.get("enabled", False)))
-                alerts_show_overview = al2.checkbox("Mostra in dashboard", value=bool(alerts_settings.get("show_overview", True)))
-                alerts_risk_weight = al3.checkbox("Monitora rischio/peso", value=bool(alerts_settings.get("risk_weight_monitoring", True)))
-                al4, al5, al6 = st.columns(3)
+                alerts_risk_weight = al2.checkbox("Monitora rischio/peso", value=bool(alerts_settings.get("risk_weight_monitoring", True)))
+                al4, al5 = st.columns(2)
                 loss_threshold_pct = al4.number_input("Perdita soglia %", min_value=0.0, max_value=100.0, value=float(alerts_settings.get("loss_threshold_pct") or 0.0), step=1.0, format="%.1f", help="0 = disattivato")
                 concentration_threshold_pct = al5.number_input("Concentrazione soglia %", min_value=0.0, max_value=100.0, value=float(alerts_settings.get("concentration_threshold_pct") or 0.0), step=1.0, format="%.1f", help="0 = disattivato")
-                alerts_max_items = al6.number_input("Alert visibili", min_value=1, max_value=12, value=int(alerts_settings.get("max_items", 3)), step=1)
                 al7, al8 = st.columns(2)
                 drawdown_threshold_pct = al7.number_input("Drawdown soglia %", min_value=0.0, max_value=100.0, value=float(alerts_settings.get("drawdown_threshold_pct") or 0.0), step=1.0, format="%.1f", help="0 = disattivato")
                 volatility_threshold_pct = al8.number_input("Volatilità soglia %", min_value=0.0, max_value=100.0, value=float(alerts_settings.get("volatility_threshold_pct") or 0.0), step=1.0, format="%.1f", help="0 = disattivato")
@@ -665,7 +663,6 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     float(concentration_threshold_pct),
                     float(drawdown_threshold_pct),
                     float(volatility_threshold_pct),
-                    int(alerts_max_items),
                 )
 
                 settings["portfolio_id"] = str(portfolio_code).strip()
@@ -697,13 +694,11 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 settings["alerts"] = {
                     **settings.get("alerts", {}),
                     "enabled": bool(alerts_enabled),
-                    "show_overview": bool(alerts_show_overview),
                     "risk_weight_monitoring": bool(alerts_risk_weight),
                     "loss_threshold_pct": float(loss_threshold_pct) if float(loss_threshold_pct) > 0 else None,
                     "concentration_threshold_pct": float(concentration_threshold_pct) if float(concentration_threshold_pct) > 0 else None,
                     "drawdown_threshold_pct": float(drawdown_threshold_pct) if float(drawdown_threshold_pct) > 0 else None,
                     "volatility_threshold_pct": float(volatility_threshold_pct) if float(volatility_threshold_pct) > 0 else None,
-                    "max_items": int(alerts_max_items),
                 }
                 settings["ui_preferences"] = {
                     **settings.get("ui_preferences", {}),

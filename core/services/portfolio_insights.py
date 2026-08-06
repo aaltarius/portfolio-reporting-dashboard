@@ -614,6 +614,23 @@ def _build_maturity_insights(
     return insights
 
 
+def build_maturity_only_insights(
+    maturity_alerts: list[dict[str, Any]] | None,
+    data: dict[str, Any] | None,
+    da: pd.DataFrame | None,
+) -> list[PortfolioInsight]:
+    """Scadenze GOV non rimborsate, calcolate sempre.
+
+    A differenza del resto del Radar, questo segnale non dipende dal
+    toggle "mostra insight" ne' dal calcolo di direction_map/daily_report:
+    e' un problema di integrita' dati (rimborso non registrato), non una
+    preferenza di visualizzazione, quindi deve restare visibile anche
+    quando l'utente disattiva il Radar decisionale.
+    """
+    metadata = _instrument_metadata(data or {}, da)
+    return _build_maturity_insights(maturity_alerts, metadata)
+
+
 def build_portfolio_insights(
     da: pd.DataFrame,
     dfh: pd.DataFrame | None,
@@ -634,6 +651,11 @@ def build_portfolio_insights(
     metadata = _instrument_metadata(data, da)
     resolved_sator_decisions = _resolve_sator_decisions(sator_decisions)
     sator_suggestions = _latest_sator_suggestions_by_bucket(resolved_sator_decisions)
+    alert_insights = _build_alert_insights(portfolio_alerts, metadata)
+    maturity_insights = _build_maturity_insights(maturity_alerts, metadata)
+    alert_concentration_tickers = {
+        item.ticker for item in alert_insights if item.id.startswith("alert-concentration-")
+    }
     insights: list[PortfolioInsight] = []
     insights.extend(
         _build_target_gap_insights(
@@ -646,7 +668,7 @@ def build_portfolio_insights(
         )
     )
     concentration = _build_concentration_insight(da, settings, metadata)
-    if concentration is not None:
+    if concentration is not None and concentration.ticker not in alert_concentration_tickers:
         _add_unique(insights, concentration)
     for item in _build_daily_insights(da, direction_map, daily_report, metadata):
         _add_unique(insights, item)
@@ -663,8 +685,6 @@ def build_portfolio_insights(
         insights,
         max_items=max(1, int(max_items or 9)),
     )
-    alert_insights = _build_alert_insights(portfolio_alerts, metadata)
-    maturity_insights = _build_maturity_insights(maturity_alerts, metadata)
     return alert_insights + maturity_insights + ordered
 
 

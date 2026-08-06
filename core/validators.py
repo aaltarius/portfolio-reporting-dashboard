@@ -91,14 +91,12 @@ def validate_alert_thresholds(
     concentration_threshold_pct: float,
     drawdown_threshold_pct: float,
     volatility_threshold_pct: float,
-    max_items: int,
 ) -> None:
     """Valida le soglie degli alert di portafoglio."""
     validate_number_input(loss_threshold_pct, 0.0, 100.0)
     validate_number_input(concentration_threshold_pct, 0.0, 100.0)
     validate_number_input(drawdown_threshold_pct, 0.0, 100.0)
     validate_number_input(volatility_threshold_pct, 0.0, 100.0)
-    validate_number_input(float(max_items), 1.0, 12.0)
 
 
 def validate_quote_import(quotes: Any) -> None:

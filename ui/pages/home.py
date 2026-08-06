@@ -31,7 +31,7 @@ from core.services import (
     build_pl_delta_series,
     build_weekly_pl_table,
 )
-from core.services.portfolio_insights import build_portfolio_insights
+from core.services.portfolio_insights import build_maturity_only_insights, build_portfolio_insights
 from persistence.storage import SATOR_DECISIONS_FILE, macro_cat
 from core.finance import build_proventi_summary
 from ui.formatting import fmt_eur_it, fmt_pct_it, fmt_num_it, fmtds
@@ -833,6 +833,7 @@ def _build_positions_table_payload(
     direction_map: dict[str, Any] = {}
     daily_report: dict[str, Any] | None = None
     insights = []
+    maturity_insights = build_maturity_only_insights(maturity_alerts, data, table_df)
     if not table_df.empty:
         with profile_step("Portafoglio", "build positions table direction map", count=len(table_df)):
             direction_map = _build_portfolio_table_direction_map(table_df, dfh_top, data)
@@ -854,6 +855,7 @@ def _build_positions_table_payload(
         "direction_map": direction_map,
         "daily_report": daily_report,
         "insights": insights,
+        "maturity_insights": maturity_insights,
     }
 
 
@@ -1382,7 +1384,13 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                         "settings": _portfolio_table_settings_payload(settings),
                         "sator_decisions": _file_fingerprint(SATOR_DECISIONS_FILE),
                         "portfolio_alerts": [
-                            (a.get("kind"), a.get("ticker"), a.get("severity"), round(float(a.get("value") or 0.0), 4))
+                            (
+                                a.get("kind"),
+                                a.get("ticker"),
+                                a.get("severity"),
+                                round(_finite_float_or_none(a.get("value")) or 0.0, 4),
+                                round(_finite_float_or_none(a.get("threshold")) or 0.0, 4),
+                            )
                             for a in _ctx_portfolio_alerts
                         ],
                         "maturity_alerts": [
@@ -1411,9 +1419,13 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 _portfolio_direction_map = _positions_payload.get("direction_map") or {}
                 _portfolio_daily_report = _positions_payload.get("daily_report")
                 _portfolio_insights = list(_positions_payload.get("insights") or [])
+                _portfolio_maturity_insights = list(_positions_payload.get("maturity_insights") or [])
                 if get_effective_portfolio_insights_enabled(settings) and _portfolio_insights:
                     with profile_step("Portafoglio", "render portfolio insights", count=len(_portfolio_insights)):
                         render_portfolio_insights(_portfolio_insights, theme)
+                elif _portfolio_maturity_insights:
+                    with profile_step("Portafoglio", "render maturity-only insights", count=len(_portfolio_maturity_insights)):
+                        render_portfolio_insights(_portfolio_maturity_insights, theme)
             render_section_title(
                 "Controvalore del Portafoglio",
                 subtitle=suffix,

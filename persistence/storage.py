@@ -317,8 +317,6 @@ def default_settings():
         },
         "alerts": {
             "enabled": False,
-            "show_overview": True,
-            "max_items": 3,
             "risk_weight_monitoring": True,
             "loss_threshold_pct": None,
             "concentration_threshold_pct": None,
@@ -617,9 +615,7 @@ def _normalize_settings_payload(settings):
         _prefer_nested_value("reporting_export", "include_benchmark", "ui_summary_include_benchmark", reporting.get("include_benchmark", True))
     )
     alerts["enabled"] = bool(alerts.get("enabled", False))
-    alerts["show_overview"] = bool(alerts.get("show_overview", True))
     alerts["risk_weight_monitoring"] = bool(alerts.get("risk_weight_monitoring", True))
-    alerts["max_items"] = int(alerts.get("max_items", defaults["alerts"]["max_items"]) or defaults["alerts"]["max_items"])
     alerts["loss_threshold_pct"] = (
         float(alerts["loss_threshold_pct"]) if alerts.get("loss_threshold_pct") not in (None, "", False) else None
     )

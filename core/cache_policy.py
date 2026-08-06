@@ -246,6 +246,8 @@ register_cache_artifact(
             "latest_quotes",
             "portfolio_table_settings",
             "sator_decisions_file",
+            "portfolio_alerts",
+            "maturity_alerts",
         ),
         clear_group="portafoglio",
         stale_policy="rebuild_on_position_or_price_change",
