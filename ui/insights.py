@@ -20,6 +20,8 @@ _AREA_META: dict[str, tuple[str, str]] = {
     "Cambio segno": ("var(--ptf-danger)", "risk"),
     "Qualita' dati": ("#0f766e", "data"),
     "SATOR": ("#0284c7", "analysis"),
+    "Rischio": ("var(--ptf-danger)", "risk"),
+    "Scadenze": ("var(--ptf-danger)", "operations"),
     "Stato": ("var(--ptf-primary)", "default"),
 }
 _SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2, "positive": 3}

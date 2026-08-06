@@ -810,6 +810,10 @@ def _portfolio_table_settings_payload(settings: dict[str, Any] | None) -> dict[s
         "portfolio_objective": settings.get("portfolio_objective", {}),
         "sator": settings.get("sator", {}),
         "concentration_threshold_pct": alerts.get("concentration_threshold_pct"),
+        "loss_threshold_pct": alerts.get("loss_threshold_pct"),
+        "drawdown_threshold_pct": alerts.get("drawdown_threshold_pct"),
+        "volatility_threshold_pct": alerts.get("volatility_threshold_pct"),
+        "alerts_enabled": bool(alerts.get("enabled", False)),
     }
 
 
@@ -820,6 +824,8 @@ def _build_positions_table_payload(
     settings: dict[str, Any] | None,
     *,
     include_insights: bool,
+    portfolio_alerts: list[dict[str, Any]] | None = None,
+    maturity_alerts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Payload cacheabile della sezione Controvalore del Portafoglio."""
 
@@ -840,6 +846,8 @@ def _build_positions_table_payload(
                     settings or {},
                     direction_map=direction_map,
                     daily_report=daily_report,
+                    portfolio_alerts=portfolio_alerts,
+                    maturity_alerts=maturity_alerts,
                 )
     return {
         "da": table_df,
@@ -1362,6 +1370,8 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             _portfolio_daily_report: dict[str, Any] | None = None
             _portfolio_insights = []
             if not da.empty:
+                _ctx_portfolio_alerts = getattr(ctx, "portfolio_alerts", None) or []
+                _ctx_maturity_alerts = getattr(ctx, "maturity_alerts", None) or []
                 _positions_spec = get_cache_artifact_spec("portafoglio.positions_table")
                 _positions_sig = build_cache_artifact_signature(
                     "portafoglio.positions_table",
@@ -1371,6 +1381,13 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                         "history_rows": len(dfh_top) if isinstance(dfh_top, pd.DataFrame) else 0,
                         "settings": _portfolio_table_settings_payload(settings),
                         "sator_decisions": _file_fingerprint(SATOR_DECISIONS_FILE),
+                        "portfolio_alerts": [
+                            (a.get("kind"), a.get("ticker"), a.get("severity"), round(float(a.get("value") or 0.0), 4))
+                            for a in _ctx_portfolio_alerts
+                        ],
+                        "maturity_alerts": [
+                            (m.get("ticker"), m.get("giorni_scaduto")) for m in _ctx_maturity_alerts
+                        ],
                     },
                 )
                 with profile_step("Portafoglio", "load/build positions table artifact", count=len(da)):
@@ -1383,6 +1400,8 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                             data,
                             settings,
                             include_insights=get_effective_portfolio_insights_enabled(settings),
+                            portfolio_alerts=_ctx_portfolio_alerts,
+                            maturity_alerts=_ctx_maturity_alerts,
                         ),
                         clone_on_read=True,
                     )
