@@ -24,7 +24,6 @@ _BUCKET_LABELS = {
     "satellite": "Satellite",
 }
 _SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2, "positive": 3}
-_RADAR_AREAS = {"Giornata", "Trend", "Cambio segno"}
 
 
 @dataclass(frozen=True)
@@ -539,6 +538,82 @@ def _build_sator_insight(
     )
 
 
+_ALERT_SEVERITY_MAP = {"high": "critical", "medium": "warning", "low": "info"}
+_ALERT_ACTIONS = {
+    "concentration": "Valuta di ridurre il peso per rientrare sotto soglia.",
+    "loss": "Valuta se mantenere la posizione o chiudere la perdita.",
+    "risk_weight": "Rivedi la posizione: il rischio assunto e' alto rispetto al peso in portafoglio.",
+    "drawdown": "Monitora l'andamento: il calo dai massimi ha superato la soglia impostata.",
+    "volatility": "Aspettati oscillazioni ampie: la volatilita' ha superato la soglia impostata.",
+}
+_DEFAULT_ALERT_ACTION = "Valuta la posizione: ha superato una soglia di rischio impostata."
+
+
+def _build_alert_insights(
+    portfolio_alerts: list[dict[str, Any]] | None,
+    metadata: dict[str, dict[str, str]],
+) -> list[PortfolioInsight]:
+    insights: list[PortfolioInsight] = []
+    for item in portfolio_alerts or []:
+        kind = str(item.get("kind") or "")
+        ticker = str(item.get("ticker") or "").strip().upper()
+        value = _safe_float(item.get("value"), 0.0)
+        threshold = _safe_float(item.get("threshold"), 0.0)
+        rank = int(round(abs(value) / max(abs(threshold), 1e-6) * 100))
+        insights.append(
+            PortfolioInsight(
+                id=f"alert-{kind}-{ticker}",
+                severity=_ALERT_SEVERITY_MAP.get(str(item.get("severity") or ""), "warning"),
+                area="Rischio",
+                title=str(item.get("title") or ""),
+                message=str(item.get("message") or ""),
+                action=_ALERT_ACTIONS.get(kind, _DEFAULT_ALERT_ACTION),
+                rank=rank,
+                ticker=ticker,
+                name=_meta_value(metadata, ticker, "name") or ticker,
+                category=_meta_value(metadata, ticker, "category"),
+                bucket=_meta_value(metadata, ticker, "bucket"),
+                natura=_meta_value(metadata, ticker, "natura"),
+                value=value,
+            )
+        )
+    return insights
+
+
+def _build_maturity_insights(
+    maturity_alerts: list[dict[str, Any]] | None,
+    metadata: dict[str, dict[str, str]],
+) -> list[PortfolioInsight]:
+    insights: list[PortfolioInsight] = []
+    for item in maturity_alerts or []:
+        ticker = str(item.get("ticker") or "").strip().upper()
+        giorni_scaduto = int(_safe_float(item.get("giorni_scaduto"), 0.0))
+        quantita = _safe_float(item.get("quantita"), 0.0)
+        nome = str(item.get("nome") or ticker)
+        scadenza = str(item.get("scadenza") or "")
+        insights.append(
+            PortfolioInsight(
+                id=f"maturity-{ticker}",
+                severity="critical",
+                area="Scadenze",
+                title="Titolo scaduto non rimborsato",
+                message=(
+                    f"{nome} ({ticker}) scaduto il {scadenza}, {giorni_scaduto} giorni fa, "
+                    f"quantita' ancora in portafoglio {quantita:.2f}."
+                ),
+                action="Registra il rimborso a scadenza dalla sidebar.",
+                rank=giorni_scaduto,
+                ticker=ticker,
+                name=_meta_value(metadata, ticker, "name") or nome,
+                category="GOV",
+                bucket=_meta_value(metadata, ticker, "bucket"),
+                natura=_meta_value(metadata, ticker, "natura"),
+                value=quantita,
+            )
+        )
+    return insights
+
+
 def build_portfolio_insights(
     da: pd.DataFrame,
     dfh: pd.DataFrame | None,
@@ -549,6 +624,8 @@ def build_portfolio_insights(
     daily_report: dict[str, Any] | None = None,
     bucket_mix: dict[str, float] | None = None,
     sator_decisions: list[dict[str, Any]] | None = None,
+    portfolio_alerts: list[dict[str, Any]] | None = None,
+    maturity_alerts: list[dict[str, Any]] | None = None,
     max_items: int = 9,
 ) -> list[PortfolioInsight]:
     """Ritorna le priorita' piu' utili da mostrare sopra la tabella Portafoglio."""
@@ -586,7 +663,9 @@ def build_portfolio_insights(
         insights,
         max_items=max(1, int(max_items or 9)),
     )
-    return ordered
+    alert_insights = _build_alert_insights(portfolio_alerts, metadata)
+    maturity_insights = _build_maturity_insights(maturity_alerts, metadata)
+    return alert_insights + maturity_insights + ordered
 
 
 def _sort_key(item: PortfolioInsight) -> tuple[int, int, str, str]:
