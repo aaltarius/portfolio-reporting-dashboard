@@ -73,10 +73,16 @@ def _cell_tooltip(item: PortfolioInsight) -> str:
 def _insight_cell_html(item: PortfolioInsight) -> str:
     severity_class = _severity_class(item.severity)
     tooltip = _cell_tooltip(item)
+    message = html.escape(str(item.message or "").strip())
+    action = html.escape(str(item.action or "").strip())
+    message_html = f'<div class="ptf-insight-cell-message">{message}</div>' if message else ""
+    action_html = f'<div class="ptf-insight-cell-action">{action}</div>' if action else ""
     return (
         f'<div class="ptf-insight-cell is-{severity_class}" title="{tooltip}">'
         f"{_area_badge(item.area)}"
         f'<div class="ptf-insight-cell-title">{html.escape(item.title)}</div>'
+        f"{message_html}"
+        f"{action_html}"
         f"{_ticker_chip_html(item)}"
         "</div>"
     )

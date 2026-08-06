@@ -152,6 +152,27 @@ section[data-testid="stSidebar"], [data-testid="stSidebar"], [data-testid="stSid
   -webkit-line-clamp:2;
   -webkit-box-orient:vertical;
 }
+.ptf-insight-cell-message{
+  color:var(--ptf-text);
+  font-size:.78rem;
+  line-height:1.32;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  display:-webkit-box;
+  -webkit-line-clamp:3;
+  -webkit-box-orient:vertical;
+}
+.ptf-insight-cell-action{
+  color:var(--ptf-muted);
+  font-size:.72rem;
+  line-height:1.3;
+  font-weight:700;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  display:-webkit-box;
+  -webkit-line-clamp:2;
+  -webkit-box-orient:vertical;
+}
 .ptf-insight-tag{
   display:inline-flex;
   align-items:center;
