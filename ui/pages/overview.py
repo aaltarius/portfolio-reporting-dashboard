@@ -8,7 +8,6 @@ import pandas as pd
 import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
 
-from core.settings_profiles import get_alerts_settings
 from ui.formatting import fmt_eur_it, fmt_pct_it
 from ui.components import kpi_card, kpi_triplet_card
 from ui.charts.overview import build_overview_time_chart
@@ -41,9 +40,7 @@ def render_overview(container: DeltaGenerator, ctx: SimpleNamespace) -> None:
         dfmt = ctx.dfmt
         CHART_BG = ctx.CHART_BG
         P_dict = P
-        portfolio_alerts = getattr(ctx, "portfolio_alerts", [])
         settings = getattr(ctx, "settings", {}) if hasattr(ctx, "settings") else {}
-        alerts_settings = get_alerts_settings(settings)
 
         if not dfh_top.empty and len(dfh_top) > 1:
             fig = build_overview_time_chart(dfh_top, da, "P/L del portafoglio", pl_color, pl_totale, CHART_BG, dfmt, get_theme_context(), settings=settings, total_return=total_return)
@@ -66,25 +63,6 @@ def render_overview(container: DeltaGenerator, ctx: SimpleNamespace) -> None:
             st.plotly_chart(fig, width="stretch", key=overview_chart_key)
         else:
             st.info("📌 Aggiorna le quotazioni per visualizzare l'andamento storico del P/L in home page.")
-
-        if bool(alerts_settings.get("enabled", False)) and bool(alerts_settings.get("show_overview", True)) and portfolio_alerts:
-            max_items = max(1, int(alerts_settings.get("max_items", 3) or 3))
-            severity_icon = {"high": "🔴", "medium": "🟠", "low": "🔵"}
-            lines = [
-                f"- {severity_icon.get(str(item.get('severity')), '•')} **{item.get('title', 'Alert')}**: {item.get('message', '')}"
-                for item in portfolio_alerts[:max_items]
-            ]
-            st.warning("**Avvisi attivi sul portafoglio**\n" + "\n".join(lines))
-
-        maturity_alerts = getattr(ctx, "maturity_alerts", [])
-        if maturity_alerts:
-            lines = [
-                f"- **{item['ticker']}** ({item['nome']}): scaduto il {item['scadenza']}, "
-                f"{item['giorni_scaduto']} giorni fa, quantità ancora in portafoglio {item['quantita']:.2f}. "
-                "Registra il rimborso a scadenza dalla sidebar."
-                for item in maturity_alerts
-            ]
-            st.error("**Titoli scaduti non ancora rimborsati**\n" + "\n".join(lines))
 
         triplet_items = getattr(ctx, "category_triplet_items", [])
 
