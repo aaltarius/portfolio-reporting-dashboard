@@ -371,6 +371,43 @@ Stato sincero della cache al 2026-08-03:
   confronto proposta/scelta reale e apprendimento per funzione.
 - La parte piu' evoluta di SATOR e' interessante ma resta da validare con il
   prossimo piano acquisti reale.
+- Priorita' 4 chiusa (2026-08-08): rischio/rendimento SATOR consolidato su
+  `core/domain/risk.py` (funzioni canoniche gia' esistenti, riusate) e sulla
+  finestra rolling configurabile invece della vecchia finestra fissa a 252
+  giorni; `storico_sufficiente` ora segue la stessa finestra. Nessuna formula
+  duplicata rimasta fuori da `core/`.
+- Aggiunta Mappa strumenti (Progetto C del libro, `docs/progetti/ROADMAP_AI_FINANZA_LIBRO.md`)
+  in Pianificazione: scatter rischio/rendimento su posseduti+candidati SATOR,
+  rilevazione ridondanza per soglia di correlazione (0,85). Impatto misurato
+  sul render Pianificazione: +250/320 ms circa su una base di ~0,5 s (vedi
+  riga Pianificazione in "Ultima lettura performance", da aggiornare al
+  prossimo log completo).
+
+### Cruscotti / Analitica
+
+- Aggiunta Simulazione Monte Carlo del portafoglio posseduto (Progetto B del
+  libro, `docs/progetti/ROADMAP_AI_FINANZA_LIBRO.md`), 2026-08-09: bootstrap
+  storico dei rendimenti semplici pesati (non gaussiano), ventaglio
+  5-95/25-75 percentile a 6/12/24 mesi, tabella con mediana/P5/P95/probabilita'
+  di perdita/VaR/CVaR. Stesso pattern di cache a grana fine gia' in uso per
+  gli altri grafici di `_build_analitica_bundle` (`ui/dashboard_bundles.py`),
+  nessuna modifica al comportamento preesistente.
+  - Estratta `combine_weighted_returns` (`core/domain/returns.py`) come
+    formula canonica unica per la combinazione pesata rendimenti->portafoglio,
+    riusata da SATOR (`_build_portfolio_return_series`, ora un wrapper) e dal
+    Monte Carlo — evitava una duplicazione della stessa formula.
+  - Scelta metodologica rilevante: il pool di rendimenti su cui si campiona
+    e' ristretto alla finestra comune fra tutti gli strumenti posseduti
+    pesati (`dropna` sui giorni in cui anche un solo strumento non ha ancora
+    storico), non all'unione con giorni riempiti a zero — trovato in review
+    finale come bug Critical (il riempimento a zero diluiva artificialmente
+    la volatilita' simulata) e corretto prima del merge.
+  - Impatto prestazionale misurato su `_build_analitica_bundle`: +129/166 ms
+    (media ~145 ms) su piu' round puliti con metodologia a worktree isolato;
+    un residuo di ~70-100 ms fra il costo isolato del solo blocco nuovo
+    (~60 ms) e il delta end-to-end resta senza spiegazione certa (probabile
+    overhead di hashing/serializzazione della cache), dichiarato qui come
+    aperto invece di essere richiuso senza prova.
 
 ### Report
 
@@ -460,8 +497,12 @@ dentro il contratto unico e non devono causare rerun globali pesanti:
 
 ### Priorita 4 - Dati e metriche quantitative comuni
 
-- Consolidare il dataset rischio/rendimento strumenti in un servizio unico.
-- Migrare gradualmente Cruscotti, Quotazioni e poi SATOR verso quel servizio.
+Chiusa (2026-08-08) per la parte SATOR: vedi "Pianificazione e SATOR" in
+sezione 3. Resta aperta la migrazione di Cruscotti/Quotazioni verso lo stesso
+servizio comune, se emergera' un bisogno concreto (non forzarla adesso).
+
+- ~~Consolidare il dataset rischio/rendimento strumenti in un servizio unico~~ (fatto per SATOR).
+- Migrare gradualmente Cruscotti, Quotazioni verso quel servizio (non ancora fatto).
 - Evitare formule duplicate nelle pagine.
 - Verificare con test e confronto sui numeri reali.
 
@@ -486,13 +527,18 @@ Da non forzare adesso. Quando sara' il momento:
 Il progetto AI/finanza resta separato in
 `docs/progetti/ROADMAP_AI_FINANZA_LIBRO.md`.
 
-Ordine consigliato, non urgente:
+Ordine consigliato originale, non urgente (l'ordine effettivo seguito e'
+stato C poi B, per una preferenza esplicita di collocazione emersa in corso
+d'opera, non una revisione della priorita'):
 
-1. SATOR Frontier.
-2. Monte Carlo Portafoglio.
-3. Mappa AI strumenti / clustering.
-4. Explainability SATOR.
-5. Storico decisionale con valutazione ex-post.
+1. SATOR Frontier — non iniziato.
+2. Monte Carlo Portafoglio — fatto (2026-08-09), vedi "Cruscotti / Analitica"
+   in sezione 3.
+3. Mappa AI strumenti / clustering — fatto, vedi "Pianificazione e SATOR" in
+   sezione 3.
+4. Explainability SATOR — non iniziato.
+5. Storico decisionale con valutazione ex-post — non iniziato (la parte
+   fotografie/confronto in Pianificazione copre gia' un pezzo di questo).
 
 ### Priorita 8 - Irrobustimento e maturazione 5.0
 
