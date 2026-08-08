@@ -68,6 +68,24 @@ def _render_risk_contribution_analitica(bundle: Any) -> None:
     legend_block("Se la barra del rischio è uguale o inferiore alla barra del peso, la situazione è equilibrata; se la supera, lo strumento pesa sulle oscillazioni più della sua quota.", variant="bottom")
 
 
+def _fmt_loss_metric(value: float) -> str:
+    """Formatta una metrica di perdita (VaR/CVaR 5%) per la tabella orizzonti.
+
+    Il valore e' definito come "valore iniziale - percentile" quindi e'
+    positivo quando rappresenta una perdita reale. Puo' risultare negativo
+    quando anche lo scenario peggiore al percentile e' un guadagno (nessuna
+    perdita nemmeno nel worst-case) — in quel caso un numero con segno "-"
+    letto in una colonna di perdite risulterebbe fuorviante (si legge come
+    l'opposto di quel che significa), quindi mostriamo un testo esplicito
+    invece del segno.
+    """
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return "—"
+    if value < 0:
+        return "Nessuna perdita"
+    return fmt_eur_it(value, 0)
+
+
 def _render_monte_carlo_analitica(bundle: Any) -> None:
     """Render Monte Carlo simulation chart + assumptions box from bundle."""
     mc_fig = getattr(bundle, "monte_carlo_figure", None)
@@ -91,8 +109,8 @@ def _render_monte_carlo_analitica(bundle: Any) -> None:
             "P5": fmt_eur_it(h.p5_value, 0),
             "P95": fmt_eur_it(h.p95_value, 0),
             "Probabilità di perdita": fmt_pct_it(h.prob_loss, 0),
-            "VaR 5%": fmt_eur_it(h.var_5pct, 0, signed=True),
-            "CVaR 5%": fmt_eur_it(h.cvar_5pct, 0, signed=True),
+            "VaR 5%": _fmt_loss_metric(h.var_5pct),
+            "CVaR 5%": _fmt_loss_metric(h.cvar_5pct),
         })
     horizons_df = pd.DataFrame(horizons_rows)
     render_styled_table(horizons_df.style, height="content")

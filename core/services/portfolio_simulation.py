@@ -76,6 +76,15 @@ def build_portfolio_simulation(
         return _unavailable("Nessuno strumento posseduto ha una storia prezzi disponibile.", 0)
 
     simple_returns = build_simple_returns(price_frame, tickers)
+    # Restringe alla finestra comune a tutti i ticker effettivamente pesati:
+    # combine_weighted_returns fa fillna(0.0) sui buchi (comportamento voluto
+    # per SATOR, dove serve su finestre parziali), ma per il bootstrap Monte
+    # Carlo un giorno in cui uno strumento posseduto non ha ancora storico
+    # prezzi non e' un rendimento reale dello 0% con peso pieno: e' un dato
+    # mancante che, se lasciato, diluirebbe artificialmente la volatilita'
+    # del pool campionato. dropna(how="any") scarta quei giorni prima di
+    # combinare, cosi' n_observations riflette solo osservazioni vere.
+    simple_returns = simple_returns.dropna(how="any")
     portfolio_returns = combine_weighted_returns(simple_returns, weights.reindex(tickers)).dropna()
 
     n_observations = int(len(portfolio_returns))
