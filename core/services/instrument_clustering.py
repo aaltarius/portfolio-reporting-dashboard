@@ -61,13 +61,13 @@ def _build_scatter_df(ranking: pd.DataFrame) -> pd.DataFrame:
             "nature": r.get("nature"),
             "role": r.get("role"),
             "in_portfolio": bool(r.get("in_portfolio")),
-            "current_weight": float(r.get("current_weight") or 0.0),
+            "current_weight": float(r.get("current_weight")) if pd.notna(r.get("current_weight")) else 0.0,
             "vol": float(r.get("vol")),
             "return_value": return_value,
             "return_label": return_label,
             "storico_sufficiente": bool(r.get("storico_sufficiente")),
         })
-    return pd.DataFrame(rows, columns=columns) if not rows else pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=columns)
 
 
 def _build_redundant_pairs(ranking: pd.DataFrame, returns_frame: pd.DataFrame) -> pd.DataFrame:

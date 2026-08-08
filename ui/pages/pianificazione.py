@@ -23,7 +23,7 @@ from core.services.sator import (
 )
 from core.services.instrument_clustering import build_instrument_map
 from persistence.storage import load_sator_decisions, load_settings, save_settings
-from ui.formatting import fmt_eur_it, fmt_pct_it
+from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it
 from ui.i18n import t
 from ui.page_chrome import render_page_intro as render_page_intro_shared, render_section_line as render_section_line_shared
 from ui.components import render_section_title, back_to_top, legend_block
@@ -742,12 +742,17 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
 
     render_section_title(
         "Mappa strumenti",
-        comment="Rischio e rendimento storico osservato per ogni strumento posseduto o in osservazione, con segnalazione delle coppie molto correlate (possibile ridondanza). Nessuna previsione: solo comportamento passato.",
+        comment="Rischio e rendimento storico osservato per ogni strumento posseduto o in osservazione, con segnalazione delle coppie molto correlate (possibile ridondanza). L'orizzonte del rendimento varia per strumento (12/6/3/1 mesi, il più lungo disponibile — vedi il tooltip di ogni punto). Nessuna previsione: solo comportamento passato.",
         gap_after="sm",
     )
     with profile_step("Pianificazione/SATOR", "instrument_map"):
-        instrument_map = build_instrument_map(data, settings)
-    if instrument_map.scatter_df.empty:
+        try:
+            instrument_map = build_instrument_map(data, settings)
+        except Exception:
+            instrument_map = None
+    if instrument_map is None:
+        st.info("Mappa strumenti non disponibile su questi dati.")
+    elif instrument_map.scatter_df.empty:
         st.info("Storico prezzi insufficiente per calcolare rischio/rendimento di almeno uno strumento dell'universo SATOR.")
     else:
         with profile_step("Pianificazione/SATOR", "instrument_map_chart", count=len(instrument_map.scatter_df)):
@@ -762,6 +767,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
                 "category_a": "Categoria A", "category_b": "Categoria B",
                 "correlazione": "Correlazione",
             })[["Strumento A", "Categoria A", "Strumento B", "Categoria B", "Correlazione"]]
+            display_pairs["Correlazione"] = display_pairs["Correlazione"].map(lambda v: fmt_num_it(v, 2))
             st.dataframe(display_pairs, hide_index=True, width="stretch")
 
 

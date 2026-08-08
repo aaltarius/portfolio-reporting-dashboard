@@ -1520,6 +1520,15 @@ CHARTS: dict[str, dict[str, Any]] = {
      'y_tickformat': '.2f',
      'title': '<b>Prossimo acquisto: mappa decisionale</b>'},
 
+    'pianificazione_instrument_map': {'type': 'scatter',
+     'height': 460,
+     'legend': 'bottom',
+     'show_buttons': False,
+     'margin_delta': {'t': 0, 'b': 0, 'l': 0, 'r': 0},
+     'x_tickformat': '.0%',
+     'y_tickformat': '.0%',
+     'title': '<b>Mappa strumenti: rischio e rendimento storico</b>'},
+
     # ------------------------------------------------------------------
     # DA VERIFICARE / LEGACY
     # ------------------------------------------------------------------

@@ -340,7 +340,7 @@ def build_next_purchase_bubble_chart(bubble_df: pd.DataFrame, theme) -> go.Figur
 def build_instrument_map_chart(scatter_df: pd.DataFrame, theme) -> go.Figure:
     """Mappa strumenti rischio/rendimento storico osservato (Progetto C,
     ROADMAP_AI_FINANZA_LIBRO.md): X = volatilita' annualizzata, Y =
-    rendimento storico realizzato (mai "atteso" - vedi return_label per
+    rendimento storico realizzato (solo dato passato, vedi return_label per
     l'orizzonte usato), colore = categoria, dimensione bolla = peso attuale
     in portafoglio (0 per i soli osservati), bordo piu' marcato per gli
     strumenti posseduti."""
@@ -369,17 +369,18 @@ def build_instrument_map_chart(scatter_df: pd.DataFrame, theme) -> go.Figure:
                     width=[1.8 if v else 0.6 for v in sub["in_portfolio"]],
                 ),
             ),
-            customdata=sub[["ticker", "name", "nature", "return_label", "ownership_label"]].to_numpy(),
+            customdata=sub[["ticker", "name", "nature", "return_label", "ownership_label", "current_weight"]].to_numpy(),
             hovertemplate=(
                 "<b>%{customdata[0]}</b> — %{customdata[1]}<br>"
                 "Natura: %{customdata[2]}<br>"
                 "Volatilita' annua: %{x:.1%}<br>"
                 "Rendimento storico %{customdata[3]}: %{y:+.1%}<br>"
+                "Peso in portafoglio: %{customdata[5]:.1%}<br>"
                 "%{customdata[4]}<extra></extra>"
             ),
         ))
     fig.update_xaxes(title_text="Volatilita' annualizzata", tickformat=".0%")
-    fig.update_yaxes(title_text="Rendimento storico realizzato", tickformat=".0%")
+    fig.update_yaxes(title_text="Rendimento storico realizzato (orizzonte variabile per strumento)", tickformat=".0%")
     fig = finalize_chart(fig, "pianificazione_instrument_map")
     fig.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.16, xanchor="center", x=0.5))
     return fig
