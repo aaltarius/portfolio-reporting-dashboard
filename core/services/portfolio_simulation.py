@@ -5,8 +5,8 @@ Bootstrap storico: ricampiona con rimpiazzo i rendimenti giornalieri
 semplici osservati del portafoglio (combinazione pesata dei rendimenti
 per-strumento sui pesi correnti), non un modello gaussiano/parametrico —
 preserva la distribuzione reale (codulate, code) senza stimare una matrice
-di covarianza dedicata. Ogni risultato e' uno "scenario simulato", mai una
-previsione: nessun numero qui rappresenta un valore atteso o promesso.
+di covarianza dedicata. Ogni risultato e' uno scenario simulato: nessun
+numero qui equivale a un valore garantito o a una promessa di rendimento.
 """
 from __future__ import annotations
 
