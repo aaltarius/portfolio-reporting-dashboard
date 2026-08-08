@@ -21,6 +21,7 @@ from core.services.sator import (
     build_next_purchase_bubble_frame,
     latest_sator_decision,
 )
+from core.services.instrument_clustering import build_instrument_map
 from persistence.storage import load_sator_decisions, load_settings, save_settings
 from ui.formatting import fmt_eur_it, fmt_pct_it
 from ui.i18n import t
@@ -33,6 +34,7 @@ from ui.charts.pianificazione import (
     build_objective_mix_chart,
     build_allocation_rings_chart,
     build_next_purchase_bubble_chart,
+    build_instrument_map_chart,
 )
 from ui.theme import bucket_color, get_theme_context
 from ui.notifications import queue_success
@@ -737,6 +739,30 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
                 st.rerun()
         with profile_step("Pianificazione/SATOR", "reference_summary"):
             _render_sator_reference_summary(latest_decision, theme, data, decisions_state.get("items") or [])
+
+    render_section_title(
+        "Mappa strumenti",
+        comment="Rischio e rendimento storico osservato per ogni strumento posseduto o in osservazione, con segnalazione delle coppie molto correlate (possibile ridondanza). Nessuna previsione: solo comportamento passato.",
+        gap_after="sm",
+    )
+    with profile_step("Pianificazione/SATOR", "instrument_map"):
+        instrument_map = build_instrument_map(data, settings)
+    if instrument_map.scatter_df.empty:
+        st.info("Storico prezzi insufficiente per calcolare rischio/rendimento di almeno uno strumento dell'universo SATOR.")
+    else:
+        with profile_step("Pianificazione/SATOR", "instrument_map_chart", count=len(instrument_map.scatter_df)):
+            fig_instrument_map = build_instrument_map_chart(instrument_map.scatter_df, theme)
+            st.plotly_chart(fig_instrument_map, width="stretch", config={"displayModeBar": False})
+        if instrument_map.redundant_pairs.empty:
+            st.caption("Nessuna coppia di strumenti sopra la soglia di ridondanza (correlazione 0,90) nell'universo attuale.")
+        else:
+            st.markdown("**Coppie potenzialmente ridondanti**")
+            display_pairs = instrument_map.redundant_pairs.rename(columns={
+                "ticker_a": "Strumento A", "ticker_b": "Strumento B",
+                "category_a": "Categoria A", "category_b": "Categoria B",
+                "correlazione": "Correlazione",
+            })[["Strumento A", "Categoria A", "Strumento B", "Categoria B", "Correlazione"]]
+            st.dataframe(display_pairs, hide_index=True, width="stretch")
 
 
 def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
