@@ -68,6 +68,47 @@ def _render_risk_contribution_analitica(bundle: Any) -> None:
     legend_block("Se la barra del rischio è uguale o inferiore alla barra del peso, la situazione è equilibrata; se la supera, lo strumento pesa sulle oscillazioni più della sua quota.", variant="bottom")
 
 
+def _render_monte_carlo_analitica(bundle: Any) -> None:
+    """Render Monte Carlo simulation chart + assumptions box from bundle."""
+    mc_fig = getattr(bundle, "monte_carlo_figure", None)
+    mc_result = getattr(bundle, "monte_carlo_result", None)
+
+    if mc_fig is None or mc_result is None:
+        st.info("Simulazione non disponibile.")
+        return
+
+    st.plotly_chart(mc_fig, width="stretch")
+
+    if not mc_result.available:
+        st.caption(mc_result.reason)
+        return
+
+    horizons_rows = []
+    for h in mc_result.horizons:
+        horizons_rows.append({
+            "Orizzonte": h.label,
+            "Mediana": fmt_eur_it(h.median_value, 0),
+            "P5": fmt_eur_it(h.p5_value, 0),
+            "P95": fmt_eur_it(h.p95_value, 0),
+            "Probabilità di perdita": fmt_pct_it(h.prob_loss, 0),
+            "VaR 5%": fmt_eur_it(h.var_5pct, 0, signed=True),
+            "CVaR 5%": fmt_eur_it(h.cvar_5pct, 0, signed=True),
+        })
+    horizons_df = pd.DataFrame(horizons_rows)
+    render_styled_table(horizons_df.style, height="content")
+
+    extrapolation_note = (
+        " Lo storico disponibile è più corto dell'orizzonte a 24 mesi: il ricampionamento riusa gli stessi giorni più volte."
+        if mc_result.extrapolated else ""
+    )
+    st.caption(
+        f"Simulazione basata su {mc_result.n_observations} osservazioni storiche reali del "
+        f"portafoglio attuale, {mc_result.n_scenarios} scenari ricampionati (bootstrap storico, "
+        f"non un modello previsivo).{extrapolation_note}"
+    )
+    legend_block("Ogni scenario è un percorso possibile ricostruito ricampionando la storia reale del portafoglio, non una previsione: la mediana è il centro della distribuzione simulata, le bande mostrano quanto può variare l'esito.", variant="bottom")
+
+
 def _format_dashboard_metric(metric: dict[str, Any]) -> tuple[str, str, str | None]:
     kind = str(metric.get("kind") or "")
     value = metric.get("value")
@@ -811,6 +852,10 @@ def _render_analitica(bundle: Any) -> None:
         render_section_title("Contributo al Rischio", icon="risk")
         # Renderizza direttamente il grafico del contributo al rischio (come in analisi.py)
         _render_risk_contribution_analitica(bundle)
+    vertical_gap("sm")
+    with profile_step("Cruscotti/AnaliticaRender", "render monte carlo chart"):
+        render_section_title("Simulazione Monte Carlo", icon="risk")
+        _render_monte_carlo_analitica(bundle)
     vertical_gap("sm")
     with profile_step("Cruscotti/AnaliticaRender", "render radar section"):
         _render_analitica_radar_section(bundle)

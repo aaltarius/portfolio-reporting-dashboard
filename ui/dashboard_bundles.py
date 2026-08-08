@@ -28,6 +28,7 @@ from ui.charts.analitica import (
     build_performance_attribution,
     build_percentage_return_time_chart,
     build_pl_decomposition_time_chart,
+    build_portfolio_simulation_chart,
     build_portfolio_value_time_chart,
     build_quality_profile_radar,
     build_risk_contribution_chart,
@@ -43,6 +44,7 @@ from ui.charts.cruscotti import (
 from ui.charts.summary import build_summary_figures
 from ui.charts.runtime import empty_chart
 from core.services.sator import compute_instrument_buckets
+from core.services.portfolio_simulation import build_portfolio_simulation
 from core.services import build_percentage_return_series
 from persistence.storage import _safe_float, get_proventi_normalizzati
 from ui.theme import macro_color
@@ -264,6 +266,8 @@ class AnaliticaBundle:
     include_benchmark: bool = True
     theme: Any = None
     analysis_bundle: AdvancedAnalysisDatasetBundle | None = None
+    monte_carlo_figure: Any = None
+    monte_carlo_result: Any = None
 
 
 def _build_market_only_history(
@@ -954,6 +958,27 @@ def _build_analitica_bundle(
             strategy=cache_strategy,
         )
 
+    with profile_step("Cruscotti/Analitica", "build monte carlo figure"):
+        if analysis_bundle is None:
+            monte_carlo_result = build_portfolio_simulation(pd.DataFrame(), pd.DataFrame())
+        else:
+            monte_carlo_result = build_portfolio_simulation(
+                dh_hist_effective,
+                analysis_bundle.risk_df,
+                n_scenarios=2000,
+                seed=20260808,
+            )
+        monte_carlo_fig = fcache.get_or_build(
+            chart_id="analisi_monte_carlo",
+            data_sig=data_sig,
+            theme_sig=theme_sig,
+            charts_settings_sig=charts_settings_sig,
+            builder=lambda: build_portfolio_simulation_chart(monte_carlo_result, theme),
+            page_mode="Completa",
+            extra_params={"monte_carlo_scenarios": 2000, "monte_carlo_seed": 20260808},
+            strategy=cache_strategy,
+        )
+
     with profile_step("Cruscotti/Analitica", "build performance attribution figure"):
         performance_attribution_fig = fcache.get_or_build(
             chart_id="analisi_performance_attribution",
@@ -1017,6 +1042,8 @@ def _build_analitica_bundle(
         include_benchmark=include_benchmark,
         theme=theme,
         analysis_bundle=analysis_bundle,
+        monte_carlo_figure=monte_carlo_fig,
+        monte_carlo_result=monte_carlo_result,
     )
 
 
