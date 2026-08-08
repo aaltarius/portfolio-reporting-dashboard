@@ -71,10 +71,18 @@ def build_percentage_return_time_chart(dfh, pct_cap, pct_cost, pl_color, pl_tota
 			last_costo = float(pd.to_numeric(dfh["Costo"], errors="coerce").iloc[-1] or 0.0)
 		except Exception:
 			last_costo = 0.0
+		try:
+			valore_aperto_col = dfh["ValoreAperto"] if "ValoreAperto" in dfh.columns else dfh["Valore"]
+			last_pl_aperto = float(pd.to_numeric(valore_aperto_col, errors="coerce").iloc[-1] or 0.0) - last_costo
+		except Exception:
+			last_pl_aperto = 0.0
 		if pct_cap and last_capitale:
 			pct_cap[-1] = (float(pl_total or 0.0) / last_capitale) * 100.0
 		if pct_cost and last_costo:
-			pct_cost[-1] = (float(pl_total or 0.0) / last_costo) * 100.0
+			# Non usare pl_total qui: include liquidita' e guadagni realizzati
+			# da vendite passate, non comparabili con "Costo" (solo posizioni
+			# ancora aperte) - vedi build_percentage_return_series.
+			pct_cost[-1] = (last_pl_aperto / last_costo) * 100.0
 	fig = go.Figure()
 	fig.add_trace(
 		go.Scatter(
@@ -121,7 +129,24 @@ def build_pl_decomposition_time_chart(dfh, pl_cols, viz_mode, dfmt, theme):
 			)
 		)
 	chart_id = "andamento_pl_decomp_stacked" if viz_mode == "Stacked" else "andamento_pl_decomp_grouped"
-	if "P/L" in dfh.columns and (not dfh["P/L"].dropna().empty):
+	if viz_mode == "Stacked" and pl_cols:
+		# Il marker deve riflettere il totale che lo stack mostra davvero (somma
+		# riga per riga delle sole componenti visualizzate), non l'aggregato
+		# "P/L" del portafoglio: quest'ultimo include anche liquidita' e
+		# guadagni realizzati da vendite passate, non rappresentati nello
+		# stack, e produrrebbe un massimo/minimo che il grafico non raggiunge
+		# mai visivamente.
+		stack_total = dfh[pl_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0).sum(axis=1)
+		if not stack_total.dropna().empty:
+			add_extrema_markers(
+				fig,
+				chart_id,
+				dfh["Data"],
+				stack_total,
+				theme=theme,
+				value_formatter=lambda v: fmt_eur_it(v, 2),
+			)
+	elif "P/L" in dfh.columns and (not dfh["P/L"].dropna().empty):
 		add_extrema_markers(
 			fig,
 			chart_id,

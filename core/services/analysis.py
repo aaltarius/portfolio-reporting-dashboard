@@ -190,14 +190,25 @@ def build_percentage_return_series(df_history: pd.DataFrame, data=None) -> dict[
     FORMULA CORRETTA: (Valore - Capitale) / Capitale × 100
     Non dipende dai versamenti PAC.
 
+    pct_cost usa "ValoreAperto" (solo posizioni aperte) al numeratore, non
+    "Valore" (che include tutta la liquidita', anche quella incassata da
+    vendite passate): "Costo" al denominatore e' gia' il costo delle sole
+    posizioni aperte, quindi il numeratore deve restare comparabile. Usare
+    "Valore" avrebbe fatto schizzare il rapporto dopo qualunque vendita,
+    perche' il ricavato resta in "Valore" mentre il relativo costo esce da
+    "Costo" — due quantita' non piu' confrontabili tra loro.
+
     Args:
-        df_history: DataFrame with columns: Data, Valore, Capitale, Costo
+        df_history: DataFrame with columns: Data, Valore, ValoreAperto,
+            Capitale, Costo (ValoreAperto assente su dati storici molto
+            vecchi: fallback su Valore per compatibilita')
         data: portafoglio data (optional, per compatibilità)
 
     Returns:
         Dict con:
         - pct_cap: rendimento % rispetto al capitale netto versato
-        - pct_cost: rendimento % rispetto al costo totale
+        - pct_cost: rendimento % (non realizzato) rispetto al costo delle
+          sole posizioni ancora aperte
         - dates: date serializzate come stringhe
     """
     if df_history is None or df_history.empty:
@@ -210,7 +221,8 @@ def build_percentage_return_series(df_history: pd.DataFrame, data=None) -> dict[
     df = df_history.copy()
     # CORREZIONE: (Valore - Capitale) / Capitale, non Valore / Capitale
     pct_cap = ((df["Valore"] - df["Capitale"]) / df["Capitale"].replace(0, np.nan)) * 100
-    pct_cost = ((df["Valore"] - df["Costo"]) / df["Costo"].replace(0, np.nan)) * 100
+    valore_aperto = df["ValoreAperto"] if "ValoreAperto" in df.columns else df["Valore"]
+    pct_cost = ((valore_aperto - df["Costo"]) / df["Costo"].replace(0, np.nan)) * 100
     dates = [d.strftime("%Y-%m-%d") if hasattr(d, 'strftime') else str(d) for d in df["Data"]]
 
     return {

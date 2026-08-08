@@ -359,6 +359,7 @@ def _build_portfolio_history_core(sto: dict, eventi: list) -> tuple[list[dict], 
             if qty > 0:
                 row[f"PL_{tk}"] = qty * prezzo - cost
         row["Valore"] = valore_aperto + cash
+        row["ValoreAperto"] = valore_aperto
         row["Costo"] = costo_aperto
         row["Capitale"] = capital_versato
         row["Liquidità"] = cash
@@ -457,6 +458,7 @@ def _build_synthetic_today_row(
         if q > 0:
             row_today[f"PL_{tk}"] = q * pr - c
     row_today["Valore"] = valore_aperto_t + cash
+    row_today["ValoreAperto"] = valore_aperto_t
     row_today["Costo"] = costo_aperto_t
     row_today["Capitale"] = capital_versato
     row_today["Liquidità"] = cash
@@ -481,7 +483,10 @@ def build_portfolio_history_df(data: dict[str, Any]) -> pd.DataFrame:
     # davvero funzione. I prezzi correnti influenzano solo la riga
     # sintetica "oggi" sotto, mai cache-ata.
     hist_sig = hashlib.md5(json.dumps({"sto": sto}, sort_keys=True, default=str).encode()).hexdigest()
-    cache_sig = f"portfolio_history_v6|{event_sig}|{hist_sig}"
+    # v7: aggiunta colonna "ValoreAperto" (solo posizioni aperte, esclusa
+    # liquidita') - bump obbligatorio per invalidare le righe gia' cache-ate
+    # sotto lo schema precedente, che non la conterrebbero.
+    cache_sig = f"portfolio_history_v7|{event_sig}|{hist_sig}"
 
     cache = data.get("cache_storico_portafoglio", {}) or {}
     hp: list[dict] | None = None
