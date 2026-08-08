@@ -358,8 +358,11 @@ def build_instrument_map_chart(scatter_df: pd.DataFrame, theme) -> go.Figure:
         fig.add_trace(go.Scatter(
             x=sub["vol"],
             y=sub["return_value"],
-            mode="markers",
+            mode="markers+text",
             name=str(category),
+            text=sub["ticker"],
+            textposition="top center",
+            textfont=dict(size=9),
             marker=dict(
                 size=sub["marker_size"],
                 color=macro_color(str(category)),

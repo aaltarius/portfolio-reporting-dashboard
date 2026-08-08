@@ -1019,7 +1019,8 @@ CHARTS: dict[str, dict[str, Any]] = {
      'show_buttons': False,
      'margin_delta': {'t': 0, 'b': 0, 'l': 0, 'r': -20},
      'y_title': 'Valore simulato (€)',
-     'x_title': 'Giorni di trading',
+     'x_title': 'Mesi',
+     'x_tickformat': '.0f',
      'title': '<b>Simulazione Monte Carlo del portafoglio</b>'},
 
     'home_radar_allocation': {'type': 'radar',

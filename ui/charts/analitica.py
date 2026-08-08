@@ -377,31 +377,35 @@ def build_portfolio_simulation_chart(result, theme):
 
 	fan = result.fan_percentiles
 	band_color = getattr(theme, "color_blue", "#1f5eff")
+	# Asse X in mesi (non giorni di trading): unita' immediatamente
+	# comprensibile per chi non ha familiarita' coi mercati. Conversione
+	# approssimata, 21 giorni di trading per mese solare.
+	fan_months = fan["trading_day"] / 21.0
 	fig = go.Figure()
 	fig.add_trace(go.Scatter(
-		x=fan["trading_day"], y=fan["p95"], mode="lines",
+		x=fan_months, y=fan["p95"], mode="lines",
 		line=dict(width=0), showlegend=False, hoverinfo="skip",
 	))
 	fig.add_trace(go.Scatter(
-		x=fan["trading_day"], y=fan["p5"], mode="lines",
+		x=fan_months, y=fan["p5"], mode="lines",
 		line=dict(width=0), fill="tonexty", fillcolor=hex_to_rgba(band_color, 0.12),
 		name="Intervallo 5°-95° percentile",
-		hovertemplate="Giorno %{x}: %{y:,.0f} €<extra></extra>",
+		hovertemplate="Mese %{x:.1f}: %{y:,.0f} €<extra></extra>",
 	))
 	fig.add_trace(go.Scatter(
-		x=fan["trading_day"], y=fan["p75"], mode="lines",
+		x=fan_months, y=fan["p75"], mode="lines",
 		line=dict(width=0), showlegend=False, hoverinfo="skip",
 	))
 	fig.add_trace(go.Scatter(
-		x=fan["trading_day"], y=fan["p25"], mode="lines",
+		x=fan_months, y=fan["p25"], mode="lines",
 		line=dict(width=0), fill="tonexty", fillcolor=hex_to_rgba(band_color, 0.28),
 		name="Intervallo 25°-75° percentile",
-		hovertemplate="Giorno %{x}: %{y:,.0f} €<extra></extra>",
+		hovertemplate="Mese %{x:.1f}: %{y:,.0f} €<extra></extra>",
 	))
 	fig.add_trace(go.Scatter(
-		x=fan["trading_day"], y=fan["p50"], mode="lines",
+		x=fan_months, y=fan["p50"], mode="lines",
 		line=dict(width=2.4, color=band_color),
 		name="Mediana scenari simulati",
-		hovertemplate="Giorno %{x}: %{y:,.0f} €<extra></extra>",
+		hovertemplate="Mese %{x:.1f}: %{y:,.0f} €<extra></extra>",
 	))
 	return apply_settings(fig, "analisi_monte_carlo")
