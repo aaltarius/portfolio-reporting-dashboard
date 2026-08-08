@@ -560,7 +560,7 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
         if item.get("ticker")
     ]
     calc_settings = ctx.settings.get("calculations_metrics", {}) if isinstance(ctx.settings, dict) else {}
-    rolling_window = int(_safe_float(calc_settings.get("rolling_window_days"), 90.0))
+    rolling_window = int(min(3650.0, max(2.0, _safe_float(calc_settings.get("rolling_window_days"), 90.0))))
     metrics_batch = _compute_all_metrics_batch(all_tickers, ctx.price_frame, rolling_window)
 
     rows = []
@@ -641,7 +641,7 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
     weights = cfg.get("score_weights", PESI_DIMENSIONI)
     df["score_finale"] = sum(df[k] * _safe_float(weights.get(k), PESI_DIMENSIONI[k]) for k in PESI_DIMENSIONI).clip(0.0, 1.0)
     df["voto"] = (1.0 + df["score_finale"] * 9.0).round(1)
-    df["storico_sufficiente"] = df["n_punti"] >= MIN_PUNTI_STORICO
+    df["storico_sufficiente"] = df["n_punti"] >= max(MIN_PUNTI_STORICO, rolling_window)
     df["_bucket"] = df["role"].astype(str).map(_role_bucket)
     df["bucket_weight"] = df["_bucket"].map(lambda b: _safe_float(ctx.bucket_weights.get(str(b)), 0.0))
     df["bucket_target"] = df["_bucket"].map(
@@ -1458,11 +1458,12 @@ def _compute_all_metrics_batch(tickers: list[str], price_frame: pd.DataFrame, wi
     _empty["n_punti"] = 0.0
     if not tickers or price_frame is None or price_frame.empty:
         return {t: dict(_empty) for t in tickers}
-    cols = [t for t in tickers if t in price_frame.columns]
+    cols = list(dict.fromkeys(t for t in tickers if t in price_frame.columns))
     if not cols:
         return {t: dict(_empty) for t in tickers}
 
     frame = price_frame[cols].apply(pd.to_numeric, errors="coerce")
+    frame = frame.loc[:, ~frame.columns.duplicated()]
     frame = frame.where(frame > 0)
     n_rows = len(frame)
     last = frame.iloc[-1]
