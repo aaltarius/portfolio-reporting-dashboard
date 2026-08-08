@@ -44,7 +44,7 @@ from ui.charts.cruscotti import (
 from ui.charts.summary import build_summary_figures
 from ui.charts.runtime import empty_chart
 from core.services.sator import compute_instrument_buckets
-from core.services.portfolio_simulation import build_portfolio_simulation
+from core.services.portfolio_simulation import build_portfolio_simulation, PortfolioSimulationResult
 from core.services import build_percentage_return_series
 from persistence.storage import _safe_float, get_proventi_normalizzati
 from ui.theme import macro_color
@@ -267,7 +267,7 @@ class AnaliticaBundle:
     theme: Any = None
     analysis_bundle: AdvancedAnalysisDatasetBundle | None = None
     monte_carlo_figure: Any = None
-    monte_carlo_result: Any = None
+    monte_carlo_result: PortfolioSimulationResult | None = None
 
 
 def _build_market_only_history(
