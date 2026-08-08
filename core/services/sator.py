@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 
 from core.constants import QTY_ZERO_EPS
+from core.domain.risk import build_drawdown_series, rolling_sharpe, rolling_volatility_annualized
 from core.finance import build_ptf_df, compute_portfolio_state
 from core.price_frames import build_expanded_price_frame
 from persistence.storage import load_sator_decisions, macro_cat
@@ -558,7 +559,9 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
         for item in ctx.data.get("strumenti", []) or []
         if item.get("ticker")
     ]
-    metrics_batch = _compute_all_metrics_batch(all_tickers, ctx.price_frame)
+    calc_settings = ctx.settings.get("calculations_metrics", {}) if isinstance(ctx.settings, dict) else {}
+    rolling_window = int(_safe_float(calc_settings.get("rolling_window_days"), 90.0))
+    metrics_batch = _compute_all_metrics_batch(all_tickers, ctx.price_frame, rolling_window)
 
     rows = []
     for item in ctx.data.get("strumenti", []) or []:
@@ -1445,9 +1448,12 @@ def _rolling_return(serie: pd.Series, finestra: int) -> float:
     return (fine / inizio) - 1.0 if inizio > 0 else np.nan
 
 
-def _compute_all_metrics_batch(tickers: list[str], price_frame: pd.DataFrame) -> dict[str, dict[str, float]]:
-    """Versione vettorizzata di _compute_metrics: calcola tutte le metriche per tutti
-    i ticker in una sola passata sul DataFrame invece di N passate separate."""
+def _compute_all_metrics_batch(tickers: list[str], price_frame: pd.DataFrame, window: int) -> dict[str, dict[str, float]]:
+    """Rendimenti multi-orizzonte calcolati in un solo passaggio vettorizzato
+    (nessuna fonte canonica equivalente, specifico del momentum SATOR);
+    volatilita', drawdown e Sharpe riusano le funzioni canoniche di
+    core/domain/risk.py — stessa fonte gia' usata da Summary e Cruscotti,
+    chiamate una serie alla volta (non vettorizzabili sull'intero frame)."""
     _empty: dict[str, float] = {k: np.nan for k in ("ret_1m", "ret_3m", "ret_6m", "ret_12m", "vol", "drawdown", "rend_vol")}
     _empty["n_punti"] = 0.0
     if not tickers or price_frame is None or price_frame.empty:
@@ -1469,22 +1475,28 @@ def _compute_all_metrics_batch(tickers: list[str], price_frame: pd.DataFrame) ->
         else:
             ret_series[k] = pd.Series(np.nan, index=frame.columns)
 
-    pct = frame.pct_change().replace([np.inf, -np.inf], np.nan)
-    tail = pct.tail(252)
-    vol = tail.std(ddof=1) * math.sqrt(252)
-    vol = vol.where(tail.notna().sum() >= 20)
-
-    dd = (frame / frame.cummax() - 1.0).min()
-
-    ret_12m = ret_series.get("ret_12m", pd.Series(np.nan, index=frame.columns))
-    rend_annuo = ret_12m
-    rend_vol = (rend_annuo / vol).where(vol > 1e-9)
-
     n_dict = frame.notna().sum().to_dict()
-    vol_dict = vol.to_dict()
-    dd_dict = dd.to_dict()
-    rv_dict = rend_vol.to_dict()
     ret_dicts = {k: s.to_dict() for k, s in ret_series.items()}
+
+    vol_dict: dict[str, float] = {}
+    dd_dict: dict[str, float] = {}
+    rv_dict: dict[str, float] = {}
+    for t in cols:
+        prices = frame[t].dropna()
+        if len(prices) < 2:
+            vol_dict[t] = np.nan
+            dd_dict[t] = np.nan
+            rv_dict[t] = np.nan
+            continue
+        vol_series = rolling_volatility_annualized(prices, window)
+        vol_dict[t] = float(vol_series.iloc[-1]) if not vol_series.empty else np.nan
+        pct_returns = (prices / prices.iloc[0] - 1.0) * 100.0
+        # build_drawdown_series lavora in punti percentuali; _score_risk si
+        # aspetta una frazione decimale (es. -0.15, non -15.0): il /100.0 non
+        # e' ridondante, converte l'unita' di misura.
+        dd_dict[t] = min(build_drawdown_series(pct_returns.tolist())) / 100.0
+        sharpe_series = rolling_sharpe(prices, window)
+        rv_dict[t] = float(sharpe_series.iloc[-1]) if not sharpe_series.empty else np.nan
 
     result: dict[str, dict[str, float]] = {}
     for t in tickers:
@@ -1495,9 +1507,9 @@ def _compute_all_metrics_batch(tickers: list[str], price_frame: pd.DataFrame) ->
         for k, rd in ret_dicts.items():
             v = rd.get(t, np.nan)
             m[k] = float(v) if pd.notna(v) else np.nan
-        for attr, d in (("vol", vol_dict), ("drawdown", dd_dict), ("rend_vol", rv_dict)):
-            v = d.get(t, np.nan)
-            m[attr] = float(v) if pd.notna(v) else np.nan
+        m["vol"] = vol_dict.get(t, np.nan)
+        m["drawdown"] = dd_dict.get(t, np.nan)
+        m["rend_vol"] = rv_dict.get(t, np.nan)
         result[t] = m
     return result
 
