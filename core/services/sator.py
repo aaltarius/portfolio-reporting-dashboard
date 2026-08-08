@@ -544,7 +544,10 @@ def run_sator_analysis(
         "watchlist_count": int((ranking["state"] == "watchlist").sum()) if not ranking.empty else 0,
         "storico_incompleto": int((~ranking["storico_sufficiente"]).sum()) if not ranking.empty else 0,
     }
-    return {"summary": summary, "ranking": ranking, "alerts": alerts, "scenarios": {}, "sator_settings": cfg}
+    return {
+        "summary": summary, "ranking": ranking, "alerts": alerts, "scenarios": {},
+        "sator_settings": cfg, "returns_frame": returns_frame,
+    }
 
 
 def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
