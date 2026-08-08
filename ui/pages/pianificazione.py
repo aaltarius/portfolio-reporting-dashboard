@@ -759,7 +759,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
             fig_instrument_map = build_instrument_map_chart(instrument_map.scatter_df, theme)
             st.plotly_chart(fig_instrument_map, width="stretch", config={"displayModeBar": False})
         if instrument_map.redundant_pairs.empty:
-            st.caption("Nessuna coppia di strumenti sopra la soglia di ridondanza (correlazione 0,90) nell'universo attuale.")
+            st.caption("Nessuna coppia di strumenti sopra la soglia di ridondanza (correlazione 0,85) nell'universo attuale.")
         else:
             st.markdown("**Coppie potenzialmente ridondanti**")
             display_pairs = instrument_map.redundant_pairs.rename(columns={

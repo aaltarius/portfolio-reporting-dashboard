@@ -16,7 +16,7 @@ import pandas as pd
 
 from core.services.sator import ensure_sator_settings, run_sator_analysis
 
-REDUNDANCY_THRESHOLD = 0.90
+REDUNDANCY_THRESHOLD = 0.85
 MIN_OVERLAP_DAYS = 60
 _RETURN_HORIZONS = (
     ("ret_12m", "12 mesi"),
