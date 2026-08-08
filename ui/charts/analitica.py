@@ -331,3 +331,52 @@ def build_quality_profile_radar(radar_payload: dict[str, Any], theme):
 		theme,
 		"home_radar_quality",
 	)
+
+
+def build_portfolio_simulation_chart(result, theme):
+	"""Build Monte Carlo fan chart for Analitica.
+
+	chart_id: analisi_monte_carlo
+	chiamato da: ui/dashboard_bundles.py (_build_analitica_bundle)
+	"""
+	if not result.available:
+		fig = go.Figure()
+		fig.add_annotation(
+			text=result.reason or "Dati insufficienti per la simulazione.",
+			xref="paper", yref="paper",
+			x=0.5, y=0.5,
+			showarrow=False,
+			font=dict(size=12),
+		)
+		return apply_settings(fig, "analisi_monte_carlo")
+
+	fan = result.fan_percentiles
+	band_color = getattr(theme, "color_blue", "#1f5eff")
+	fig = go.Figure()
+	fig.add_trace(go.Scatter(
+		x=fan["trading_day"], y=fan["p95"], mode="lines",
+		line=dict(width=0), showlegend=False, hoverinfo="skip",
+	))
+	fig.add_trace(go.Scatter(
+		x=fan["trading_day"], y=fan["p5"], mode="lines",
+		line=dict(width=0), fill="tonexty", fillcolor=hex_to_rgba(band_color, 0.12),
+		name="Intervallo 5°-95° percentile",
+		hovertemplate="Giorno %{x}: %{y:,.0f} €<extra></extra>",
+	))
+	fig.add_trace(go.Scatter(
+		x=fan["trading_day"], y=fan["p75"], mode="lines",
+		line=dict(width=0), showlegend=False, hoverinfo="skip",
+	))
+	fig.add_trace(go.Scatter(
+		x=fan["trading_day"], y=fan["p25"], mode="lines",
+		line=dict(width=0), fill="tonexty", fillcolor=hex_to_rgba(band_color, 0.28),
+		name="Intervallo 25°-75° percentile",
+		hovertemplate="Giorno %{x}: %{y:,.0f} €<extra></extra>",
+	))
+	fig.add_trace(go.Scatter(
+		x=fan["trading_day"], y=fan["p50"], mode="lines",
+		line=dict(width=2.4, color=band_color),
+		name="Mediana scenari simulati",
+		hovertemplate="Giorno %{x}: %{y:,.0f} €<extra></extra>",
+	))
+	return apply_settings(fig, "analisi_monte_carlo")

@@ -1013,6 +1013,15 @@ CHARTS: dict[str, dict[str, Any]] = {
      'x_nticks': 15,
      'title': '<b>Contributo al rischio</b>'},
 
+    'analisi_monte_carlo': {'type': 'scatter',
+     'height': 460,
+     'legend': 'bottom',
+     'show_buttons': False,
+     'margin_delta': {'t': 0, 'b': 0, 'l': 0, 'r': -20},
+     'y_title': 'Valore simulato (€)',
+     'x_title': 'Giorni di trading',
+     'title': '<b>Simulazione Monte Carlo del portafoglio</b>'},
+
     'home_radar_allocation': {'type': 'radar',
      'height': 380,
      'legend': 'off',
