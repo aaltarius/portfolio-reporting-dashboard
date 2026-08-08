@@ -41,6 +41,54 @@ def build_analysis_returns(price_frame: pd.DataFrame, tickers: list[str]) -> pd.
     return pd.DataFrame(returns).sort_index() if returns else pd.DataFrame()
 
 
+def build_simple_returns(price_frame: pd.DataFrame, tickers: list[str]) -> pd.DataFrame:
+    """Rendimenti semplici giorno-per-giorno, per comporre un percorso di valore.
+
+    A differenza di build_analysis_returns (log-rendimenti normalizzati per
+    la radice del gap tra osservazioni, un trucco di annualizzazione), qui
+    il rendimento resta quello effettivamente realizzato in ciascun giorno
+    di storico disponibile — l'unico adatto a un bootstrap che deve comporre
+    un percorso di valore (Monte Carlo, core/services/portfolio_simulation.py).
+    """
+    returns = {}
+    for tk in tickers:
+        if tk not in price_frame.columns:
+            continue
+        p = pd.Series(price_frame[tk]).dropna().astype(float)
+        p = p[p > 0]
+        if len(p) < 3:
+            continue
+        simple = p.pct_change().dropna()
+        if simple.empty:
+            continue
+        returns[tk] = simple
+    return pd.DataFrame(returns).sort_index() if returns else pd.DataFrame()
+
+
+def combine_weighted_returns(returns_df: pd.DataFrame, weights: pd.Series) -> pd.Series:
+    """Combina i rendimenti multi-strumento in un'unica serie di portafoglio.
+
+    I pesi vengono rinormalizzati a somma 1 sugli strumenti effettivamente
+    presenti in returns_df con peso positivo; un giorno senza rendimento per
+    uno strumento conta zero per quel giorno (fillna, non drop: evita di
+    perdere l'intera riga per un solo strumento mancante).
+
+    Definizione canonica unica: usata sia da SATOR
+    (core/services/sator.py::_build_portfolio_return_series) sia dal Monte
+    Carlo del portafoglio — non duplicare questa formula altrove.
+    """
+    if returns_df is None or returns_df.empty or weights is None or weights.empty:
+        return pd.Series(dtype=float)
+    cols = [t for t in weights.index if t in returns_df.columns and weights[t] > 0]
+    if not cols:
+        return pd.Series(dtype=float)
+    total = float(weights[cols].sum())
+    if total <= 0:
+        return pd.Series(dtype=float)
+    w = weights[cols] / total
+    return returns_df[cols].fillna(0.0).mul(w, axis=1).sum(axis=1)
+
+
 def compute_instrument_stats(
     price_series: pd.Series,
     bench_series: pd.Series | None = None,

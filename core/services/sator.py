@@ -29,6 +29,7 @@ import pandas as pd
 
 from core.constants import QTY_ZERO_EPS
 from core.domain.risk import build_drawdown_series, rolling_sharpe, rolling_volatility_annualized
+from core.domain.returns import combine_weighted_returns
 from core.finance import build_ptf_df, compute_portfolio_state
 from core.price_frames import build_expanded_price_frame
 from persistence.storage import load_sator_decisions, macro_cat
@@ -1528,14 +1529,8 @@ def _build_returns_frame(price_frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _build_portfolio_return_series(returns_frame: pd.DataFrame, state_df: pd.DataFrame, weights: dict[str, float]) -> pd.Series:
-    if returns_frame is None or returns_frame.empty or not weights:
-        return pd.Series(dtype=float)
-    cols = [t for t in weights if t in returns_frame.columns and weights[t] > 0]
-    if not cols:
-        return pd.Series(dtype=float)
-    tot = sum(weights[t] for t in cols)
-    w = pd.Series({t: weights[t] / tot for t in cols})
-    return returns_frame[cols].fillna(0.0).mul(w, axis=1).sum(axis=1)
+    _ = state_df  # non usato: firma invariata per compatibilita' con i chiamanti esistenti
+    return combine_weighted_returns(returns_frame, pd.Series(weights or {}, dtype=float))
 
 
 def _compute_correlations(returns_frame: pd.DataFrame, portfolio_returns: pd.Series) -> dict[str, float]:
