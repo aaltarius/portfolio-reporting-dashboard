@@ -382,6 +382,35 @@ Stato sincero della cache al 2026-08-03:
   sul render Pianificazione: +250/320 ms circa su una base di ~0,5 s (vedi
   riga Pianificazione in "Ultima lettura performance", da aggiornare al
   prossimo log completo).
+- Chiuso Progetto D (`docs/progetti/ROADMAP_AI_FINANZA_LIBRO.md`), 2026-08-09:
+  sezione "Perche' questo voto" in Pianificazione, sotto la Mappa strumenti —
+  per ogni strumento della classifica SATOR, contributo dei 5 fattori al voto
+  (grafico a barre impilate `pianificazione_sator_explain` + tabella di
+  sintesi), formule riusate da `core/services/sator.py`
+  (`PESI_DIMENSIONI`/`NOME_FATTORE`) via il nuovo modulo
+  `core/services/sator_explain.py`, nessun nuovo calcolo di punteggio.
+  `build_instrument_map` ora accetta un `precomputed_result` opzionale cosi'
+  Mappa strumenti e la nuova sezione condividono la stessa chiamata a
+  `run_sator_analysis` invece di ricalcolarla due volte. Impatto misurato sul
+  blocco SATOR di Pianificazione con dati reali (mediana di 5 run): da 157,7 ms
+  (solo Mappa strumenti, comportamento pre-Task) a 204,5 ms (Mappa strumenti +
+  Perche' questo voto), delta di mediana +46,9 ms — di cui ~23 ms per la
+  costruzione del grafico e ~1 ms per `build_sator_explanations` (puro Python
+  su una DataFrame gia' in memoria), il resto e' variabilita' di
+  `run_sator_analysis` fra le due misurazioni.
+  La review finale sul branch (che ha costruito ed ispezionato la figura
+  renderizzata, non solo il codice) ha trovato e corretto tre problemi
+  reali invisibili alla sola review per-task: l'asse X del grafico veniva
+  tagliato a circa 1/3 della lunghezza vera (la protezione automatica sulle
+  barre non e' stack-aware), l'asse Y mostrava il voto piu' alto in fondo
+  invece che in cima (un passaggio della pipeline di rendering sovrascriveva
+  l'ordine impostato dal builder), e i contributi usavano sempre i pesi di
+  default invece di quelli che l'utente puo' personalizzare dall'expander
+  "Pesi del punteggio SATOR" — ora `build_sator_explanations` riceve i pesi
+  realmente usati da SATOR (`sator_result["sator_settings"]["score_weights"]`).
+  Riformulata anche la frase di sintesi ("il fattore che porta meno punti al
+  voto" invece di "il punto piu' debole", per non far sembrare un giudizio
+  sullo strumento quello che e' solo un effetto dei pesi).
 
 ### Cruscotti / Analitica
 
