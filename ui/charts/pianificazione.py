@@ -537,3 +537,47 @@ def build_sator_explanation_chart(explanations, theme) -> go.Figure:
     # impostato) elenca le tracce nell'ordine di aggiunta, che e' quello
     # voluto.
     return fig
+
+
+_FRONTIER_MARKER_STYLE = {
+    "Attuale": {"symbol": "square", "color_attr": "color_blue"},
+    "Proposta SATOR": {"symbol": "diamond", "color_attr": "color_green"},
+    "Manuale": {"symbol": "circle", "color_attr": "color_orange"},
+    "Min-rischio": {"symbol": "star", "color_attr": "color_purple"},
+    "Miglior Sharpe": {"symbol": "star-triangle-up", "color_attr": "color_red"},
+}
+
+
+def build_sator_frontier_chart(cloud: pd.DataFrame, markers: list, theme) -> go.Figure:
+    """Frontiera rischio/rendimento simulata (Progetto A,
+    ROADMAP_AI_FINANZA_LIBRO.md): nuvola di portafogli casuali (nessun
+    ottimizzatore) piu' 5 marker comparabili con la stessa formula -
+    Attuale, Proposta SATOR, Manuale (slider), Min-rischio e Miglior
+    Sharpe *osservati* nella nuvola, non un ottimo matematico.
+
+    chart_id: pianificazione_sator_frontier
+    chiamato da: ui/pages/pianificazione.py
+    """
+    fig = go.Figure()
+    if (cloud is None or cloud.empty) and not markers:
+        return finalize_chart(fig, "pianificazione_sator_frontier")
+    if cloud is not None and not cloud.empty:
+        fig.add_trace(go.Scatter(
+            x=cloud["vol"], y=cloud["ret"], mode="markers", name="Portafogli simulati",
+            marker=dict(size=4, color=getattr(theme, "color_gray", "#6b7280"), opacity=0.25),
+            showlegend=False, hoverinfo="skip",
+        ))
+    for marker in markers:
+        style = _FRONTIER_MARKER_STYLE.get(marker.label, {"symbol": "circle", "color_attr": "color_gray"})
+        color = getattr(theme, style["color_attr"], COLORS.get("gray", "#6b7280"))
+        fig.add_trace(go.Scatter(
+            x=[marker.vol], y=[marker.ret], mode="markers", name=marker.label,
+            marker=dict(size=16, symbol=style["symbol"], color=color, line=dict(color="rgba(17,24,39,0.6)", width=1.2)),
+            customdata=[marker.sharpe],
+            hovertemplate=(
+                f"<b>{marker.label}</b><br>Volatilita' annua: %{{x:.1%}}<br>"
+                "Rendimento storico annuo: %{y:+.1%}<br>Sharpe (storico): %{customdata:.2f}<extra></extra>"
+            ),
+        ))
+    fig = finalize_chart(fig, "pianificazione_sator_frontier")
+    return fig

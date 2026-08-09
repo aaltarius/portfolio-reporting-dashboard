@@ -1545,6 +1545,17 @@ CHARTS: dict[str, dict[str, Any]] = {
      'y_tickformat': '.0%',
      'title': '<b>Mappa strumenti: rischio e rendimento storico</b>'},
 
+    'pianificazione_sator_frontier': {'type': 'scatter',
+     'height': 460,
+     'legend': 'bottom',
+     'show_buttons': False,
+     'margin_delta': {'t': 0, 'b': 0, 'l': 0, 'r': 0},
+     'x_title': "Volatilita' annualizzata",
+     'y_title': 'Rendimento storico annualizzato',
+     'x_tickformat': '.0%',
+     'y_tickformat': '.0%',
+     'title': '<b>Frontiera rischio/rendimento: attuale, proposta SATOR e simulazione</b>'},
+
     'pianificazione_sator_explain': {'type': 'bar',
      'height': 480,
      'legend': 'bottom',
