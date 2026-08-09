@@ -242,7 +242,18 @@ with _logged_app_phase("form_server_start"):
 
 
 # === INITIALIZE STATE ===
-_STATE_MANAGER_SCHEMA = "2026-05-31-derived-runtime-cache-v1"
+# Bump obbligatorio ad ogni cambio di schema/logica nella pipeline
+# derived-runtime (core/state.py, core/finance.py e chiamanti a valle):
+# questa stringa e' sia la chiave di @st.cache_resource su get_state_manager
+# (forza una nuova istanza StateManager, azzerando la sua cache interna in
+# memoria) sia un componente di _portfolio_semantic_signature (forza il
+# rebuild completo di runtime.orchestration_payload, il livello di cache
+# piu' esterno che avvolge l'intero ctx). Bump del 2026-08-09: aggiunta
+# colonna "ValoreAperto" a build_portfolio_history_df - senza bump qui,
+# ne' il bump del cache_sig interno alla funzione ne' quello del token
+# StateManager (history_df_v4 -> v5) bastavano, perche' questo livello
+# esterno non richiamava neppure get_history_df_for su un hit.
+_STATE_MANAGER_SCHEMA = "2026-08-09-derived-runtime-cache-v2"
 
 
 @st.cache_resource
