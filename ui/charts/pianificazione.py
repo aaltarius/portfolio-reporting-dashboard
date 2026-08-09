@@ -459,6 +459,13 @@ def build_sator_explanation_chart(explanations, theme) -> go.Figure:
     # cumulativa dei segmenti arriva esattamente al voto vero, per
     # costruzione (1 + score_finale*9 == voto, la stessa formula di SATOR).
     running_base = {exp.ticker: 1.0 for exp in explanations}
+    # Posseduto = opacita' piena, solo osservato = opacita' ridotta - stessa
+    # distinzione "pieno vs attenuato" gia' usata per la forma dei marker in
+    # Mappa Strumenti, qui applicata all'opacita' perche' le barre non hanno
+    # un equivalente "vuoto/pieno". Ribadita anche nell'hover (mai solo
+    # opacita': l'identita' non deve dipendere da un solo canale visivo).
+    ownership_labels = ["In portafoglio" if exp.in_portfolio else "In osservazione" for exp in explanations]
+    bar_opacities = [1.0 if exp.in_portfolio else 0.45 for exp in explanations]
     for factor in factor_order:
         label = next(c.label for c in explanations[0].contributions if c.factor == factor)
         x_values = []
@@ -477,11 +484,15 @@ def build_sator_explanation_chart(explanations, theme) -> go.Figure:
             base=base_values,
             orientation="h",
             name=label,
-            marker_color=factor_colors.get(factor, COLORS.get("gray", "#6b7280")),
-            customdata=raw_scores,
+            marker=dict(
+                color=factor_colors.get(factor, COLORS.get("gray", "#6b7280")),
+                opacity=bar_opacities,
+            ),
+            customdata=list(zip(raw_scores, ownership_labels)),
             hovertemplate=(
                 f"<b>{label}</b><br>Contributo: %{{x:.2f}} punti voto<br>"
-                "Punteggio fattore: %{customdata:.0%}<extra></extra>"
+                "Punteggio fattore: %{customdata[0]:.0%}<br>"
+                "%{customdata[1]}<extra></extra>"
             ),
         ))
 
@@ -518,13 +529,11 @@ def build_sator_explanation_chart(explanations, theme) -> go.Figure:
     # che explanations e' ordinato per voto decrescente) perche' finisca in
     # cima.
     fig.update_yaxes(categoryorder="array", categoryarray=list(reversed(tickers)))
-    # La legenda orizzontale, di default, elenca le tracce nell'ordine di
-    # aggiunta (strategic_fit -> cost_efficiency, da sinistra a destra) -
-    # coerente in teoria con l'ordine dei segmenti nella barra (che parte
-    # da strategic_fit vicino alla base). Segnalato pero' come percepito al
-    # contrario: "reversed" e' l'impostazione raccomandata da Plotly stesso
-    # per allineare legenda e ordine di impilamento nei grafici a barre
-    # impilate. Riapplicato DOPO finalize_chart per lo stesso motivo del
-    # categoryarray sopra.
-    fig.update_layout(legend=dict(traceorder="reversed"))
+    # NON forzare legend.traceorder: verificato dall'utente che con
+    # "reversed" la legenda mostra cost_efficiency (ultimo fattore
+    # aggiunto) per primo, mentre il segmento piu' a sinistra nella barra
+    # e' strategic_fit (primo fattore aggiunto, base=1.0) - "reversed" era
+    # la direzione sbagliata. Il default di Plotly (nessun traceorder
+    # impostato) elenca le tracce nell'ordine di aggiunta, che e' quello
+    # voluto.
     return fig
