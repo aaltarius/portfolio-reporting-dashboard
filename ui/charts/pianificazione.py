@@ -419,7 +419,7 @@ def build_instrument_map_chart(scatter_df: pd.DataFrame, theme) -> go.Figure:
                 x=observed["vol"], y=observed["return_value"], mode="markers+text",
                 name="In osservazione", showlegend=not observed_legend_shown,
                 text=observed["ticker"], textposition=observed["text_position"], textfont=dict(size=9),
-                marker=dict(size=observed["marker_size"], color=observed_color, opacity=0.7, line=dict(color="rgba(17,24,39,0.35)", width=1.0)),
+                marker=dict(size=observed["marker_size"], color=observed_color, opacity=0.9, line=dict(color="rgba(17,24,39,0.55)", width=1.0)),
                 customdata=observed[customdata_cols].to_numpy(),
                 hovertemplate=hover_template,
             ))

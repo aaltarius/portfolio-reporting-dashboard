@@ -859,7 +859,7 @@ def _build_analitica_bundle(
             charts_settings_sig=charts_settings_sig,
             builder=lambda: build_pl_decomposition_time_chart(dfh_market_only, pl_cols, "Stacked", dfmt, theme),
             page_mode="Completa",
-            extra_params={"viz_mode": "Stacked", "palette": "instrument_based_v3", "income_mode": "market_only_v1"},
+            extra_params={"viz_mode": "Stacked", "palette": "instrument_based_v3", "income_mode": "market_only_v1", "extrema_source": "stack_total_v1"},
             strategy=cache_strategy,
         )
 
@@ -878,7 +878,7 @@ def _build_analitica_bundle(
                 charts_settings_sig=charts_settings_sig,
                 builder=lambda: build_percentage_return_time_chart(dfh_market_only, pct_cap, pct_cost, pl_color, pl_total_market_only, dfmt, theme),
                 page_mode="Completa",
-                extra_params={"return_alignment": "current_pl_v2", "income_mode": "market_only_v1"},
+                extra_params={"return_alignment": "current_pl_v2", "income_mode": "market_only_v1", "pct_cost_basis": "open_only_v1"},
                 strategy=cache_strategy,
             )
 
@@ -975,7 +975,7 @@ def _build_analitica_bundle(
             charts_settings_sig=charts_settings_sig,
             builder=lambda: build_portfolio_simulation_chart(monte_carlo_result, theme),
             page_mode="Completa",
-            extra_params={"monte_carlo_scenarios": 2000, "monte_carlo_seed": 20260808},
+            extra_params={"monte_carlo_scenarios": 2000, "monte_carlo_seed": 20260808, "chart_style": "gradient_bands_v2"},
             strategy=cache_strategy,
         )
 
