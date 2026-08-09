@@ -452,17 +452,32 @@ def build_sator_explanation_chart(explanations, theme) -> go.Figure:
     }
     tickers = [exp.ticker for exp in explanations]
     factor_order = [c.factor for c in explanations[0].contributions]
+
+    # Ogni barra parte da 1.0 (il minimo del voto SATOR), non da 0: cosi'
+    # l'asse X e' direttamente la scala voto 1-10 usata ovunque nell'app,
+    # invece di una scala "punti su 9" (voto-1) che il lettore deve
+    # convertire a mente - fonte di confusione gia' segnalata (una barra
+    # che arriva a ~7 su una scala 0-9 non si legge come "voto 8"). Base
+    # esplicita per ogni traccia (non barmode="stack" automatico): la somma
+    # cumulativa dei segmenti arriva esattamente al voto vero, per
+    # costruzione (1 + score_finale*9 == voto, la stessa formula di SATOR).
+    running_base = {exp.ticker: 1.0 for exp in explanations}
     for factor in factor_order:
         label = next(c.label for c in explanations[0].contributions if c.factor == factor)
         x_values = []
+        base_values = []
         raw_scores = []
         for exp in explanations:
             contrib = next(c for c in exp.contributions if c.factor == factor)
-            x_values.append(contrib.contribution * 9.0)
+            segment = contrib.contribution * 9.0
+            base_values.append(running_base[exp.ticker])
+            x_values.append(segment)
             raw_scores.append(contrib.raw_score)
+            running_base[exp.ticker] += segment
         fig.add_trace(go.Bar(
             y=tickers,
             x=x_values,
+            base=base_values,
             orientation="h",
             name=label,
             marker_color=factor_colors.get(factor, COLORS.get("gray", "#6b7280")),
@@ -472,22 +487,29 @@ def build_sator_explanation_chart(explanations, theme) -> go.Figure:
                 "Punteggio fattore: %{customdata:.0%}<extra></extra>"
             ),
         ))
-    # Etichetta di fine barra col voto vero (scala 1-10, la stessa usata
-    # ovunque nell'app): senza questa, il lettore deve convertire a mente la
-    # lunghezza della barra (scala "punti su 9", cioe' voto-1) nel voto
-    # reale - fonte di confusione gia' segnalata (una barra che arriva a ~7
-    # non si legge subito come "voto 8").
+
+    # Etichetta col voto vero, ancorata alla STESSA posizione X per tutti
+    # gli strumenti (non a fine barra, che varierebbe riga per riga):
+    # "middle left" fa crescere il testo verso sinistra dall'ancora, quindi
+    # il bordo destro di ogni etichetta risulta allineato alla stessa X -
+    # una colonna di numeri, non un'accozzaglia a lunghezze diverse.
+    label_anchor_x = 10.3
     fig.add_trace(go.Scatter(
         y=tickers,
-        x=[exp.voto - 1.0 for exp in explanations],
+        x=[label_anchor_x] * len(tickers),
         mode="text",
         text=[f"Voto {exp.voto:.1f}" for exp in explanations],
-        textposition="middle right",
+        textposition="middle left",
         textfont=dict(size=11, color=getattr(theme, "font_color", "#1f2937")),
         showlegend=False,
         hoverinfo="skip",
+        cliponaxis=False,
     ))
-    fig.update_layout(barmode="stack")
+
+    # barmode="overlay": ogni barra e' gia' posizionata esplicitamente da
+    # base+x sopra, non serve (ne' si deve) lasciare che Plotly la
+    # ristacki automaticamente da zero.
+    fig.update_layout(barmode="overlay")
     fig = finalize_chart(fig, "pianificazione_sator_explain")
     # force_all_y_categories (dentro apply_settings/finalize_chart, attiva di
     # default per le barre orizzontali) sovrascrive qualunque categoryarray
@@ -499,4 +521,13 @@ def build_sator_explanation_chart(explanations, theme) -> go.Figure:
     # che explanations e' ordinato per voto decrescente) perche' finisca in
     # cima.
     fig.update_yaxes(categoryorder="array", categoryarray=list(reversed(tickers)))
+    # La legenda orizzontale, di default, elenca le tracce nell'ordine di
+    # aggiunta (strategic_fit -> cost_efficiency, da sinistra a destra) -
+    # coerente in teoria con l'ordine dei segmenti nella barra (che parte
+    # da strategic_fit vicino alla base). Segnalato pero' come percepito al
+    # contrario: "reversed" e' l'impostazione raccomandata da Plotly stesso
+    # per allineare legenda e ordine di impilamento nei grafici a barre
+    # impilate. Riapplicato DOPO finalize_chart per lo stesso motivo del
+    # categoryarray sopra.
+    fig.update_layout(legend=dict(traceorder="reversed"))
     return fig

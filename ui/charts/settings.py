@@ -1543,13 +1543,17 @@ CHARTS: dict[str, dict[str, Any]] = {
      'legend': 'bottom',
      'show_buttons': False,
      'margin_delta': {'t': 0, 'b': 0, 'l': 40, 'r': -20},
-     'x_title': 'Contributo al voto (punti su 9)',
+     'x_title': 'Voto (1-10)',
      # Barre orizzontali impilate: la protezione automatica dell'asse X
      # (apply_bar_protection, ui/charts/bars.py) calcola il range sulle
      # singole tracce, non sul totale impilato, tagliando l'asse a ~1/3
      # della scala reale. Il range esplicito qui vince perche' applicato
      # dopo la protezione automatica nella pipeline di apply_settings.
-     'x_range': [0, 9],
+     # Scala diretta 1-10 (non "punti su 9"): ogni barra parte da 1.0
+     # (base esplicita nel builder), non da 0 - vedi
+     # ui/charts/pianificazione.py::build_sator_explanation_chart. Il
+     # margine fino a 10,5 lascia spazio alla colonna di etichette voto.
+     'x_range': [1, 10.5],
      'title': '<b>Perché questo voto</b>'},
 
     # ------------------------------------------------------------------
