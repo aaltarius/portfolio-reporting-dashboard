@@ -37,6 +37,7 @@ class InstrumentExplanation:
     voto: float
     contributions: list[FactorContribution]
     summary_text: str
+    in_portfolio: bool = False
 
 
 def _build_summary_text(contributions: list[FactorContribution]) -> str:
@@ -75,6 +76,7 @@ def build_sator_explanations(
             voto=float(row["voto"]),
             contributions=contributions,
             summary_text=_build_summary_text(contributions),
+            in_portfolio=bool(row.get("in_portfolio", False)),
         ))
     explanations.sort(key=lambda e: e.voto, reverse=True)
     return explanations

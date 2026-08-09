@@ -808,8 +808,9 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
             fig_explain = build_sator_explanation_chart(explanations, theme)
             st.plotly_chart(fig_explain, width="stretch", config={"displayModeBar": False})
         legend_block(
-            "Ogni barra è uno strumento: i segmenti colorati mostrano quanto ciascun fattore contribuisce, il numero a fine barra è il voto vero (1-10). "
-            "Un segmento più lungo significa un punteggio più alto su quel fattore per quello strumento — i pesi sono sempre gli stessi per tutti.",
+            "Ogni barra è uno strumento: i segmenti colorati mostrano quanto ciascun fattore contribuisce, il numero nella colonna a destra è il voto vero (1-10). "
+            "Un segmento più lungo significa un punteggio più alto su quel fattore per quello strumento — i pesi sono sempre gli stessi per tutti. "
+            "Barra piena = lo possiedi già; barra più chiara = lo stai solo osservando (passa il mouse per conferma).",
             variant="bottom",
         )
 
