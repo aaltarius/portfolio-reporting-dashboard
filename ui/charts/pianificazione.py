@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import plotly.graph_objects as go
 
+from core.config import COLORS
 from ui.charts.runtime import finalize_chart
 from ui.formatting import fmt_eur_it, fmt_pct_it
 from ui.charts.natura_icons import get_natura_visual
@@ -429,3 +430,48 @@ def build_instrument_map_chart(scatter_df: pd.DataFrame, theme) -> go.Figure:
     fig = finalize_chart(fig, "pianificazione_instrument_map")
     fig.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.16, xanchor="center", x=0.5))
     return fig
+
+
+def build_sator_explanation_chart(explanations, theme) -> go.Figure:
+    """Barre orizzontali impilate: contributo pesato di ciascun fattore al
+    voto SATOR, uno strumento per riga.
+
+    chart_id: pianificazione_sator_explain
+    chiamato da: ui/pages/pianificazione.py
+    """
+    fig = go.Figure()
+    if not explanations:
+        return finalize_chart(fig, "pianificazione_sator_explain")
+
+    factor_colors = {
+        "strategic_fit": getattr(theme, "color_blue", "#5B8DEF"),
+        "tactical_momentum": getattr(theme, "color_orange", "#d97706"),
+        "risk_efficiency": getattr(theme, "color_red", "#dc2626"),
+        "diversification_benefit": getattr(theme, "color_green", "#16803c"),
+        "cost_efficiency": getattr(theme, "color_purple", "#8E44AD"),
+    }
+    tickers = [exp.ticker for exp in explanations]
+    factor_order = [c.factor for c in explanations[0].contributions]
+    for factor in factor_order:
+        label = next(c.label for c in explanations[0].contributions if c.factor == factor)
+        x_values = []
+        raw_scores = []
+        for exp in explanations:
+            contrib = next(c for c in exp.contributions if c.factor == factor)
+            x_values.append(contrib.contribution * 9.0)
+            raw_scores.append(contrib.raw_score)
+        fig.add_trace(go.Bar(
+            y=tickers,
+            x=x_values,
+            orientation="h",
+            name=label,
+            marker_color=factor_colors.get(factor, COLORS.get("gray", "#6b7280")),
+            customdata=raw_scores,
+            hovertemplate=(
+                f"<b>{label}</b><br>Contributo: %{{x:.2f}} punti voto<br>"
+                "Punteggio fattore: %{customdata:.0%}<extra></extra>"
+            ),
+        ))
+    fig.update_layout(barmode="stack")
+    fig.update_yaxes(categoryorder="array", categoryarray=list(reversed(tickers)))
+    return finalize_chart(fig, "pianificazione_sator_explain")

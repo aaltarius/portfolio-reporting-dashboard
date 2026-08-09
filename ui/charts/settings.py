@@ -1538,6 +1538,14 @@ CHARTS: dict[str, dict[str, Any]] = {
      'y_tickformat': '.0%',
      'title': '<b>Mappa strumenti: rischio e rendimento storico</b>'},
 
+    'pianificazione_sator_explain': {'type': 'bar',
+     'height': 480,
+     'legend': 'bottom',
+     'show_buttons': False,
+     'margin_delta': {'t': 0, 'b': 0, 'l': 40, 'r': -20},
+     'x_title': 'Contributo al voto (punti su 9)',
+     'title': '<b>Perché questo voto</b>'},
+
     # ------------------------------------------------------------------
     # DA VERIFICARE / LEGACY
     # ------------------------------------------------------------------
