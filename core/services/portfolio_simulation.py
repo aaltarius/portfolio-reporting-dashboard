@@ -21,6 +21,11 @@ MIN_OBSERVATIONS = 60
 HORIZON_DAYS_MAX = 504
 _HORIZONS: tuple[tuple[int, str], ...] = ((126, "6 mesi"), (252, "12 mesi"), (504, "24 mesi"))
 _FAN_STEP_DAYS = 5
+# Percentili annidati (5-95, 10-90, 25-75, 40-60) per un effetto "fan chart"
+# a piu' livelli di opacita' intorno alla mediana, invece di due sole bande
+# piatte - stessa tecnica dei fan chart di banca centrale.
+_FAN_PERCENTILES: tuple[int, ...] = (5, 10, 25, 40, 50, 60, 75, 90, 95)
+_FAN_COLUMNS: tuple[str, ...] = tuple(f"p{p}" for p in _FAN_PERCENTILES)
 
 
 @dataclass(frozen=True)
@@ -55,7 +60,7 @@ def _unavailable(reason: str, n_observations: int) -> PortfolioSimulationResult:
         n_observations=n_observations,
         n_scenarios=0,
         extrapolated=False,
-        fan_percentiles=pd.DataFrame(columns=["trading_day", "p5", "p25", "p50", "p75", "p95"]),
+        fan_percentiles=pd.DataFrame(columns=["trading_day", *_FAN_COLUMNS]),
         horizons=[],
     )
 
@@ -107,14 +112,14 @@ def build_portfolio_simulation(
     fan_days = list(range(0, HORIZON_DAYS_MAX, _FAN_STEP_DAYS))
     if fan_days[-1] != HORIZON_DAYS_MAX - 1:
         fan_days.append(HORIZON_DAYS_MAX - 1)
-    fan_rows = [{
-        "trading_day": 0, "p5": initial_value, "p25": initial_value,
-        "p50": initial_value, "p75": initial_value, "p95": initial_value,
-    }]
+    fan_rows = [{"trading_day": 0, **{col: initial_value for col in _FAN_COLUMNS}}]
     for day in fan_days:
         column = values[:, day]
-        p5, p25, p50, p75, p95 = (float(v) for v in np.percentile(column, [5, 25, 50, 75, 95]))
-        fan_rows.append({"trading_day": day + 1, "p5": p5, "p25": p25, "p50": p50, "p75": p75, "p95": p95})
+        pct_values = np.percentile(column, _FAN_PERCENTILES)
+        fan_rows.append({
+            "trading_day": day + 1,
+            **{col: float(v) for col, v in zip(_FAN_COLUMNS, pct_values)},
+        })
     fan_percentiles = pd.DataFrame(fan_rows)
 
     horizons: list[HorizonMetrics] = []

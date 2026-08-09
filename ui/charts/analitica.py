@@ -377,35 +377,68 @@ def build_portfolio_simulation_chart(result, theme):
 
 	fan = result.fan_percentiles
 	band_color = getattr(theme, "color_blue", "#1f5eff")
-	# Asse X in mesi (non giorni di trading): unita' immediatamente
-	# comprensibile per chi non ha familiarita' coi mercati. Conversione
-	# approssimata, 21 giorni di trading per mese solare.
-	fan_months = fan["trading_day"] / 21.0
+	muted = COLORS.get("gray", "#6b7280")
+	x = fan["trading_day"]
+	hover_pct = "Giorno %{x}: %{y:,.0f} €<extra></extra>"
 	fig = go.Figure()
+
+	# Bande annidate 5-95/10-90/25-75/40-60, opacita' crescente verso il
+	# centro: un vero effetto sfumato (fan chart), non due bande piatte.
+	# Solo le due piu' esterne compaiono in legenda - le intermedie
+	# rinforzano il gradiente senza affollare la legenda (label selettive).
+	_band_layers = (
+		("p95", "p5", 0.07, "Intervallo 5°-95° percentile", True),
+		("p90", "p10", 0.12, None, False),
+		("p75", "p25", 0.20, "Intervallo 25°-75° percentile", True),
+		("p60", "p40", 0.34, None, False),
+	)
+	for upper_col, lower_col, opacity, band_name, show_in_legend in _band_layers:
+		fig.add_trace(go.Scatter(
+			x=x, y=fan[upper_col], mode="lines",
+			line=dict(width=0), showlegend=False, hoverinfo="skip",
+		))
+		fig.add_trace(go.Scatter(
+			x=x, y=fan[lower_col], mode="lines",
+			line=dict(width=0), fill="tonexty", fillcolor=hex_to_rgba(band_color, opacity),
+			name=band_name or "", showlegend=show_in_legend,
+			hovertemplate=hover_pct,
+		))
+
 	fig.add_trace(go.Scatter(
-		x=fan_months, y=fan["p95"], mode="lines",
-		line=dict(width=0), showlegend=False, hoverinfo="skip",
-	))
-	fig.add_trace(go.Scatter(
-		x=fan_months, y=fan["p5"], mode="lines",
-		line=dict(width=0), fill="tonexty", fillcolor=hex_to_rgba(band_color, 0.12),
-		name="Intervallo 5°-95° percentile",
-		hovertemplate="Mese %{x:.1f}: %{y:,.0f} €<extra></extra>",
-	))
-	fig.add_trace(go.Scatter(
-		x=fan_months, y=fan["p75"], mode="lines",
-		line=dict(width=0), showlegend=False, hoverinfo="skip",
-	))
-	fig.add_trace(go.Scatter(
-		x=fan_months, y=fan["p25"], mode="lines",
-		line=dict(width=0), fill="tonexty", fillcolor=hex_to_rgba(band_color, 0.28),
-		name="Intervallo 25°-75° percentile",
-		hovertemplate="Mese %{x:.1f}: %{y:,.0f} €<extra></extra>",
-	))
-	fig.add_trace(go.Scatter(
-		x=fan_months, y=fan["p50"], mode="lines",
+		x=x, y=fan["p50"], mode="lines",
 		line=dict(width=2.4, color=band_color),
 		name="Mediana scenari simulati",
-		hovertemplate="Mese %{x:.1f}: %{y:,.0f} €<extra></extra>",
+		hovertemplate=hover_pct,
 	))
+
+	# Punto di partenza ("oggi") ed etichetta di valore sulla mediana finale:
+	# le linee prendono valore all'estremo (marks-and-anatomy), non un
+	# numero su ogni punto.
+	fig.add_trace(go.Scatter(
+		x=[x.iloc[0]], y=[fan["p50"].iloc[0]], mode="markers+text",
+		marker=dict(size=8, color=band_color, line=dict(color="white", width=1.5)),
+		text=[f"Oggi: {fmt_eur_it(fan['p50'].iloc[0], 0)}"], textposition="middle left",
+		textfont=dict(size=10), showlegend=False, hoverinfo="skip",
+	))
+	fig.add_trace(go.Scatter(
+		x=[x.iloc[-1]], y=[fan["p50"].iloc[-1]], mode="markers+text",
+		marker=dict(size=8, color=band_color, line=dict(color="white", width=1.5)),
+		text=[fmt_eur_it(fan["p50"].iloc[-1], 0)], textposition="middle right",
+		textfont=dict(size=10, color=band_color), showlegend=False, hoverinfo="skip",
+	))
+
+	# Righe verticali di riferimento sugli orizzonti (6/12 mesi): quello a 24
+	# mesi coincide col bordo destro del grafico, gia' segnato dall'etichetta
+	# di valore finale, quindi non serve ripeterlo.
+	last_day = int(x.iloc[-1])
+	for h in result.horizons:
+		if h.trading_days >= last_day:
+			continue
+		fig.add_vline(
+			x=h.trading_days, line_dash="dot", line_width=1,
+			line_color=hex_to_rgba(muted, 0.55),
+			annotation_text=h.label, annotation_position="top",
+			annotation_font=dict(size=10, color=muted),
+		)
+
 	return apply_settings(fig, "analisi_monte_carlo")
