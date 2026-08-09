@@ -337,6 +337,43 @@ def build_next_purchase_bubble_chart(bubble_df: pd.DataFrame, theme) -> go.Figur
     return fig
 
 
+def _declutter_text_positions(x_values, y_values) -> list[str]:
+    """Assegna la posizione dell'etichetta (alto/basso/destra/sinistra) punto
+    per punto per ridurre le sovrapposizioni tra bolle vicine.
+
+    Euristica greedy in spazio normalizzato: per ogni punto, tra le 4
+    posizioni candidate sceglie quella la cui etichetta cade piu' lontana da
+    tutte le etichette gia' assegnate. Non elimina le sovrapposizioni quando
+    tanti punti sono davvero vicini tra loro (in quel caso e' informativo:
+    significa che quegli strumenti si comportano in modo simile), ma le
+    riduce sensibilmente rispetto a un'unica posizione fissa per tutti."""
+    positions = ["top center", "bottom center", "middle right", "middle left"]
+    offsets = {"top center": (0.0, 0.05), "bottom center": (0.0, -0.05), "middle right": (0.055, 0.0), "middle left": (-0.055, 0.0)}
+    xs = pd.to_numeric(pd.Series(x_values), errors="coerce").fillna(0.0).to_numpy(dtype=float)
+    ys = pd.to_numeric(pd.Series(y_values), errors="coerce").fillna(0.0).to_numpy(dtype=float)
+    n = len(xs)
+    if n == 0:
+        return []
+    x_range = max(float(xs.max() - xs.min()), 1e-9)
+    y_range = max(float(ys.max() - ys.min()), 1e-9)
+    xn = (xs - xs.min()) / x_range
+    yn = (ys - ys.min()) / y_range
+    order = sorted(range(n), key=lambda i: -yn[i])
+    assigned = [""] * n
+    anchors: list[tuple[float, float]] = []
+    for i in order:
+        best_pos, best_dist, best_anchor = positions[0], -1.0, (xn[i], yn[i])
+        for pos in positions:
+            dx, dy = offsets[pos]
+            ax, ay = xn[i] + dx, yn[i] + dy
+            min_d = min((((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5 for bx, by in anchors), default=999.0)
+            if min_d > best_dist:
+                best_dist, best_pos, best_anchor = min_d, pos, (ax, ay)
+        assigned[i] = best_pos
+        anchors.append(best_anchor)
+    return assigned
+
+
 def build_instrument_map_chart(scatter_df: pd.DataFrame, theme) -> go.Figure:
     """Mappa strumenti rischio/rendimento storico osservato (Progetto C,
     ROADMAP_AI_FINANZA_LIBRO.md): X = volatilita' annualizzata, Y =
@@ -351,6 +388,7 @@ def build_instrument_map_chart(scatter_df: pd.DataFrame, theme) -> go.Figure:
     df["ownership_label"] = df["in_portfolio"].map({True: "Posseduto", False: "In osservazione"})
     max_weight = max(float(df["current_weight"].max()), 1e-6)
     df["marker_size"] = 10.0 + (df["current_weight"].clip(lower=0.0) / max_weight) * 26.0
+    df["text_position"] = _declutter_text_positions(df["vol"], df["return_value"])
     for category in sorted(df["category"].dropna().unique()):
         sub = df[df["category"] == category]
         if sub.empty:
@@ -361,7 +399,7 @@ def build_instrument_map_chart(scatter_df: pd.DataFrame, theme) -> go.Figure:
             mode="markers+text",
             name=str(category),
             text=sub["ticker"],
-            textposition="top center",
+            textposition=sub["text_position"],
             textfont=dict(size=9),
             marker=dict(
                 size=sub["marker_size"],

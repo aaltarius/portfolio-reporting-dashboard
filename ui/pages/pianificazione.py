@@ -758,6 +758,14 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
         with profile_step("Pianificazione/SATOR", "instrument_map_chart", count=len(instrument_map.scatter_df)):
             fig_instrument_map = build_instrument_map_chart(instrument_map.scatter_df, theme)
             st.plotly_chart(fig_instrument_map, width="stretch", config={"displayModeBar": False})
+        legend_block(
+            "Come si legge: più a destra = lo strumento sale e scende di più nel tempo (rischio); "
+            "più in alto = ha reso di più in passato (non è una garanzia per il futuro). "
+            "Bolla più grande = pesa di più nel tuo portafoglio oggi; bordo scuro spesso = lo possiedi già, "
+            "bordo sottile = solo osservato. Punti vicini tra loro si sono comportati in modo simile: "
+            "se sono molto vicini potrebbero essere ridondanti (vedi tabella sotto).",
+            variant="bottom",
+        )
         if instrument_map.redundant_pairs.empty:
             st.caption("Nessuna coppia di strumenti sopra la soglia di ridondanza (correlazione 0,85) nell'universo attuale.")
         else:
