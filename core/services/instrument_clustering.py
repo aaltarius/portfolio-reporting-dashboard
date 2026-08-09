@@ -99,10 +99,18 @@ def _build_redundant_pairs(ranking: pd.DataFrame, returns_frame: pd.DataFrame) -
     return pd.DataFrame(rows, columns=columns).sort_values("correlazione", ascending=False).reset_index(drop=True)
 
 
-def build_instrument_map(data: dict[str, Any], settings: dict[str, Any] | None) -> InstrumentMapResult:
+def build_instrument_map(
+    data: dict[str, Any],
+    settings: dict[str, Any] | None,
+    *,
+    precomputed_result: dict[str, Any] | None = None,
+) -> InstrumentMapResult:
     settings = settings or {}
-    cfg = ensure_sator_settings(settings)
-    result = run_sator_analysis(data, settings, budget=cfg["default_budget"])
+    if precomputed_result is not None:
+        result = precomputed_result
+    else:
+        cfg = ensure_sator_settings(settings)
+        result = run_sator_analysis(data, settings, budget=cfg["default_budget"])
     ranking = result.get("ranking", pd.DataFrame())
     returns_frame = result.get("returns_frame", pd.DataFrame())
     return InstrumentMapResult(
