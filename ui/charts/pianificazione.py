@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import plotly.graph_objects as go
 
+from core.config import COLORS
 from ui.charts.runtime import finalize_chart
 from ui.formatting import fmt_eur_it, fmt_pct_it
 from ui.charts.natura_icons import get_natura_visual
@@ -378,9 +379,10 @@ def build_instrument_map_chart(scatter_df: pd.DataFrame, theme) -> go.Figure:
     """Mappa strumenti rischio/rendimento storico osservato (Progetto C,
     ROADMAP_AI_FINANZA_LIBRO.md): X = volatilita' annualizzata, Y =
     rendimento storico realizzato (solo dato passato, vedi return_label per
-    l'orizzonte usato), colore = categoria, dimensione bolla = peso attuale
-    in portafoglio (0 per i soli osservati), bordo piu' marcato per gli
-    strumenti posseduti."""
+    l'orizzonte usato), dimensione bolla = peso attuale in portafoglio (0 per
+    i soli osservati). Colore: per categoria (Core/Difensivo/Satellite) sugli
+    strumenti posseduti, grigio neutro per i soli osservati - la proprieta'
+    si legge dal colore, non dal bordo."""
     fig = go.Figure()
     if scatter_df is None or scatter_df.empty:
         return finalize_chart(fig, "pianificazione_instrument_map")
@@ -389,37 +391,39 @@ def build_instrument_map_chart(scatter_df: pd.DataFrame, theme) -> go.Figure:
     max_weight = max(float(df["current_weight"].max()), 1e-6)
     df["marker_size"] = 10.0 + (df["current_weight"].clip(lower=0.0) / max_weight) * 26.0
     df["text_position"] = _declutter_text_positions(df["vol"], df["return_value"])
+    observed_color = COLORS.get("gray", "#9ca3af")
+    hover_template = (
+        "<b>%{customdata[0]}</b> — %{customdata[1]}<br>"
+        "Natura: %{customdata[2]}<br>"
+        "Volatilita' annua: %{x:.1%}<br>"
+        "Rendimento storico %{customdata[3]}: %{y:+.1%}<br>"
+        "Peso in portafoglio: %{customdata[5]:.1%}<br>"
+        "%{customdata[4]}<extra></extra>"
+    )
+    customdata_cols = ["ticker", "name", "nature", "return_label", "ownership_label", "current_weight"]
+    observed_legend_shown = False
     for category in sorted(df["category"].dropna().unique()):
-        sub = df[df["category"] == category]
-        if sub.empty:
-            continue
-        fig.add_trace(go.Scatter(
-            x=sub["vol"],
-            y=sub["return_value"],
-            mode="markers+text",
-            name=str(category),
-            text=sub["ticker"],
-            textposition=sub["text_position"],
-            textfont=dict(size=9),
-            marker=dict(
-                size=sub["marker_size"],
-                color=macro_color(str(category)),
-                opacity=0.82,
-                line=dict(
-                    color="rgba(17,24,39,0.55)",
-                    width=[1.8 if v else 0.6 for v in sub["in_portfolio"]],
-                ),
-            ),
-            customdata=sub[["ticker", "name", "nature", "return_label", "ownership_label", "current_weight"]].to_numpy(),
-            hovertemplate=(
-                "<b>%{customdata[0]}</b> — %{customdata[1]}<br>"
-                "Natura: %{customdata[2]}<br>"
-                "Volatilita' annua: %{x:.1%}<br>"
-                "Rendimento storico %{customdata[3]}: %{y:+.1%}<br>"
-                "Peso in portafoglio: %{customdata[5]:.1%}<br>"
-                "%{customdata[4]}<extra></extra>"
-            ),
-        ))
+        owned = df[(df["category"] == category) & df["in_portfolio"]]
+        if not owned.empty:
+            fig.add_trace(go.Scatter(
+                x=owned["vol"], y=owned["return_value"], mode="markers+text",
+                name=str(category), text=owned["ticker"],
+                textposition=owned["text_position"], textfont=dict(size=9),
+                marker=dict(size=owned["marker_size"], color=macro_color(str(category)), opacity=0.85, line=dict(color="rgba(17,24,39,0.55)", width=1.0)),
+                customdata=owned[customdata_cols].to_numpy(),
+                hovertemplate=hover_template,
+            ))
+        observed = df[(df["category"] == category) & ~df["in_portfolio"]]
+        if not observed.empty:
+            fig.add_trace(go.Scatter(
+                x=observed["vol"], y=observed["return_value"], mode="markers+text",
+                name="In osservazione", showlegend=not observed_legend_shown,
+                text=observed["ticker"], textposition=observed["text_position"], textfont=dict(size=9),
+                marker=dict(size=observed["marker_size"], color=observed_color, opacity=0.7, line=dict(color="rgba(17,24,39,0.35)", width=1.0)),
+                customdata=observed[customdata_cols].to_numpy(),
+                hovertemplate=hover_template,
+            ))
+            observed_legend_shown = True
     fig.update_xaxes(title_text="Volatilita' annualizzata", tickformat=".0%")
     fig.update_yaxes(title_text="Rendimento storico realizzato (orizzonte variabile per strumento)", tickformat=".0%")
     fig = finalize_chart(fig, "pianificazione_instrument_map")
