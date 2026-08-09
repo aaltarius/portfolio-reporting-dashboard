@@ -24,6 +24,7 @@ from core.services.sator import (
 )
 from core.services.instrument_clustering import build_instrument_map
 from core.services.sator_explain import build_sator_explanations
+from core.services.sator_frontier import build_sator_frontier
 from persistence.storage import load_sator_decisions, load_settings, save_settings
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it
 from ui.i18n import t
@@ -38,6 +39,7 @@ from ui.charts.pianificazione import (
     build_next_purchase_bubble_chart,
     build_instrument_map_chart,
     build_sator_explanation_chart,
+    build_sator_frontier_chart,
 )
 from ui.theme import bucket_color, get_theme_context
 from ui.notifications import queue_success
@@ -787,6 +789,51 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
             })[["Strumento A", "Categoria A", "Strumento B", "Categoria B", "Correlazione"]]
             display_pairs["Correlazione"] = display_pairs["Correlazione"].map(lambda v: fmt_num_it(v, 2))
             st.dataframe(display_pairs, hide_index=True, width="stretch")
+
+    render_section_title(
+        "Frontiera rischio/rendimento",
+        comment="Portafogli simulati (nessun ottimizzatore): rendimento storico e volatilita' annualizzati sull'orizzonte scelto. La proposta SATOR usa le quote suggerite al budget corrente; lo slider interpola linearmente tra il portafoglio attuale e la proposta. Min-rischio e Miglior Sharpe sono i punti migliori osservati nella simulazione, non un ottimo garantito.",
+        gap_after="sm",
+    )
+    _col_horizon, _col_slider = st.columns([1, 2])
+    _horizon_options = {"6 mesi": 6, "12 mesi": 12, "24 mesi": 24, "36 mesi": 36}
+    with _col_horizon:
+        _horizon_label = st.selectbox(
+            "Orizzonte storico", list(_horizon_options.keys()), index=1, key="sator_frontier_horizon",
+        )
+    with _col_slider:
+        _manual_pct = st.slider(
+            "Adesione alla proposta SATOR", min_value=0, max_value=100, value=0, step=5,
+            format="%d%%", key="sator_frontier_slider",
+        )
+    with profile_step("Pianificazione/SATOR", "frontier"):
+        try:
+            frontier_result = build_sator_frontier(
+                data, settings, precomputed_result=sator_result,
+                lookback_months=_horizon_options[_horizon_label], manual_slider_pct=_manual_pct / 100.0,
+            ) if sator_result is not None else None
+        except Exception:
+            frontier_result = None
+    if frontier_result is None or not frontier_result.available:
+        st.info(frontier_result.reason if frontier_result is not None else "Frontiera non disponibile su questi dati.")
+    else:
+        if frontier_result.excluded_tickers:
+            st.warning(
+                "Esclusi dalla simulazione per storico insufficiente sull'orizzonte scelto: "
+                + ", ".join(frontier_result.excluded_tickers)
+            )
+        if not frontier_result.has_proposal:
+            st.caption("Nessuna quota suggerita da SATOR al budget corrente: lo slider non ha effetto (Proposta SATOR coincide con Attuale).")
+        with profile_step("Pianificazione/SATOR", "frontier_chart", count=len(frontier_result.cloud)):
+            fig_frontier = build_sator_frontier_chart(frontier_result.cloud, frontier_result.markers, theme)
+            st.plotly_chart(fig_frontier, width="stretch", config={"displayModeBar": False})
+        legend_block(
+            "Quadrato = portafoglio attuale; diamante = proposta SATOR; cerchio = punto scelto con lo slider; "
+            "le due stelle sono il minor rischio e il miglior rapporto rendimento/rischio osservati nella "
+            f"simulazione, non un ottimo garantito. {frontier_result.verdict_vs_current.capitalize()}; "
+            f"{frontier_result.verdict_vs_frontier}.",
+            variant="bottom",
+        )
 
     render_section_title(
         "Perché questo voto",
