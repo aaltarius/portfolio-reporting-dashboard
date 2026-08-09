@@ -132,14 +132,26 @@ def _blend_weights(weights_a: dict[str, float], weights_b: dict[str, float], pct
     return {k: weights_a.get(k, 0.0) * (1.0 - pct_b) + weights_b.get(k, 0.0) * pct_b for k in keys}
 
 
-def _sample_capped_weights(n: int, max_share: float, rng: np.random.Generator) -> np.ndarray:
+def _sample_capped_weights(n: int, max_share: float, rng: np.random.Generator, *, max_attempts: int = 5000) -> np.ndarray:
     """Un vettore di pesi long-only sul simplesso (Dirichlet alpha=1),
-    ricampionato finche' nessun peso supera `max_share` (rifiuto). Con
-    `max_share >= 1.0` non c'e' mai rifiuto."""
-    while True:
+    ricampionato finche' nessun peso supera `max_share` (rifiuto), fino a
+    `max_attempts` tentativi. Se `max_share` e' sotto il minimo
+    matematicamente raggiungibile (1/n - es. un cap troppo stretto per il
+    numero di strumenti), si usa 1/n come cap effettivo: altrimenti
+    nessun vettore sarebbe mai ammissibile e il campionamento non
+    terminerebbe mai (bug corretto in fix round 1, segnalato da code
+    review). Se il cap e' tecnicamente raggiungibile ma con un tasso di
+    accettazione bassissimo, dopo `max_attempts` tentativi si ricade su
+    pesi uniformi (1/n ciascuno, sempre ammissibili per costruzione) -
+    garanzia di terminazione anche nel caso limite."""
+    effective_cap = max(max_share, 1.0 / n) if n > 0 else max_share
+    if effective_cap >= 1.0:
+        return rng.dirichlet(np.ones(n))
+    for _ in range(max_attempts):
         w = rng.dirichlet(np.ones(n))
-        if max_share >= 1.0 or w.max() <= max_share:
+        if w.max() <= effective_cap:
             return w
+    return np.full(n, 1.0 / n)
 
 
 def _simulate_random_portfolios(
@@ -148,20 +160,51 @@ def _simulate_random_portfolios(
     """Nuvola di portafogli casuali long-only sui ticker di `mean_returns`,
     col cap di concentrazione `max_share` (stessa soglia gia' usata da
     SATOR per le linee, `cfg["max_share_per_line"]`). Nessun ottimizzatore:
-    la "frontiera" e' il bordo superiore osservato di questa nuvola."""
+    la "frontiera" e' il bordo superiore osservato di questa nuvola.
+
+    Rifiuto vettorizzato a blocchi (non un ciclo Python campione-per-
+    campione): quando il cap e' stretto rispetto al numero di strumenti
+    il tasso di accettazione puo' essere molto basso (es. ~0.3% con 3
+    strumenti e cap 0.35), e un ciclo Python a un campione per iterazione
+    misurato in code review impiegava oltre 25 secondi sui default -
+    campionare a blocchi con numpy riduce lo stesso numero di estrazioni
+    a una frazione di secondo. Se il cap e' matematicamente irraggiungibile
+    (sotto 1/n) si usa 1/n come cap effettivo; se restano scenari non
+    accettati dopo un numero massimo di blocchi, si completa con pesi
+    uniformi (1/n ciascuno, sempre ammissibili). cov viene riempita con
+    fillna(0.0) prima dell'uso, stessa convenzione di _portfolio_point in
+    Task 1 - evita vol NaN quando due strumenti non hanno storico
+    sovrapposto nella finestra scelta."""
     tickers = list(mean_returns.index)
     n = len(tickers)
     if n == 0:
         return pd.DataFrame(columns=["ret", "vol"])
     rng = np.random.default_rng(seed)
     mean_arr = mean_returns.to_numpy()
-    cov_arr = cov.reindex(index=tickers, columns=tickers).to_numpy()
-    rets = np.empty(n_scenarios)
-    vols = np.empty(n_scenarios)
-    for i in range(n_scenarios):
-        w = _sample_capped_weights(n, max_share, rng)
-        rets[i] = float(w @ mean_arr)
-        vols[i] = float(np.sqrt(max(w @ cov_arr @ w, 0.0)))
+    cov_arr = cov.reindex(index=tickers, columns=tickers).fillna(0.0).to_numpy()
+
+    effective_cap = max(max_share, 1.0 / n)
+    if effective_cap >= 1.0:
+        weights = rng.dirichlet(np.ones(n), size=n_scenarios)
+    else:
+        batch_size = max(n_scenarios * 4, 2000)
+        max_batches = 50
+        accepted = np.empty((0, n))
+        for _ in range(max_batches):
+            if len(accepted) >= n_scenarios:
+                break
+            batch = rng.dirichlet(np.ones(n), size=batch_size)
+            ok = batch[batch.max(axis=1) <= effective_cap]
+            accepted = np.vstack([accepted, ok]) if len(accepted) else ok
+        if len(accepted) < n_scenarios:
+            missing = n_scenarios - len(accepted)
+            fallback = np.full((missing, n), 1.0 / n)
+            accepted = np.vstack([accepted, fallback]) if len(accepted) else fallback
+        weights = accepted[:n_scenarios]
+
+    rets = weights @ mean_arr
+    variances = np.einsum("ij,jk,ik->i", weights, cov_arr, weights)
+    vols = np.sqrt(np.maximum(variances, 0.0))
     return pd.DataFrame({"ret": rets, "vol": vols})
 
 
@@ -174,11 +217,17 @@ def _extract_cloud_extremes(cloud: pd.DataFrame) -> tuple[FrontierMarker, Fronti
         sharpe=float(min_row["ret"] / min_row["vol"]) if min_row["vol"] > 1e-9 else 0.0,
     )
     sharpe = cloud["ret"] / cloud["vol"].replace(0.0, np.nan)
-    best_idx = sharpe.idxmax()
-    max_sharpe = FrontierMarker(
-        label="Miglior Sharpe", ret=float(cloud.loc[best_idx, "ret"]), vol=float(cloud.loc[best_idx, "vol"]),
-        sharpe=float(sharpe.loc[best_idx]),
-    )
+    if sharpe.notna().any():
+        best_idx = sharpe.idxmax()
+        max_sharpe = FrontierMarker(
+            label="Miglior Sharpe", ret=float(cloud.loc[best_idx, "ret"]), vol=float(cloud.loc[best_idx, "vol"]),
+            sharpe=float(sharpe.loc[best_idx]),
+        )
+    else:
+        # Tutta la nuvola ha volatilita' zero (strumenti a varianza nulla
+        # nella finestra scelta): nessuno Sharpe e' definito, "miglior
+        # Sharpe" coincide col minimo rischio per definizione.
+        max_sharpe = FrontierMarker(label="Miglior Sharpe", ret=min_risk.ret, vol=min_risk.vol, sharpe=min_risk.sharpe)
     return min_risk, max_sharpe
 
 
