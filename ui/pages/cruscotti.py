@@ -601,7 +601,7 @@ def _render_analitica(bundle: Any) -> None:
         legend_block("Vista storica (non le sole posizioni aperte oggi): rappresentazione cumulata che mostra come ciascuno strumento, anche se successivamente chiuso o rimborsato, ha contribuito al risultato totale di portafoglio nel tempo.", variant="bottom")
 
     with profile_step("Cruscotti/AnaliticaRender", "render percentage return chart"):
-        render_section_title("Rendimento % sul Capitale nel Tempo", icon="analysis")
+        render_section_title("🔴 VERIFICA-CACHE-A 🔴 Rendimento % sul Capitale nel Tempo", icon="analysis")
         st.markdown("<div title=\"Indicatore percentuale storico del risultato del portafoglio costruito sulla base del capitale registrato nello storico.\" style=\"margin-top:-0.45rem; margin-bottom:0.35rem; font-size:0.82rem; opacity:0.78;\">ⓘ</div>", unsafe_allow_html=True)
         st.plotly_chart(bundle.percentage_return_figure, width="stretch")
         legend_block("Andamento del rendimento percentuale del portafoglio nel tempo. Misura il guadagno rispetto al capitale versato.", variant="bottom")
@@ -872,7 +872,7 @@ def _render_analitica(bundle: Any) -> None:
         _render_risk_contribution_analitica(bundle)
     vertical_gap("sm")
     with profile_step("Cruscotti/AnaliticaRender", "render monte carlo chart"):
-        render_section_title("Simulazione Monte Carlo", icon="risk")
+        render_section_title("🔴 VERIFICA-CACHE-B 🔴 Simulazione Monte Carlo", icon="risk")
         _render_monte_carlo_analitica(bundle)
     vertical_gap("sm")
     with profile_step("Cruscotti/AnaliticaRender", "render radar section"):
