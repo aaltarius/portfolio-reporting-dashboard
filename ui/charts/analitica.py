@@ -418,7 +418,7 @@ def build_portfolio_simulation_chart(result, theme):
 	fig.add_trace(go.Scatter(
 		x=[x.iloc[0]], y=[fan["p50"].iloc[0]], mode="markers+text",
 		marker=dict(size=8, color=band_color, line=dict(color="white", width=1.5)),
-		text=[f"Oggi: {fmt_eur_it(fan['p50'].iloc[0], 0)}"], textposition="middle right",
+		text=[f"Oggi: {fmt_eur_it(fan['p50'].iloc[0], 0)}"], textposition="middle left",
 		textfont=dict(size=10, color=band_color), showlegend=False, hoverinfo="skip",
 		cliponaxis=False,
 	))
@@ -445,6 +445,7 @@ def build_portfolio_simulation_chart(result, theme):
 			line_color=hex_to_rgba(muted, 0.55),
 			annotation_text=label, annotation_position="top",
 			annotation_font=dict(size=10, color=muted),
+			annotation_yshift=-18,
 		)
 
 	return apply_settings(fig, "analisi_monte_carlo")
