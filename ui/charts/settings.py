@@ -1539,6 +1539,8 @@ CHARTS: dict[str, dict[str, Any]] = {
      'legend': 'bottom',
      'show_buttons': False,
      'margin_delta': {'t': 0, 'b': 0, 'l': 0, 'r': 0},
+     'x_title': "Volatilita' annualizzata",
+     'y_title': 'Rendimento storico realizzato (orizzonte variabile per strumento)',
      'x_tickformat': '.0%',
      'y_tickformat': '.0%',
      'title': '<b>Mappa strumenti: rischio e rendimento storico</b>'},

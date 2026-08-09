@@ -425,10 +425,7 @@ def build_instrument_map_chart(scatter_df: pd.DataFrame, theme) -> go.Figure:
                 customdata=observed[customdata_cols].to_numpy(),
                 hovertemplate=hover_template,
             ))
-    fig.update_xaxes(title_text="Volatilita' annualizzata", tickformat=".0%")
-    fig.update_yaxes(title_text="Rendimento storico realizzato (orizzonte variabile per strumento)", tickformat=".0%")
     fig = finalize_chart(fig, "pianificazione_instrument_map")
-    fig.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.16, xanchor="center", x=0.5))
     return fig
 
 
