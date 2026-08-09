@@ -27,6 +27,7 @@ N_SCENARIOS_DEFAULT = 4000
 RETURN_NEUTRAL_BAND = 0.005
 VOL_NEUTRAL_BAND = 0.005
 FRONTIER_CLOSE_BAND = 0.01
+MIN_CLOUD_UNIQUE_FRACTION = 0.5
 
 
 @dataclass(frozen=True)
@@ -279,6 +280,7 @@ class SatorFrontierResult:
     excluded_tickers: list[str]
     n_universe: int
     has_proposal: bool
+    cloud_degenerate: bool
     verdict_vs_current: str
     verdict_vs_frontier: str
 
@@ -286,7 +288,7 @@ class SatorFrontierResult:
 def _unavailable(reason: str) -> SatorFrontierResult:
     return SatorFrontierResult(
         available=False, reason=reason, cloud=pd.DataFrame(columns=["ret", "vol"]),
-        markers=[], excluded_tickers=[], n_universe=0, has_proposal=False,
+        markers=[], excluded_tickers=[], n_universe=0, has_proposal=False, cloud_degenerate=False,
         verdict_vs_current="", verdict_vs_frontier="",
     )
 
@@ -307,12 +309,14 @@ def build_sator_frontier(
     if ranking is None or ranking.empty:
         return _unavailable("Nessuno strumento nell'universo SATOR.")
 
-    universe = (
-        [str(t) for t in ranking.loc[ranking["storico_sufficiente"].astype(bool), "ticker"].tolist()]
-        if "storico_sufficiente" in ranking.columns
-        else [str(t) for t in ranking["ticker"].tolist()]
-    )
+    if "storico_sufficiente" in ranking.columns:
+        universe = [str(t) for t in ranking.loc[ranking["storico_sufficiente"].astype(bool), "ticker"].tolist()]
+        short_history = [str(t) for t in ranking.loc[~ranking["storico_sufficiente"].astype(bool), "ticker"].tolist()]
+    else:
+        universe = [str(t) for t in ranking["ticker"].tolist()]
+        short_history = []
     mean_returns, cov, excluded = _historical_return_and_cov(returns_frame, universe, lookback_months)
+    excluded = short_history + excluded
     if len(mean_returns) < MIN_UNIVERSE_SIZE:
         return _unavailable(
             f"Servono almeno {MIN_UNIVERSE_SIZE} strumenti con storico sufficiente "
@@ -342,8 +346,11 @@ def build_sator_frontier(
     cloud = _simulate_random_portfolios(mean_returns, cov, max_share, n_scenarios, seed)
     if cloud.empty:
         min_risk_point, max_sharpe_point = current_point, current_point
+        cloud_degenerate = True
     else:
         min_risk_point, max_sharpe_point = _extract_cloud_extremes(cloud)
+        unique_fraction = len(cloud.drop_duplicates()) / len(cloud)
+        cloud_degenerate = unique_fraction < MIN_CLOUD_UNIQUE_FRACTION
 
     markers = [
         FrontierMarker(label="Attuale", ret=current_point.ret, vol=current_point.vol, sharpe=current_point.sharpe),
@@ -355,6 +362,7 @@ def build_sator_frontier(
     return SatorFrontierResult(
         available=True, reason="", cloud=cloud, markers=markers,
         excluded_tickers=excluded, n_universe=len(included), has_proposal=has_proposal,
+        cloud_degenerate=cloud_degenerate,
         verdict_vs_current=_classify_vs_current(current_point, manual_point),
         verdict_vs_frontier=_classify_vs_frontier(manual_point, cloud),
     )

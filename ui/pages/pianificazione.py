@@ -824,6 +824,8 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
             )
         if not frontier_result.has_proposal:
             st.caption("Nessuna quota suggerita da SATOR al budget corrente: lo slider non ha effetto (Proposta SATOR coincide con Attuale).")
+        if frontier_result.cloud_degenerate:
+            st.warning("Con questo vincolo di concentrazione e questo numero di strumenti simulati, la nuvola genera pochi portafogli davvero distinti: interpreta minimo-rischio e miglior Sharpe con cautela.")
         with profile_step("Pianificazione/SATOR", "frontier_chart", count=len(frontier_result.cloud)):
             fig_frontier = build_sator_frontier_chart(frontier_result.cloud, frontier_result.markers, theme)
             st.plotly_chart(fig_frontier, width="stretch", config={"displayModeBar": False})
