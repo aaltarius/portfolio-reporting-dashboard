@@ -303,16 +303,29 @@ class StateManager:
         return self._cache["portfolio_state"]
 
     def get_history_df_for(self, data: dict[str, Any]) -> pd.DataFrame:
-        """Ritorna serie storica per payload filtrato usando cache persistita."""
-        token = ("history_df_v4",) + self._derived_data_token(data)
+        """Ritorna serie storica per payload filtrato usando cache persistita.
+
+        Questo token e' un TERZO livello di cache, indipendente dalla firma
+        interna di build_portfolio_history_df (cache_sig, dentro
+        data["cache_storico_portafoglio"]): quando questo strato trova una
+        entry su disco/processo, build_portfolio_history_df non viene
+        nemmeno chiamata, quindi il suo bump di versione non basta da solo.
+        Bump obbligatorio anche qui ad ogni cambio di schema della history
+        (visto succedere il 2026-08-09: aggiunta colonna "ValoreAperto" -
+        senza questo bump, i chiamanti a valle continuavano a ricevere un
+        dataframe senza la colonna, e i fallback difensivi ("se manca la
+        colonna uso quella vecchia") riattivavano silenziosamente la
+        formula superata).
+        """
+        token = ("history_df_v5",) + self._derived_data_token(data)
         if self._cache["history_df"] is None or self._history_cache_token != token:
-            cached = self._load_persisted_derived("history_df_v4", token)
+            cached = self._load_persisted_derived("history_df_v5", token)
             if cached is not None:
                 self._cache["history_df"] = cached
             else:
                 logger.debug("Cache miss history_df")
                 self._cache["history_df"] = build_portfolio_history_df(data)
-                self._save_persisted_derived("history_df_v4", token, self._cache["history_df"])
+                self._save_persisted_derived("history_df_v5", token, self._cache["history_df"])
             self._history_cache_token = token
         return self._cache["history_df"]
 
