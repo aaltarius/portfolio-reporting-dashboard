@@ -108,6 +108,10 @@ def apply_axis_settings(
         fig.update_xaxes(dtick=settings.get("x_dtick"))
     if settings.get("y_dtick") is not None:
         fig.update_yaxes(dtick=settings.get("y_dtick"))
+    if settings.get("x_minor_dtick") is not None:
+        fig.update_xaxes(minor=dict(dtick=settings.get("x_minor_dtick"), ticks="outside"))
+    if settings.get("y_minor_dtick") is not None:
+        fig.update_yaxes(minor=dict(dtick=settings.get("y_minor_dtick"), ticks="outside"))
     if settings.get("x_nticks") is not None:
         fig.update_xaxes(nticks=int(settings.get("x_nticks")))
     elif settings.get("type") != "time":

@@ -518,6 +518,11 @@ GLOBAL_STYLE: dict[str, Any] = {
 # x_nticks / y_nticks / x_dtick / y_dtick
 #   nticks suggerisce il numero di tacche; dtick forza il passo fisso.
 #
+# x_minor_dtick / y_minor_dtick
+#   Tacche secondarie (mezze tacche) tra quelle principali di dtick, senza
+#   etichetta numerica propria - es. x_dtick=1 + x_minor_dtick=0.5 da'
+#   tacche piene ogni intero e tacche corte ogni mezzo punto.
+#
 # x_tickformat / y_tickformat / y2_tickformat
 #   Formato Plotly delle tacche. Esempi: ".0%", ".1f", ",.0f", ".3~s".
 #
@@ -1554,6 +1559,8 @@ CHARTS: dict[str, dict[str, Any]] = {
      # ui/charts/pianificazione.py::build_sator_explanation_chart. Il
      # margine fino a 10,5 lascia spazio alla colonna di etichette voto.
      'x_range': [1, 10.5],
+     'x_dtick': 1,
+     'x_minor_dtick': 0.5,
      'title': '<b>Perché questo voto</b>'},
 
     # ------------------------------------------------------------------
