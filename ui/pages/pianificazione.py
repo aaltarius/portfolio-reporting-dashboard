@@ -20,13 +20,15 @@ from core.services.sator import (
     compute_watchlist_reminders,
     build_next_purchase_bubble_frame,
     latest_sator_decision,
+    run_sator_analysis,
 )
 from core.services.instrument_clustering import build_instrument_map
+from core.services.sator_explain import build_sator_explanations
 from persistence.storage import load_sator_decisions, load_settings, save_settings
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it
 from ui.i18n import t
 from ui.page_chrome import render_page_intro as render_page_intro_shared, render_section_line as render_section_line_shared
-from ui.components import render_section_title, back_to_top, legend_block
+from ui.components import render_section_title, back_to_top, legend_block, render_styled_table
 from ui.charts.natura_icons import get_natura_visual
 from core.instrument_classification import suggest_tipo_correction
 from core.render_profiler import profile_step
@@ -35,6 +37,7 @@ from ui.charts.pianificazione import (
     build_allocation_rings_chart,
     build_next_purchase_bubble_chart,
     build_instrument_map_chart,
+    build_sator_explanation_chart,
 )
 from ui.theme import bucket_color, get_theme_context
 from ui.notifications import queue_success
@@ -745,9 +748,15 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
         comment="Rischio e rendimento storico osservato per ogni strumento posseduto o in osservazione, con segnalazione delle coppie molto correlate (possibile ridondanza). L'orizzonte del rendimento varia per strumento (12/6/3/1 mesi, il più lungo disponibile — vedi il tooltip di ogni punto). Nessuna previsione: solo comportamento passato.",
         gap_after="sm",
     )
+    with profile_step("Pianificazione/SATOR", "sator_analysis"):
+        try:
+            sator_cfg = ensure_sator_settings(settings)
+            sator_result = run_sator_analysis(data, settings, budget=sator_cfg["default_budget"])
+        except Exception:
+            sator_result = None
     with profile_step("Pianificazione/SATOR", "instrument_map"):
         try:
-            instrument_map = build_instrument_map(data, settings)
+            instrument_map = build_instrument_map(data, settings, precomputed_result=sator_result) if sator_result is not None else None
         except Exception:
             instrument_map = None
     if instrument_map is None:
@@ -778,6 +787,33 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
             })[["Strumento A", "Categoria A", "Strumento B", "Categoria B", "Correlazione"]]
             display_pairs["Correlazione"] = display_pairs["Correlazione"].map(lambda v: fmt_num_it(v, 2))
             st.dataframe(display_pairs, hide_index=True, width="stretch")
+
+    render_section_title(
+        "Perché questo voto",
+        comment="Per ogni strumento della classifica SATOR, quanto pesa ciascuno dei 5 fattori sul voto finale. I pesi sono fissi e uguali per tutti gli strumenti — un segmento più lungo significa un punteggio più alto su quel fattore, non un peso maggiore.",
+        gap_after="sm",
+    )
+    with profile_step("Pianificazione/SATOR", "sator_explain"):
+        try:
+            explanations = build_sator_explanations(sator_result.get("ranking", pd.DataFrame())) if sator_result is not None else []
+        except Exception:
+            explanations = []
+    if not explanations:
+        st.info("Spiegazione del voto non disponibile su questi dati.")
+    else:
+        with profile_step("Pianificazione/SATOR", "sator_explain_chart", count=len(explanations)):
+            fig_explain = build_sator_explanation_chart(explanations, theme)
+            st.plotly_chart(fig_explain, width="stretch", config={"displayModeBar": False})
+        legend_block(
+            "Ogni barra è uno strumento: i segmenti colorati mostrano quanto ciascun fattore contribuisce al voto, sommati danno il voto totale. "
+            "Un segmento più lungo significa un punteggio più alto su quel fattore per quello strumento — i pesi sono sempre gli stessi per tutti.",
+            variant="bottom",
+        )
+        explain_rows = [
+            {"Ticker": e.ticker, "Nome": e.name, "Voto": fmt_num_it(e.voto, 1), "Sintesi": e.summary_text}
+            for e in explanations
+        ]
+        render_styled_table(pd.DataFrame(explain_rows).style, height="content")
 
 
 def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
