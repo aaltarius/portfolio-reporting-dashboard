@@ -474,4 +474,14 @@ def build_sator_explanation_chart(explanations, theme) -> go.Figure:
         ))
     fig.update_layout(barmode="stack")
     fig.update_yaxes(categoryorder="array", categoryarray=list(reversed(tickers)))
-    return finalize_chart(fig, "pianificazione_sator_explain")
+    fig = finalize_chart(fig, "pianificazione_sator_explain")
+    # force_all_y_categories (dentro apply_settings/finalize_chart, attiva di
+    # default per le barre orizzontali) sovrascrive il categoryarray impostato
+    # sopra con l'ordine di apparizione delle tracce: va riapplicato DOPO,
+    # stesso pattern usato in ui/charts/calendario_btp.py per lo stesso
+    # motivo. Su un asse Y orizzontale Plotly disegna categoryarray[0] in
+    # basso, quindi l'ultimo elemento deve essere il ticker col voto piu'
+    # alto (tickers[0], visto che explanations e' ordinato per voto
+    # decrescente) perche' finisca in cima.
+    fig.update_yaxes(categoryorder="array", categoryarray=list(reversed(tickers)))
+    return fig

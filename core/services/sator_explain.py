@@ -46,11 +46,13 @@ def _build_summary_text(contributions: list[FactorContribution]) -> str:
         return "Voto equilibrato: nessun fattore domina in modo netto."
     return (
         f"Punteggio trainato soprattutto da {top1.label} e {top2.label}; "
-        f"il punto più debole è {bottom.label}."
+        f"il fattore che porta meno punti al voto è {bottom.label}."
     )
 
 
-def build_sator_explanations(ranking: pd.DataFrame) -> list[InstrumentExplanation]:
+def build_sator_explanations(
+    ranking: pd.DataFrame, weights: dict[str, float] | None = None
+) -> list[InstrumentExplanation]:
     required_cols = {"ticker", "name", "voto", *PESI_DIMENSIONI.keys()}
     if ranking is None or ranking.empty or not required_cols.issubset(set(ranking.columns)):
         return []
@@ -62,10 +64,10 @@ def build_sator_explanations(ranking: pd.DataFrame) -> list[InstrumentExplanatio
                 factor=factor,
                 label=NOME_FATTORE[factor],
                 raw_score=float(row[factor]),
-                weight=weight,
-                contribution=float(row[factor]) * weight,
+                weight=(weights or {}).get(factor, PESI_DIMENSIONI[factor]),
+                contribution=float(row[factor]) * (weights or {}).get(factor, PESI_DIMENSIONI[factor]),
             )
-            for factor, weight in PESI_DIMENSIONI.items()
+            for factor in PESI_DIMENSIONI.keys()
         ]
         explanations.append(InstrumentExplanation(
             ticker=str(row["ticker"]),

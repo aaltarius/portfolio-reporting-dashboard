@@ -795,7 +795,10 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
     )
     with profile_step("Pianificazione/SATOR", "sator_explain"):
         try:
-            explanations = build_sator_explanations(sator_result.get("ranking", pd.DataFrame())) if sator_result is not None else []
+            explanations = build_sator_explanations(
+                sator_result.get("ranking", pd.DataFrame()),
+                weights=sator_result.get("sator_settings", {}).get("score_weights"),
+            ) if sator_result is not None else []
         except Exception:
             explanations = []
     if not explanations:

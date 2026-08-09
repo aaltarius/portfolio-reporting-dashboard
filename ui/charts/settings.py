@@ -1544,6 +1544,12 @@ CHARTS: dict[str, dict[str, Any]] = {
      'show_buttons': False,
      'margin_delta': {'t': 0, 'b': 0, 'l': 40, 'r': -20},
      'x_title': 'Contributo al voto (punti su 9)',
+     # Barre orizzontali impilate: la protezione automatica dell'asse X
+     # (apply_bar_protection, ui/charts/bars.py) calcola il range sulle
+     # singole tracce, non sul totale impilato, tagliando l'asse a ~1/3
+     # della scala reale. Il range esplicito qui vince perche' applicato
+     # dopo la protezione automatica nella pipeline di apply_settings.
+     'x_range': [0, 9],
      'title': '<b>Perché questo voto</b>'},
 
     # ------------------------------------------------------------------
