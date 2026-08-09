@@ -392,14 +392,15 @@ def build_portfolio_simulation_chart(result, theme):
 		("p75", "p25", 0.20, "Intervallo 25°-75° percentile", True),
 		("p60", "p40", 0.34, None, False),
 	)
+	band_edge = dict(width=1, dash="dot", color=hex_to_rgba(band_color, 0.45))
 	for upper_col, lower_col, opacity, band_name, show_in_legend in _band_layers:
 		fig.add_trace(go.Scatter(
 			x=x, y=fan[upper_col], mode="lines",
-			line=dict(width=0), showlegend=False, hoverinfo="skip",
+			line=band_edge, showlegend=False, hoverinfo="skip",
 		))
 		fig.add_trace(go.Scatter(
 			x=x, y=fan[lower_col], mode="lines",
-			line=dict(width=0), fill="tonexty", fillcolor=hex_to_rgba(band_color, opacity),
+			line=band_edge, fill="tonexty", fillcolor=hex_to_rgba(band_color, opacity),
 			name=band_name or "", showlegend=show_in_legend,
 			hovertemplate=hover_pct,
 		))

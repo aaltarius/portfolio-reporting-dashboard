@@ -1047,6 +1047,19 @@ def _build_analitica_bundle(
     )
 
 
+# _build_analitica_bundle e' cachata su disco (get_or_build_registered_artifact,
+# persist_disk=True) sotto una firma costruita SOLO da dati/tema/impostazioni:
+# nessuno dei suoi input riflette il contenuto del codice dei chart builder.
+# Se cambia la logica interna di un grafico (formula, marker, layout) senza
+# che cambi nessuno degli altri input della firma, la vecchia bundle
+# pickled resta servita dal disco a tempo indeterminato, anche dopo un
+# riavvio dell'app - il builder non viene mai richiamato. Bump obbligatorio
+# di questo intero ad ogni modifica del genere (visto succedere il
+# 2026-08-09: fix marker stacked P/L, formula Rend. su Costo %, redesign
+# grafico Monte Carlo - nessuno dei tre cambiava data_sig/theme_sig/ecc).
+_ANALITICA_BUNDLE_LOGIC_VERSION = 2
+
+
 def get_analitica_bundle(
     *,
     dfh_top: pd.DataFrame,
@@ -1108,6 +1121,7 @@ def get_analitica_bundle(
             "layout_analytic": bool(layout_analytic),
             "include_methodology": bool(include_methodology),
             "include_benchmark": bool(include_benchmark),
+            "logic_version": _ANALITICA_BUNDLE_LOGIC_VERSION,
         },
     )
     artifact = get_or_build_registered_artifact(
