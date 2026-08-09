@@ -3,7 +3,6 @@ from __future__ import annotations
 import pandas as pd
 import plotly.graph_objects as go
 
-from core.config import COLORS
 from ui.charts.runtime import finalize_chart
 from ui.formatting import fmt_eur_it, fmt_pct_it
 from ui.charts.natura_icons import get_natura_visual
@@ -380,11 +379,12 @@ def build_instrument_map_chart(scatter_df: pd.DataFrame, theme) -> go.Figure:
     ROADMAP_AI_FINANZA_LIBRO.md): X = volatilita' annualizzata, Y =
     rendimento storico realizzato (solo dato passato, vedi return_label per
     l'orizzonte usato), dimensione bolla = peso attuale in portafoglio (0 per
-    i soli osservati). Colore: per categoria (Core/Difensivo/Satellite,
-    blu/verde/arancio) sugli strumenti posseduti, viola per i soli osservati
-    - una quarta tinta ben distinguibile dalle altre tre, non un grigio che
-    si confonde con lo sfondo. La proprieta' si legge dal colore, non dal
-    bordo."""
+    i soli osservati). Colore per categoria (Core/Difensivo/Satellite) su
+    entrambi; la proprieta' si legge dalla forma del marker (pieno =
+    posseduto, cerchio vuoto = solo osservato), non da una tinta in piu' da
+    distinguere dalle altre - due tentativi precedenti con un colore unico
+    per "osservato" (grigio, poi viola) restavano poco leggibili accanto
+    alle categorie."""
     fig = go.Figure()
     if scatter_df is None or scatter_df.empty:
         return finalize_chart(fig, "pianificazione_instrument_map")
@@ -393,7 +393,6 @@ def build_instrument_map_chart(scatter_df: pd.DataFrame, theme) -> go.Figure:
     max_weight = max(float(df["current_weight"].max()), 1e-6)
     df["marker_size"] = 10.0 + (df["current_weight"].clip(lower=0.0) / max_weight) * 26.0
     df["text_position"] = _declutter_text_positions(df["vol"], df["return_value"])
-    observed_color = getattr(theme, "color_purple", COLORS.get("purple", "#8E44AD"))
     hover_template = (
         "<b>%{customdata[0]}</b> — %{customdata[1]}<br>"
         "Natura: %{customdata[2]}<br>"
@@ -403,15 +402,15 @@ def build_instrument_map_chart(scatter_df: pd.DataFrame, theme) -> go.Figure:
         "%{customdata[4]}<extra></extra>"
     )
     customdata_cols = ["ticker", "name", "nature", "return_label", "ownership_label", "current_weight"]
-    observed_legend_shown = False
     for category in sorted(df["category"].dropna().unique()):
+        cat_color = macro_color(str(category))
         owned = df[(df["category"] == category) & df["in_portfolio"]]
         if not owned.empty:
             fig.add_trace(go.Scatter(
                 x=owned["vol"], y=owned["return_value"], mode="markers+text",
-                name=str(category), text=owned["ticker"],
+                name=str(category), legendgroup=str(category), text=owned["ticker"],
                 textposition=owned["text_position"], textfont=dict(size=9),
-                marker=dict(size=owned["marker_size"], color=macro_color(str(category)), opacity=0.85, line=dict(color="rgba(17,24,39,0.55)", width=1.0)),
+                marker=dict(size=owned["marker_size"], color=cat_color, opacity=0.85, line=dict(color="rgba(17,24,39,0.55)", width=1.0)),
                 customdata=owned[customdata_cols].to_numpy(),
                 hovertemplate=hover_template,
             ))
@@ -419,13 +418,12 @@ def build_instrument_map_chart(scatter_df: pd.DataFrame, theme) -> go.Figure:
         if not observed.empty:
             fig.add_trace(go.Scatter(
                 x=observed["vol"], y=observed["return_value"], mode="markers+text",
-                name="In osservazione", showlegend=not observed_legend_shown,
+                name=f"{category} (osservato)", legendgroup=str(category),
                 text=observed["ticker"], textposition=observed["text_position"], textfont=dict(size=9),
-                marker=dict(size=observed["marker_size"], color=observed_color, opacity=0.9, line=dict(color="rgba(17,24,39,0.55)", width=1.0)),
+                marker=dict(size=observed["marker_size"], symbol="circle-open", color=cat_color, line=dict(width=2.4)),
                 customdata=observed[customdata_cols].to_numpy(),
                 hovertemplate=hover_template,
             ))
-            observed_legend_shown = True
     fig.update_xaxes(title_text="Volatilita' annualizzata", tickformat=".0%")
     fig.update_yaxes(title_text="Rendimento storico realizzato (orizzonte variabile per strumento)", tickformat=".0%")
     fig = finalize_chart(fig, "pianificazione_instrument_map")
