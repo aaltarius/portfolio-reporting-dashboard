@@ -28,7 +28,7 @@ from persistence.storage import load_sator_decisions, load_settings, save_settin
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it
 from ui.i18n import t
 from ui.page_chrome import render_page_intro as render_page_intro_shared, render_section_line as render_section_line_shared
-from ui.components import render_section_title, back_to_top, legend_block, render_styled_table
+from ui.components import render_section_title, back_to_top, legend_block
 from ui.charts.natura_icons import get_natura_visual
 from core.instrument_classification import suggest_tipo_correction
 from core.render_profiler import profile_step
@@ -808,15 +808,10 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
             fig_explain = build_sator_explanation_chart(explanations, theme)
             st.plotly_chart(fig_explain, width="stretch", config={"displayModeBar": False})
         legend_block(
-            "Ogni barra è uno strumento: i segmenti colorati mostrano quanto ciascun fattore contribuisce al voto, sommati danno il voto totale. "
+            "Ogni barra è uno strumento: i segmenti colorati mostrano quanto ciascun fattore contribuisce, il numero a fine barra è il voto vero (1-10). "
             "Un segmento più lungo significa un punteggio più alto su quel fattore per quello strumento — i pesi sono sempre gli stessi per tutti.",
             variant="bottom",
         )
-        explain_rows = [
-            {"Ticker": e.ticker, "Nome": e.name, "Voto": fmt_num_it(e.voto, 1), "Sintesi": e.summary_text}
-            for e in explanations
-        ]
-        render_styled_table(pd.DataFrame(explain_rows).style, height="content")
 
 
 def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:

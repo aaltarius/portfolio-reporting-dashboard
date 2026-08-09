@@ -472,16 +472,31 @@ def build_sator_explanation_chart(explanations, theme) -> go.Figure:
                 "Punteggio fattore: %{customdata:.0%}<extra></extra>"
             ),
         ))
+    # Etichetta di fine barra col voto vero (scala 1-10, la stessa usata
+    # ovunque nell'app): senza questa, il lettore deve convertire a mente la
+    # lunghezza della barra (scala "punti su 9", cioe' voto-1) nel voto
+    # reale - fonte di confusione gia' segnalata (una barra che arriva a ~7
+    # non si legge subito come "voto 8").
+    fig.add_trace(go.Scatter(
+        y=tickers,
+        x=[exp.voto - 1.0 for exp in explanations],
+        mode="text",
+        text=[f"Voto {exp.voto:.1f}" for exp in explanations],
+        textposition="middle right",
+        textfont=dict(size=11, color=getattr(theme, "font_color", "#1f2937")),
+        showlegend=False,
+        hoverinfo="skip",
+    ))
     fig.update_layout(barmode="stack")
-    fig.update_yaxes(categoryorder="array", categoryarray=list(reversed(tickers)))
     fig = finalize_chart(fig, "pianificazione_sator_explain")
     # force_all_y_categories (dentro apply_settings/finalize_chart, attiva di
-    # default per le barre orizzontali) sovrascrive il categoryarray impostato
-    # sopra con l'ordine di apparizione delle tracce: va riapplicato DOPO,
-    # stesso pattern usato in ui/charts/calendario_btp.py per lo stesso
-    # motivo. Su un asse Y orizzontale Plotly disegna categoryarray[0] in
-    # basso, quindi l'ultimo elemento deve essere il ticker col voto piu'
-    # alto (tickers[0], visto che explanations e' ordinato per voto
-    # decrescente) perche' finisca in cima.
+    # default per le barre orizzontali) sovrascrive qualunque categoryarray
+    # impostato prima di questa chiamata con l'ordine di apparizione delle
+    # tracce: va applicato DOPO, stesso pattern usato in
+    # ui/charts/calendario_btp.py per lo stesso motivo. Su un asse Y
+    # orizzontale Plotly disegna categoryarray[0] in basso, quindi l'ultimo
+    # elemento deve essere il ticker col voto piu' alto (tickers[0], visto
+    # che explanations e' ordinato per voto decrescente) perche' finisca in
+    # cima.
     fig.update_yaxes(categoryorder="array", categoryarray=list(reversed(tickers)))
     return fig
