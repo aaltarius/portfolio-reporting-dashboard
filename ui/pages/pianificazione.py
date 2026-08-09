@@ -762,7 +762,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
             "Come si legge: più a destra = lo strumento sale e scende di più nel tempo (rischio); "
             "più in alto = ha reso di più in passato (non è una garanzia per il futuro). "
             "Bolla più grande = pesa di più nel tuo portafoglio oggi. Colore per categoria "
-            "(Core/Difensivo/Satellite) = lo possiedi già; grigio = lo stai solo osservando. "
+            "(Core/Difensivo/Satellite) = lo possiedi già; viola = lo stai solo osservando. "
             "Punti vicini tra loro si sono comportati in modo simile: se sono molto vicini "
             "potrebbero essere ridondanti (vedi tabella sotto).",
             variant="bottom",

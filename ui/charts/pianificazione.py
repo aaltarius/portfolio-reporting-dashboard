@@ -380,9 +380,11 @@ def build_instrument_map_chart(scatter_df: pd.DataFrame, theme) -> go.Figure:
     ROADMAP_AI_FINANZA_LIBRO.md): X = volatilita' annualizzata, Y =
     rendimento storico realizzato (solo dato passato, vedi return_label per
     l'orizzonte usato), dimensione bolla = peso attuale in portafoglio (0 per
-    i soli osservati). Colore: per categoria (Core/Difensivo/Satellite) sugli
-    strumenti posseduti, grigio neutro per i soli osservati - la proprieta'
-    si legge dal colore, non dal bordo."""
+    i soli osservati). Colore: per categoria (Core/Difensivo/Satellite,
+    blu/verde/arancio) sugli strumenti posseduti, viola per i soli osservati
+    - una quarta tinta ben distinguibile dalle altre tre, non un grigio che
+    si confonde con lo sfondo. La proprieta' si legge dal colore, non dal
+    bordo."""
     fig = go.Figure()
     if scatter_df is None or scatter_df.empty:
         return finalize_chart(fig, "pianificazione_instrument_map")
@@ -391,7 +393,7 @@ def build_instrument_map_chart(scatter_df: pd.DataFrame, theme) -> go.Figure:
     max_weight = max(float(df["current_weight"].max()), 1e-6)
     df["marker_size"] = 10.0 + (df["current_weight"].clip(lower=0.0) / max_weight) * 26.0
     df["text_position"] = _declutter_text_positions(df["vol"], df["return_value"])
-    observed_color = COLORS.get("gray", "#9ca3af")
+    observed_color = getattr(theme, "color_purple", COLORS.get("purple", "#8E44AD"))
     hover_template = (
         "<b>%{customdata[0]}</b> — %{customdata[1]}<br>"
         "Natura: %{customdata[2]}<br>"
