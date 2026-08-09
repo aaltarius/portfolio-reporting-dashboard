@@ -418,27 +418,32 @@ def build_portfolio_simulation_chart(result, theme):
 	fig.add_trace(go.Scatter(
 		x=[x.iloc[0]], y=[fan["p50"].iloc[0]], mode="markers+text",
 		marker=dict(size=8, color=band_color, line=dict(color="white", width=1.5)),
-		text=[f"Oggi: {fmt_eur_it(fan['p50'].iloc[0], 0)}"], textposition="middle left",
-		textfont=dict(size=10), showlegend=False, hoverinfo="skip",
+		text=[f"Oggi: {fmt_eur_it(fan['p50'].iloc[0], 0)}"], textposition="middle right",
+		textfont=dict(size=10, color=band_color), showlegend=False, hoverinfo="skip",
+		cliponaxis=False,
 	))
 	fig.add_trace(go.Scatter(
 		x=[x.iloc[-1]], y=[fan["p50"].iloc[-1]], mode="markers+text",
 		marker=dict(size=8, color=band_color, line=dict(color="white", width=1.5)),
 		text=[fmt_eur_it(fan["p50"].iloc[-1], 0)], textposition="middle right",
 		textfont=dict(size=10, color=band_color), showlegend=False, hoverinfo="skip",
+		cliponaxis=False,
 	))
 
-	# Righe verticali di riferimento sugli orizzonti (6/12 mesi): quello a 24
-	# mesi coincide col bordo destro del grafico, gia' segnato dall'etichetta
-	# di valore finale, quindi non serve ripeterlo.
+	# Righe verticali di riferimento sugli orizzonti (6/12/18 mesi): 24 mesi
+	# coincide col bordo destro del grafico, gia' segnato dall'etichetta di
+	# valore finale, quindi non serve ripeterlo. 18 mesi (378 giorni) e' solo
+	# un riferimento visivo sul grafico, non un nuovo orizzonte calcolato
+	# nella tabella sotto (quella resta 6/12/24, come da metodologia).
 	last_day = int(x.iloc[-1])
-	for h in result.horizons:
-		if h.trading_days >= last_day:
+	reference_points = sorted({(h.trading_days, h.label) for h in result.horizons} | {(378, "18 mesi")})
+	for trading_days, label in reference_points:
+		if trading_days >= last_day:
 			continue
 		fig.add_vline(
-			x=h.trading_days, line_dash="dot", line_width=1,
+			x=trading_days, line_dash="dot", line_width=1,
 			line_color=hex_to_rgba(muted, 0.55),
-			annotation_text=h.label, annotation_position="top",
+			annotation_text=label, annotation_position="top",
 			annotation_font=dict(size=10, color=muted),
 		)
 
