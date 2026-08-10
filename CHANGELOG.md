@@ -1,5 +1,38 @@
 # Changelog
 
+## 5.0-pre - Progetti libro AI/Finanza: Mappa strumenti, Monte Carlo, Explainability SATOR, SATOR Frontier
+
+- aggiunta Mappa strumenti in Pianificazione (Progetto C,
+  `docs/progetti/ROADMAP_AI_FINANZA_LIBRO.md`,
+  `core/services/instrument_clustering.py`): scatter rischio/rendimento
+  storico su strumenti posseduti e in osservazione, rilevazione coppie
+  potenzialmente ridondanti per correlazione (soglia 0,85)
+- aggiunta simulazione Monte Carlo del portafoglio posseduto in
+  Cruscotti/Analitica (Progetto B, `core/services/portfolio_simulation.py`):
+  bootstrap storico dei rendimenti giornalieri pesati (non un modello
+  gaussiano), fan chart a percentili annidati su 6/12/24 mesi, tabella
+  mediana/P5/P95/probabilita' di perdita/VaR/CVaR; estratta
+  `combine_weighted_returns` (`core/domain/returns.py`) come formula
+  canonica unica di combinazione pesata rendimenti->portafoglio, riusata
+  anche da SATOR
+- aggiunta sezione "Perché questo voto" in Pianificazione (Progetto D,
+  Explainability SATOR, `core/services/sator_explain.py`): per ogni
+  strumento della classifica, contributo dei 5 fattori SATOR al voto finale
+  su una scala 1-10 diretta, con distinzione visiva posseduto/osservato
+- aggiunta sezione "Frontiera rischio/rendimento" in Pianificazione
+  (Progetto A, SATOR Frontier, `core/services/sator_frontier.py`): confronto
+  simulato (nessun ottimizzatore, nessuna stima di rendimento "atteso") tra
+  portafoglio attuale, proposta SATOR e una modifica manuale via slider, con
+  minimo-rischio e miglior Sharpe individuati su una nuvola di portafogli
+  casuali; orizzonte storico selezionabile (6/12/24/36 mesi) e avvisi
+  espliciti su strumenti esclusi per storico corto e su simulazioni poco
+  informative quando il vincolo di concentrazione e' molto stretto rispetto
+  al numero di strumenti
+- archiviato (non urgente, per scelta esplicita) il quinto progetto del
+  libro, storico decisionale con valutazione ex-post: la parte
+  fotografie/confronto gia' esistente in Pianificazione copre in parte
+  questo bisogno
+
 ## 5.0-pre - Coerenza dati posizioni chiuse, KPI Quotazioni e sezione Posizioni Chiuse
 
 - corretto il conteggio KPI "Letture OK/Warning/Errori" in Quotazioni: una

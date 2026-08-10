@@ -45,12 +45,32 @@ Fase pilota L3 chiusa. Cache unica applicativa ancora aperta.
 
 ---
 
+## Maturazione 5.0 (prima del tag definitivo)
+
+Priorita' 8 di `STATO_OPERATIVO_5.0_PRE.md`, sezione 5 — non cache, qualita'
+e robustezza. Con i progetti del libro chiusi (vedi sotto), questa e' la
+traccia concreta rimasta per dichiarare la 5.0 matura:
+
+1. Audit difensivo dei chart builder in `ui/charts/`: 51 funzioni
+   `build_*_chart` su 12 file, un solo file (`operazioni.py`) usa l'helper
+   centralizzato `empty_chart()` gia' esistente in `ui/charts/runtime.py` —
+   gli altri fanno guardie ad-hoc o rischiano di non averne. Verificare
+   sistematicamente dati vuoti, singolo giorno, strumento appena aperto;
+   convergere su `empty_chart()` dove manca o e' duplicato a mano.
+2. Review complessiva del branch (`/code-review ultra`) prima di taggare la
+   5.0 definitiva — cattura pattern trasversali che le review per singola
+   feature (gia' fatte per B/C/D/A) non vedono per costruzione.
+
+---
+
 ## Rimandato intenzionalmente
 
 1. Miglioramento profondo SATOR con il prossimo piano acquisti reale.
-2. Progetti dal libro in `ROADMAP_AI_FINANZA_LIBRO.md`:
-   SATOR Frontier, Monte Carlo, clustering strumenti, explainability e storico
-   decisionale ex-post.
+2. Progetti dal libro in `ROADMAP_AI_FINANZA_LIBRO.md`: chiusi (2026-08-09)
+   SATOR Frontier, Monte Carlo, clustering strumenti (Mappa strumenti) ed
+   explainability ("Perché questo voto") — vedi `STATO_OPERATIVO_5.0_PRE.md`
+   sezione 3. Storico decisionale ex-post archiviato (2026-08-11) per scelta
+   esplicita, non urgente: non riaprire senza richiesta esplicita.
 3. L4 render snapshot: resta solo in `experimental/l4_render_snapshot_pilot/`.
    Non rientra nel runtime finche' non esiste una pipeline di prebuild esterna
    al render Streamlit.

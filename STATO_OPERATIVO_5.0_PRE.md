@@ -411,6 +411,37 @@ Stato sincero della cache al 2026-08-03:
   Riformulata anche la frase di sintesi ("il fattore che porta meno punti al
   voto" invece di "il punto piu' debole", per non far sembrare un giudizio
   sullo strumento quello che e' solo un effetto dei pesi).
+- Chiuso Progetto A (`docs/progetti/ROADMAP_AI_FINANZA_LIBRO.md`), 2026-08-09:
+  sezione "Frontiera rischio/rendimento" in Pianificazione, sotto Mappa
+  strumenti — confronto simulato tra portafoglio attuale, proposta SATOR
+  (quote suggerite al budget corrente) e una modifica manuale via slider,
+  con minimo-rischio e miglior Sharpe individuati su una nuvola di
+  portafogli casuali long-only. Deliberatamente senza ottimizzatore (niente
+  `scipy`, mai in uso nel repo) e senza alcuna stima di rendimento "atteso":
+  solo rendimento storico annualizzato (orizzonte 6/12/24/36 mesi
+  selezionabile) sullo stesso `returns_frame` gia' calcolato da
+  `run_sator_analysis`, riusato senza ricalcolo — stesso principio "storico,
+  non previsione" gia' applicato al resto di SATOR. Nuovo modulo
+  `core/services/sator_frontier.py`.
+  La review finale sull'intero branch ha trovato e corretto tre problemi
+  reali, tutti nella stessa direzione (evitare la "falsa precisione" che la
+  roadmap segnala come rischio esplicito di questo progetto): (1) uno
+  strumento posseduto con storico troppo corto per l'orizzonte scelto
+  spariva dal marker "Attuale" senza comparire nell'avviso "esclusi per
+  storico insufficiente" — i due filtri (soglia larga per l'universo,
+  soglia stretta per il calcolo storico/covarianza) non erano allineati;
+  (2) con un vincolo di concentrazione stretto rispetto al numero di
+  strumenti simulati, la nuvola casuale poteva degenerare in gran parte in
+  punti duplicati (misurato: solo il 50% di punti distinti con 3 strumenti
+  e il cap di default 0,35), disegnando comunque i marker "Min-rischio" e
+  "Miglior Sharpe" come se la simulazione fosse informativa — ora un nuovo
+  campo `cloud_degenerate` avvisa esplicitamente l'utente in questo caso;
+  (3) mancava il test di guardia "mai parole previsive" gia' presente per
+  la Mappa strumenti gemella, aggiunto per allineamento.
+  Con questa chiusura, tutti e 4 i progetti pianificati del libro (A, B, C,
+  D) sono completati; il quinto (storico decisionale ex-post) resta
+  archiviato per scelta esplicita, non urgente — vedi Priorita' 7 in
+  sezione 5.
 
 ### Cruscotti / Analitica
 
@@ -557,17 +588,25 @@ Il progetto AI/finanza resta separato in
 `docs/progetti/ROADMAP_AI_FINANZA_LIBRO.md`.
 
 Ordine consigliato originale, non urgente (l'ordine effettivo seguito e'
-stato C poi B, per una preferenza esplicita di collocazione emersa in corso
+stato C, poi B, poi D, poi A — scelto di volta in volta dall'utente in corso
 d'opera, non una revisione della priorita'):
 
-1. SATOR Frontier — non iniziato.
+1. SATOR Frontier — fatto (2026-08-09), vedi "Pianificazione e SATOR" in
+   sezione 3.
 2. Monte Carlo Portafoglio — fatto (2026-08-09), vedi "Cruscotti / Analitica"
    in sezione 3.
 3. Mappa AI strumenti / clustering — fatto, vedi "Pianificazione e SATOR" in
    sezione 3.
-4. Explainability SATOR — non iniziato.
-5. Storico decisionale con valutazione ex-post — non iniziato (la parte
-   fotografie/confronto in Pianificazione copre gia' un pezzo di questo).
+4. Explainability SATOR — fatto (2026-08-09), vedi "Pianificazione e SATOR"
+   in sezione 3.
+5. Storico decisionale con valutazione ex-post — archiviato (2026-08-11) per
+   scelta esplicita dell'utente: non urgente, non prioritario adesso. La
+   parte fotografie/confronto gia' in Pianificazione copre gia' un pezzo di
+   questo bisogno, quindi non e' un vuoto totale.
+
+Con questo, Priorita' 7 e' di fatto esaurita: tutti i progetti pianificati
+sono chiusi o archiviati per scelta esplicita. Non riaprire il punto 5 senza
+una richiesta esplicita.
 
 ### Priorita 8 - Irrobustimento e maturazione 5.0
 
