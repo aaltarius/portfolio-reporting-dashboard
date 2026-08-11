@@ -60,6 +60,8 @@ def build_ante_post_bucket_chart(bucket_df: pd.DataFrame, theme) -> go.Figure:
 
 def build_objective_mix_chart(objective: dict, current_mix: dict, theme) -> go.Figure:
     """Obiettivo di portafoglio vs mix attuale, per bucket Core/Difensivo/Satellite."""
+    objective = objective or {}
+    current_mix = current_mix or {}
     buckets = ("Core", "Difensivo", "Satellite")
     obiettivo_pct = {
         "Core": objective.get("core", 0.0) * 100.0,
