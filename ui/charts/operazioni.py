@@ -19,7 +19,7 @@ def build_monthly_purchase_spending_time_chart(monthly_df: pd.DataFrame, theme) 
     chart_id: andamento_monthly_spending
     chiamato da: ui/pages/operazioni.py
     """
-    if monthly_df.empty:
+    if monthly_df is None or monthly_df.empty:
         return empty_chart("andamento_monthly_spending")
     chart_df = monthly_df.copy()
     chart_df["DataMese"] = pd.to_datetime(chart_df["Mese"] + "-01", errors="coerce")
