@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 
 from core.config import COLORS
 from ui.charts.extrema import add_extrema_markers
-from ui.charts.runtime import finalize_chart
+from ui.charts.runtime import empty_chart, finalize_chart
 from ui.charts.settings import apply_settings
 from ui.components import wrap_radar_label
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it, hex_to_rgba
@@ -24,6 +24,8 @@ def build_portfolio_value_time_chart(dfh, dfmt, theme):
 	chart_id: andamento_portfolio_value
 	chiamato da: ui/pages/andamento.py e ui/prewarm_bundle.py
 	"""
+	if dfh is None or dfh.empty:
+		return empty_chart("andamento_portfolio_value")
 	fig = go.Figure()
 	fig.add_trace(
 		go.Scatter(
@@ -60,6 +62,8 @@ def build_percentage_return_time_chart(dfh, pct_cap, pct_cost, pl_color, pl_tota
 	chart_id: andamento_percentage_return
 	chiamato da: ui/pages/andamento.py e ui/prewarm_bundle.py
 	"""
+	if dfh is None or dfh.empty:
+		return empty_chart("andamento_percentage_return")
 	pct_cap = list(pct_cap or [])
 	pct_cost = list(pct_cost or [])
 	if dfh is not None and not dfh.empty:
@@ -113,6 +117,9 @@ def build_pl_decomposition_time_chart(dfh, pl_cols, viz_mode, dfmt, theme):
 	chiamato da: ui/pages/andamento.py; stacked anche da ui/prewarm_bundle.py
 	"""
 	_ = dfmt
+	if dfh is None or dfh.empty:
+		chart_id = "andamento_pl_decomp_stacked" if viz_mode == "Stacked" else "andamento_pl_decomp_grouped"
+		return empty_chart(chart_id)
 	fig = go.Figure()
 	for col in pl_cols:
 		tk = col[3:]
@@ -174,6 +181,8 @@ def build_target_gap_chart(macro_target_df):
 	chart_id: analisi_target_gap
 	chiamato da: ui/dashboard_bundles.py (get_analitica_bundle)
 	"""
+	if macro_target_df is None or macro_target_df.empty:
+		return empty_chart("analisi_target_gap")
 	fig = go.Figure()
 	peso_attuale = pd.to_numeric(macro_target_df["Peso attuale"], errors="coerce").fillna(0.0)
 	fig.add_trace(
@@ -210,6 +219,8 @@ def build_risk_contribution_chart(risk_df):
 	chart_id: analisi_risk_contribution2
 	chiamato da: ui/pages/analisi.py
 	"""
+	if risk_df is None or risk_df.empty:
+		return empty_chart("analisi_risk_contribution2")
 	fig = go.Figure()
 	fig.add_trace(
 		go.Bar(
@@ -364,10 +375,10 @@ def build_portfolio_simulation_chart(result, theme):
 	chart_id: analisi_monte_carlo
 	chiamato da: ui/dashboard_bundles.py (_build_analitica_bundle)
 	"""
-	if not result.available:
+	if result is None or not result.available:
 		fig = go.Figure()
 		fig.add_annotation(
-			text=result.reason or "Dati insufficienti per la simulazione.",
+			text=getattr(result, "reason", None) or "Dati insufficienti per la simulazione.",
 			xref="paper", yref="paper",
 			x=0.5, y=0.5,
 			showarrow=False,
