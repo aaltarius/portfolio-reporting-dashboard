@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 
 from core.asset_categories import get_selected_category_codes
 from persistence.storage import macro_cat
-from ui.charts.runtime import finalize_chart
+from ui.charts.runtime import empty_chart, finalize_chart
 from ui.charts.tables import small_pie_texts as _small_pie_texts
 from ui.charts.settings import apply_settings
 from ui.formatting import fmt_eur_it, hex_to_rgba
@@ -31,6 +31,8 @@ def build_concentration_chart(da_frame, total_value, theme, settings: dict[str, 
     chart_id: home_concentration
     chiamato da: ui/pages/home.py
     """
+    if da_frame is None or da_frame.empty:
+        return empty_chart("home_concentration")
     type_col = "Tipo" if "Tipo" in da_frame.columns else ("tipo" if "tipo" in da_frame.columns else None)
     base_cols = ["Ticker", "Controvalore"] + ([type_col] if type_col else [])
     top_weights = da_frame.sort_values("Controvalore", ascending=False)[base_cols].copy()
@@ -112,6 +114,8 @@ def build_portfolio_pl_chart(dfh, delta_colors, delta_text, dfmt, theme):
     chiamato da: ui/pages/home.py
     """
     _ = dfmt
+    if dfh is None or dfh.empty:
+        return empty_chart("home_portfolio_pl")
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
@@ -183,7 +187,7 @@ def build_portfolio_pl_chart(dfh, delta_colors, delta_text, dfmt, theme):
 def build_portfolio_pl_category_chart(dfh, data, theme, settings: dict[str, Any] | None = None):
     """Build 100% stacked daily P/L composition chart by macro category for Home."""
     if dfh is None or dfh.empty:
-        return go.Figure()
+        return empty_chart("home_portfolio_pl_category")
 
     visible_categories = _resolve_visible_categories(settings)
     ticker_to_cat = {
@@ -277,6 +281,8 @@ def build_instrument_allocation_pie_chart(da_frame, small_pie_texts=_small_pie_t
     chart_id: home_instrument_pie
     chiamato da: ui/pages/home.py
     """
+    if da_frame is None or da_frame.empty:
+        return empty_chart("home_instrument_pie")
     pie_text = small_pie_texts(da_frame["Controvalore"].tolist(), threshold=0.06)
     fig = go.Figure(
         go.Pie(
@@ -304,6 +310,8 @@ def build_category_allocation_pie_chart(
     chart_id: home_category_pie
     chiamato da: ui/pages/home.py
     """
+    if da_frame is None:
+        return None
     visible_categories = _resolve_visible_categories(settings)
     da_tip = da_frame.copy()
     da_tip["Categoria"] = da_tip["Tipo"].apply(macro_cat)
@@ -334,6 +342,9 @@ def build_instrument_bar_chart(data, x_col, title, text_formatter, xaxis_tickfor
     chiamato da: ui/pages/home.py
     """
     _ = xaxis_tickformat
+    if data is None or data.empty:
+        chart_id = "home_instrument_bar_perf" if "%" in str(x_col) or "perf" in str(title).lower() else "home_instrument_bar_pl"
+        return empty_chart(chart_id)
     fig = go.Figure(
         go.Bar(
             x=data[x_col],
@@ -370,6 +381,14 @@ def build_category_bar_chart(
     chiamato da: ui/pages/home.py
     """
     _ = yaxis_tickformat
+    if cat_agg is None or cat_agg.empty:
+        if y_col == "Controvalore":
+            chart_id = "home_category_bar_value"
+        elif y_col == "P/L %":
+            chart_id = "home_category_bar_perf"
+        else:
+            chart_id = "home_category_bar_pl"
+        return empty_chart(chart_id)
     visible_categories = _resolve_visible_categories(settings)
     chart_df = cat_agg[cat_agg["Categoria"].isin(visible_categories)].copy()
     fig = go.Figure(
