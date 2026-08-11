@@ -1,7 +1,7 @@
 import plotly.graph_objects as go
 import pandas as pd
 
-from ui.charts.runtime import finalize_chart
+from ui.charts.runtime import empty_chart, finalize_chart
 from ui.formatting import fmt_eur_it, fmt_pct_it
 
 # Ownership reale:
@@ -21,6 +21,8 @@ def build_snapshot_comparison_time_chart(cmp_df, snap_a_label, snap_b_label, the
     chart_id: confronto_snapshot
     chiamato da: ui/pages/confronto.py
     """
+    if cmp_df is None or cmp_df.empty:
+        return empty_chart("confronto_snapshot")
     fig = go.Figure()
     fig.add_bar(
         x=cmp_df["Categoria"],
