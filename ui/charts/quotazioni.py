@@ -29,6 +29,8 @@ def build_quote_history_time_chart(ticker, instrument, normalized_series, benchm
     dati sorgente (normalized_series, benchmark_series) non vengono
     modificati, e nessun calcolo finanziario a monte usa questa funzione.
     """
+    if normalized_series is None or normalized_series.empty:
+        return apply_settings_base100(go.Figure(), "quotazioni_quote_history")
     display_series = normalized_series if full_resolution else downsample_for_display(normalized_series)
 
     fig = go.Figure()
@@ -104,6 +106,8 @@ def build_instrument_performance_comparison_time_chart(
     chart_id: quotazioni_instrument_performance
     chiamato da: ui/pages/quotazioni.py
     """
+    if flow_index_df is None:
+        return apply_settings_base100(go.Figure(), chart_id)
     fig = go.Figure()
     plotted_series = {}
     for ticker in tickers:
@@ -151,6 +155,8 @@ def build_category_performance_comparison_time_chart(cat_flow_index, dfmt, chart
     chart_id: analisi_category_performance
     chiamato da: ui/pages/quotazioni.py; prewarm da ui/prewarm_bundle.py
     """
+    if cat_flow_index is None:
+        return apply_settings_base100(go.Figure(), chart_id)
     fig = go.Figure()
     plotted_series = {}
     for cat in list(cat_flow_index.columns):
