@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from core.config import COLORS
-from ui.charts.runtime import finalize_chart
+from ui.charts.runtime import empty_chart, finalize_chart
 from ui.formatting import fmt_num_it, hex_to_rgba
 
 # La pagina ui/pages/andamento.py non esiste piu' (rinominata/assorbita da Cruscotti):
@@ -20,6 +20,8 @@ def build_category_drawdown_time_chart(dfh, drawdown_series, chart_id, dfmt, the
 
     Usato dai cruscotti per i grafici di drawdown per categoria.
     """
+    if dfh is None or dfh.empty:
+        return empty_chart(chart_id)
     fig = go.Figure(
         go.Scatter(
             x=dfh["Data"],
@@ -39,6 +41,8 @@ def build_category_monthly_returns_time_chart(monthly_data, chart_id, theme):
 
     Usato dai cruscotti per i grafici di rendimenti mensili per categoria.
     """
+    if not monthly_data or not monthly_data.get("months"):
+        return empty_chart(chart_id)
     dates = []
     for m_str in monthly_data["months"]:
         try:
