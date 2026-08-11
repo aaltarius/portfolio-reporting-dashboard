@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from core.asset_categories import get_selected_category_codes
 from persistence.storage import macro_cat
 from ui.charts.extrema import add_extrema_markers
-from ui.charts.runtime import finalize_chart
+from ui.charts.runtime import empty_chart, finalize_chart
 from ui.charts.settings import apply_settings
 from ui.formatting import fmt_eur_it, hex_to_rgba
 from ui.theme import P, macro_color
@@ -77,6 +77,8 @@ def build_overview_time_chart(dfh_top, da_frame, view, pl_color, pl_total, chart
     cui era ancora aperto.
     """
     _ = chart_bg, dfmt
+    if dfh_top is None or dfh_top.empty:
+        return empty_chart("overview_pl_categoria" if view == "P/L per Categoria" else "overview_pl_portafoglio")
     if view == "P/L per Categoria":
         visible_categories = list(get_selected_category_codes(settings))
         cat_map: dict[str, str] = {}
