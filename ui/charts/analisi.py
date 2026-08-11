@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 from core.config import COLORS
 from core.domain.risk import build_drawdown_series
 from ui.charts.settings import apply_settings
+from ui.charts.runtime import empty_chart
 from ui.formatting import fmt_pct_it, hex_to_rgba
 from ui.styles import get_common_colors
 from ui.theme import instrument_color, macro_color
@@ -26,6 +27,8 @@ def build_risk_contribution_chart(risk_df):
     chart_id: analisi_risk_contribution2
     chiamato da: ui/pages/analisi.py
     """
+    if risk_df is None or risk_df.empty:
+        return empty_chart("analisi_risk_contribution2")
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
@@ -92,6 +95,8 @@ def build_instrument_drawdown_time_chart(dh, tickers, date_fmt):
     chiamato da: ui/pages/analisi.py
     """
     _ = date_fmt
+    if dh is None:
+        return empty_chart("analisi_instrument_drawdown")
     fig = go.Figure()
     for ticker in tickers:
         prices = dh[ticker].dropna()
