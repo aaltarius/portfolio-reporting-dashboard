@@ -28,7 +28,7 @@ from ui.theme import P, get_theme_context, macro_color
 from ui.charts.home import build_category_allocation_pie_chart, build_category_bar_chart
 from ui.charts.analisi import build_correlation_heatmap, build_instrument_drawdown_time_chart
 from ui.charts.quotazioni import build_category_performance_comparison_time_chart
-from ui.charts.operazioni import build_monthly_purchase_spending_time_chart, build_purchase_installments_chart
+from ui.charts.operazioni import build_monthly_purchase_spending_time_chart, build_purchase_installments_chart, build_purchase_installments_by_value_chart
 from ui.charts.calendario_btp import build_btp_calendar_figure, render_btp_calendar_table
 from ui.charts.settings import apply_settings
 from ui.charts.tables import color_pl, style_macro_cols
@@ -1144,9 +1144,12 @@ def _render_flussi_acquisti(ctx: SimpleNamespace, theme, *, data_sig: str, theme
     if operations:
         info_map = {s["ticker"]: s for s in getattr(ctx, "data", {}).get("strumenti", [])}
         pmc_map = {}
+        controvalore_map = {}
         da = getattr(ctx, "da", None)
         if da is not None and not getattr(da, "empty", True) and "Ticker" in da.columns and "PMC" in da.columns:
             pmc_map = dict(zip(da["Ticker"], pd.to_numeric(da["PMC"], errors="coerce")))
+        if da is not None and not getattr(da, "empty", True) and "Ticker" in da.columns and "Controvalore" in da.columns:
+            controvalore_map = dict(zip(da["Ticker"], pd.to_numeric(da["Controvalore"], errors="coerce")))
         purchase_df = pd.DataFrame(operations)
         purchase_df = purchase_df[purchase_df.get("tipo_evento", "").eq("ACQUISTO")].copy()
         if not purchase_df.empty:
@@ -1164,6 +1167,7 @@ def _render_flussi_acquisti(ctx: SimpleNamespace, theme, *, data_sig: str, theme
             )
             purchase_summary["category"] = purchase_summary["Ticker"].map(lambda tk: macro_cat(info_map.get(tk, {}).get("tipo", "")))
             purchase_summary["pmc"] = purchase_summary["Ticker"].map(pmc_map)
+            purchase_summary["controvalore"] = purchase_summary["Ticker"].map(controvalore_map)
             purchase_summary = purchase_summary[purchase_summary["category"] != "GOV"].copy()
             if not purchase_summary.empty:
                 render_section_title(
@@ -1182,6 +1186,19 @@ def _render_flussi_acquisti(ctx: SimpleNamespace, theme, *, data_sig: str, theme
                     strategy=cache_strategy,
                 )
                 st.plotly_chart(installments_fig, width="stretch")
+
+                st.caption("Versione in valutazione: stesso grafico con l'asse Y sul controvalore posseduto invece del numero di acquisti (il numero di acquisti resta come etichetta sulle barre).")
+                installments_by_value_fig = fcache.get_or_build(
+                    chart_id="cruscotti_flussi_installments_by_value",
+                    data_sig=data_sig,
+                    theme_sig=theme_sig,
+                    charts_settings_sig=charts_settings_sig,
+                    builder=lambda: apply_settings(build_purchase_installments_by_value_chart(purchase_summary, theme), "operations_purchase_installments_by_value"),
+                    page_mode="Completa",
+                    extra_params={"rows": len(purchase_summary)},
+                    strategy=cache_strategy,
+                )
+                st.plotly_chart(installments_by_value_fig, width="stretch")
 
 
 def _render_cruscotti_inner_nav(current_key: str, category_labels: list[str]) -> None:

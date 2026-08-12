@@ -1197,6 +1197,25 @@ CHARTS: dict[str, dict[str, Any]] = {
      'x_tickangle': 0,
      'title': '<b>Acquisti per strumento</b>'},
 
+    'operations_purchase_installments_by_value': {'type': 'bar',
+     'height': 480,
+     'legend': 'off',
+     'show_buttons': False,
+     'margin_delta': {'t': 0, 'b': 0, 'l': 0, 'r': -20},
+     'bar_padding': 0.5,
+     'y_title': 'Controvalore posseduto (€)',
+     'y_tickformat': ',.0f',
+     'y_nticks': 16,
+     'y2_title': 'Prezzi acquisto (€)',
+     'y2_range': [0, 200],
+     'y2_overlaying': 'y',
+     'y2_side': 'right',
+     'y2_showgrid': False,
+     'y2_nticks': 16,
+     'y2_tickformat': ',.2f',
+     'x_tickangle': 0,
+     'title': '<b>Acquisti per strumento — per controvalore posseduto (in valutazione)</b>'},
+
     # ------------------------------------------------------------------
     # SUMMARY
     # ------------------------------------------------------------------
