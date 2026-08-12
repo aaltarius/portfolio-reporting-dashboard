@@ -1,5 +1,15 @@
 # Changelog
 
+## 5.0-pre - Grafico "Rate di acquisto per strumento" su controvalore posseduto
+
+- sostituito in Cruscotti/Flussi e Acquisti l'asse Y del grafico "Rate di
+  acquisto per strumento" dal numero di acquisti al controvalore posseduto
+  per strumento (da `ctx.da["Controvalore"]`); il numero di acquisti resta
+  visibile come etichetta sopra ogni barra e nell'hover, asse secondario
+  (range prezzi/PMC) invariato — `build_purchase_installments_by_value_chart`
+  in `ui/charts/operazioni.py`, rimossa la funzione precedente
+  (`build_purchase_installments_chart`) dopo valutazione affiancata
+
 ## 5.0-pre - Audit difensivo dei chart builder
 
 - corrette 24 funzioni `build_*_chart` su 9 file (`ui/charts/overview.py`,

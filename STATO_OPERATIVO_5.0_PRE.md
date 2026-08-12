@@ -468,6 +468,13 @@ Stato sincero della cache al 2026-08-03:
     (~60 ms) e il delta end-to-end resta senza spiegazione certa (probabile
     overhead di hashing/serializzazione della cache), dichiarato qui come
     aperto invece di essere richiuso senza prova.
+- Modificato (2026-08-13) il grafico "Rate di acquisto per strumento" in
+  Cruscotti/Flussi e Acquisti: asse Y sul controvalore posseduto per
+  strumento invece del numero di acquisti (che resta come etichetta sulle
+  barre e nell'hover). Fatto affiancando la nuova versione a quella storica
+  per un confronto diretto prima di decidere, come richiesto esplicitamente
+  dall'utente; dopo valutazione la versione storica
+  (`build_purchase_installments_chart`) e' stata rimossa.
 
 ### Report
 
