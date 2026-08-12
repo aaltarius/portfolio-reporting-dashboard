@@ -28,7 +28,7 @@ from ui.theme import P, get_theme_context, macro_color
 from ui.charts.home import build_category_allocation_pie_chart, build_category_bar_chart
 from ui.charts.analisi import build_correlation_heatmap, build_instrument_drawdown_time_chart
 from ui.charts.quotazioni import build_category_performance_comparison_time_chart
-from ui.charts.operazioni import build_monthly_purchase_spending_time_chart, build_purchase_installments_chart, build_purchase_installments_by_value_chart
+from ui.charts.operazioni import build_monthly_purchase_spending_time_chart, build_purchase_installments_by_value_chart
 from ui.charts.calendario_btp import build_btp_calendar_figure, render_btp_calendar_table
 from ui.charts.settings import apply_settings
 from ui.charts.tables import color_pl, style_macro_cols
@@ -1172,22 +1172,9 @@ def _render_flussi_acquisti(ctx: SimpleNamespace, theme, *, data_sig: str, theme
             if not purchase_summary.empty:
                 render_section_title(
                     "Rate di acquisto per strumento",
-                    comment="Conta quante volte gli strumenti ad accumulo sono stati acquistati e mette a confronto PMC attuale e range dei prezzi di acquisto.",
+                    comment="Confronta il controvalore posseduto per strumento con PMC attuale e range dei prezzi di acquisto; il numero sopra ogni barra è quante volte lo strumento è stato acquistato.",
                     gap_after="xs",
                 )
-                installments_fig = fcache.get_or_build(
-                    chart_id="cruscotti_flussi_installments",
-                    data_sig=data_sig,
-                    theme_sig=theme_sig,
-                    charts_settings_sig=charts_settings_sig,
-                    builder=lambda: apply_settings(build_purchase_installments_chart(purchase_summary, theme), "operations_purchase_installments"),
-                    page_mode="Completa",
-                    extra_params={"rows": len(purchase_summary)},
-                    strategy=cache_strategy,
-                )
-                st.plotly_chart(installments_fig, width="stretch")
-
-                st.caption("Versione in valutazione: stesso grafico con l'asse Y sul controvalore posseduto invece del numero di acquisti (il numero di acquisti resta come etichetta sulle barre).")
                 installments_by_value_fig = fcache.get_or_build(
                     chart_id="cruscotti_flussi_installments_by_value",
                     data_sig=data_sig,

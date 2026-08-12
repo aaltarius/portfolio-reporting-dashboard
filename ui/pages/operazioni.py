@@ -30,7 +30,6 @@ from ui.components import (
 )
 from ui.charts.operazioni import (
     build_monthly_purchase_spending_time_chart,
-    build_purchase_installments_chart,
 )
 from ui.charts.calendario_btp import render_btp_calendar
 from ui.charts.settings import apply_settings
