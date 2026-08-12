@@ -483,6 +483,40 @@ Stato sincero della cache al 2026-08-03:
 - Centralizzato il richiamo a icone/categorie/bucket dove erano state introdotte
   soluzioni visive incoerenti.
 
+### Robustezza chart builder
+
+- Chiuso (2026-08-11) l'audit difensivo dei chart builder, Priorita' 8.1
+  ("Maturazione 5.0"): censite tutte le 51 funzioni `build_*_chart` sotto
+  `ui/charts/` (12 file), corrette le 24 prive di guardia o con guardia
+  rotta/incoerente su 9 file (`overview.py` 1, `home.py` 7, `analitica.py`
+  6, `andamento.py` 2, `analisi.py` 2, `quotazioni.py` 3, `operazioni.py`
+  1, `confronto.py` 1, `pianificazione.py` 1) — `cruscotti.py`,
+  `accumuli.py` e `benchmark.py` gia' interamente a posto, nessuna
+  modifica. Metodo puramente additivo: ogni fix e' un controllo `None`/vuoto
+  aggiunto in testa alla funzione, mai una riscrittura; pattern canonico
+  `empty_chart(chart_id)` (helper gia' esistente in `ui/charts/runtime.py`,
+  prima usato in un solo file su dodici), con due eccezioni deliberate
+  (`quotazioni.py` usa `apply_settings_base100` per lo stile base-100 anche
+  a vuoto; `pianificazione.py::build_objective_mix_chart` usa `x or {}`
+  invece di un early-return, perche' produce comunque un grafico valido a
+  barre zero, piu' informativo di un placeholder vuoto).
+  Due funzioni in `home.py` avevano un contratto di ritorno da preservare,
+  verificato sui chiamanti reali prima di toccarle:
+  `build_category_allocation_pie_chart` resta a `None` sul path vuoto (il
+  suo unico chiamante lo gestisce gia' esplicitamente); `build_portfolio_pl_category_chart`
+  e' passata da un `go.Figure()` nudo a `empty_chart(...)` (sicuro, il suo
+  unico chiamante avvolge gia' il risultato in `apply_settings`).
+  La review finale sull'intero branch ha cercato attivamente un rischio di
+  crash residuo o nuovo nelle 24 funzioni corrette e non l'ha trovato;
+  "pronto per il merge" senza riserve. Follow-up minori non urgenti (vedi
+  `TODO_5.0.md`, sezione "Maturazione 5.0"): unificare la selezione
+  duplicata del `chart_id` in due funzioni di `home.py`; quando si fara' la
+  deduplicazione gia' nota di `build_risk_contribution_chart`
+  (`analisi.py`/`analitica.py`, entrambe guardate separatamente in questo
+  audit), la copia in `analisi.py` va rimossa (codice morto, nessun
+  chiamante in produzione) non fusa; copertura test asimmetrica sul ramo
+  "vuoto ma non `None`" di ~20 guardie.
+
 ---
 
 ## 4. Ultima lettura performance

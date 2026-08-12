@@ -51,15 +51,25 @@ Priorita' 8 di `STATO_OPERATIVO_5.0_PRE.md`, sezione 5 — non cache, qualita'
 e robustezza. Con i progetti del libro chiusi (vedi sotto), questa e' la
 traccia concreta rimasta per dichiarare la 5.0 matura:
 
-1. Audit difensivo dei chart builder in `ui/charts/`: 51 funzioni
-   `build_*_chart` su 12 file, un solo file (`operazioni.py`) usa l'helper
-   centralizzato `empty_chart()` gia' esistente in `ui/charts/runtime.py` —
-   gli altri fanno guardie ad-hoc o rischiano di non averne. Verificare
-   sistematicamente dati vuoti, singolo giorno, strumento appena aperto;
-   convergere su `empty_chart()` dove manca o e' duplicato a mano.
+1. ~~Audit difensivo dei chart builder in `ui/charts/`~~ fatto (2026-08-11):
+   24 funzioni corrette su 9 file, tutte quelle senza guardia o con guardia
+   rotta/incoerente sulle 51 censite. Vedi `STATO_OPERATIVO_5.0_PRE.md`
+   sezione 3. Follow-up minori emersi dalla review finale, non urgenti:
+   - unificare la selezione duplicata del `chart_id` (stesso ternario/if-elif
+     ripetuto due volte) in `build_instrument_bar_chart` e
+     `build_category_bar_chart` (`ui/charts/home.py`);
+   - quando si fara' la deduplicazione gia' nota di `build_risk_contribution_chart`
+     (copia identica in `ui/charts/analisi.py` e `ui/charts/analitica.py`,
+     entrambe gia' guardate separatamente in questo audit): la copia in
+     `analisi.py` e' codice morto (nessun chiamante in produzione, la pagina
+     `ui/pages/analisi.py` citata nella sua docstring non esiste piu') — va
+     **rimossa**, non fusa con l'altra;
+   - copertura test asimmetrica: la meta' "vuoto ma non None" di ~20 guardie
+     non ha un test dedicato (solo il caso `None` e' testato sistematicamente).
 2. Review complessiva del branch (`/code-review ultra`) prima di taggare la
    5.0 definitiva — cattura pattern trasversali che le review per singola
-   feature (gia' fatte per B/C/D/A) non vedono per costruzione.
+   feature (gia' fatte per B/C/D/A e per l'audit chart builder) non vedono
+   per costruzione.
 
 ---
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 5.0-pre - Audit difensivo dei chart builder
+
+- corrette 24 funzioni `build_*_chart` su 9 file (`ui/charts/overview.py`,
+  `home.py`, `analitica.py`, `andamento.py`, `analisi.py`, `quotazioni.py`,
+  `operazioni.py`, `confronto.py`, `pianificazione.py`) prive di guardia
+  contro input `None`/vuoto o con una guardia rotta/incoerente, su un
+  censimento completo delle 51 funzioni chart builder del repo; nessuna
+  modifica al comportamento su dati validi, solo prevenzione crash su
+  input mancante o malformato
+
 ## 5.0-pre - Progetti libro AI/Finanza: Mappa strumenti, Monte Carlo, Explainability SATOR, SATOR Frontier
 
 - aggiunta Mappa strumenti in Pianificazione (Progetto C,
