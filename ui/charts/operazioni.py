@@ -279,10 +279,10 @@ def build_purchase_installments_by_value_chart(purchase_df: pd.DataFrame, theme)
         pmc_txt = fmt_eur_it(row["pmc"], 2) if pd.notna(row["pmc"]) else "n/d"
         cat_txt = str(row.get("category", "") or "").upper()
         cat_color = macro_color(cat_txt or "ALT")
-        qty_txt = fmt_qty_it(row["qty_totale"], 4) if "qty_totale" in plot_df.columns and pd.notna(row.get("qty_totale")) else "n/d"
+        qty_txt = fmt_qty_it(row["qty_totale"], 3) if "qty_totale" in plot_df.columns and pd.notna(row.get("qty_totale")) else "n/d"
         tick_text.append(
             f"{row['Ticker']}<br><span style='color:{cat_color};font-weight:800'>{cat_txt}</span>"
-            f"<br>{qty_txt} quote<br>PMC {pmc_txt}"
+            f"<br>{qty_txt} quote<br>PMC<br>{pmc_txt}"
         )
     customdata = [
         [

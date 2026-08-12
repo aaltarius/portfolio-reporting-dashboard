@@ -1207,7 +1207,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'y_tickformat': ',.0f',
      'y_nticks': 16,
      'y2_title': 'Prezzi acquisto (€)',
-     'y2_range': [0, 200],
+     'y2_range': [0, 220],
      'y2_overlaying': 'y',
      'y2_side': 'right',
      'y2_showgrid': False,
