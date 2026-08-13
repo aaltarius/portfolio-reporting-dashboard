@@ -2,6 +2,12 @@
 
 ## 5.0-pre - Corretta l'infiltrazione di date weekend nello storico portafoglio
 
+- bump obbligatorio anche dei due livelli di cache esterni al fix
+  (`history_df_v5` -> `v6` in `core/state.py`, `_STATE_MANAGER_SCHEMA` in
+  `app.py`): senza bump, un pkl già su disco con la firma dati invariata
+  avrebbe continuato a servire il vecchio dataframe con le righe weekend
+  anche dopo il fix — stesso sintomo già documentato nel bump del
+  2026-08-09 (colonna `ValoreAperto`)
 - `core/finance.py::_build_portfolio_history_core` costruiva l'indice date
   dello storico portafoglio dall'unione di **tutte** le date di **tutti**
   gli strumenti in `storico_prezzi`, non solo di quelli posseduti: un
