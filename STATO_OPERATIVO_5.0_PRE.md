@@ -332,6 +332,18 @@ Stato sincero della cache al 2026-08-03:
   indicatori BTP poco invasivi.
 - Aggiunto pannello sperimentale `Portfolio Insights`, coerente con icone,
   categorie e bucket strategici ufficiali.
+- Corretto (2026-08-13) un bug reale in `core/finance.py`, trovato
+  dall'utente dopo un import di storico per 3 strumenti solo osservati
+  (MMS.MI, XBAG.MI, XDEQ.MI): l'indice date dello storico portafoglio
+  (`_build_portfolio_history_core`) era costruito sull'unione di tutte le
+  date di tutti gli strumenti tracciati, non solo di quelli posseduti —
+  strumenti che pubblicano NAV di weekend facevano infiltrare date
+  sabato/domenica nello storico portafoglio, visibili come spazi nel
+  grafico P/L di Overview ogni settimana. Nessun dato perso (solo indice
+  date, non integrità prezzi). Fix incondizionato (`_filter_weekend_dates`,
+  non solo per strumenti osservati: uno osservato oggi può essere
+  comprato domani), coerente con la logica "niente weekend" già presente
+  altrove nell'app; `cache_storico_portafoglio` bump a v8.
 
 ### Quotazioni
 

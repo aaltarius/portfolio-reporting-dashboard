@@ -1,5 +1,28 @@
 # Changelog
 
+## 5.0-pre - Corretta l'infiltrazione di date weekend nello storico portafoglio
+
+- `core/finance.py::_build_portfolio_history_core` costruiva l'indice date
+  dello storico portafoglio dall'unione di **tutte** le date di **tutti**
+  gli strumenti in `storico_prezzi`, non solo di quelli posseduti: un
+  import di storico per uno strumento solo osservato che pubblica NAV di
+  sabato/domenica (es. alcuni fondi) faceva entrare quelle date weekend
+  nello storico portafoglio, riportando avanti l'ultimo prezzo noto dei
+  posseduti sotto una data di mercato chiuso — visibile come uno spazio
+  tra venerdì e lunedì nel grafico P/L di Overview (che nasconde
+  sabato-lunedì dall'asse) ogni settimana in cui lo strumento osservato
+  aveva un prezzo
+- trovato dopo un import reale di storico per 3 strumenti osservati
+  (MMS.MI, XBAG.MI, XDEQ.MI): 137 nuove date weekend infiltrate
+  nell'indice; nessun dato esistente perso, il bug era solo di indice date
+  non di integrità dei prezzi già presenti
+- nuovo `_filter_weekend_dates()`, applicato incondizionatamente
+  (indipendente da chi possiede cosa: uno strumento osservato oggi può
+  diventare posseduto domani e continuerebbe a pubblicare NAV di weekend)
+  — stessa filosofia "niente weekend" già in uso da
+  `_build_synthetic_today_row` e `_with_current_point`
+  (`ui/charts/overview.py`); `cache_storico_portafoglio` bump a v8
+
 ## 5.0-pre - Grafico "Rate di acquisto per strumento" su controvalore posseduto
 
 - sostituito in Cruscotti/Flussi e Acquisti l'asse Y del grafico "Rate di
