@@ -252,8 +252,11 @@ with _logged_app_phase("form_server_start"):
 # colonna "ValoreAperto" a build_portfolio_history_df - senza bump qui,
 # ne' il bump del cache_sig interno alla funzione ne' quello del token
 # StateManager (history_df_v4 -> v5) bastavano, perche' questo livello
-# esterno non richiamava neppure get_history_df_for su un hit.
-_STATE_MANAGER_SCHEMA = "2026-08-09-derived-runtime-cache-v2"
+# esterno non richiamava neppure get_history_df_for su un hit. Bump del
+# 2026-08-13: fix sulle date weekend infiltrate nell'indice date dello
+# storico portafoglio (_filter_weekend_dates in core/finance.py) - stesso
+# sintomo, stesso motivo del bump precedente.
+_STATE_MANAGER_SCHEMA = "2026-08-13-derived-runtime-cache-v3"
 
 
 @st.cache_resource

@@ -310,22 +310,26 @@ class StateManager:
         data["cache_storico_portafoglio"]): quando questo strato trova una
         entry su disco/processo, build_portfolio_history_df non viene
         nemmeno chiamata, quindi il suo bump di versione non basta da solo.
-        Bump obbligatorio anche qui ad ogni cambio di schema della history
-        (visto succedere il 2026-08-09: aggiunta colonna "ValoreAperto" -
-        senza questo bump, i chiamanti a valle continuavano a ricevere un
-        dataframe senza la colonna, e i fallback difensivi ("se manca la
-        colonna uso quella vecchia") riattivavano silenziosamente la
-        formula superata).
+        Bump obbligatorio anche qui ad ogni cambio di schema/logica della
+        history (visto succedere il 2026-08-09: aggiunta colonna
+        "ValoreAperto" - senza questo bump, i chiamanti a valle
+        continuavano a ricevere un dataframe senza la colonna, e i
+        fallback difensivi ("se manca la colonna uso quella vecchia")
+        riattivavano silenziosamente la formula superata; ripetuto il
+        2026-08-13 per il fix sulle date weekend infiltrate nell'indice -
+        stesso sintomo, un pkl gia' su disco con la firma dati invariata
+        avrebbe continuato a servire righe weekend anche dopo il fix in
+        build_portfolio_history_df).
         """
-        token = ("history_df_v5",) + self._derived_data_token(data)
+        token = ("history_df_v6",) + self._derived_data_token(data)
         if self._cache["history_df"] is None or self._history_cache_token != token:
-            cached = self._load_persisted_derived("history_df_v5", token)
+            cached = self._load_persisted_derived("history_df_v6", token)
             if cached is not None:
                 self._cache["history_df"] = cached
             else:
                 logger.debug("Cache miss history_df")
                 self._cache["history_df"] = build_portfolio_history_df(data)
-                self._save_persisted_derived("history_df_v5", token, self._cache["history_df"])
+                self._save_persisted_derived("history_df_v6", token, self._cache["history_df"])
             self._history_cache_token = token
         return self._cache["history_df"]
 
