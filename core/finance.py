@@ -309,6 +309,26 @@ def _apply_event_to_pos(
     return cash, realized_gross_total, realized_net_total, taxes_total
 
 
+def _filter_weekend_dates(ds: list[str]) -> list[str]:
+    """Esclude sabato/domenica dall'indice date dello storico portafoglio.
+
+    `ds` e' l'unione di TUTTE le date di TUTTI gli strumenti tracciati in
+    storico_prezzi, non solo di quelli posseduti: uno strumento solo
+    osservato che pubblica NAV di weekend (es. alcuni fondi, di domenica)
+    farebbe comunque entrare quella data nell'indice, riportando avanti
+    l'ultimo prezzo noto dei posseduti sotto una data di mercato chiuso -
+    il grafico P/L di Overview nasconde sabato-lunedi' dall'asse
+    (rangebreaks), quindi un punto reale piazzato li' dentro produce uno
+    spazio visibile tra venerdi' e lunedi'. Filtro incondizionato (non
+    "solo se lo strumento e' posseduto"): uno strumento oggi osservato
+    puo' essere comprato domani e continuerebbe a pubblicare NAV di
+    weekend, quindi il filtro deve reggere a prescindere da chi possiede
+    cosa. Stessa filosofia "niente weekend" gia' applicata da
+    _build_synthetic_today_row sotto e da _with_current_point
+    (ui/charts/overview.py)."""
+    return [d for d in ds if pd.Timestamp(d).weekday() < 5]
+
+
 def _build_portfolio_history_core(sto: dict, eventi: list) -> tuple[list[dict], dict]:
     """Righe storiche reali (mai dipendenti da strumenti[].prezzo) + stato
     finale (posizioni/cassa/capitale/realizzato/ultimo prezzo valido/
@@ -316,7 +336,7 @@ def _build_portfolio_history_core(sto: dict, eventi: list) -> tuple[list[dict], 
     "oggi" con i prezzi correnti (Fase 2bis Parte A: la riga sintetica non
     e' mai cache-ata da questa funzione, quindi lo stato finale va sempre
     ricalcolato o riletto dalla cache insieme alle righe storiche)."""
-    ds = sorted(sto.keys())
+    ds = _filter_weekend_dates(sorted(sto.keys()))
     hp: list[dict] = []
     pos: dict[str, dict[str, float]] = {}
     cash = 0.0
@@ -483,10 +503,12 @@ def build_portfolio_history_df(data: dict[str, Any]) -> pd.DataFrame:
     # davvero funzione. I prezzi correnti influenzano solo la riga
     # sintetica "oggi" sotto, mai cache-ata.
     hist_sig = hashlib.md5(json.dumps({"sto": sto}, sort_keys=True, default=str).encode()).hexdigest()
-    # v7: aggiunta colonna "ValoreAperto" (solo posizioni aperte, esclusa
-    # liquidita') - bump obbligatorio per invalidare le righe gia' cache-ate
-    # sotto lo schema precedente, che non la conterrebbero.
-    cache_sig = f"portfolio_history_v7|{event_sig}|{hist_sig}"
+    # v8: l'indice date dello storico esclude ora sabato/domenica anche
+    # quando quella data esiste in storico_prezzi solo per uno strumento
+    # osservato (vedi _filter_weekend_dates) - bump obbligatorio per
+    # invalidare le righe gia' cache-ate sotto lo schema precedente, che
+    # potrebbero contenere righe weekend indebite.
+    cache_sig = f"portfolio_history_v8|{event_sig}|{hist_sig}"
 
     cache = data.get("cache_storico_portafoglio", {}) or {}
     hp: list[dict] | None = None
@@ -512,7 +534,7 @@ def build_portfolio_history_df(data: dict[str, Any]) -> pd.DataFrame:
             "final_state": final_state,
         }
 
-    ds = sorted(sto.keys())
+    ds = _filter_weekend_dates(sorted(sto.keys()))
     today_date = date.today()
     today_str = today_date.strftime("%Y-%m-%d")
     row_today = _build_synthetic_today_row(data, ds, today_date, today_str, eventi_ordinati, final_state)
