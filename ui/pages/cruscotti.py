@@ -14,6 +14,7 @@ from core.asset_categories import get_selected_category_codes
 from core.cache_signatures import build_historical_data_signature, build_portfolio_data_signature, charts_settings_signature, theme_signature
 from core.constants import QTY_ZERO_EPS
 from core.cache_orchestrator import get_registered_figure_cache
+from core.domain.returns import normalize_to_first
 from core.domain.risk import build_drawdown_series
 from core.figure_cache import CachingStrategy
 from core.finance import calc_positions
@@ -955,11 +956,11 @@ def _render_analitica_market_structure(ctx: SimpleNamespace, settings: dict[str,
                 prices = prices.loc[prices.index >= start_date]
             if len(prices) < 2:
                 continue
-            # Rendimento percentuale dal primo prezzo disponibile: build_drawdown_series
-            # converte in equity=1+v/100, un puro riscalamento moltiplicativo di prices
-            # (prices/prices.iloc[0]) che lascia invariato il rapporto drawdown originale
-            # (prices/prices.cummax()-1)*100, qualunque sia il livello assoluto dei prezzi.
-            pct_returns = ((prices / prices.iloc[0]) - 1) * 100.0
+            # Rendimento normalizzato dal primo prezzo disponibile: build_drawdown_series
+            # converte in equity=1+v/100, un puro riscalamento moltiplicativo che lascia
+            # invariato il rapporto drawdown originale. normalize_to_first è la stessa
+            # formula centralizzata in core/ (vedi ui/charts/analisi.py, core/services/sator.py).
+            pct_returns = normalize_to_first(prices, as_pct=True)
             drawdown_min = min(build_drawdown_series(pct_returns.tolist()))
             drawdown_depths.append((ticker, float(drawdown_min)))
         drawdown_depths.sort(key=lambda item: item[1])
