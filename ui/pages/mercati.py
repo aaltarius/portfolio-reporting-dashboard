@@ -21,6 +21,7 @@ from core.cache_policy import build_cache_artifact_signature, get_cache_artifact
 from core.cache_orchestrator import get_or_build_registered_artifact
 from core.cache_signatures import build_market_data_signature
 from core.config import COLORS
+from core.domain.returns import simple_period_return
 from core.render_profiler import profile_step
 from core.services.market_universe_refresh import (
     DEFAULT_MARKET_REFRESH_PERIOD,
@@ -145,7 +146,7 @@ def _period_return(series: pd.Series, observations_back: int) -> float | None:
     end = _finite_float(series.iloc[-1])
     if start is None or end is None or abs(start) < 1e-12:
         return None
-    return (end / start) - 1.0
+    return simple_period_return(start, end)
 
 
 def _ytd_return(series: pd.Series) -> float | None:
@@ -160,7 +161,7 @@ def _ytd_return(series: pd.Series) -> float | None:
     end = _finite_float(series.iloc[-1])
     if start is None or end is None or abs(start) < 1e-12:
         return None
-    return (end / start) - 1.0
+    return simple_period_return(start, end)
 
 
 def _tone(value: float | None) -> str:
