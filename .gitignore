@@ -1,6 +1,3 @@
-# Worktree locali (isolamento sessioni di sviluppo, mai nel repo pubblico)
-.worktrees/
-
 # Python
 __pycache__/
 *.py[cod]
