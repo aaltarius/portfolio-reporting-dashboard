@@ -29,7 +29,7 @@ import pandas as pd
 
 from core.constants import QTY_ZERO_EPS
 from core.domain.risk import build_drawdown_series, rolling_sharpe, rolling_volatility_annualized
-from core.domain.returns import combine_weighted_returns
+from core.domain.returns import combine_weighted_returns, normalize_to_first
 from core.finance import build_ptf_df, compute_portfolio_state
 from core.price_frames import build_expanded_price_frame
 from persistence.storage import load_sator_decisions, macro_cat
@@ -1495,7 +1495,7 @@ def _compute_all_metrics_batch(tickers: list[str], price_frame: pd.DataFrame, wi
             continue
         vol_series = rolling_volatility_annualized(prices, window)
         vol_dict[t] = float(vol_series.iloc[-1]) if not vol_series.empty else np.nan
-        pct_returns = (prices / prices.iloc[0] - 1.0) * 100.0
+        pct_returns = normalize_to_first(prices, as_pct=True)
         # build_drawdown_series lavora in punti percentuali; _score_risk si
         # aspetta una frazione decimale (es. -0.15, non -15.0): il /100.0 non
         # e' ridondante, converte l'unita' di misura.
