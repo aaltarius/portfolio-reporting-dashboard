@@ -1449,6 +1449,8 @@ def _rolling_return(serie: pd.Series, finestra: int) -> float:
         return np.nan
     inizio = float(serie.iloc[-1 - finestra])
     fine = float(serie.iloc[-1])
+    if inizio <= 0:
+        return np.nan
     ret = simple_period_return(inizio, fine)
     return ret if ret is not None else np.nan
 
