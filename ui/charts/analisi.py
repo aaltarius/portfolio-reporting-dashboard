@@ -5,6 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from core.config import COLORS
+from core.domain.returns import normalize_to_first
 from core.domain.risk import build_drawdown_series
 from ui.charts.settings import apply_settings
 from ui.charts.runtime import empty_chart
@@ -102,11 +103,12 @@ def build_instrument_drawdown_time_chart(dh, tickers, date_fmt):
         prices = dh[ticker].dropna()
         if len(prices) < 2:
             continue
-        # Rendimento percentuale dal primo prezzo disponibile: build_drawdown_series
-        # converte in equity=1+v/100, un puro riscalamento moltiplicativo di prices
-        # (prices/prices.iloc[0]) che lascia invariato il rapporto drawdown originale
-        # (prices/prices.cummax()-1)*100, qualunque sia il livello assoluto dei prezzi.
-        pct_returns = (prices / prices.iloc[0] - 1) * 100
+        # Rendimento normalizzato dal primo prezzo disponibile: build_drawdown_series
+        # converte in equity=1+v/100, un puro riscalamento moltiplicativo che lascia
+        # invariato il rapporto drawdown originale, qualunque sia il livello assoluto
+        # dei prezzi. normalize_to_first è la stessa formula centralizzata in core/
+        # (vedi core/services/sator.py per lo stesso pattern).
+        pct_returns = normalize_to_first(prices, as_pct=True)
         drawdown = pd.Series(build_drawdown_series(pct_returns.tolist()), index=prices.index)
         fig.add_trace(
             go.Scatter(
