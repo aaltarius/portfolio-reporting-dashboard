@@ -406,3 +406,19 @@ def compute_return_curve_metrics(
         "tracking_error": tracking_error,
     })
     return metrics
+
+
+def normalize_to_first(prices: pd.Series | None, *, as_pct: bool = True) -> pd.Series:
+    """Ribasa una serie di prezzi al primo valore valido: (p/p0 - 1) [*100].
+
+    Serie None/vuota, o primo valore <=0/NaN -> pd.Series vuota. Stesso
+    guard di simple_period_return, applicato punto per punto invece che
+    sui due estremi.
+    """
+    if prices is None or len(prices) == 0:
+        return pd.Series(dtype=float)
+    first = prices.iloc[0]
+    if pd.isna(first) or float(first) <= 0:
+        return pd.Series(dtype=float)
+    ratio = prices / float(first) - 1.0
+    return ratio * 100.0 if as_pct else ratio
