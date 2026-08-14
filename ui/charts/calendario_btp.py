@@ -7,28 +7,13 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core.config import COLORS
-from core.domain.calendar import TAX_RATE_GOV_PCT
+from core.domain.calendar import TAX_RATE_GOV_PCT, estimate_maturity_tax
 from ui.charts.runtime import finalize_chart
 from ui.charts.settings import apply_settings, get_chart_setting
 from ui.components import render_styled_table
 from ui.formatting import fmt_eur_it
 from ui.theme import ThemeConfig
 from ui.theme import macro_color
-
-
-_ALIQUOTA_BTP = TAX_RATE_GOV_PCT / 100.0
-
-
-def _stima_imposte_scadenza(lordo: float, pmc: float | None) -> float | None:
-    """Stima l'imposta sulla plusvalenza a rimborso per un BTP.
-
-    Restituisce None se PMC non disponibile (la cella mostrerà '—').
-    """
-    # Formula valida per BTP con nominale=100: gain_frac = (100-PMC)/100, lordo = nominale*quantita
-    if pmc is None:
-        return None
-    gain_frac = max(0.0, (100.0 - pmc) / 100.0)
-    return lordo * gain_frac * _ALIQUOTA_BTP
 
 
 def build_btp_calendar_figure(
@@ -406,14 +391,14 @@ def render_btp_calendar_table(
                 lordo_v = float(_il2)
             else:
                 # importo_lordo assente/uguale al netto (cache stale): calcoliamo dal netto
-                lordo_v = importo / (1.0 - _ALIQUOTA_BTP) if _ALIQUOTA_BTP < 1.0 else importo
+                lordo_v = importo / (1.0 - TAX_RATE_GOV_PCT / 100.0) if TAX_RATE_GOV_PCT / 100.0 < 1.0 else importo
             netto_v = importo
             imp_v = lordo_v - netto_v
         elif tipo == "scadenza":
             lordo_v = importo_lordo
             ticker = str(row.get("ticker") or "")
             pmc = pmc_map.get(ticker) if pmc_map else None
-            imp_v = _stima_imposte_scadenza(lordo_v, pmc)
+            imp_v = estimate_maturity_tax(lordo_v, pmc)
             netto_v = lordo_v - imp_v if imp_v is not None else lordo_v
         else:
             lordo_v = importo_lordo

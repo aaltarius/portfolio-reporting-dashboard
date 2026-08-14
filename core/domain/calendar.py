@@ -282,3 +282,15 @@ def build_btp_calendar(data: dict) -> pd.DataFrame:
 
 def fmt_eur_label(value: float) -> str:
     return f"€ {_finite_float(value, 0.0):,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def estimate_maturity_tax(lordo: float, pmc: float | None) -> float | None:
+    """Stima l'imposta sulla plusvalenza a rimborso per un BTP (nominale=100).
+
+    gain_frac = (100-PMC)/100, lordo = nominale*quantita'. Ritorna None se
+    PMC non disponibile (la cella chiamante mostra '—').
+    """
+    if pmc is None:
+        return None
+    gain_frac = max(0.0, (100.0 - pmc) / 100.0)
+    return lordo * gain_frac * (TAX_RATE_GOV_PCT / 100.0)
