@@ -132,6 +132,13 @@ def _normalized_instrument_signature_payload(strumenti: list[dict[str, Any]]) ->
             "prezzo": prezzo,
             "stato": stato_norm,
             "osserva_prezzo": bool(item.get("osserva_prezzo", False)),
+            # senza questo campo, un fix all'etichetta "natura" (icona
+            # Quotazioni/Portafoglio/Pianificazione, vedi
+            # ui/charts/natura_icons.py) non cambia la firma dati e gli
+            # artefatti page-cache gia' su disco continuano a servire
+            # l'icona vecchia a tempo indeterminato (bug trovato il
+            # 2026-08-13 su IWQU.MI/XDEQ.MI/FAM-PU6).
+            "natura": str(item.get("natura", "")).strip(),
         })
     return sorted(normalized, key=lambda row: (row["ticker"], row["isin"], row["tipo"]))
 
