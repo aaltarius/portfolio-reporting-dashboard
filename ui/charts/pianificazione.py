@@ -610,18 +610,29 @@ def build_instrument_comparison_chart(series: list[ComparisonSeries]) -> go.Figu
         x_vals = [int(d) for d in s.dates] if align_mode else pd.to_datetime(s.dates)
         if s.is_benchmark:
             line_style = dict(color=P["gray"], width=2.0, dash="dash")
+            trace_name = s.label
         else:
             color = palette[color_idx % len(palette)]
             color_idx += 1
-            line_style = dict(color=color, width=2.2)
+            # Distinzione visiva E testuale per gli strumenti fuori
+            # portafoglio (non solo colore) — stesso stile della vecchia
+            # build_normalized_performance_chart (ui/charts/benchmark.py,
+            # rimossa in Task 10): linea tratteggiata "dot" + suffisso nel
+            # nome traccia, non un colore inventato.
+            if s.is_held:
+                line_style = dict(color=color, width=2.2)
+                trace_name = s.label
+            else:
+                line_style = dict(color=color, width=2.0, dash="dot")
+                trace_name = f"{s.label} (fuori portafoglio)"
         fig.add_trace(
             go.Scatter(
                 x=x_vals,
                 y=s.values,
                 mode="lines",
-                name=s.label,
+                name=trace_name,
                 line=line_style,
-                hovertemplate=f"<b>{s.label}</b><br>Rendimento: %{{y:+.2f}}%<extra></extra>",
+                hovertemplate=f"<b>{trace_name}</b><br>Rendimento: %{{y:+.2f}}%<extra></extra>",
             )
         )
 

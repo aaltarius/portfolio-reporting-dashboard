@@ -689,15 +689,23 @@ def _render_instrument_comparison_section(ctx: SimpleNamespace) -> None:
         return
 
     all_tickers = get_all_historical_tickers(data)
-    options = [t["ticker"] for t in all_tickers]
-    default_tickers = [t["ticker"] for t in all_tickers if t["active"]]
+    # Stesso formato etichetta della vecchia sezione "Performance normalizzata"
+    # in Cruscotti/Benchmark (rimossa in Task 10): "(In portafoglio)" /
+    # "(Fuori portafoglio)" nel widget, non solo nel grafico dopo la scelta.
+    option_labels = [
+        f"{t['ticker']} {'(In portafoglio)' if t['active'] else '(Fuori portafoglio)'}"
+        for t in all_tickers
+    ]
+    ticker_by_label = {label: t["ticker"] for label, t in zip(option_labels, all_tickers)}
+    default_labels = [label for label, t in zip(option_labels, all_tickers) if t["active"]]
 
     col_sel, col_period = st.columns([2, 1])
     with col_sel:
-        selected = st.multiselect(
-            "Strumenti da confrontare", options=options, default=default_tickers,
+        selected_labels = st.multiselect(
+            "Strumenti da confrontare", options=option_labels, default=default_labels,
             key="_pianificazione_comparison_tickers",
         )
+    selected = [ticker_by_label[label] for label in selected_labels if label in ticker_by_label]
     with col_period:
         period = st.radio(
             "Periodo", options=["1M", "3M", "6M", "1A", "3A", "Tutto"], index=5,

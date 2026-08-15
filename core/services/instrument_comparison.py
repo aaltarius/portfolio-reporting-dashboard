@@ -29,6 +29,11 @@ class ComparisonSeries:
     dates: list[str]
     values: list[float]
     is_benchmark: bool = False
+    # True se il ticker e' attualmente posseduto (held_tickers), False se lo
+    # storico e' solo osservato/non piu' in portafoglio. Irrilevante per le
+    # serie benchmark (is_benchmark=True), che hanno il proprio stile fisso
+    # indipendentemente da questo flag — vedi build_instrument_comparison_chart.
+    is_held: bool = True
 
 
 _PERIOD_DELTAS: dict[str, relativedelta | None] = {
@@ -101,13 +106,20 @@ def build_comparison_frame(
     Pianificazione, con overlay opzionale del benchmark assegnato a un
     singolo strumento (benchmark_for)."""
     result: list[ComparisonSeries] = []
+    # Stesso segnale "active" gia' calcolato da get_all_historical_tickers
+    # (held_tickers da core.domain.positions): non reimplementarlo qui.
+    active_set = held_tickers(data)
     for ticker in tickers:
         price_df = instrument_price_history(data, ticker)
         series = _normalized_series(price_df, "strumento", start_date=start_date, align_starts=align_starts)
         if series is None:
             continue
         dates, values = series
-        result.append(ComparisonSeries(ticker=ticker, label=ticker, dates=dates, values=values))
+        result.append(
+            ComparisonSeries(
+                ticker=ticker, label=ticker, dates=dates, values=values, is_held=ticker in active_set,
+            )
+        )
 
     if benchmark_for:
         instrument = next(
