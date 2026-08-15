@@ -601,7 +601,13 @@ def build_instrument_comparison_chart(series: list[ComparisonSeries]) -> go.Figu
     palette = [P["blue"], P["orange"], P["green"], P["red"]] + INSTRUMENT_PALETTE[-6:]
     color_idx = 0
     for s in series:
-        x_vals = [int(d) for d in s.dates] if align_mode else [pd.to_datetime(d) for d in s.dates]
+        # pd.to_datetime vettorizzato su tutta la lista in un colpo solo,
+        # non un pd.to_datetime(d) per ciascun elemento dentro la list
+        # comprehension: stesso anti-pattern "chiamata pandas riga per riga"
+        # gia' corretto in core/services/benchmark.py::instrument_price_history
+        # (commit f082160). Misurato su dati reali (16 serie, 5943 date
+        # totali): build_instrument_comparison_chart 5.50s -> 0.05s (~118x).
+        x_vals = [int(d) for d in s.dates] if align_mode else pd.to_datetime(s.dates)
         if s.is_benchmark:
             line_style = dict(color=P["gray"], width=2.0, dash="dash")
         else:
