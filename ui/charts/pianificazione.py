@@ -4,10 +4,11 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from core.config import COLORS
+from core.services.instrument_comparison import ComparisonSeries
 from ui.charts.runtime import finalize_chart
 from ui.formatting import fmt_eur_it, fmt_pct_it
 from ui.charts.natura_icons import get_natura_visual
-from ui.theme import bucket_color, macro_color
+from ui.theme import bucket_color, macro_color, INSTRUMENT_PALETTE, P
 
 
 def build_composition_donut_chart(per_funzione: pd.Series, theme) -> go.Figure:
@@ -583,3 +584,52 @@ def build_sator_frontier_chart(cloud: pd.DataFrame, markers: list, theme) -> go.
         ))
     fig = finalize_chart(fig, "pianificazione_sator_frontier")
     return fig
+
+
+def build_instrument_comparison_chart(series: list[ComparisonSeries]) -> go.Figure:
+    """Confronto strumenti normalizzati a 0%, con overlay opzionale del
+    benchmark assegnato (vedi core/services/instrument_comparison.py per il
+    calcolo). Porta qui la logica gia' in ui/charts/benchmark.py::
+    build_normalized_performance_chart, rimossa da li' insieme al resto
+    della sezione "Performance normalizzata" di Cruscotti/Benchmark."""
+    chart_id = "pianificazione_instrument_comparison"
+    fig = go.Figure()
+    if not series:
+        return finalize_chart(fig, chart_id)
+
+    align_mode = all(s.dates and s.dates[0].lstrip("-").isdigit() for s in series)
+    palette = [P["blue"], P["orange"], P["green"], P["red"]] + INSTRUMENT_PALETTE[-6:]
+    color_idx = 0
+    for s in series:
+        x_vals = [int(d) for d in s.dates] if align_mode else [pd.to_datetime(d) for d in s.dates]
+        if s.is_benchmark:
+            line_style = dict(color=P["gray"], width=2.0, dash="dash")
+        else:
+            color = palette[color_idx % len(palette)]
+            color_idx += 1
+            line_style = dict(color=color, width=2.2)
+        fig.add_trace(
+            go.Scatter(
+                x=x_vals,
+                y=s.values,
+                mode="lines",
+                name=s.label,
+                line=line_style,
+                hovertemplate=f"<b>{s.label}</b><br>Rendimento: %{{y:+.2f}}%<extra></extra>",
+            )
+        )
+
+    fig.add_hline(y=0, line_dash="dot", line_color="rgba(100,116,139,0.4)", line_width=1)
+    x_title = "Giorni dal punto zero" if align_mode else ""
+    title = "Confronto strumenti — base 0% (origini allineate)" if align_mode else "Confronto strumenti — base 0%"
+    return finalize_chart(
+        fig,
+        chart_id,
+        hovermode="x unified",
+        layout_updates={
+            "title": title,
+            "legend": dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        },
+        xaxis_updates={"title_text": x_title, "automargin": True, "rangeslider": dict(visible=False)},
+        yaxis_updates={"title_text": "Rendimento %", "tickformat": "+.1f", "automargin": True, "zeroline": False},
+    )

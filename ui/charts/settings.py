@@ -1061,12 +1061,12 @@ CHARTS: dict[str, dict[str, Any]] = {
      'quarter_mode': 'year',
      'title': '<b>Portafoglio vs Benchmark</b>'},
 
-    'benchmark_normalized_performance': {'type': 'custom',
+    'pianificazione_instrument_comparison': {'type': 'custom',
      'height': 420,
      'legend': 'bottom',
      'show_buttons': False,
      'margin_delta': {'t': 0, 'b': 0, 'l': 0, 'r': 0},
-     'title': '<b>Performance normalizzata — base 0%</b>'},
+     'title': '<b>Confronto strumenti — base 0%</b>'},
 
     'cruscotti_benchmark_instrument_scatter': {'type': 'scatter',
      'height': 500,
