@@ -18,7 +18,7 @@ from core.cache_signatures import build_portfolio_data_signature, charts_setting
 from core.frozen_analysis_cache import cached_render_figure, get_frozen_analysis_cache, small_signature_part, store_frozen_analysis_cache
 from core.render_profiler import profile_step
 from core.services.benchmark import build_benchmark_transparency_payload, benchmark_explanation
-from ui.charts.benchmark import build_instrument_benchmark_scatter, build_portfolio_benchmark_comparison_chart, build_normalized_performance_chart, get_all_historical_tickers, resolve_period_start_date
+from ui.charts.benchmark import build_instrument_benchmark_scatter, build_portfolio_benchmark_comparison_chart
 from ui.components import kpi_card, legend_block, render_frozen_analysis_freeze_header, render_frozen_analysis_status_text, render_section_title, render_styled_table, vertical_gap
 from ui.formatting import fmt_date_only_it, fmt_eur_it, fmt_num_it, fmt_pct_it
 from ui.theme import P, get_theme_context, macro_color
@@ -378,115 +378,6 @@ def _format_period(period: dict[str, Any]) -> str:
     return f"Periodo confronto: {fmt_date_only_it(start)} → {fmt_date_only_it(end)}"
 
 
-_NORM_PERF_SESSION_KEY = "_benchmark_norm_perf_fig_v2"
-
-
-def _render_normalized_performance_section(ctx: SimpleNamespace) -> None:
-    """Grafico performance normalizzata — sempre visibile, ricostruito solo su richiesta."""
-    data = getattr(ctx, "data", {}) or {}
-    storico = data.get("storico_prezzi") or {}
-    if not storico:
-        return
-
-    vertical_gap("sm")
-    render_section_title(
-        "Performance normalizzata",
-        comment="Sovrappone gli strumenti normalizzati a 0% da una data o un'origine comune. Non viene ricalcolato automaticamente nei rerun.",
-        icon="analysis",
-    )
-
-    all_tickers = get_all_historical_tickers(data)
-    if not all_tickers:
-        st.info("Nessuno storico prezzi disponibile.")
-        return
-
-    options = [
-        f"{t['ticker']} {'(In portafoglio)' if t['active'] else '(Fuori portafoglio)'}"
-        for t in all_tickers
-    ]
-    ticker_by_label = {
-        f"{t['ticker']} {'(In portafoglio)' if t['active'] else '(Fuori portafoglio)'}": t["ticker"]
-        for t in all_tickers
-    }
-    default_labels = [
-        lbl for lbl, tk in ticker_by_label.items()
-        if next((t["active"] for t in all_tickers if t["ticker"] == tk), False)
-    ]
-
-    sorted_dates = sorted(storico.keys())
-    first_date = sorted_dates[0][:10] if sorted_dates else ""
-    last_date = sorted_dates[-1][:10] if sorted_dates else ""
-
-    col_sel, col_mode = st.columns([2, 1])
-    with col_sel:
-        selected_labels = st.multiselect(
-            "Strumenti da confrontare",
-            options=options,
-            default=default_labels,
-            key="_norm_perf_ticker_select",
-        )
-    with col_mode:
-        mode = st.radio(
-            "Modalità",
-            options=["Data comune", "Origini allineate"],
-            index=0,
-            key="_norm_perf_mode",
-            help=(
-                "Data comune: tutte le curve partono dalla stessa data di calendario.\n"
-                "Origini allineate: ogni strumento parte da Giorno 0 indipendentemente "
-                "da quando è entrato in storico — utile per confrontare traiettorie."
-            ),
-        )
-
-    align_starts = mode == "Origini allineate"
-
-    ctrl_left, ctrl_right = st.columns([3, 1])
-    with ctrl_left:
-        if not align_starts:
-            PERIOD_OPTIONS = ["1M", "3M", "6M", "1A", "3A", "Tutto"]
-            period = st.radio(
-                "Periodo",
-                options=PERIOD_OPTIONS,
-                index=3,
-                horizontal=True,
-                key="_norm_perf_period",
-            )
-            start_date = resolve_period_start_date(sorted_dates, period)
-        else:
-            start_date = first_date
-    with ctrl_right:
-        build_clicked = st.button(
-            "Costruisci grafico",
-            type="primary",
-            key="_norm_perf_build_btn",
-            width="stretch",
-        )
-
-    cached_entry = st.session_state.get(_NORM_PERF_SESSION_KEY)
-
-    if build_clicked:
-        tickers_selected = [ticker_by_label[lbl] for lbl in selected_labels if lbl in ticker_by_label]
-        held_set = frozenset(t["ticker"] for t in all_tickers if t["active"])
-        fig = build_normalized_performance_chart(
-            storico, tickers_selected, start_date, align_starts=align_starts, held_tickers=held_set,
-        )
-        cached_entry = {"fig": fig, "label": f"da {start_date} a {last_date}" if not align_starts else "origini allineate"}
-        st.session_state[_NORM_PERF_SESSION_KEY] = cached_entry
-
-    if cached_entry is not None:
-        fig = cached_entry.get("fig") if isinstance(cached_entry, dict) else cached_entry
-        label = cached_entry.get("label", "") if isinstance(cached_entry, dict) else ""
-        if label:
-            st.caption(f"Ultimo grafico costruito: {label}. Modifica i parametri e clicca di nuovo per aggiornare.")
-        st.plotly_chart(fig, width="stretch")
-    else:
-        legend_block(
-            "Seleziona gli strumenti, scegli modalità e periodo, poi clicca \"Costruisci grafico\". "
-            "Il grafico resta visibile nei rerun successivi senza essere ricalcolato.",
-            variant="bottom",
-        )
-
-
 def render_benchmark(ctx: SimpleNamespace, summary_bundle: Any | None = None) -> None:
     """Renderizza la scheda Benchmark senza rigenerare automaticamente i payload pesanti."""
     settings = getattr(ctx, "settings", None)
@@ -628,5 +519,3 @@ def render_benchmark(ctx: SimpleNamespace, summary_bundle: Any | None = None) ->
         )
         with profile_step("Cruscotti/Benchmark", "render scatter coerenza", count=matrix_count):
             st.plotly_chart(scatter_fig, width="stretch")
-
-    _render_normalized_performance_section(ctx)

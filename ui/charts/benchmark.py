@@ -1,15 +1,10 @@
 from __future__ import annotations
 
-from datetime import date as _date
-from dateutil.relativedelta import relativedelta
-from typing import Any
-
 import pandas as pd
 import plotly.graph_objects as go
 
 from ui.charts.settings import apply_settings
 from ui.theme import INSTRUMENT_PALETTE, P, macro_color
-from core.domain.positions import held_tickers
 
 
 def build_portfolio_benchmark_comparison_chart(history: pd.DataFrame) -> go.Figure:
@@ -55,154 +50,6 @@ def build_portfolio_benchmark_comparison_chart(history: pd.DataFrame) -> go.Figu
     )
     fig.update_yaxes(title_text="Indice base 100", tickformat=",.1f", automargin=True, zeroline=False)
     fig.update_xaxes(automargin=True, rangeslider=dict(visible=False))
-    return apply_settings(fig, chart_id)
-
-
-_PERIOD_DELTAS: dict[str, relativedelta | None] = {
-    "1M": relativedelta(months=1),
-    "3M": relativedelta(months=3),
-    "6M": relativedelta(months=6),
-    "1A": relativedelta(years=1),
-    "3A": relativedelta(years=3),
-    "Tutto": None,
-}
-
-
-def resolve_period_start_date(sorted_dates: list[str], period: str) -> str:
-    """Calcola la start_date sottraendo il periodo dalla data più recente nello storico."""
-    if not sorted_dates:
-        return ""
-    first = sorted_dates[0][:10]
-    last = sorted_dates[-1][:10]
-    delta = _PERIOD_DELTAS.get(period)
-    if delta is None:
-        return first
-    ref = _date.fromisoformat(last) - delta
-    computed = ref.strftime("%Y-%m-%d")
-    return computed if computed >= first else first
-
-
-def get_all_historical_tickers(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Ritorna tutti i ticker mai presenti in storico_prezzi, con flag active.
-
-    "active" significa "possiedo quote ora", calcolato dagli eventi reali
-    (held_tickers) — non dal campo stato dello strumento, che puo' restare
-    "aperto" anche dopo una vendita totale se nessuno lo ritagga a mano.
-    Un ticker mai acquistato (es. un benchmark di riferimento) o venduto per
-    intero risulta ugualmente "non posseduto"."""
-    storico: dict[str, dict[str, float]] = data.get("storico_prezzi") or {}
-    active_set = held_tickers(data)
-    all_tickers: set[str] = set()
-    for prices in storico.values():
-        all_tickers.update(prices.keys())
-    return [
-        {"ticker": tk, "active": tk in active_set}
-        for tk in sorted(all_tickers)
-    ]
-
-
-def build_normalized_performance_chart(
-    storico_prezzi: dict[str, dict[str, float]],
-    tickers: list[str],
-    start_date: str,
-    *,
-    align_starts: bool = False,
-    held_tickers: frozenset[str] | set[str] | None = None,
-) -> go.Figure:
-    """Grafico a linee sovrapposte: rendimento % normalizzato a 0%.
-
-    align_starts=False (default): asse X = date di calendario, tutte le serie
-        partono da start_date (o dalla prima data disponibile se start_date è
-        antecedente allo storico).
-
-    align_starts=True: asse X = giorni trascorsi dal punto zero di ciascuna
-        serie. Ogni strumento parte da (giorno 0, rendimento 0%) usando la
-        propria prima data disponibile, indipendentemente dal calendario.
-        Questo consente di confrontare la traiettoria di performance anche fra
-        strumenti entrati in portafoglio in momenti diversi.
-
-    held_tickers: se fornito, i ticker non presenti (fuori portafoglio) sono
-        disegnati con linea tratteggiata e "(fuori portafoglio)" nel nome
-        traccia — distinzione visiva E testuale, non solo di colore. Se None
-        (default), nessuna distinzione: tutte le linee sono continue.
-    """
-    chart_id = "benchmark_normalized_performance"
-    fig = go.Figure()
-    if not storico_prezzi or not tickers:
-        return apply_settings(fig, chart_id)
-
-    sorted_dates = sorted(storico_prezzi.keys())
-
-    # Ultimi 6 valori: stessi di ui.theme.INSTRUMENT_PALETTE[-6:] (le 6 tinte
-    # "extra" oltre COLORS["instrument_1..6"], gia' canoniche in
-    # core.constants.STRUMENTO_PALETTE) - riusate, non ridichiarate qui.
-    palette = [P["blue"], P["orange"], P["green"], P["red"]] + INSTRUMENT_PALETTE[-6:]
-
-    added = 0
-    for tk in tickers:
-        # Raccoglie (date, prezzo) per questo ticker — tutti i punti disponibili
-        series: list[tuple[str, float]] = []
-        for d in sorted_dates:
-            price = storico_prezzi[d].get(tk)
-            if price is None:
-                continue
-            series.append((d, float(price)))
-
-        if not series:
-            continue
-
-        if align_starts:
-            # Modalità allineamento: usa tutta la storia del ticker, parte da giorno 0
-            ref_price = series[0][1]
-            if ref_price == 0.0:
-                continue
-            x_vals = list(range(len(series)))
-            y_vals = [(p / ref_price) - 1.0 for _, p in series]
-            hover = f"<b>{tk}</b><br>Giorno %{{x}}<br>Rendimento: %{{y:+.2%}}<extra></extra>"
-        else:
-            # Modalità data comune: taglia dalla start_date (o prima data utile)
-            ref_price = None
-            trim_idx = 0
-            for i, (d, p) in enumerate(series):
-                if d >= start_date:
-                    ref_price = p
-                    trim_idx = i
-                    break
-            if ref_price is None or ref_price == 0.0:
-                continue
-            series = series[trim_idx:]
-            x_vals = [pd.to_datetime(d) for d, _ in series]
-            y_vals = [(p / ref_price) - 1.0 for _, p in series]
-            hover = f"<b>{tk}</b><br>%{{x|%d/%m/%Y}}<br>Rendimento: %{{y:+.2%}}<extra></extra>"
-
-        color = palette[added % len(palette)]
-        is_held = held_tickers is None or tk in held_tickers
-        trace_name = tk if is_held else f"{tk} (fuori portafoglio)"
-        line_style = dict(color=color, width=2.2) if is_held else dict(color=color, width=2.0, dash="dot")
-        fig.add_trace(
-            go.Scatter(
-                x=x_vals,
-                y=y_vals,
-                mode="lines",
-                name=trace_name,
-                line=line_style,
-                hovertemplate=hover,
-            )
-        )
-        added += 1
-
-    fig.add_hline(y=0, line_dash="dot", line_color="rgba(100,116,139,0.4)", line_width=1)
-    x_title = "Giorni dal punto zero" if align_starts else ""
-    title = "Performance normalizzata — base 0% (origini allineate)" if align_starts else "Performance normalizzata — base 0%"
-    fig.update_layout(
-        height=420,
-        margin=dict(l=8, r=8, t=42, b=16),
-        title=title,
-        hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    )
-    fig.update_yaxes(title_text="Rendimento %", tickformat="+.1%", automargin=True, zeroline=False)
-    fig.update_xaxes(title_text=x_title, automargin=True, rangeslider=dict(visible=False))
     return apply_settings(fig, chart_id)
 
 
