@@ -238,7 +238,7 @@ def _date_price_mapping_to_frame(mapping: Any, value_col: str = "price") -> pd.D
     return pd.DataFrame(rows).sort_values("date").drop_duplicates("date", keep="last").reset_index(drop=True)
 
 
-def _instrument_price_history(data: dict[str, Any] | None, ticker: str) -> pd.DataFrame:
+def instrument_price_history(data: dict[str, Any] | None, ticker: str) -> pd.DataFrame:
     storico = data.get("storico_prezzi", {}) if isinstance(data, dict) else {}
     if not isinstance(storico, dict) or not ticker:
         return pd.DataFrame(columns=["date", "strumento"])
@@ -255,7 +255,7 @@ def _instrument_price_history(data: dict[str, Any] | None, ticker: str) -> pd.Da
     return pd.DataFrame(rows).sort_values("date").drop_duplicates("date", keep="last").reset_index(drop=True)
 
 
-def _benchmark_price_history(data: dict[str, Any] | None, bench_ticker: str) -> pd.DataFrame:
+def benchmark_price_history(data: dict[str, Any] | None, bench_ticker: str) -> pd.DataFrame:
     benchmark_data = data.get("benchmark_data", {}) if isinstance(data, dict) else {}
     raw = benchmark_data.get(f"bench_{bench_ticker}", {}) if isinstance(benchmark_data, dict) else {}
     return _date_price_mapping_to_frame(raw, "benchmark")
@@ -443,8 +443,8 @@ def build_instrument_benchmark_matrix(
         aligned = pd.DataFrame()
         metrics = _aligned_return_metrics(aligned)
         if bench_ticker:
-            inst_hist = _instrument_price_history(data, ticker)
-            bench_hist = _benchmark_price_history(data, bench_ticker)
+            inst_hist = instrument_price_history(data, ticker)
+            bench_hist = benchmark_price_history(data, bench_ticker)
             aligned = _align_instrument_benchmark(inst_hist, bench_hist)
             metrics = _aligned_return_metrics(aligned)
         score = _compatibility_score(raw_type, bench_ticker, metrics.get("correlation"), int(metrics.get("points") or 0))
