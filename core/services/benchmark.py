@@ -223,36 +223,48 @@ def _component_cache_state(data: dict[str, Any] | None, ticker: str) -> dict[str
 
 
 
+def _rows_to_price_frame(date_raw_list: list[Any], value_list: list[Any], value_col: str) -> pd.DataFrame:
+    """Converte liste parallele data/valore in serie ordinata e pulita.
+
+    Vettorizza la conversione: `pd.to_datetime`/`pd.to_numeric` vengono
+    chiamati una sola volta sull'intera lista invece che riga per riga
+    (l'anti-pattern precedente costava ~5.7s su 976 date x 16 strumenti).
+    Contratto di output invariato: stesse colonne, stesso ordinamento,
+    stesso dedup, stesso filtro (data valida, valore valido, valore > 0).
+    """
+    if not date_raw_list:
+        return pd.DataFrame(columns=["date", value_col])
+    dates = pd.to_datetime(pd.Series(date_raw_list), errors="coerce")
+    values = pd.to_numeric(pd.Series(value_list), errors="coerce")
+    mask = dates.notna() & values.notna() & (values > 0)
+    if not mask.any():
+        return pd.DataFrame(columns=["date", value_col])
+    df = pd.DataFrame({
+        "date": dates[mask].reset_index(drop=True),
+        value_col: values[mask].astype(float).reset_index(drop=True),
+    })
+    return df.sort_values("date").drop_duplicates("date", keep="last").reset_index(drop=True)
+
+
 def _date_price_mapping_to_frame(mapping: Any, value_col: str = "price") -> pd.DataFrame:
     """Converte un mapping data->prezzo in serie ordinata e pulita."""
     if not isinstance(mapping, dict) or not mapping:
         return pd.DataFrame(columns=["date", value_col])
-    rows = []
-    for date_raw, value in mapping.items():
-        dt = pd.to_datetime(date_raw, errors="coerce")
-        val = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
-        if pd.notna(dt) and pd.notna(val) and float(val) > 0:
-            rows.append({"date": dt, value_col: float(val)})
-    if not rows:
-        return pd.DataFrame(columns=["date", value_col])
-    return pd.DataFrame(rows).sort_values("date").drop_duplicates("date", keep="last").reset_index(drop=True)
+    return _rows_to_price_frame(list(mapping.keys()), list(mapping.values()), value_col)
 
 
 def instrument_price_history(data: dict[str, Any] | None, ticker: str) -> pd.DataFrame:
     storico = data.get("storico_prezzi", {}) if isinstance(data, dict) else {}
     if not isinstance(storico, dict) or not ticker:
         return pd.DataFrame(columns=["date", "strumento"])
-    rows = []
+    date_raw_list = []
+    value_list = []
     for date_raw, by_ticker in storico.items():
         if not isinstance(by_ticker, dict) or ticker not in by_ticker:
             continue
-        dt = pd.to_datetime(date_raw, errors="coerce")
-        val = pd.to_numeric(pd.Series([by_ticker.get(ticker)]), errors="coerce").iloc[0]
-        if pd.notna(dt) and pd.notna(val) and float(val) > 0:
-            rows.append({"date": dt, "strumento": float(val)})
-    if not rows:
-        return pd.DataFrame(columns=["date", "strumento"])
-    return pd.DataFrame(rows).sort_values("date").drop_duplicates("date", keep="last").reset_index(drop=True)
+        date_raw_list.append(date_raw)
+        value_list.append(by_ticker.get(ticker))
+    return _rows_to_price_frame(date_raw_list, value_list, "strumento")
 
 
 def benchmark_price_history(data: dict[str, Any] | None, bench_ticker: str) -> pd.DataFrame:
