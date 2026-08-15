@@ -961,6 +961,8 @@ def _render_analitica_market_structure(ctx: SimpleNamespace, settings: dict[str,
             # invariato il rapporto drawdown originale. normalize_to_first è la stessa
             # formula centralizzata in core/ (vedi ui/charts/analisi.py, core/services/sator.py).
             pct_returns = normalize_to_first(prices, as_pct=True)
+            if pct_returns.empty:
+                continue
             drawdown_min = min(build_drawdown_series(pct_returns.tolist()))
             drawdown_depths.append((ticker, float(drawdown_min)))
         drawdown_depths.sort(key=lambda item: item[1])

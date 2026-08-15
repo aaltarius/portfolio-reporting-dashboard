@@ -109,6 +109,8 @@ def build_instrument_drawdown_time_chart(dh, tickers, date_fmt):
         # dei prezzi. normalize_to_first è la stessa formula centralizzata in core/
         # (vedi core/services/sator.py per lo stesso pattern).
         pct_returns = normalize_to_first(prices, as_pct=True)
+        if pct_returns.empty:
+            continue
         drawdown = pd.Series(build_drawdown_series(pct_returns.tolist()), index=prices.index)
         fig.add_trace(
             go.Scatter(
