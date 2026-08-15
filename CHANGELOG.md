@@ -1,5 +1,81 @@
 # Changelog
 
+## 5.0-pre - Confronto strumenti in Pianificazione e consolidamento formule rendimento
+
+- consolidati 8 siti (non 6 come stimato all'inizio: l'ottavo,
+  `core/services/sator.py::_rolling_return`, e' emerso a meta' lavoro)
+  che reimplementavano la formula "rendimento rispetto al primo valore"
+  (`ultimo/primo - 1`) invece di chiamare `core/`; nuova
+  `core.domain.returns.normalize_to_first(prices, *, as_pct=True)` come
+  primitiva condivisa, usata da `ui/charts/analisi.py:109`,
+  `ui/pages/cruscotti.py:962` e
+  `core/services/sator.py::_compute_all_metrics_batch` (riga ~1501); gli
+  altri siti (incl. l'ottavo) si sono accorpati sulla gia' esistente
+  `core.domain.returns.simple_period_return`
+  (`core/services/sator.py::_rolling_return`,
+  `ui/pages/mercati.py::_period_return`/`_ytd_return`). Spostata in
+  `core/domain/calendar.py::estimate_maturity_tax(lordo, pmc)` anche la
+  stima fiscale a scadenza BTP, rimossa la duplicazione privata
+  (`_stima_imposte_scadenza`/`_ALIQUOTA_BTP`) da
+  `ui/charts/calendario_btp.py`.
+- la review del task ha trovato e corretto una rottura di parity durante il
+  consolidamento di `_rolling_return`: il codice originale proteggeva anche
+  i valori di partenza negativi (`inizio > 0`), la nuova funzione condivisa
+  proteggeva solo lo zero (`== 0`) — aggiunta una guardia esplicita
+  `inizio <= 0` prima di delegare, per non introdurre un rendimento
+  calcolato su un valore di partenza negativo.
+- nuova sezione "Confronto strumenti" in Pianificazione, subito dopo Mappa
+  strumenti: sposta e ricostruisce la vecchia "Performance normalizzata" di
+  Cruscotti/Benchmark, prima on-demand dietro un pulsante, ora sempre viva
+  e aggiornata a ogni rerun — nessun pulsante "costruisci", scelta esplicita
+  dell'utente per un confronto "facile ed immediato". Multiselect strumenti
+  (default: posseduti), periodo, opzione "origini allineate" e overlay
+  opzionale di un singolo benchmark (tramite `core.benchmark_registry`
+  gia' esistente) — `ui/pages/pianificazione.py::_render_instrument_comparison_section`,
+  grafico in `ui/charts/pianificazione.py::build_instrument_comparison_chart`
+  (linee colorate piene per strumento, tratteggiata grigia per il
+  benchmark), logica dati in nuovo
+  `core/services/instrument_comparison.py` (`ComparisonSeries`,
+  `build_comparison_frame`, `get_all_historical_tickers`,
+  `resolve_period_start_date`). Rimossi da
+  `ui/pages/cruscotti_benchmark.py`/`ui/charts/benchmark.py` la vecchia
+  `_render_normalized_performance_section`,
+  `build_normalized_performance_chart` e le due funzioni di supporto ora
+  superate; il resto di Cruscotti/Benchmark (KPI, grafico
+  portafoglio-vs-benchmark, matrice di correlazione, scatter di coerenza)
+  resta invariato, deliberatamente fuori perimetro.
+- due bug di performance reali trovati e corretti dopo l'implementazione,
+  con misura diretta su dati reali (16 strumenti posseduti, 976 date di
+  storico), non per assunzione: (1)
+  `core/services/benchmark.py::instrument_price_history`/`benchmark_price_history`
+  (funzioni preesistenti, non create da questo lavoro) avevano un
+  anti-pattern `pd.to_datetime()`/`pd.to_numeric()` riga per riga, prima
+  nascosto dietro la cache on-demand di Cruscotti e ora esposto dalla nuova
+  sezione sempre viva — vettorizzato, ~121x piu' veloce (5,1 s -> 0,04 s
+  per 16 strumenti); (2) `ui/charts/pianificazione.py::build_instrument_comparison_chart`
+  aveva lo stesso anti-pattern nel proprio codice nuovo
+  (`[pd.to_datetime(d) for d in s.dates]` in loop) — sostituito con
+  un'unica chiamata `pd.to_datetime(s.dates)`, ~118x piu' veloce
+  (5,5 s -> 0,05 s). Risultato end-to-end: l'intera sezione (dati +
+  grafico) costa ora circa 253 ms a rerun per la vista di default a 16
+  strumenti, contro un costo iniziale di circa 9,6 s — solo cosi' il
+  requisito "live, senza pulsante" e' davvero rispettato, verificato con
+  numeri reali prima/dopo come richiesto dalla regola di progetto sulle
+  modifiche di performance.
+- reso pubblico (rinominato, nessuna modifica di logica al momento del
+  rename) `core/services/benchmark.py::_instrument_price_history`/
+  `_benchmark_price_history` in `instrument_price_history`/
+  `benchmark_price_history`, per riuso dal nuovo modulo
+  `core/services/instrument_comparison.py`.
+- nuovo `tools/finance_formula_audit.py`, sul modello di
+  `tools/cache_surface_audit.py`: scansione statica ripetibile di `ui/`
+  per pattern di formule finanziarie (normalizzazione rendimento,
+  statistiche/rischio, aliquote fiscali) non instradate da `core/`.
+  Stessa limitazione nota del tool gemello: il filtro dei path esclude
+  qualunque segmento con prefisso punto, quindi non trova file se
+  eseguito da dentro un checkout annidato in `.worktrees/` (funziona
+  correttamente da un checkout normale).
+
 ## 5.0-pre - Corretta l'infiltrazione di date weekend nello storico portafoglio
 
 - bump obbligatorio anche dei due livelli di cache esterni al fix

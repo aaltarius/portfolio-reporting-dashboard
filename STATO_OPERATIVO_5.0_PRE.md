@@ -536,6 +536,103 @@ Stato sincero della cache al 2026-08-03:
   chiamante in produzione) non fusa; copertura test asimmetrica sul ramo
   "vuoto ma non `None`" di ~20 guardie.
 
+### Consolidamento formule rendimento e Confronto strumenti (2026-08-14)
+
+Piano a 14 task eseguito con subagent-driven-development, spec e piano
+completi in
+`docs/superpowers/specs/2026-08-14-pianificazione-confronto-strumenti-design.md`
+e `docs/superpowers/plans/2026-08-14-pianificazione-confronto-strumenti.md`.
+
+- Fase A (7 task) — consolidamento: un audit di `ui/charts/*.py` e
+  `ui/pages/*.py` ha trovato 8 siti (non 6 come stimato all'avvio; l'ottavo,
+  `core/services/sator.py::_rolling_return`, e' emerso a meta' lavoro) che
+  reimplementavano "rendimento rispetto al primo valore"
+  (`ultimo/primo - 1`) fuori da `core/`. Nuova
+  `core.domain.returns.normalize_to_first(prices, *, as_pct=True)`
+  (`core/domain/returns.py:411`) come primitiva condivisa, usata da
+  `ui/charts/analisi.py:109`, `ui/pages/cruscotti.py:962` e
+  `core/services/sator.py::_compute_all_metrics_batch` (riga 1501); gli
+  altri siti (incl. l'ottavo) si sono accorpati sulla gia' esistente
+  `core.domain.returns.simple_period_return` (`core/domain/returns.py:211`):
+  `core/services/sator.py::_rolling_return` (riga 1454),
+  `ui/pages/mercati.py::_period_return`/`_ytd_return`. Spostata anche la
+  stima fiscale a scadenza BTP in
+  `core/domain/calendar.py::estimate_maturity_tax` (`core/domain/calendar.py:287`),
+  rimossa la duplicazione privata (`_stima_imposte_scadenza`/
+  `_ALIQUOTA_BTP`) da `ui/charts/calendario_btp.py`.
+  La review del task 5 ha trovato e corretto una rottura di parity: il
+  codice originale di `_rolling_return` proteggeva anche i valori di
+  partenza negativi (`inizio > 0`), la funzione condivisa proteggeva solo
+  lo zero (`== 0`) — aggiunta una guardia esplicita `inizio <= 0` prima di
+  delegare.
+- Fase B (5 task) — nuova sezione "Confronto strumenti" in Pianificazione,
+  subito dopo Mappa strumenti: sposta e ricostruisce la vecchia
+  "Performance normalizzata" di Cruscotti/Benchmark (prima on-demand dietro
+  un pulsante), ora sempre viva e aggiornata a ogni rerun — nessun pulsante
+  "costruisci", scelta esplicita dell'utente ("confronto facile ed
+  immediato"). Multiselect strumenti (default: posseduti), periodo,
+  opzione "origini allineate" e overlay opzionale di un singolo benchmark
+  (via `core.benchmark_registry` gia' esistente, mostrato/usabile solo con
+  esattamente uno strumento selezionato) —
+  `ui/pages/pianificazione.py::_render_instrument_comparison_section`
+  (riga 674), grafico in
+  `ui/charts/pianificazione.py::build_instrument_comparison_chart` (riga
+  589, linee colorate piene per strumento, tratteggiata grigia per il
+  benchmark), logica dati in nuovo `core/services/instrument_comparison.py`
+  (`ComparisonSeries` riga 26, `resolve_period_start_date` riga 44,
+  `get_all_historical_tickers` riga 60, `build_comparison_frame` riga 92).
+  Rimossi da `ui/pages/cruscotti_benchmark.py`/`ui/charts/benchmark.py` la
+  vecchia `_render_normalized_performance_section`,
+  `build_normalized_performance_chart`, `get_all_historical_tickers` e
+  `resolve_period_start_date` ora superate; il resto di Cruscotti/Benchmark
+  (KPI, grafico portafoglio-vs-benchmark, matrice di correlazione,
+  scatter di coerenza) resta invariato, deliberatamente fuori perimetro.
+  Reso pubblico (rinominato, nessuna modifica di logica al momento del
+  rename) `core/services/benchmark.py::instrument_price_history`/
+  `benchmark_price_history` (righe 256/270, prima
+  `_instrument_price_history`/`_benchmark_price_history`) per riuso dal
+  nuovo modulo.
+  Due bug di performance reali trovati e corretti dopo l'implementazione,
+  misurati su dati reali (16 strumenti posseduti, 976 date di storico):
+  (1) `instrument_price_history`/`benchmark_price_history` (funzioni
+  preesistenti, non create da questo lavoro) avevano un anti-pattern
+  `pd.to_datetime()`/`pd.to_numeric()` riga per riga, prima nascosto dietro
+  la cache on-demand di Cruscotti e ora esposto dalla nuova sezione sempre
+  viva — vettorizzato, ~121x piu' veloce (5,1 s -> 0,04 s per 16
+  strumenti); (2) `build_instrument_comparison_chart` aveva lo stesso
+  anti-pattern nel proprio codice nuovo (`[pd.to_datetime(d) for d in
+  s.dates]` in loop) — sostituito con un'unica chiamata
+  `pd.to_datetime(s.dates)`, ~118x piu' veloce (5,5 s -> 0,05 s). Risultato
+  end-to-end: l'intera sezione (dati + grafico) costa ora circa 253 ms a
+  rerun per la vista di default a 16 strumenti, contro un costo iniziale
+  di circa 9,6 s — numeri reali prima/dopo come richiesto dalla regola di
+  progetto sulle modifiche di performance.
+- Fase C (1 task) — nuovo `tools/finance_formula_audit.py`, sul modello di
+  `tools/cache_surface_audit.py`: scansione statica ripetibile di `ui/` per
+  pattern di formule finanziarie (normalizzazione rendimento,
+  statistiche/rischio, aliquote fiscali) non instradate da `core/`. Stessa
+  limitazione nota del tool gemello: il filtro dei path esclude qualunque
+  segmento con prefisso punto, quindi non trova file se eseguito da dentro
+  un checkout annidato in `.worktrees/` (funziona correttamente da un
+  checkout normale).
+- Fuori piano, necessario per chiudere pulito: le fasi A e B avevano rotto
+  4 file di test LOCALI preesistenti (`tests/` e' interamente gitignored,
+  quindi invisibili in qualunque diff) che referenziavano ancora i nomi
+  rimossi. Sistemati: eliminato
+  `tests/test_normalized_performance_chart.py` (superato del tutto),
+  aggiornati `tests/test_resto_volume_colori.py`,
+  `tests/test_tax_rate_gov_consolidation.py`,
+  `tests/test_cruscotti_uncached_tabs_perf_fix.py`. Suite locale completa
+  verificata pulita dopo il fix (unico fallimento residuo: un artefatto
+  path `.worktrees/` nel test proprio di `tools/cache_surface_audit.py`,
+  preesistente, fuori perimetro, irrilevante fuori da questo worktree).
+- Non fa parte di questo piano ma coincide temporalmente: durante
+  l'inserimento manuale di IWQU.MI, XDEQ.MI, FAM-PU6 e' emerso e corretto
+  un bug di firma cache separato — `core/cache_signatures.py::_normalized_instrument_signature_payload`
+  non includeva il campo `natura`, quindi correggere l'etichetta natura di
+  uno strumento non invalidava gli artefatti UI in cache. Gia' committato
+  su `main` (`87f6ae9`), prima dell'apertura di questo branch.
+
 ---
 
 ## 4. Ultima lettura performance
