@@ -40,6 +40,12 @@ from ui.charts.pianificazione import (
     build_instrument_map_chart,
     build_sator_explanation_chart,
     build_sator_frontier_chart,
+    build_instrument_comparison_chart,
+)
+from core.services.instrument_comparison import (
+    build_comparison_frame,
+    get_all_historical_tickers,
+    resolve_period_start_date,
 )
 from ui.theme import bucket_color, get_theme_context
 from ui.notifications import queue_success
@@ -665,6 +671,84 @@ def _render_sator_reference_summary(latest: dict, theme, data: dict, decisions: 
     st.markdown(_build_sator_reference_summary_html(latest, theme, data, decisions), unsafe_allow_html=True)
 
 
+def _render_instrument_comparison_section(ctx: SimpleNamespace) -> None:
+    """Confronto normalizzato tra strumenti, con overlay benchmark opzionale
+    quando e' selezionato un solo strumento. Si aggiorna subito ad ogni
+    cambio di selezione/periodo (nessun bottone "Costruisci grafico", a
+    differenza della vecchia sezione in Cruscotti/Benchmark che sostituisce
+    — vedi docs/superpowers/specs/2026-08-14-pianificazione-confronto-strumenti-design.md)."""
+    data = ctx.data
+    storico = data.get("storico_prezzi") or {}
+    render_section_title(
+        "Confronto strumenti",
+        comment="Sovrappone gli strumenti normalizzati a 0% dalla data scelta. Si aggiorna subito ad ogni modifica, nessun bottone da premere.",
+        gap_after="sm",
+    )
+    if not storico:
+        st.info("Nessuno storico prezzi disponibile.")
+        return
+
+    all_tickers = get_all_historical_tickers(data)
+    options = [t["ticker"] for t in all_tickers]
+    default_tickers = [t["ticker"] for t in all_tickers if t["active"]]
+
+    col_sel, col_period = st.columns([2, 1])
+    with col_sel:
+        selected = st.multiselect(
+            "Strumenti da confrontare", options=options, default=default_tickers,
+            key="_pianificazione_comparison_tickers",
+        )
+    with col_period:
+        period = st.radio(
+            "Periodo", options=["1M", "3M", "6M", "1A", "3A", "Tutto"], index=5,
+            horizontal=True, key="_pianificazione_comparison_period",
+        )
+
+    col_align, col_bench = st.columns([1, 1])
+    with col_align:
+        align_starts = st.checkbox(
+            "Origini allineate", value=False, key="_pianificazione_comparison_align",
+            help="Ogni strumento parte da Giorno 0 alla propria prima data disponibile, invece che da una data di calendario comune.",
+        )
+    benchmark_for = None
+    with col_bench:
+        if len(selected) == 1:
+            want_benchmark = st.checkbox(
+                "Confronta con benchmark", value=False, key="_pianificazione_comparison_benchmark",
+            )
+            if want_benchmark:
+                benchmark_for = selected[0]
+        else:
+            st.caption("Confronto con benchmark disponibile solo con un singolo strumento selezionato.")
+
+    if not selected:
+        legend_block("Seleziona almeno uno strumento per vedere il confronto.", variant="bottom")
+        return
+
+    sorted_dates = sorted(storico.keys())
+    start_date = None if align_starts else resolve_period_start_date(sorted_dates, period)
+
+    with profile_step("Pianificazione/Confronto", "build_comparison_frame", count=len(selected)):
+        series = build_comparison_frame(
+            data, selected, start_date=start_date, align_starts=align_starts, benchmark_for=benchmark_for,
+        )
+
+    plotted = {s.ticker for s in series if not s.is_benchmark}
+    skipped = sorted(set(selected) - plotted)
+    if skipped:
+        st.caption("Esclusi per storico insufficiente nel periodo scelto: " + ", ".join(skipped))
+    if benchmark_for and not any(s.is_benchmark for s in series):
+        st.caption(f"Nessun benchmark assegnato a {benchmark_for}.")
+
+    if not series:
+        legend_block("Nessuno storico disponibile per gli strumenti scelti nel periodo indicato.", variant="bottom")
+        return
+
+    with profile_step("Pianificazione/Confronto", "render chart", count=len(series)):
+        fig = build_instrument_comparison_chart(series)
+        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+
+
 def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
     """Dashboard decisionale basata sul portafoglio corrente e sull'ultima
     fotografia SATOR salvata su disco dalla pagina standalone in sidebar."""
@@ -789,6 +873,8 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
             })[["Strumento A", "Categoria A", "Strumento B", "Categoria B", "Correlazione"]]
             display_pairs["Correlazione"] = display_pairs["Correlazione"].map(lambda v: fmt_num_it(v, 2))
             st.dataframe(display_pairs, hide_index=True, width="stretch")
+
+    _render_instrument_comparison_section(ctx)
 
     render_section_title(
         "Frontiera rischio/rendimento",
