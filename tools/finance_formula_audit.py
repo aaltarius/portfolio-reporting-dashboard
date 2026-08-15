@@ -19,7 +19,7 @@ SCAN_ROOTS = ("ui",)
 
 PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("return_normalization", re.compile(r"\.pct_change\(|/\s*\w+(\.iloc\[0\]|\[0\])\s*-\s*1|\.cumprod\(")),
-    ("statistics", re.compile(r"\.std\(|\.corr\(|\bsharpe\b|\bcagr\b|\bdrawdown\b|tracking.?error|\bbeta\b", re.IGNORECASE)),
+    ("statistics", re.compile(r"\.std\(|\.corr\(|(?<![a-zA-Z])sharpe(?![a-zA-Z])|(?<![a-zA-Z])cagr(?![a-zA-Z])|(?<![a-zA-Z])drawdown(?![a-zA-Z])|tracking.?error|(?<![a-zA-Z])beta(?![a-zA-Z])", re.IGNORECASE)),
     ("tax_rate", re.compile(r"aliquota|tax_rate|imposta", re.IGNORECASE)),
 )
 
