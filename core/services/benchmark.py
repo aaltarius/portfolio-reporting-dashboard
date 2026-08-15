@@ -234,7 +234,14 @@ def _rows_to_price_frame(date_raw_list: list[Any], value_list: list[Any], value_
     """
     if not date_raw_list:
         return pd.DataFrame(columns=["date", value_col])
-    dates = pd.to_datetime(pd.Series(date_raw_list), errors="coerce")
+    # format="mixed": la versione riga-per-riga precedente parsava ogni data
+    # indipendentemente (pd.to_datetime(date_raw) per elemento); la versione
+    # vettorizzata senza questo parametro inferisce UN solo formato dal primo
+    # elemento e forza a NaT tutto cio' che non lo rispetta. Con format="mixed"
+    # torna l'inferenza per-elemento (sempre vettorizzata, non un loop
+    # Python), restando robusta a date storiche/eterogenee anche se sui dati
+    # di produzione (uniformemente YYYY-MM-DD) la differenza e' oggi dormiente.
+    dates = pd.to_datetime(pd.Series(date_raw_list), errors="coerce", format="mixed")
     values = pd.to_numeric(pd.Series(value_list), errors="coerce")
     mask = dates.notna() & values.notna() & (values > 0)
     if not mask.any():
