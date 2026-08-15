@@ -40,7 +40,8 @@ def _iter_files() -> list[Path]:
             files.extend(
                 p
                 for p in path.rglob("*.py")
-                if "__pycache__" not in p.parts and not any(part.startswith(".") for part in p.parts)
+                if "__pycache__" not in p.parts
+                and not any(part.startswith(".") for part in p.relative_to(PROJECT_ROOT).parts)
             )
     return sorted(files)
 
