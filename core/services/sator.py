@@ -1436,6 +1436,21 @@ def _suggested_quotes_by_bucket(
     volta per bucket sul relativo sotto-budget. I bucket in blocked_buckets
     o senza deficit positivo non ricevono nulla.
 
+    Secondo giro di redistribuzione: se un bucket non riesce a spendere
+    tutto il proprio sotto-budget (candidati esauriti sotto soglia 0,50 di
+    punteggio decisionale, o vincoli di cap/quote intere), il residuo non
+    resta liquido a prescindere - viene riassegnato, in un solo giro
+    aggiuntivo (deterministico, nessun loop), ai bucket che invece hanno
+    saturato la propria quota (segno che potrebbero avere ancora candidati
+    validi), in proporzione al loro deficit. Un bucket che ha gia' lasciato
+    residuo nel primo giro non riceve mai altro nel secondo: se non aveva
+    candidati sufficienti a spendere la propria fetta, darghene di piu' non
+    aiuta. Se anche dopo la redistribuzione resta un residuo, quello si
+    ferma li' (nessun ulteriore giro): stesso comportamento onesto di
+    _suggested_quotes, il budget puo' restare parzialmente liquido quando
+    davvero non ci sono abbastanza candidati validi in tutto l'universo
+    eleggibile.
+
     max_lines_per_bucket=None (default): nessun tetto predeterminato, ogni
     riga del bucket puo' essere finanziata (equivalente a len(ranking_df)).
 
@@ -1452,19 +1467,49 @@ def _suggested_quotes_by_bucket(
     if total_deficit <= 0:
         return quote
     df = ranking_df.reset_index(drop=True)
-    for bucket, deficit in bucket_deficits.items():
-        if bucket in blocked_buckets or deficit <= 0:
-            continue
-        sub_budget = budget * deficit / total_deficit
+    prices = pd.to_numeric(df.get("unit_price"), errors="coerce").fillna(0.0)
+
+    eligible_buckets = [
+        bucket for bucket, deficit in bucket_deficits.items()
+        if bucket not in blocked_buckets and deficit > 0
+    ]
+    sub_budgets = {b: budget * bucket_deficits[b] / total_deficit for b in eligible_buckets}
+    speso_per_bucket: dict[str, float] = {}
+    for bucket in eligible_buckets:
+        sub_budget = sub_budgets[bucket]
         if sub_budget <= 0:
+            speso_per_bucket[bucket] = 0.0
             continue
-        mask = df["_bucket"] == bucket
-        bucket_df = df.loc[mask]
+        bucket_df = df.loc[df["_bucket"] == bucket]
         if bucket_df.empty:
+            speso_per_bucket[bucket] = 0.0
             continue
         bucket_quote = _suggested_quotes(bucket_df, sub_budget, max_lines=max_lines_per_bucket)
         for local_idx, q in zip(bucket_df.index, bucket_quote):
             quote[local_idx] = q
+        speso_per_bucket[bucket] = sum(quote[i] * prices[i] for i in bucket_df.index)
+
+    leftover = sum(sub_budgets[b] - speso_per_bucket.get(b, 0.0) for b in eligible_buckets)
+    saturated = [
+        b for b in eligible_buckets
+        if speso_per_bucket.get(b, 0.0) >= sub_budgets[b] - max(1.0, sub_budgets[b] * 0.05)
+    ]
+    saturated_deficit_total = sum(bucket_deficits[b] for b in saturated)
+    if leftover > 0.01 and saturated and saturated_deficit_total > 0:
+        for bucket in saturated:
+            extra = leftover * bucket_deficits[bucket] / saturated_deficit_total
+            new_sub_budget = speso_per_bucket[bucket] + extra
+            bucket_df = df.loc[df["_bucket"] == bucket]
+            if bucket_df.empty:
+                continue
+            bucket_quote = _suggested_quotes(bucket_df, new_sub_budget, max_lines=max_lines_per_bucket)
+            for local_idx, q in zip(bucket_df.index, bucket_quote):
+                quote[local_idx] = q
+        logger.info(
+            "SATOR bucket_first_allocation: ridistribuiti %.2f EUR di residuo dai bucket "
+            "sottospesi ai bucket saturi %s",
+            leftover, saturated,
+        )
     return quote
 
 
