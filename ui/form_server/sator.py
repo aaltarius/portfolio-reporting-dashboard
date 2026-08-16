@@ -1763,7 +1763,7 @@ async def post_sator(
                 return err_page("Nessuno strumento corrisponde ai criteri selezionati.")
 
             alerts = list(analysis.get("alerts") or [])
-            matrix_df = build_sator_matrix_frame(ranking_df, budget=budget_f, max_lines=ml_i)
+            matrix_df = build_sator_matrix_frame(ranking_df, budget=budget_f, max_lines=ml_i, data=data, settings=settings)
 
             rj = ranking_df.to_json(orient="records", force_ascii=False)
             aj = json.dumps(alerts, ensure_ascii=False, default=str)
