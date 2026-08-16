@@ -1009,6 +1009,28 @@ def compute_instrument_buckets(data: dict[str, Any], held_tickers: set[str] | No
     return out
 
 
+_BUCKET_OBJECTIVE_KEYS = {"Core": "core", "Difensivo": "difensivo", "Satellite": "satellite"}
+
+
+def _compute_bucket_bands(objective: dict[str, float], tolerance_pp: float) -> dict[str, dict[str, float]]:
+    """Banda [min,max] simmetrica attorno al target di ciascun bucket.
+
+    tolerance_pp e' la meta'-ampiezza in punti percentuali (frazione, es.
+    0.03 = 3pp). Stessa idea della soglia oggi hardcoded in
+    ui/pages/pianificazione.py::_bucket_scost_severity, ma qui persistita
+    e usata nella logica, non solo per colorare la UI.
+    """
+    bands: dict[str, dict[str, float]] = {}
+    for bucket, obj_key in _BUCKET_OBJECTIVE_KEYS.items():
+        target = _safe_float(objective.get(obj_key), 0.0)
+        bands[bucket] = {
+            "target": target,
+            "min": max(0.0, target - tolerance_pp),
+            "max": min(1.0, target + tolerance_pp),
+        }
+    return bands
+
+
 def _compute_bucket_weights(data: dict[str, Any], state_df: pd.DataFrame, current_weights: dict[str, float]) -> dict[str, float]:
     held = _tickers_posseduti(state_df)
     buckets = compute_instrument_buckets(data, held)
