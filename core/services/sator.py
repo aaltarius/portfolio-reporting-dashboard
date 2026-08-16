@@ -1064,6 +1064,24 @@ def _compute_bucket_weights(
     return out
 
 
+def _non_pac_held_tickers(data: dict[str, Any], held_tickers: set[str]) -> frozenset[str]:
+    """Ticker posseduti non ad accumulo (oggi: categoria GOV, es. BTP).
+
+    Riusa infer_sator_metadata (stessa fonte di 'pac_enabled' gia' usata
+    per il bonus nel punteggio costo, core/services/sator.py:737) invece
+    di ricalcolare il criterio categoria=='GOV' una seconda volta.
+    """
+    out: set[str] = set()
+    for item in data.get("strumenti", []) or []:
+        ticker = str(item.get("ticker") or "").strip().upper()
+        if not ticker or ticker not in held_tickers:
+            continue
+        inferred = infer_sator_metadata(item, ticker in held_tickers)
+        if not bool(inferred.get("pac_enabled", True)):
+            out.add(ticker)
+    return frozenset(out)
+
+
 def compute_current_bucket_mix(data: dict[str, Any], state_df: pd.DataFrame) -> dict[str, float]:
     """Mix Core/Difensivo/Satellite del portafoglio attuale (percentuale del
     controvalore totale). Chiamata sia da SATOR sia dalla UI di Pianificazione."""
