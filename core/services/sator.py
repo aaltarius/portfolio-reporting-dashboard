@@ -1082,6 +1082,45 @@ def _non_pac_held_tickers(data: dict[str, Any], held_tickers: set[str]) -> froze
     return frozenset(out)
 
 
+def _compute_bucket_deficits(
+    bucket_weights: dict[str, float],
+    objective: dict[str, float],
+    bands: dict[str, dict[str, float]],
+    portfolio_value: float,
+    budget: float,
+) -> tuple[dict[str, float], set[str]]:
+    """Deficit in euro per bucket, e insieme dei bucket bloccati (sopra banda massima).
+
+    Formula standard di ribilanciamento tramite nuovi flussi:
+    Vpost = portfolio_value + budget
+    TargetValue_k = Vpost * target_k
+    Deficit_k = max(TargetValue_k - CurrentValue_k, 0)
+
+    Un bucket sopra la propria banda massima e' bloccato: deficit forzato
+    a 0 anche se la formula darebbe un valore positivo (non dovrebbe mai
+    accadere se target e banda sono coerenti, ma la banda ha sempre
+    l'ultima parola). Un bucket dentro banda (ne' sopra ne' sotto il
+    minimo) non e' urgente: deficit 0, non bloccato.
+    """
+    vpost = portfolio_value + budget
+    deficits: dict[str, float] = {}
+    blocked: set[str] = set()
+    for bucket, obj_key in _BUCKET_OBJECTIVE_KEYS.items():
+        current_weight = _safe_float(bucket_weights.get(bucket), 0.0)
+        band = bands.get(bucket, {"target": 0.0, "min": 0.0, "max": 1.0})
+        if current_weight > band["max"]:
+            blocked.add(bucket)
+            continue
+        if current_weight >= band["min"]:
+            continue  # dentro banda, non urgente
+        target_value = vpost * band["target"]
+        current_value = portfolio_value * current_weight
+        deficit = max(target_value - current_value, 0.0)
+        if deficit > 0:
+            deficits[bucket] = deficit
+    return deficits, blocked
+
+
 def compute_current_bucket_mix(data: dict[str, Any], state_df: pd.DataFrame) -> dict[str, float]:
     """Mix Core/Difensivo/Satellite del portafoglio attuale (percentuale del
     controvalore totale). Chiamata sia da SATOR sia dalla UI di Pianificazione."""
