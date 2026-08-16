@@ -1389,6 +1389,47 @@ def _suggested_quotes(ranking_df: pd.DataFrame, budget: float, *, max_lines: int
     return quote
 
 
+def _suggested_quotes_by_bucket(
+    ranking_df: pd.DataFrame,
+    budget: float,
+    bucket_deficits: dict[str, float],
+    blocked_buckets: set[str],
+    *,
+    max_lines_per_bucket: int = 2,
+) -> list[int]:
+    """Come _suggested_quotes, ma il budget e' prima diviso tra i bucket
+    proporzionalmente al loro deficit (Allocation_k = budget * deficit_k /
+    sum(deficit)), poi _suggested_quotes (INVARIATA) viene richiamata una
+    volta per bucket sul relativo sotto-budget. I bucket in blocked_buckets
+    o senza deficit positivo non ricevono nulla.
+
+    Stesso contratto di _suggested_quotes: lista di interi allineata
+    all'indice di ranking_df (dopo reset_index).
+    """
+    n = len(ranking_df)
+    quote = [0] * n
+    if budget <= 0 or n == 0 or "_bucket" not in ranking_df.columns:
+        return quote
+    total_deficit = sum(v for v in bucket_deficits.values() if v > 0)
+    if total_deficit <= 0:
+        return quote
+    df = ranking_df.reset_index(drop=True)
+    for bucket, deficit in bucket_deficits.items():
+        if bucket in blocked_buckets or deficit <= 0:
+            continue
+        sub_budget = budget * deficit / total_deficit
+        if sub_budget <= 0:
+            continue
+        mask = df["_bucket"] == bucket
+        bucket_df = df.loc[mask]
+        if bucket_df.empty:
+            continue
+        bucket_quote = _suggested_quotes(bucket_df, sub_budget, max_lines=max_lines_per_bucket)
+        for local_idx, q in zip(bucket_df.index, bucket_quote):
+            quote[local_idx] = q
+    return quote
+
+
 # --------------------------------------------------------------------------- #
 # Alert onesti (legati alle spiegazioni)
 # --------------------------------------------------------------------------- #
