@@ -1031,12 +1031,36 @@ def _compute_bucket_bands(objective: dict[str, float], tolerance_pp: float) -> d
     return bands
 
 
-def _compute_bucket_weights(data: dict[str, Any], state_df: pd.DataFrame, current_weights: dict[str, float]) -> dict[str, float]:
+def _compute_bucket_weights(
+    data: dict[str, Any],
+    state_df: pd.DataFrame,
+    current_weights: dict[str, float],
+    *,
+    exclude_tickers: frozenset[str] = frozenset(),
+) -> dict[str, float]:
+    """Peso per bucket (Core/Difensivo/Satellite) sul totale posseduto.
+
+    exclude_tickers: se non vuoto, quei ticker vengono esclusi sia dal
+    numeratore (il loro valore non conta per nessun bucket) sia dal
+    denominatore implicito (i pesi restanti vengono rinormalizzati sul
+    totale che esclude quei ticker) - usato dal flag deficit_pac_only per
+    escludere BTP/GOV dal calcolo del deficit di bucket.
+    """
     held = _tickers_posseduti(state_df)
     buckets = compute_instrument_buckets(data, held)
     out: dict[str, float] = {"Core": 0.0, "Difensivo": 0.0, "Satellite": 0.0}
+    included_weight_total = sum(
+        max(0.0, current_weights.get(ticker, 0.0))
+        for ticker in buckets
+        if ticker not in exclude_tickers
+    )
+    if included_weight_total <= 0:
+        return out
     for ticker, bucket in buckets.items():
-        out[bucket] = out.get(bucket, 0.0) + max(0.0, current_weights.get(ticker, 0.0))
+        if ticker in exclude_tickers:
+            continue
+        raw_weight = max(0.0, current_weights.get(ticker, 0.0))
+        out[bucket] = out.get(bucket, 0.0) + raw_weight / included_weight_total
     return out
 
 
