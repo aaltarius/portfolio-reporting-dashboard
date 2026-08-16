@@ -858,7 +858,7 @@ def build_sator_matrix_frame(
         bands = _compute_bucket_bands(objective, cfg["band_tolerance_pp"])
         portfolio_value = _safe_float(work["portfolio_value"].iloc[0], 0.0) if "portfolio_value" in work.columns else 0.0
         deficits, blocked = _compute_bucket_deficits(bucket_weights, objective, bands, portfolio_value, budget)
-        suggerite = _suggested_quotes_by_bucket(work, budget, deficits, blocked, max_lines_per_bucket=max(1, max_lines // 3 or 1))
+        suggerite = _suggested_quotes_by_bucket(work, budget, deficits, blocked, max_lines_per_bucket=len(work))
     else:
         suggerite = _suggested_quotes(work, budget, max_lines=max_lines)
 
