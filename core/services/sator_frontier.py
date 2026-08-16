@@ -325,7 +325,7 @@ def build_sator_frontier(
     included = list(mean_returns.index)
     max_share = float(cfg.get("max_share_per_line", 0.35) or 0.35)
     budget = float(cfg.get("default_budget", 0.0) or 0.0)
-    matrix = build_sator_matrix_frame(ranking, budget=budget) if budget > 0 else pd.DataFrame()
+    matrix = build_sator_matrix_frame(ranking, budget=budget, data=data, settings=settings) if budget > 0 else pd.DataFrame()
 
     current_values = _current_value_weights(ranking, included)
     proposed_values = _proposed_value_weights(ranking, matrix, included)
