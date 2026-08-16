@@ -1,5 +1,38 @@
 # Changelog
 
+## 5.0-pre - Redistribuzione del residuo di budget tra bucket SATOR
+
+- bug segnalato dall'utente in uso reale (2026-08-16), dopo il merge del
+  meccanismo di allocazione per bucket sopra: con budget 1.600EUR e
+  `bucket_first_allocation` attivo, ogni bucket riceveva un sotto-budget
+  proporzionale al proprio deficit ma poteva fermarsi prima di spenderlo
+  (candidati sotto soglia 0,50 di punteggio decisionale, o cap del 35% per
+  riga); il residuo restava liquido a prescindere, senza mai andare a un
+  bucket che aveva invece saturato la propria quota. Misurato: 126EUR di
+  residuo su 1.600EUR richiesti; l'utente notava inoltre che il pannello di
+  confronto SATOR/utente (`ui/form_server/sator.py`) lo accusava di
+  "impegnare piu' budget di SATOR" quando in realta' stava solo usando il
+  proprio budget dichiarato, non la proposta (parziale) di SATOR.
+- fix in `_suggested_quotes_by_bucket` (`core/services/sator.py:1425`):
+  aggiunto un secondo giro, singolo e deterministico (nessun loop): il
+  residuo dei bucket sottospesi va ai bucket che hanno saturato la propria
+  fetta nel primo giro (entro il 5% o 1EUR di tolleranza), in proporzione
+  al loro deficit. Un bucket che non ha saturato la propria quota nel primo
+  giro non riceve mai altro nel secondo — se aveva gia' esaurito i
+  candidati validi, dargli piu' budget non lo aiuterebbe. Verificato sui
+  dati reali: residuo sceso da 126EUR a 10EUR (quota fisiologica di
+  granularita' quote intere, non risolvibile senza spezzare l'invariante
+  "quote intere" del motore).
+- ripristinati in questa occasione anche i test del piano precedente
+  (`tests/test_sator_bucket_objective.py`), persi durante la pulizia del
+  worktree: `tests/` e' interamente gitignored in questo repo (scelta
+  esplicita, 2026-08-05) e `git worktree remove` non ne preserva il
+  contenuto - i test scritti durante l'11 task del piano bucket-eligibility
+  esistevano solo nella working copy del worktree e sono spariti con esso.
+  Nota per il futuro: prima di rimuovere un worktree che ha esteso test in
+  `tests/`, copiarli nella working copy principale se si vuole conservarne
+  la copertura.
+
 ## 5.0-pre - Allocazione budget SATOR per deficit di bucket (opt-in)
 
 - bug reale trovato e misurato sul portafoglio dell'utente, non
