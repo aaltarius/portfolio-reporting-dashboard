@@ -73,6 +73,31 @@
   flag spento -> Core €570 / Satellite €923 (bug di oggi, invariato);
   flag acceso -> **Core €1.128 / Satellite €292** — inversione corretta,
   vicino allo split teorico 80/20 implicato dai deficit euro reali.
+- bug critico trovato dalla review finale whole-branch (dopo l'11° e
+  ultimo task del piano, prima del merge) e corretto in un fix wave
+  dedicato: `_compute_bucket_weights` (riga 1057) rinormalizzava i pesi
+  restanti quando `exclude_tickers` non era vuoto, dividendo per il
+  totale ridotto. Su dati reali, attivando insieme `deficit_pac_only` e
+  `bucket_first_allocation`, escludere i BTP gonfiava il peso di Core dal
+  18,98% reale a un 79,41% rinormalizzato — sopra la banda massima,
+  quindi bloccato — dirottando l'intero budget su Difensivo, gia' il
+  bucket piu' sovrappesato: l'esatto opposto dello scopo del fix.
+  Interpellato direttamente, l'utente ha confermato: "voglio che se dico
+  escludi dal calcolo i BTP questi non vengano considerati" — gli
+  strumenti esclusi non devono avere alcun effetto sui pesi degli altri
+  bucket. Fix: rimossa ogni rinormalizzazione, somma di pesi grezzi senza
+  divisione, per entrambi i casi (`exclude_tickers` vuoto o no). Aggiunti
+  anche in questo fix wave: logging (`logger.info`/`logger.warning`) su
+  `build_sator_matrix_frame` per i casi "nessun deficit positivo" e
+  "colonne mancanti col flag acceso" (prima silenziosi), rimozione di un
+  controllo morto (`"bucket_weight" in work.columns`, mai letto nel
+  branch) dalla guardia del branch, e rimozione del cap
+  `max_lines_per_bucket=2` residuo di un design gia' scartato dall'utente
+  (ora `None`, risolto a `len(ranking_df)`). Verificato con un test
+  end-to-end su dati reali (entrambi i flag attivi: Core non piu'
+  bloccato) e uno sintetico (bucket interamente escluso -> peso 0.0, non
+  rinormalizzato); scoped re-review dedicata: tutti i finding ADDRESSED,
+  nessuna nuova regressione.
 - deliberatamente non toccato: il resto del motore di punteggio SATOR
   (`_score_fit`, `_score_momentum`, `_purchase_decision_score` e simili)
   e la primitiva `_suggested_quotes()` restano invariati, ancora

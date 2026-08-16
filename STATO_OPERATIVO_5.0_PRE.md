@@ -497,6 +497,28 @@ Stato sincero della cache al 2026-08-03:
   €570/Satellite €923 (bug invariato); flag acceso -> Core
   €1.128/Satellite €292 (inversione corretta, vicino allo split teorico
   80/20 implicato dai deficit reali).
+  Bug critico trovato dalla review finale whole-branch (dopo l'11° task,
+  prima del merge) e corretto in un fix wave dedicato:
+  `_compute_bucket_weights` rinormalizzava i pesi restanti quando
+  `exclude_tickers` non era vuoto, dividendo per il totale ridotto. Con
+  `deficit_pac_only` e `bucket_first_allocation` entrambi attivi,
+  escludere i BTP gonfiava il peso di Core dal 18,98% reale a un 79,41%
+  rinormalizzato — sopra banda massima, quindi bloccato — dirottando
+  l'intero budget su Difensivo, gia' il bucket piu' sovrappesato: l'esatto
+  opposto dello scopo del fix. Utente consultato direttamente, confermato
+  verbatim: "voglio che se dico escludi dal calcolo i BTP questi non
+  vengano considerati". Fix: rimossa ogni rinormalizzazione, somma pesi
+  grezzi senza divisione in entrambi i casi (`exclude_tickers` vuoto o
+  no). Aggiunti nello stesso fix wave: logging (`logger.info`/
+  `logger.warning`, prima assente in questo file) per i casi "nessun
+  deficit positivo" e "colonne mancanti col flag acceso", rimozione di un
+  controllo morto (`"bucket_weight" in work.columns`, mai letto nel
+  branch) e del cap residuo `max_lines_per_bucket=2` (ora `None` ->
+  `len(ranking_df)`). Verificato con test end-to-end reale (entrambi i
+  flag attivi, Core non piu' bloccato) e test sintetico (bucket
+  interamente escluso -> peso 0.0, non rinormalizzato); scoped re-review
+  dedicata su commit 0c28627..fb03288: tutti i finding ADDRESSED, nessuna
+  nuova regressione.
 
 ### Cruscotti / Analitica
 
