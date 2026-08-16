@@ -286,6 +286,9 @@ def _save_portfolio_objective_settings_from_state() -> None:
 
     settings["portfolio_objective"] = objective
     settings.setdefault("sator", {})["concentration_caps"] = cap_edits
+    settings["sator"]["bucket_first_allocation"] = bool(st.session_state.get("sator_bucket_first_allocation", False))
+    settings["sator"]["band_tolerance_pp"] = max(0.0, min(20.0, _state_float("sator_band_tolerance_pp", 3.0))) / 100.0
+    settings["sator"]["deficit_pac_only"] = bool(st.session_state.get("sator_deficit_pac_only", False))
     if weight_total > 0:
         settings["sator"]["score_weights"] = {
             key: max(0.0, value) / weight_total
@@ -328,6 +331,31 @@ def _render_portfolio_objective_section(ctx: SimpleNamespace, theme) -> None:
                     nature.replace("_", " "), min_value=1.0, max_value=100.0, step=1.0,
                     value=float(caps[nature] * 100), key=f"cap_{nature}",
                 )
+
+        with st.expander("Allocazione budget per bucket (avanzato)", expanded=False):
+            st.caption(
+                "Se attivo, il budget per il prossimo acquisto viene diviso tra Core/Difensivo/"
+                "Satellite in proporzione a quanto ciascuno e' sotto il proprio target, invece che "
+                "assegnato allo strumento col punteggio migliore su tutto l'universo. I bucket sopra "
+                "la banda massima non ricevono budget."
+            )
+            bucket_first = st.checkbox(
+                "Dividi il budget per deficit di bucket prima di scegliere gli strumenti",
+                value=bool(sator_cfg["bucket_first_allocation"]),
+                key="sator_bucket_first_allocation",
+            )
+            band_tolerance = st.number_input(
+                "Tolleranza banda attorno al target (pp)", min_value=0.0, max_value=20.0, step=0.5,
+                value=float(sator_cfg["band_tolerance_pp"] * 100.0),
+                key="sator_band_tolerance_pp",
+                help="Un bucket entro questa distanza dal target non e' considerato ne' urgente ne' bloccato.",
+            )
+            deficit_pac_only = st.checkbox(
+                "Ignora i BTP/titoli non ad accumulo nel calcolo del deficit di bucket",
+                value=bool(sator_cfg["deficit_pac_only"]),
+                key="sator_deficit_pac_only",
+                help="Se attivo, il peso di un bucket per questo calcolo conta solo gli strumenti che si possono accumulare nel tempo (ETF/ETC), non i BTP.",
+            )
 
         with st.expander("Pesi del punteggio SATOR", expanded=False):
             weights = dict(sator_cfg["score_weights"])
