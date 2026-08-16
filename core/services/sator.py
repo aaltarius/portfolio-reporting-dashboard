@@ -826,6 +826,8 @@ def build_sator_matrix_frame(
     budget: float,
     manual_alloc: dict[str, int] | None = None,
     max_lines: int = MAX_LINEE_SUGGERITE,
+    data: dict[str, Any] | None = None,
+    settings: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
     if ranking_df is None or ranking_df.empty:
         return pd.DataFrame()
@@ -838,7 +840,28 @@ def build_sator_matrix_frame(
             work["rango_gruppo"] = work.groupby("comparison_group")["score_finale"].rank(ascending=False, method="first").astype(int)
         else:
             work["rango_gruppo"] = 1
-    suggerite = _suggested_quotes(work, budget, max_lines=max_lines)
+
+    cfg = ensure_sator_settings(settings) if (data is not None and settings is not None) else None
+    if (
+        cfg is not None
+        and cfg["bucket_first_allocation"]
+        and "_bucket" in work.columns
+        and "bucket_weight" in work.columns
+        and "portfolio_value" in work.columns
+    ):
+        state_df = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
+        current_weights = _compute_current_weights(state_df)
+        held = _tickers_posseduti(state_df)
+        exclude = _non_pac_held_tickers(data, held) if cfg["deficit_pac_only"] else frozenset()
+        bucket_weights = _compute_bucket_weights(data, state_df, current_weights, exclude_tickers=exclude)
+        objective = settings.get("portfolio_objective", {}) if isinstance(settings, dict) else {}
+        bands = _compute_bucket_bands(objective, cfg["band_tolerance_pp"])
+        portfolio_value = _safe_float(work["portfolio_value"].iloc[0], 0.0) if "portfolio_value" in work.columns else 0.0
+        deficits, blocked = _compute_bucket_deficits(bucket_weights, objective, bands, portfolio_value, budget)
+        suggerite = _suggested_quotes_by_bucket(work, budget, deficits, blocked, max_lines_per_bucket=max(1, max_lines // 3 or 1))
+    else:
+        suggerite = _suggested_quotes(work, budget, max_lines=max_lines)
+
     ranghi = pd.to_numeric(work["rango_gruppo"], errors="coerce").fillna(0).astype(int).tolist()
     marginal = [
         _compute_marginal_purchase_metrics(work.iloc[i], int(suggerite[i]) * _safe_float(work.iloc[i].get("unit_price"), 0.0))
