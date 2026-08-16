@@ -910,8 +910,6 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
             display_pairs["Correlazione"] = display_pairs["Correlazione"].map(lambda v: fmt_num_it(v, 2))
             st.dataframe(display_pairs, hide_index=True, width="stretch")
 
-    _render_instrument_comparison_section(ctx)
-
     render_section_title(
         "Frontiera rischio/rendimento",
         comment="Portafogli simulati (nessun ottimizzatore): rendimento storico e volatilita' annualizzati sull'orizzonte scelto. La proposta SATOR usa le quote suggerite al budget corrente; lo slider interpola linearmente tra il portafoglio attuale e la proposta. Min-rischio e Miglior Sharpe sono i punti migliori osservati nella simulazione, non un ottimo garantito.",
@@ -984,6 +982,8 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
             "Barra piena = lo possiedi già; barra più chiara = lo stai solo osservando (passa il mouse per conferma).",
             variant="bottom",
         )
+
+    _render_instrument_comparison_section(ctx)
 
 
 def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
