@@ -454,6 +454,49 @@ Stato sincero della cache al 2026-08-03:
   D) sono completati; il quinto (storico decisionale ex-post) resta
   archiviato per scelta esplicita, non urgente — vedi Priorita' 7 in
   sezione 5.
+- Allocazione budget SATOR per deficit di bucket (2026-08-16), opt-in.
+  Piano a 11 task eseguito con subagent-driven-development, spec e piano
+  completi in
+  `docs/superpowers/specs/2026-08-15-sator-bucket-eligibility-design.md`
+  e `docs/superpowers/plans/2026-08-15-sator-bucket-eligibility.md`.
+  Bug reale trovato e misurato sul portafoglio dell'utente: con Core al
+  18,98% (target 50%), Difensivo al 78,58% (target 40%, dominato da BTP
+  pari al 76,1% del portafoglio) e Satellite al 2,44% (target 10%), a
+  budget €1.500 l'allocazione greedy-globale gia' esistente di SATOR
+  escludeva correttamente Difensivo (€0, oltre la banda massima) ma
+  assegnava piu' soldi a Satellite (€923, deficit ~€5.031) che a Core
+  (€570, deficit ~€20.765 — 4 volte maggiore): il motore sceglie il
+  candidato con il punteggio migliore su tutto l'universo,
+  indipendentemente da quale bucket abbia piu' bisogno di capitale.
+  Nuovo master switch `bucket_first_allocation`
+  (`core/services/sator.py:153`, spento di default — a flag spento il
+  comportamento resta identico a prima, verificato per tracciamento del
+  branch condizionale), con `band_tolerance_pp` (riga 151, bande min/max
+  reali attorno al target di bucket, prima c'era solo il target puntuale)
+  e `deficit_pac_only` (riga 152, esclude BTP/GOV dal calcolo dei pesi di
+  bucket usato per lo split del deficit); UI in
+  `ui/pages/pianificazione.py:335`, expander "Allocazione budget per
+  bucket (avanzato)" dentro il form esistente "Obiettivo di portafoglio".
+  Funzioni chiave: `_compute_bucket_bands` (riga 1038),
+  `_compute_bucket_weights` esteso con `exclude_tickers` (riga 1057,
+  retrocompatibile), `_non_pac_held_tickers` (riga 1090, riusa
+  `infer_sator_metadata`/`pac_enabled`), `_compute_bucket_deficits`
+  (riga 1108, formula Vpost/TargetValue/Deficit standard + blocco hard
+  dei bucket oltre banda), `_suggested_quotes_by_bucket` (riga 1415,
+  split del budget proporzionale al deficit, poi chiama per bucket la
+  primitiva invariata `_suggested_quotes`). Decisione dell'utente a
+  meta' implementazione: nessun cap predeterminato di righe per bucket
+  (respinte sia la formula del piano, 1 riga/bucket, sia le 2 riga/bucket
+  del design doc iniziale) — il conteggio resta governato solo da
+  sotto-budget e punteggio di decisione (soglia >=0,50); wiring finale
+  `max_lines_per_bucket=len(work)`. `build_sator_matrix_frame` (riga 823)
+  riceve due parametri opzionali `data`/`settings` (default None,
+  percorso invariato se assenti); collegata nei due call site reali
+  `core/services/sator_frontier.py:328` e `ui/form_server/sator.py:1766`.
+  Verifica end-to-end su dati reali, budget €1.500: flag spento -> Core
+  €570/Satellite €923 (bug invariato); flag acceso -> Core
+  €1.128/Satellite €292 (inversione corretta, vicino allo split teorico
+  80/20 implicato dai deficit reali).
 
 ### Cruscotti / Analitica
 

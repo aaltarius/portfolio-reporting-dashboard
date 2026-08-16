@@ -1,5 +1,96 @@
 # Changelog
 
+## 5.0-pre - Allocazione budget SATOR per deficit di bucket (opt-in)
+
+- bug reale trovato e misurato sul portafoglio dell'utente, non
+  ipotetico: con Core al 18,98% (target 50%), Difensivo al 78,58%
+  (target 40%, dominato da BTP pari al 76,1% dell'intero portafoglio) e
+  Satellite al 2,44% (target 10%), a budget di €1.500 l'allocazione
+  greedy-globale gia' esistente di SATOR escludeva correttamente
+  Difensivo (€0, bucket oltre la banda massima) ma assegnava piu' soldi a
+  Satellite (€923, deficit euro ~€5.031) che a Core (€570, deficit
+  ~€20.765 — 4 volte maggiore): SATOR sceglie il candidato con il
+  punteggio migliore su tutto l'universo, indipendentemente da quale
+  bucket abbia piu' bisogno di capitale.
+- nuovo meccanismo opt-in, spento di default, in `core/services/sator.py`:
+  master switch `bucket_first_allocation` (riga 153, False di default —
+  a flag spento il comportamento resta identico a prima, verificato per
+  tracciamento del branch condizionale e non solo per output di test),
+  `band_tolerance_pp` (riga 151, 0,03 di default: bande min/max reali
+  attorno al target di ciascun bucket, prima esisteva solo il target
+  puntuale) e `deficit_pac_only` (riga 152, False di default: esclude gli
+  strumenti non da accumulo come BTP/GOV dal calcolo dei pesi di bucket
+  usato per lo split del deficit), tutti normalizzati in
+  `ensure_sator_settings` (riga 180).
+- 5 funzioni nuove/estese in `core/services/sator.py`:
+  `_compute_bucket_bands` (riga 1038, target puntuale -> {target, min,
+  max}); `_compute_bucket_weights` esteso con `exclude_tickers` (riga
+  1057, retrocompatibile — verificato su dati reali di produzione, non
+  solo su fixture sintetica, che ometterlo riproduce l'output odierno
+  entro il rumore float); `_non_pac_held_tickers` (riga 1090, riusa
+  `infer_sator_metadata`/`pac_enabled` gia' esistenti invece di
+  reimplementare il check di categoria); `_compute_bucket_deficits`
+  (riga 1108, formula standard Vpost = value+budget,
+  TargetValue = Vpost*target, Deficit = max(TargetValue-CurrentValue, 0),
+  piu' blocco hard dei bucket oltre la banda massima — il test di
+  regressione sul caso reale riproduce i numeri misurati sopra);
+  `_suggested_quotes_by_bucket` (riga 1415, divide il budget fra i
+  bucket idonei in proporzione al deficit, poi chiama una volta per
+  bucket, sul sotto-budget, la primitiva esistente e non modificata
+  `_suggested_quotes`).
+- decisione di design dell'utente a meta' implementazione: nessun cap
+  predeterminato di righe suggerite per bucket. La review del task 7 ha
+  trovato che la formula del piano (`max(1, max_lines // 3 or 1)`, 1 riga
+  per bucket) contraddiceva il design doc scritto in precedenza (2 righe
+  per bucket) — interpellato direttamente, l'utente ha respinto entrambi
+  i numeri: il conteggio di acquisti suggeriti resta governato solo dal
+  sotto-budget e dal punteggio di decisione di ogni candidato (soglia
+  >=0,50), non da un limite fisso. Wiring finale:
+  `max_lines_per_bucket=len(work)`, nessun cap artificiale — i limiti
+  reali restano soglia di punteggio, budget disponibile e il cap
+  preesistente del 35% per riga.
+- `build_sator_matrix_frame` (riga 823) riceve due nuovi parametri
+  opzionali `data`/`settings` (default None): se assenti il percorso di
+  codice resta strutturalmente identico a prima (la condizione di branch
+  fa short-circuit prima di toccare `ensure_sator_settings` o le nuove
+  funzioni); se presenti e col flag acceso, delega alla nuova allocazione
+  per bucket. Collegati i due call site reali:
+  `core/services/sator_frontier.py:328` (simulazione pre-trade di SATOR
+  Frontier) e `ui/form_server/sator.py:1766` (azione "Analizza"
+  principale di SATOR) — entrambi verificati live su dati reali, output
+  invariato a flag spento.
+- UI in `ui/pages/pianificazione.py:335`, dentro il form esistente
+  "Obiettivo di portafoglio": nuovo expander "Allocazione budget per
+  bucket (avanzato)" con 3 controlli (checkbox `bucket_first_allocation`,
+  number_input `band_tolerance_pp` in punti percentuali con conversione
+  andata/ritorno verso la frazione memorizzata, verificata anche in
+  round-trip, checkbox `deficit_pac_only`), salvati con il pattern
+  esistente `_save_portfolio_objective_settings_from_state`.
+- verifica end-to-end finale (test interattivo via browser non
+  disponibile in questa sessione: simulato cio' che i nuovi controlli UI
+  scriverebbero nelle settings, poi eseguito `run_sator_analysis` +
+  `build_sator_matrix_frame` sul portafoglio reale con budget €1.500):
+  flag spento -> Core €570 / Satellite €923 (bug di oggi, invariato);
+  flag acceso -> **Core €1.128 / Satellite €292** — inversione corretta,
+  vicino allo split teorico 80/20 implicato dai deficit euro reali.
+- deliberatamente non toccato: il resto del motore di punteggio SATOR
+  (`_score_fit`, `_score_momentum`, `_purchase_decision_score` e simili)
+  e la primitiva `_suggested_quotes()` restano invariati, ancora
+  chiamati dal nuovo codice per bucket. Origine del lavoro: un documento
+  esterno "Portfolio Intelligence" proponeva un modulo generico parallelo
+  (Policy, Eligibility Engine, Rebalancing, Opportunity Engine); l'analisi
+  preliminare ha concluso di innestare i miglioramenti reali dentro SATOR
+  invece di duplicarlo (correlazione reale gia' esistente contro tag
+  manuali proposti, explainability deterministica gia' esistente, due
+  punteggi gia' distinti) — le altre proposte del documento (Scenario
+  Engine per versamenti ricorrenti, Risk Tags/Cluster con limiti hard,
+  stati RESEARCH/EXCLUDED con motivazioni salvate, audit log delle
+  raccomandazioni, versioning della Policy) restano deliberatamente fuori
+  perimetro, candidate per un futuro potenziamento SATOR. Spec e piano
+  completi:
+  `docs/superpowers/specs/2026-08-15-sator-bucket-eligibility-design.md`,
+  `docs/superpowers/plans/2026-08-15-sator-bucket-eligibility.md`.
+
 ## 5.0-pre - Confronto strumenti in Pianificazione e consolidamento formule rendimento
 
 - consolidati 8 siti (non 6 come stimato all'inizio: l'ottavo,
