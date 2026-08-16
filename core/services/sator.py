@@ -528,6 +528,14 @@ def run_sator_analysis(
     current_weights = _compute_current_weights(state_df)
     nature_weights = _compute_nature_weights(data, state_df, current_weights)
     bucket_weights = _compute_bucket_weights(data, state_df, current_weights)
+    nature_weights_excl: dict[str, float] | None = None
+    bucket_weights_excl: dict[str, float] | None = None
+    if cfg["deficit_pac_only"]:
+        held_per_alerts = _tickers_posseduti(state_df)
+        exclude_per_alerts = _non_pac_held_tickers(data, held_per_alerts)
+        if exclude_per_alerts:
+            nature_weights_excl = _compute_nature_weights(data, state_df, current_weights, exclude_tickers=exclude_per_alerts)
+            bucket_weights_excl = _compute_bucket_weights(data, state_df, current_weights, exclude_tickers=exclude_per_alerts)
     portfolio_value = _compute_portfolio_value(state_df)
     portfolio_returns = _build_portfolio_return_series(returns_frame, state_df, current_weights)
     correlations = _compute_correlations(returns_frame, portfolio_returns)
@@ -544,7 +552,11 @@ def run_sator_analysis(
     )
 
     ranking = _score_universe(ctx, cfg)
-    alerts = _build_alerts(ranking, nature_weights, ctx.bucket_weights, settings.get("portfolio_objective", {}), cfg.get("concentration_caps", CAP_MORBIDO_NATURA))
+    alerts = _build_alerts(
+        ranking, nature_weights, ctx.bucket_weights, settings.get("portfolio_objective", {}),
+        cfg.get("concentration_caps", CAP_MORBIDO_NATURA),
+        nature_weights_excl=nature_weights_excl, bucket_weights_excl=bucket_weights_excl,
+    )
     summary = {
         "budget": budget,
         "liquidita_corrente": liquidita,
@@ -1523,25 +1535,46 @@ def _build_alerts(
     bucket_weights: dict[str, float] | None = None,
     portfolio_objective: dict[str, float] | None = None,
     caps: dict[str, float] | None = None,
+    *,
+    nature_weights_excl: dict[str, float] | None = None,
+    bucket_weights_excl: dict[str, float] | None = None,
 ) -> list[dict[str, str]]:
+    """Alert di concentrazione onesti: per default guardano sempre il peso reale
+    (con tutti gli strumenti posseduti, BTP inclusi).
+
+    nature_weights_excl/bucket_weights_excl (opzionali): quando il flag
+    deficit_pac_only e' attivo, il chiamante passa qui i pesi ricalcolati
+    escludendo gli strumenti non-PAC (BTP/GOV) - se presenti, un alert di
+    concentrazione scatta solo se la soglia e' superata ANCHE dopo
+    l'esclusione, cioe' se la concentrazione non e' interamente dovuta ai
+    titoli che l'utente ha gia' detto di ignorare in quella modalita'.
+    Se None (default o flag spento), il comportamento resta quello di
+    sempre: si guarda solo il peso reale completo.
+    """
     alerts: list[dict[str, str]] = []
     if ranking is None or ranking.empty:
         return alerts
     caps = caps if caps is not None else CAP_MORBIDO_NATURA
     for nature, peso in nature_weights.items():
         cap = caps.get(nature, CAP_MORBIDO_DEFAULT)
-        if peso > cap * 1.25:
-            alerts.append({"level": "warning", "title": "Concentrazione elevata",
-                           "message": f"La funzione \"{nature.replace('_', ' ')}\" pesa {peso:.0%} (soglia indicativa {cap:.0%}): "
-                                      "il fit e la diversificazione dei titoli con questa natura sono penalizzati di conseguenza."})
+        if peso <= cap * 1.25:
+            continue
+        if nature_weights_excl is not None and nature_weights_excl.get(nature, 0.0) <= cap * 1.25:
+            continue
+        alerts.append({"level": "warning", "title": "Concentrazione elevata",
+                       "message": f"La funzione \"{nature.replace('_', ' ')}\" pesa {peso:.0%} (soglia indicativa {cap:.0%}): "
+                                  "il fit e la diversificazione dei titoli con questa natura sono penalizzati di conseguenza."})
     if bucket_weights and portfolio_objective:
         for bucket, key in _BUCKET_TO_OBJECTIVE_KEY.items():
             peso = float(bucket_weights.get(bucket, 0.0))
             target = _safe_float(portfolio_objective.get(key), 0.0)
-            if target > 0 and peso > target * 1.25:
-                alerts.append({"level": "warning", "title": "Bucket sovrappesato",
-                               "message": f"Il bucket \"{bucket}\" pesa {peso:.0%} contro un obiettivo di {target:.0%}: "
-                                          "gli acquisti in questo gruppo sono penalizzati di conseguenza nel punteggio Fit."})
+            if target <= 0 or peso <= target * 1.25:
+                continue
+            if bucket_weights_excl is not None and float(bucket_weights_excl.get(bucket, 0.0)) <= target * 1.25:
+                continue
+            alerts.append({"level": "warning", "title": "Bucket sovrappesato",
+                           "message": f"Il bucket \"{bucket}\" pesa {peso:.0%} contro un obiettivo di {target:.0%}: "
+                                      "gli acquisti in questo gruppo sono penalizzati di conseguenza nel punteggio Fit."})
     challenger_vince = ranking[(ranking["rango_gruppo"] == 1) & (~ranking["in_portfolio"])]
     incombenti = set(ranking[ranking["in_portfolio"]]["comparison_group"])
     sostituzioni = challenger_vince[challenger_vince["comparison_group"].isin(incombenti)]
@@ -1804,13 +1837,19 @@ def _compute_current_weights(state_df: pd.DataFrame) -> dict[str, float]:
     return out
 
 
-def _compute_nature_weights(data: dict[str, Any], state_df: pd.DataFrame, current_weights: dict[str, float]) -> dict[str, float]:
+def _compute_nature_weights(
+    data: dict[str, Any],
+    state_df: pd.DataFrame,
+    current_weights: dict[str, float],
+    *,
+    exclude_tickers: frozenset[str] = frozenset(),
+) -> dict[str, float]:
     master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
     held = _tickers_posseduti(state_df)
     out: dict[str, float] = {}
     for item in data.get("strumenti", []) or []:
         t = str(item.get("ticker") or "").strip().upper()
-        if t not in held:
+        if t not in held or t in exclude_tickers:
             continue
         sator = ((master.get(t, {}).get("manual_overrides") or {}).get("sator") or {})
         nature = _meta_strutturale(sator, infer_sator_metadata(item, True), "nature")
