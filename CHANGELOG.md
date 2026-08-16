@@ -1,5 +1,27 @@
 # Changelog
 
+## 5.0-pre - Alert di concentrazione BTP silenziati quando deficit_pac_only e' attivo
+
+- richiesta esplicita dell'utente (2026-08-16, confermata con domanda
+  multi-scelta): quando `deficit_pac_only` e' acceso l'utente ha gia' detto
+  a SATOR di ignorare i BTP nel calcolo del deficit di bucket; gli alert
+  "Concentrazione elevata: bond governativo 76%" e "Bucket sovrappesato:
+  Difensivo 79%" - dovuti solo ai BTP - risultavano comunque sempre
+  visibili, percepiti come rumore contraddittorio rispetto al flag appena
+  attivato. Scartate le opzioni "rimuovi sempre" (nasconderebbe
+  un'informazione di rischio reale col flag spento) e "alza la soglia"
+  (non risolve, l'utente vuole silenzio solo quando ha gia' escluso i BTP).
+- `_compute_nature_weights` (`core/services/sator.py:1807`) accetta ora
+  `exclude_tickers`, stesso pattern di `_compute_bucket_weights`: nessuna
+  rinormalizzazione, i ticker esclusi sono rimossi dalla somma e basta.
+  `run_sator_analysis`, quando `deficit_pac_only=True`, ricalcola
+  nature_weights e bucket_weights escludendo i ticker non-PAC (stesso
+  `_non_pac_held_tickers` gia' usato per lo split budget) e li passa a
+  `_build_alerts` come filtro: un alert di concentrazione compare solo se
+  la soglia resta superata ANCHE dopo l'esclusione. Un alert non causato
+  dai BTP (es. "fondo pac 15%", verificato) continua a comparire come
+  sempre. Flag spento: comportamento identico a prima, nessun filtro.
+
 ## 5.0-pre - Redistribuzione del residuo di budget tra bucket SATOR
 
 - bug segnalato dall'utente in uso reale (2026-08-16), dopo il merge del
