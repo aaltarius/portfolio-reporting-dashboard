@@ -148,6 +148,9 @@ DEFAULT_SATOR_SETTINGS: dict[str, Any] = {
     "max_share_per_line": 0.35,   # nessuna linea oltre il 35% del budget suggerito
     "score_weights": dict(PESI_DIMENSIONI),
     "concentration_caps": dict(CAP_MORBIDO_NATURA),
+    "band_tolerance_pp": 0.03,
+    "deficit_pac_only": False,
+    "bucket_first_allocation": False,
 }
 
 
@@ -198,6 +201,9 @@ def ensure_sator_settings(settings: dict[str, Any] | None) -> dict[str, Any]:
     merged["score_weights"] = (
         {k: v / weights_total for k, v in weights.items()} if weights_total > 0 else dict(PESI_DIMENSIONI)
     )
+    merged["band_tolerance_pp"] = float(min(0.20, max(0.0, _safe_float(merged.get("band_tolerance_pp"), 0.03))))
+    merged["deficit_pac_only"] = bool(merged.get("deficit_pac_only", False))
+    merged["bucket_first_allocation"] = bool(merged.get("bucket_first_allocation", False))
     return merged
 
 
