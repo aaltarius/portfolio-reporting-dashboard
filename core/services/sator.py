@@ -19,6 +19,7 @@ Pesi delle dimensioni (dal documento di impianto):
 """
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime
@@ -33,6 +34,8 @@ from core.domain.returns import combine_weighted_returns, normalize_to_first, si
 from core.finance import build_ptf_df, compute_portfolio_state
 from core.price_frames import build_expanded_price_frame
 from persistence.storage import load_sator_decisions, macro_cat
+
+logger = logging.getLogger("portafoglio.core.services.sator")
 
 
 # --------------------------------------------------------------------------- #
@@ -842,13 +845,10 @@ def build_sator_matrix_frame(
             work["rango_gruppo"] = 1
 
     cfg = ensure_sator_settings(settings) if (data is not None and settings is not None) else None
-    if (
-        cfg is not None
-        and cfg["bucket_first_allocation"]
-        and "_bucket" in work.columns
-        and "bucket_weight" in work.columns
-        and "portfolio_value" in work.columns
-    ):
+    # "bucket_weight" NON e' un requisito reale: i pesi sono sempre ricalcolati
+    # da zero via _compute_bucket_weights piu' sotto, mai letti da questa colonna.
+    bucket_columns_ok = "_bucket" in work.columns and "portfolio_value" in work.columns
+    if cfg is not None and cfg["bucket_first_allocation"] and bucket_columns_ok:
         state_df = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
         current_weights = _compute_current_weights(state_df)
         held = _tickers_posseduti(state_df)
@@ -858,8 +858,23 @@ def build_sator_matrix_frame(
         bands = _compute_bucket_bands(objective, cfg["band_tolerance_pp"])
         portfolio_value = _safe_float(work["portfolio_value"].iloc[0], 0.0) if "portfolio_value" in work.columns else 0.0
         deficits, blocked = _compute_bucket_deficits(bucket_weights, objective, bands, portfolio_value, budget)
+        if not deficits:
+            logger.info(
+                "SATOR bucket_first_allocation: nessun bucket in deficit, budget resta liquido "
+                "(pesi=%s, bande=%s, bloccati=%s)",
+                {k: round(v, 4) for k, v in bucket_weights.items()},
+                {k: {kk: round(vv, 4) for kk, vv in v.items()} for k, v in bands.items()},
+                sorted(blocked),
+            )
         suggerite = _suggested_quotes_by_bucket(work, budget, deficits, blocked, max_lines_per_bucket=len(work))
     else:
+        if cfg is not None and cfg["bucket_first_allocation"] and not bucket_columns_ok:
+            missing = [c for c in ("_bucket", "portfolio_value") if c not in work.columns]
+            logger.warning(
+                "SATOR bucket_first_allocation e' attivo ma la classifica non contiene le colonne "
+                "richieste %s (probabile snapshot obsoleto): fallback sull'allocazione greedy legacy",
+                missing,
+            )
         suggerite = _suggested_quotes(work, budget, max_lines=max_lines)
 
     ranghi = pd.to_numeric(work["rango_gruppo"], errors="coerce").fillna(0).astype(int).tolist()
@@ -1063,27 +1078,22 @@ def _compute_bucket_weights(
 ) -> dict[str, float]:
     """Peso per bucket (Core/Difensivo/Satellite) sul totale posseduto.
 
-    exclude_tickers: se non vuoto, quei ticker vengono esclusi sia dal
-    numeratore (il loro valore non conta per nessun bucket) sia dal
-    denominatore implicito (i pesi restanti vengono rinormalizzati sul
-    totale che esclude quei ticker) - usato dal flag deficit_pac_only per
-    escludere BTP/GOV dal calcolo del deficit di bucket.
+    exclude_tickers: se non vuoto, quei ticker vengono semplicemente
+    esclusi dal calcolo - il loro valore non conta per nessun bucket e
+    NON c'e' alcuna rinormalizzazione dei pesi restanti. Un bucket
+    composto interamente da ticker esclusi risulta correttamente a peso
+    ~0.0 (nulla di "accumulabile" li'), non gonfiato dall'esclusione di
+    un altro bucket. Usato dal flag deficit_pac_only per escludere
+    BTP/GOV dal calcolo del deficit di bucket.
     """
     held = _tickers_posseduti(state_df)
     buckets = compute_instrument_buckets(data, held)
     out: dict[str, float] = {"Core": 0.0, "Difensivo": 0.0, "Satellite": 0.0}
-    included_weight_total = sum(
-        max(0.0, current_weights.get(ticker, 0.0))
-        for ticker in buckets
-        if ticker not in exclude_tickers
-    )
-    if included_weight_total <= 0:
-        return out
     for ticker, bucket in buckets.items():
         if ticker in exclude_tickers:
             continue
         raw_weight = max(0.0, current_weights.get(ticker, 0.0))
-        out[bucket] = out.get(bucket, 0.0) + raw_weight / included_weight_total
+        out[bucket] = out.get(bucket, 0.0) + raw_weight
     return out
 
 
@@ -1418,7 +1428,7 @@ def _suggested_quotes_by_bucket(
     bucket_deficits: dict[str, float],
     blocked_buckets: set[str],
     *,
-    max_lines_per_bucket: int = 2,
+    max_lines_per_bucket: int | None = None,
 ) -> list[int]:
     """Come _suggested_quotes, ma il budget e' prima diviso tra i bucket
     proporzionalmente al loro deficit (Allocation_k = budget * deficit_k /
@@ -1426,9 +1436,14 @@ def _suggested_quotes_by_bucket(
     volta per bucket sul relativo sotto-budget. I bucket in blocked_buckets
     o senza deficit positivo non ricevono nulla.
 
+    max_lines_per_bucket=None (default): nessun tetto predeterminato, ogni
+    riga del bucket puo' essere finanziata (equivalente a len(ranking_df)).
+
     Stesso contratto di _suggested_quotes: lista di interi allineata
     all'indice di ranking_df (dopo reset_index).
     """
+    if max_lines_per_bucket is None:
+        max_lines_per_bucket = len(ranking_df)
     n = len(ranking_df)
     quote = [0] * n
     if budget <= 0 or n == 0 or "_bucket" not in ranking_df.columns:
