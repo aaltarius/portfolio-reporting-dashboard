@@ -1,7 +1,9 @@
 # TODO 5.0
 
 Fonte operativa principale: `STATO_OPERATIVO_5.0_PRE.md`.
-Inventario tecnico cache: `docs/archivio_5_0/06_CACHE_INVENTORY_5.0.md`.
+Inventario tecnico cache (stato attuale, sempre aggiornato al codice reale):
+`tools/cache_surface_audit.py`. Fotografia storica pre-migrazione (superata,
+archiviata 2026-08-17): `docs/archivio_5_0/old/06_CACHE_INVENTORY_5.0.md`.
 Chiusura pilota cache: `docs/archivio_5_0/07_CHIUSURA_FASE_CACHE_5.0.md`.
 Migrazione definitiva cache unica: `docs/archivio_5_0/08_CACHE_UNICA_5.0_MIGRAZIONE_DEFINITIVA.md`.
 
