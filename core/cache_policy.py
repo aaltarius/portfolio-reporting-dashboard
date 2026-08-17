@@ -496,7 +496,7 @@ register_cache_artifact(
         trigger="explicit_action",
         rerun_policy="same_run_result_no_global_invalidation",
         action_scope="comparison_only",
-        status="pilot",
+        status="registered_provider",
     )
 )
 

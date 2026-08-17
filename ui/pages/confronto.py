@@ -12,6 +12,8 @@ import pandas as pd
 import streamlit as st
 
 from core.cache import invalidate_portfolio_cache
+from core.cache_policy import build_cache_artifact_signature, get_cache_artifact_spec
+from core.cache_orchestrator import get_or_build_registered_artifact
 from streamlit.delta_generator import DeltaGenerator
 
 from persistence.storage import (
@@ -898,19 +900,34 @@ def render_confronto(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     "value_detail": fig_contrib if is_multi else (fig_value_decomposition if has_value_decomposition else fig_holdings_value_grouped),
                     "perf_detail": fig_return_delta if is_multi else fig_pl_delta,
                 }
-                comparison_html = build_comparison_report_html(
-                    title="Confronto snapshot portafoglio",
-                    generated_at=datetime.now(),
-                    snapshot_names=snapshot_names,
-                    metric_map=metric_map,
-                    summary_notes=comparison["summary"],
-                    metrics_wide_df=metrics_wide_df,
-                    categories_value_wide_df=categories_value_wide_df,
-                    categories_weight_wide_df=categories_weight_wide_df,
-                    holdings_wide_df=holdings_wide_df,
-                    interval_activities=interval_activities,
-                    figures=comparison_figures,
-                ).encode("utf-8")
+                comparison_spec = get_cache_artifact_spec("confronto.comparison_report")
+                comparison_signature = build_cache_artifact_signature(
+                    comparison_spec.artifact_id,
+                    inputs={
+                        "snapshot_ids": tuple(str(s.get("snapshot_id") or "") for s in selected_snapshots),
+                        "portfolio_data_signature": str(getattr(ctx, "data_sig", "")),
+                        "comparison_options": {"is_multi": bool(is_multi), "benchmark_label": benchmark_label},
+                        "reporting_settings": {"decimal_places": export_decimals},
+                    },
+                )
+                comparison_artifact = get_or_build_registered_artifact(
+                    artifact_id=comparison_spec.artifact_id,
+                    signature=comparison_signature,
+                    builder=lambda: build_comparison_report_html(
+                        title="Confronto snapshot portafoglio",
+                        generated_at=datetime.now(),
+                        snapshot_names=snapshot_names,
+                        metric_map=metric_map,
+                        summary_notes=comparison["summary"],
+                        metrics_wide_df=metrics_wide_df,
+                        categories_value_wide_df=categories_value_wide_df,
+                        categories_weight_wide_df=categories_weight_wide_df,
+                        holdings_wide_df=holdings_wide_df,
+                        interval_activities=interval_activities,
+                        figures=comparison_figures,
+                    ).encode("utf-8"),
+                )
+                comparison_html = comparison_artifact.value if isinstance(comparison_artifact.value, bytes) else b""
                 json_bytes = json.dumps(
                     {
                         "snapshot_a": snap_a,

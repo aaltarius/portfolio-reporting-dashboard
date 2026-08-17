@@ -34,19 +34,31 @@ sessione (nessun codice nuovo, solo verifica + etichetta ciascuno):
 `mercati.overview_rows`, `mercati.base100_frame`,
 `summary.dashboard_payload`, `runtime.orchestration_payload`.
 
-Stato registry ora: **21 `registered_provider`** (era 6), **6 `pilot`**
-(era 21), 1 `documented_exception`, 0 `legacy_provider`.
+Stato registry dopo il censimento (14 etichette): 21 `registered_provider`,
+6 `pilot`, 1 `documented_exception`, 0 `legacy_provider`.
 
-I 6 rimasti in `pilot` sono classificati per tipo di lavoro residuo, non
+Primo dei 3 "senza cache reale" completato 2026-08-17:
+`confronto.comparison_report` era ricostruito ad ogni rerun in
+`ui/pages/confronto.py:901` (nessuna cache, solo etichetta nel registro).
+Collegato a `core/cache_orchestrator.py::get_or_build_registered_artifact`
+con firma su `snapshot_ids` (ID snapshot selezionati),
+`portfolio_data_signature` (`ctx.data_sig`), `comparison_options`
+(multi-snapshot, benchmark) e `reporting_settings` (decimali export) —
+cambia solo quando cambia davvero la selezione, non ad ogni rerun della
+pagina. Test aggiunto in `tests/test_cache_policy_5.py`
+(`test_confronto_page_uses_registered_page_artifact_for_comparison_report`).
+Promosso a `registered_provider`. Stato registry ora: **22
+`registered_provider`**, **5 `pilot`**, 1 `documented_exception`,
+0 `legacy_provider`.
+
+I 5 rimasti in `pilot` sono classificati per tipo di lavoro residuo, non
 tutti uguali:
 
-- **Nessuna cache reale ancora scritta** (serve codice vero, non solo
-  etichetta): `confronto.comparison_report` (ricostruito ad ogni render in
-  `ui/pages/confronto.py:901`, nessun passaggio da
-  `core/cache_orchestrator.py`), `summary.report_payload` (stesso caso in
-  `ui/pages/summary.py:367`), `mercati.live_snapshot` (scrive/legge un
-  file JSON direttamente in `core/infrastructure/market_auto_refresh.py`,
-  mai passato dal registry).
+- **Nessuna cache reale ancora scritta** (serve codice vero, stesso schema
+  appena applicato a `confronto.comparison_report`): `summary.report_payload`
+  (stesso caso in `ui/pages/summary.py:367`), `mercati.live_snapshot`
+  (scrive/legge un file JSON direttamente in
+  `core/infrastructure/market_auto_refresh.py`, mai passato dal registry).
 - **Cache reale gia' funzionante, ma tramite un meccanismo diverso e gia'
   definitivo** (`analytics.frozen_payload_store`/`store_frozen_analysis_cache`,
   non `get_or_build_registered_artifact`): `cruscotti.benchmark_frozen_analysis`,
