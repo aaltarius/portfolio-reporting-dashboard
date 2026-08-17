@@ -14,12 +14,23 @@ Questo file contiene solo le cose aperte. Lo storico delle modifiche resta in
 
 Fase pilota L3 chiusa. Cache unica applicativa ancora aperta.
 
+Deciso 2026-08-17: `core/page_cache.py` resta il magazzino L3 definitivo
+(nessuna riscrittura in `core/cache_store.py`, mai iniziata e senza motivo
+concreto) — vedi `docs/archivio_5_0/08_CACHE_UNICA_5.0_MIGRAZIONE_DEFINITIVA.md`.
+Questo sblocca la promozione individuale degli artefatti `storage="page_artifact"`
+quando rispettano gia' il contratto unico, senza aspettare una decisione di
+architettura mai presa. Primo artefatto promosso a `registered_provider`:
+`portafoglio.positions_table` (gia' passava da `core/cache_orchestrator.py`,
+nessun codice nuovo servito, solo verifica + etichetta). Stato registry ora:
+7 `registered_provider`, 20 `pilot`, 1 `documented_exception`, 0 `legacy_provider`.
+
 1. Eseguire e mantenere `tools/cache_surface_audit.py` come censimento statico
    delle cache vive.
 2. Registrare nel policy layer o giustificare formalmente tutte le cache
    residue: Streamlit cache, FigureCache, derived runtime, benchmark/Mercati,
    frozen analysis, prewarm, cache modulo.
-3. Migrare una famiglia cache per volta sotto il contratto unico.
+3. Migrare una famiglia cache per volta sotto il contratto unico (prossimo
+   candidato piu' piccolo: `confronto.comparison_report`, un solo artefatto).
 4. Aggiornare Dati e render log per mostrare la copertura reale della cache
    unica.
 5. Solo dopo ottimizzare Cruscotti come render UI full-tabs.

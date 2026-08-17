@@ -254,7 +254,7 @@ register_cache_artifact(
         log_page="Portafoglio",
         description="Payload posizioni, frecce giornaliere e insight usato dalla tabella Controvalore del Portafoglio.",
         prebuild=True,
-        status="pilot",
+        status="registered_provider",
     )
 )
 
