@@ -297,6 +297,43 @@ Stato sincero della cache al 2026-08-03:
 - solo dopo questa chiusura ha senso tornare al tuning fine dei millisecondi su
   Cruscotti o sulle singole sezioni.
 
+Aggiornamento 2026-08-17 — governance cache quasi chiusa:
+
+- Decisa la domanda rimasta sospesa dal 2026-08-03: `core/page_cache.py`
+  resta il magazzino L3 definitivo, nessuna riscrittura in
+  `core/cache_store.py` (mai iniziata, nessun motivo concreto). Vedi
+  `docs/archivio_5_0/08_CACHE_UNICA_5.0_MIGRAZIONE_DEFINITIVA.md`.
+- Censiti artefatto per artefatto (non a campione) i 20 rimasti `pilot`:
+  14 erano gia' collegati correttamente al magazzino, promossi subito a
+  `registered_provider` (solo verifica + etichetta, nessun codice nuovo).
+- 3 non avevano ancora nessuna cache reale (`confronto.comparison_report`,
+  `summary.report_payload` ricostruiti ad ogni azione senza passare dal
+  registry): collegati a `core/cache_orchestrator.py::get_or_build_registered_artifact`
+  con firma sulle dipendenze gia' dichiarate nella scheda, test aggiunti,
+  promossi.
+- 2 avevano gia' cache reale ma tramite un meccanismo diverso da quello
+  dichiarato (`cruscotti.benchmark_frozen_analysis`,
+  `cruscotti.accumuli_frozen_analysis`: usano `core/frozen_analysis_cache.py`,
+  gia' un consumatore dei provider registrati `analytics.frozen_payload_store`
+  e `figures.plotly_cache_provider`, non `get_or_build_registered_artifact`
+  come la scheda affermava): corretti storage/owner nel registry per
+  riflettere la realta', poi promossi.
+- `prebuild.registry_engine` verificato (deriva i target dal registry via
+  `iter_prebuild_artifact_specs()`, percorso sincrono solo al primo avvio a
+  freddo) e promosso.
+- **Registry ora: 26 `registered_provider`, 1 solo `pilot`
+  (`mercati.live_snapshot`), 1 `documented_exception`, 0 `legacy_provider`.**
+  L'unico rimasto e' deliberatamente non toccato: e' un servizio in
+  background (thread separato, architettura incompatibile con
+  `get_or_build_registered_artifact`) e la sezione Mercati e' ancora
+  esplicitamente "in osservazione per qualche giorno" (Priorita' 6) — non e'
+  lavoro lasciato a meta', e' una decisione presa, dettagliata in
+  `TODO_5.0.md`.
+- Non ancora fatto: aggiornare Dati/render log per mostrare la copertura
+  reale della cache unica (punto 4 di "Da fare adesso" in `TODO_5.0.md`), e
+  la review complessiva `/code-review ultra` prima del tag 5.0 definitivo
+  (Priorita' 8). Nessun push al remoto GitHub eseguito in questa sessione.
+
 ### L4 render snapshot
 
 - Il pilot L4 su Cruscotti categorie e' stato provato e poi ritirato.
@@ -744,6 +781,11 @@ La cache unica applicativa e' chiusa come governance: registry centrale,
 page-cache L3, provider runtime registrati, eccezioni Streamlit documentate e
 test anti-regressione. Non significa che ogni pagina sia gia' al minimo teorico
 di render: significa che non devono piu' esistere cache nuove fuori contratto.
+
+Aggiornamento 2026-08-17: quasi tutti gli artefatti sono stati promossi da
+`pilot` a `registered_provider` (26 su 27, vedi dettaglio in "Cache e
+performance" sopra) — resta solo `mercati.live_snapshot`, bloccato
+dall'osservazione ancora aperta di Priorita' 6.
 
 Da mantenere:
 
