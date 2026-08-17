@@ -116,7 +116,7 @@ register_cache_artifact(
         log_page="Quotazioni",
         description="Tabella diagnostica Ultime quotazioni aggiornata e pronta per la UI.",
         prebuild=True,
-        status="pilot",
+        status="registered_provider",
     )
 )
 
@@ -141,7 +141,7 @@ register_cache_artifact(
         log_page="Quotazioni",
         description="Bundle shared Quotazioni con ticker validi, gruppi categoria e indici cashflow per confronto performance.",
         prebuild=True,
-        status="pilot",
+        status="registered_provider",
     )
 )
 
@@ -165,7 +165,7 @@ register_cache_artifact(
         log_page="Quotazioni",
         description="Serie normalizzate e benchmark dei ticker Quotazioni per singola categoria, senza st.cache_data locale.",
         prebuild=True,
-        status="pilot",
+        status="registered_provider",
     )
 )
 
@@ -184,7 +184,7 @@ register_cache_artifact(
         log_page="Dati",
         description="Dataset qualita dati strumenti, senza metriche finanziarie pesanti nella vista Dati.",
         prebuild=True,
-        status="pilot",
+        status="registered_provider",
     )
 )
 
@@ -203,7 +203,7 @@ register_cache_artifact(
         log_page="Dati",
         description="Payload diagnostico cache per la pagina Dati basato su manifest, senza invalidazione temporale all'avvio.",
         prebuild=False,
-        status="pilot",
+        status="registered_provider",
         trigger="navigation",
         rerun_policy="no_global_rebuild",
         action_scope="diagnostics_light",
@@ -228,7 +228,7 @@ register_cache_artifact(
         trigger="navigation",
         rerun_policy="no_extra_rerun",
         action_scope="data_tools",
-        status="pilot",
+        status="registered_provider",
     )
 )
 
@@ -279,7 +279,7 @@ register_cache_artifact(
         log_page="Cruscotti",
         description="Bundle categorie Cruscotti gia' pronto per tab GOV/ETF/FND/Tutto.",
         prebuild=True,
-        status="pilot",
+        status="registered_provider",
     )
 )
 
@@ -305,7 +305,7 @@ register_cache_artifact(
         log_page="Cruscotti",
         description="Bundle Analitica con figure e payload gia' pronti per il render.",
         prebuild=True,
-        status="pilot",
+        status="registered_provider",
     )
 )
 
@@ -331,7 +331,7 @@ register_cache_artifact(
         log_page="Analisi",
         description="Dataset finanziari avanzati di Analitica governati dal registry, senza st.cache_data locale.",
         prebuild=True,
-        status="pilot",
+        status="registered_provider",
     )
 )
 
@@ -356,7 +356,7 @@ register_cache_artifact(
         log_page="Cruscotti",
         description="Metriche KPI per singola categoria Cruscotti, governate dal registry invece che da st.cache_data locale.",
         prebuild=True,
-        status="pilot",
+        status="registered_provider",
     )
 )
 
@@ -397,7 +397,7 @@ register_cache_artifact(
         log_page="Mercati",
         description="Righe derivate della pagina Mercati: valori, ritorni e fonte dati. Stato aperto/chiuso aggiornato live dopo la lettura cache.",
         prebuild=False,
-        status="pilot",
+        status="registered_provider",
     )
 )
 
@@ -416,7 +416,7 @@ register_cache_artifact(
         log_page="Mercati",
         description="DataFrame base 100 Mercati per il confronto comparato, cacheato per periodo.",
         prebuild=False,
-        status="pilot",
+        status="registered_provider",
     )
 )
 
@@ -441,7 +441,7 @@ register_cache_artifact(
         log_page="Summary",
         description="Payload condiviso Summary governato dal registry/page-cache invece che da st.cache_data locale.",
         prebuild=True,
-        status="pilot",
+        status="registered_provider",
     )
 )
 
@@ -574,7 +574,7 @@ register_cache_artifact(
         log_page="Runtime",
         description="Payload principale dell'orchestrazione dati governato dal registry/page-cache.",
         prebuild=True,
-        status="pilot",
+        status="registered_provider",
     )
 )
 

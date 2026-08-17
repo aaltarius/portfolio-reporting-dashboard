@@ -17,20 +17,56 @@ Fase pilota L3 chiusa. Cache unica applicativa ancora aperta.
 Deciso 2026-08-17: `core/page_cache.py` resta il magazzino L3 definitivo
 (nessuna riscrittura in `core/cache_store.py`, mai iniziata e senza motivo
 concreto) — vedi `docs/archivio_5_0/08_CACHE_UNICA_5.0_MIGRAZIONE_DEFINITIVA.md`.
-Questo sblocca la promozione individuale degli artefatti `storage="page_artifact"`
-quando rispettano gia' il contratto unico, senza aspettare una decisione di
-architettura mai presa. Primo artefatto promosso a `registered_provider`:
-`portafoglio.positions_table` (gia' passava da `core/cache_orchestrator.py`,
-nessun codice nuovo servito, solo verifica + etichetta). Stato registry ora:
-7 `registered_provider`, 20 `pilot`, 1 `documented_exception`, 0 `legacy_provider`.
+Questo ha sbloccato la promozione di tutti gli artefatti `storage="page_artifact"`
+gia' verificati contro il contratto unico (owner, firma, dipendenze,
+invalidazione, passaggio reale da `core/cache_orchestrator.py`), senza
+aspettare una decisione di architettura mai presa.
+
+Censimento completo dei 20 artefatti ancora `pilot` fatto artefatto per
+artefatto (non a campione): 14 erano gia' collegati correttamente al
+magazzino e sono stati promossi subito a `registered_provider` in un'unica
+sessione (nessun codice nuovo, solo verifica + etichetta ciascuno):
+`quotazioni.diagnostic_table`, `quotazioni.dataset_bundle`,
+`quotazioni.category_ticker_bundles`, `dati.quality_table`,
+`dati.cache_diagnostics`, `dati.remote_php_export`,
+`cruscotti.category_dashboard_bundles`, `cruscotti.analitica_bundle`,
+`cruscotti.advanced_analysis_data`, `cruscotti.category_metrics`,
+`mercati.overview_rows`, `mercati.base100_frame`,
+`summary.dashboard_payload`, `runtime.orchestration_payload`.
+
+Stato registry ora: **21 `registered_provider`** (era 6), **6 `pilot`**
+(era 21), 1 `documented_exception`, 0 `legacy_provider`.
+
+I 6 rimasti in `pilot` sono classificati per tipo di lavoro residuo, non
+tutti uguali:
+
+- **Nessuna cache reale ancora scritta** (serve codice vero, non solo
+  etichetta): `confronto.comparison_report` (ricostruito ad ogni render in
+  `ui/pages/confronto.py:901`, nessun passaggio da
+  `core/cache_orchestrator.py`), `summary.report_payload` (stesso caso in
+  `ui/pages/summary.py:367`), `mercati.live_snapshot` (scrive/legge un
+  file JSON direttamente in `core/infrastructure/market_auto_refresh.py`,
+  mai passato dal registry).
+- **Cache reale gia' funzionante, ma tramite un meccanismo diverso e gia'
+  definitivo** (`analytics.frozen_payload_store`/`store_frozen_analysis_cache`,
+  non `get_or_build_registered_artifact`): `cruscotti.benchmark_frozen_analysis`,
+  `cruscotti.accumuli_frozen_analysis` — qui serve solo decidere come
+  rappresentare correttamente nel registry una cache che passa da un altro
+  provider gia' promosso, non scrivere cache nuova.
+- **Caso a parte**: `prebuild.registry_engine` e' il motore che decide cosa
+  preparare in anticipo (gia' collegato al registry via
+  `iter_prebuild_artifact_specs()` in `ui/prewarm_bundle.py`), non un
+  payload da mettere lui stesso in cache — la sua "definizione di finito"
+  va valutata separatamente dagli altri.
 
 1. Eseguire e mantenere `tools/cache_surface_audit.py` come censimento statico
    delle cache vive.
 2. Registrare nel policy layer o giustificare formalmente tutte le cache
    residue: Streamlit cache, FigureCache, derived runtime, benchmark/Mercati,
    frozen analysis, prewarm, cache modulo.
-3. Migrare una famiglia cache per volta sotto il contratto unico (prossimo
-   candidato piu' piccolo: `confronto.comparison_report`, un solo artefatto).
+3. Migrare una famiglia cache per volta sotto il contratto unico (i 3
+   artefatti senza cache reale sono il prossimo lavoro vero: scrivere il
+   collegamento a `core/cache_orchestrator.py` con test, uno alla volta).
 4. Aggiornare Dati e render log per mostrare la copertura reale della cache
    unica.
 5. Solo dopo ottimizzare Cruscotti come render UI full-tabs.
