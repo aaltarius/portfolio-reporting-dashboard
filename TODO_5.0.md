@@ -65,34 +65,52 @@ Promosso a `registered_provider`. Stato registry ora: **23
 `registered_provider`**, **4 `pilot`**, 1 `documented_exception`,
 0 `legacy_provider`.
 
-I 4 rimasti in `pilot` sono classificati per tipo di lavoro residuo, non
-tutti uguali:
+Completati anche 2026-08-17 (stessa sessione), portando il registro a
+**26 `registered_provider`, 1 solo `pilot` rimasto**:
 
-- **Nessuna cache reale ancora scritta** (serve codice vero, stesso schema
-  gia' applicato due volte): `mercati.live_snapshot` (scrive/legge un file
-  JSON direttamente in `core/infrastructure/market_auto_refresh.py`, mai
-  passato dal registry — architettura diversa dagli altri due perche' e' un
-  servizio in background, non generato dentro il render di una pagina).
-- **Cache reale gia' funzionante, ma tramite un meccanismo diverso e gia'
-  definitivo** (`analytics.frozen_payload_store`/`store_frozen_analysis_cache`,
-  non `get_or_build_registered_artifact`): `cruscotti.benchmark_frozen_analysis`,
-  `cruscotti.accumuli_frozen_analysis` — qui serve solo decidere come
-  rappresentare correttamente nel registry una cache che passa da un altro
-  provider gia' promosso, non scrivere cache nuova.
-- **Caso a parte**: `prebuild.registry_engine` e' il motore che decide cosa
-  preparare in anticipo (gia' collegato al registry via
-  `iter_prebuild_artifact_specs()` in `ui/prewarm_bundle.py`), non un
-  payload da mettere lui stesso in cache — la sua "definizione di finito"
-  va valutata separatamente dagli altri.
+- `cruscotti.benchmark_frozen_analysis` e `cruscotti.accumuli_frozen_analysis`:
+  avevano gia' una cache reale e funzionante, ma tramite un meccanismo
+  diverso da quello dichiarato nella scheda (`core/frozen_analysis_cache.py`
+  con `store_frozen_analysis_cache`/`cached_render_value`, che consuma i
+  provider gia' registrati `analytics.frozen_payload_store` e
+  `figures.plotly_cache_provider` — non `get_or_build_registered_artifact`
+  come la scheda affermava). Corretti `storage` (ora
+  `analytics_pickle_gzip_plus_figure_cache`) e `owner` (ora il vero
+  builder: `core.services.benchmark.build_benchmark_transparency_payload`
+  e `core.services.accumuli.build_accumuli_analysis`) per riflettere la
+  realta', poi promossi — nessuna riscrittura, solo scheda accurata.
+  Test esteso in `tests/test_cache_policy_5.py`
+  (`test_cruscotti_frozen_actions_record_isolated_cache_decisions`) per
+  bloccare in futuro un altro disallineamento scheda/codice dello stesso
+  tipo.
+- `prebuild.registry_engine`: verificato che il motore prebuild (
+  `core/cache_prewarmer.py`/`ui/prewarm_bundle.py`) deriva davvero i propri
+  target da `iter_prebuild_artifact_specs()` (nessuna lista fissa a parte),
+  e che il percorso sincrono (`run_initial_prewarm`) scatta solo al primo
+  avvio a freddo con `initial_complete` esplicitamente attivo — pattern
+  "pre-render iniziale" gia' ammesso da
+  `docs/archivio_5_0/01_REGOLE_NON_NEGOZIABILI.md`, non un'eccezione presa
+  di nascosto. Promosso.
+
+**Resta un solo `pilot`, deliberatamente non toccato**: `mercati.live_snapshot`.
+Non e' lavoro rimasto a meta': e' un servizio in background (thread separato
+che scrive un file JSON, non generato dentro il render di una pagina —
+architettura incompatibile con `get_or_build_registered_artifact`), e la
+sezione Mercati nel suo complesso e' ancora esplicitamente "in osservazione
+per qualche giorno" (Priorita' 6, vedi sotto e `STATO_OPERATIVO_5.0_PRE.md`).
+Promuovere l'etichetta cache mentre l'intera funzione e' sotto osservazione
+contraddirebbe quella decisione gia' presa. Riprendere solo dopo che i
+giorni di osservazione previsti sono passati.
 
 1. Eseguire e mantenere `tools/cache_surface_audit.py` come censimento statico
    delle cache vive.
 2. Registrare nel policy layer o giustificare formalmente tutte le cache
    residue: Streamlit cache, FigureCache, derived runtime, benchmark/Mercati,
    frozen analysis, prewarm, cache modulo.
-3. Migrare una famiglia cache per volta sotto il contratto unico (i 3
-   artefatti senza cache reale sono il prossimo lavoro vero: scrivere il
-   collegamento a `core/cache_orchestrator.py` con test, uno alla volta).
+3. `mercati.live_snapshot`: unico artefatto ancora aperto, in attesa che
+   passino i giorni di osservazione di Priorita' 6 prima di decidere se/come
+   collegarlo al registro (architettura a servizio in background, richiede
+   un pattern diverso da `get_or_build_registered_artifact`).
 4. Aggiornare Dati e render log per mostrare la copertura reale della cache
    unica.
 5. Solo dopo ottimizzare Cruscotti come render UI full-tabs.
@@ -101,18 +119,22 @@ tutti uguali:
 
 ## Da fare dopo
 
-1. Collegare gli artefatti ad azione esplicita al registry cache:
-   Summary report, Confronto report, Mercati live snapshot, Benchmark frozen e
-   Accumuli frozen.
+1. ~~Collegare gli artefatti ad azione esplicita al registry cache: Summary
+   report, Confronto report, Benchmark frozen e Accumuli frozen~~ fatto
+   2026-08-17 (vedi sezione "Da fare adesso"). Resta solo Mercati live
+   snapshot, bloccato dall'osservazione ancora aperta di Priorita' 6.
 2. Completare archivio report step 2: rigenerazione con le stesse opzioni
    salvate.
 3. Consolidare dataset rischio/rendimento strumenti e migrare gradualmente
    Cruscotti, Quotazioni e SATOR verso il servizio centrale.
-4. Valutare `core/page_cache.py` come store L3 definitivo o evolverlo in
-   `core/cache_store.py`.
-5. Costruire prebuild guidato dal registry, fuori dal render ordinario.
+4. ~~Valutare core/page_cache.py come store L3 definitivo o evolverlo in
+   core/cache_store.py~~ deciso 2026-08-17: resta definitivo, nessuna
+   riscrittura (vedi sezione "Da fare adesso").
+5. ~~Costruire prebuild guidato dal registry, fuori dal render ordinario~~
+   verificato e promosso 2026-08-17 (`prebuild.registry_engine`).
 6. Tenere Mercati in osservazione per qualche giorno: dati, semaforo,
-   auto-refresh background e striscia informativa.
+   auto-refresh background e striscia informativa. Blocca la promozione di
+   `mercati.live_snapshot` finche' non e' chiusa.
 7. Validare Portfolio Insights sul portafoglio reale prima di renderlo
    definitivo.
 

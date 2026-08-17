@@ -506,8 +506,8 @@ register_cache_artifact(
         page_id="cruscotti",
         layer="benchmark_frozen_analysis",
         level="L3",
-        owner="ui.pages.cruscotti_benchmark.render_benchmark",
-        storage="page_artifact_plus_figure_cache",
+        owner="core.services.benchmark.build_benchmark_transparency_payload",
+        storage="analytics_pickle_gzip_plus_figure_cache",
         version="benchmark-frozen-analysis-v1",
         dependencies=(
             "portfolio_data_signature",
@@ -518,12 +518,22 @@ register_cache_artifact(
         clear_group="cruscotti",
         stale_policy="rebuild_on_explicit_benchmark_analysis_only",
         log_page="Cruscotti",
-        description="Analisi Benchmark congelata di Cruscotti: il click genera un artefatto riprendibile nei rerun successivi.",
+        description=(
+            "Analisi Benchmark congelata di Cruscotti: il click genera un "
+            "artefatto riprendibile nei rerun successivi. Non passa da "
+            "get_or_build_registered_artifact ma dal modulo condiviso "
+            "core/frozen_analysis_cache.py (store_frozen_analysis_cache per il "
+            "payload, cached_render_value per le figure), che a sua volta "
+            "consuma i provider gia' registrati analytics.frozen_payload_store "
+            "e figures.plotly_cache_provider -- corretto il 2026-08-17, prima "
+            "la scheda descriveva un meccanismo (page_artifact) diverso da "
+            "quello realmente usato."
+        ),
         prebuild=False,
         trigger="explicit_action",
         rerun_policy="no_global_rebuild",
         action_scope="cruscotti_benchmark_only",
-        status="pilot",
+        status="registered_provider",
     )
 )
 
@@ -533,8 +543,8 @@ register_cache_artifact(
         page_id="cruscotti",
         layer="accumuli_frozen_analysis",
         level="L3",
-        owner="ui.pages.cruscotti_accumuli.render_accumuli",
-        storage="page_artifact_plus_figure_cache",
+        owner="core.services.accumuli.build_accumuli_analysis",
+        storage="analytics_pickle_gzip_plus_figure_cache",
         version="accumuli-frozen-analysis-v1",
         dependencies=(
             "portfolio_data_signature",
@@ -545,12 +555,22 @@ register_cache_artifact(
         clear_group="cruscotti",
         stale_policy="rebuild_on_explicit_accumuli_analysis_only",
         log_page="Cruscotti",
-        description="Analisi Accumuli/PAC congelata di Cruscotti: il click genera un artefatto riprendibile nei rerun successivi.",
+        description=(
+            "Analisi Accumuli/PAC congelata di Cruscotti: il click genera un "
+            "artefatto riprendibile nei rerun successivi. Non passa da "
+            "get_or_build_registered_artifact ma dal modulo condiviso "
+            "core/frozen_analysis_cache.py (store_frozen_analysis_cache per il "
+            "payload, cached_render_value per le figure), che a sua volta "
+            "consuma i provider gia' registrati analytics.frozen_payload_store "
+            "e figures.plotly_cache_provider -- corretto il 2026-08-17, prima "
+            "la scheda descriveva un meccanismo (page_artifact) diverso da "
+            "quello realmente usato."
+        ),
         prebuild=False,
         trigger="explicit_action",
         rerun_policy="no_global_rebuild",
         action_scope="cruscotti_accumuli_only",
-        status="pilot",
+        status="registered_provider",
     )
 )
 
@@ -732,6 +752,6 @@ register_cache_artifact(
         trigger="background_or_explicit_action",
         rerun_policy="no_forced_rerun",
         action_scope="prebuild_only",
-        status="pilot",
+        status="registered_provider",
     )
 )
