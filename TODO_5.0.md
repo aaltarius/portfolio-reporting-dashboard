@@ -51,14 +51,28 @@ Promosso a `registered_provider`. Stato registry ora: **22
 `registered_provider`**, **5 `pilot`**, 1 `documented_exception`,
 0 `legacy_provider`.
 
-I 5 rimasti in `pilot` sono classificati per tipo di lavoro residuo, non
+Secondo dei 3 "senza cache reale" completato 2026-08-17:
+`summary.report_payload` (`ui/pages/summary.py:370`, generato dal pulsante
+"Genera report") era gia' dietro un click esplicito (non ricostruito ad
+ogni rerun come Confronto), ma senza passare dal magazzino registrato: solo
+loggato per diagnostica. Collegato allo stesso modo, firma su
+`portfolio_data_signature` (`ctx.data_sig`), `report_options` (le checkbox
+di cosa includere), `theme_signature`, `operations_report` (conteggio righe
+movimenti) e `reporting_settings`. Test aggiunto in
+`tests/test_cache_policy_5.py`
+(`test_summary_page_uses_registered_page_artifact_for_report_payload`).
+Promosso a `registered_provider`. Stato registry ora: **23
+`registered_provider`**, **4 `pilot`**, 1 `documented_exception`,
+0 `legacy_provider`.
+
+I 4 rimasti in `pilot` sono classificati per tipo di lavoro residuo, non
 tutti uguali:
 
 - **Nessuna cache reale ancora scritta** (serve codice vero, stesso schema
-  appena applicato a `confronto.comparison_report`): `summary.report_payload`
-  (stesso caso in `ui/pages/summary.py:367`), `mercati.live_snapshot`
-  (scrive/legge un file JSON direttamente in
-  `core/infrastructure/market_auto_refresh.py`, mai passato dal registry).
+  gia' applicato due volte): `mercati.live_snapshot` (scrive/legge un file
+  JSON direttamente in `core/infrastructure/market_auto_refresh.py`, mai
+  passato dal registry — architettura diversa dagli altri due perche' e' un
+  servizio in background, non generato dentro il render di una pagina).
 - **Cache reale gia' funzionante, ma tramite un meccanismo diverso e gia'
   definitivo** (`analytics.frozen_payload_store`/`store_frozen_analysis_cache`,
   non `get_or_build_registered_artifact`): `cruscotti.benchmark_frozen_analysis`,

@@ -14,6 +14,9 @@ import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
 
 from core.cache import record_cache_decision
+from core.cache_orchestrator import get_or_build_registered_artifact
+from core.cache_policy import build_cache_artifact_signature, get_cache_artifact_spec
+from core.cache_signatures import theme_signature
 from core.finance import build_portfolio_summary_payload
 from core.render_profiler import profile_step
 from core.services.period_activity import build_period_activity
@@ -364,14 +367,30 @@ def render_summary(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                             include_advanced=include_risk_overview,
                             page_mode="Report",
                         )
-                    html_doc = build_portfolio_report_html(
-                        payload,
-                        report_options,
-                        figures=figures,
-                        operations_df=ctx.ops_report,
-                        income_items=ctx.proventi,
-                        liquidity=ctx.liquidita_attuale,
+                    report_spec = get_cache_artifact_spec("summary.report_payload")
+                    report_signature = build_cache_artifact_signature(
+                        report_spec.artifact_id,
+                        inputs={
+                            "portfolio_data_signature": str(getattr(ctx, "data_sig", "")),
+                            "report_options": report_options,
+                            "theme_signature": theme_signature(theme),
+                            "operations_report": {"rows": len(ctx.ops_report) if isinstance(ctx.ops_report, pd.DataFrame) else 0},
+                            "reporting_settings": settings.get("reporting_export", {}),
+                        },
                     )
+                    report_artifact = get_or_build_registered_artifact(
+                        artifact_id=report_spec.artifact_id,
+                        signature=report_signature,
+                        builder=lambda: build_portfolio_report_html(
+                            payload,
+                            report_options,
+                            figures=figures,
+                            operations_df=ctx.ops_report,
+                            income_items=ctx.proventi,
+                            liquidity=ctx.liquidita_attuale,
+                        ),
+                    )
+                    html_doc = report_artifact.value if isinstance(report_artifact.value, str) else ""
                     json_payload = dict(payload)
                     period_activity = json_payload.get("period_activity", {})
                     if isinstance(period_activity, dict):
