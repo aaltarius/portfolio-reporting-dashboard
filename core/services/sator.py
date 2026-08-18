@@ -1147,10 +1147,15 @@ def _compute_instrument_quota_status(
     instrument_quotas: dict[str, dict[str, float]],
 ) -> dict[str, dict[str, Any]]:
     """Validita' e scostamento delle quote target per strumento dentro ogni
-    bucket. Un bucket e' valido se ogni suo strumento attivo ha una quota
-    assegnata e la somma delle quote assegnate (sui soli ticker ancora
-    attivi) e' ~100%. Le quote orfane (strumenti chiusi) sono escluse dalla
-    somma e riportate in stale_tickers per messaggistica UI."""
+    bucket. La feature e' opt-in per bucket: se instrument_quotas[bucket] e'
+    completamente vuoto (mai configurato dall'utente), il bucket e' sempre
+    valido a prescindere da quanti strumenti attivi possiede - identico al
+    comportamento pre-feature (nessun blocco). Solo quando esiste almeno una
+    quota assegnata per quel bucket scatta la regola stretta: ogni strumento
+    attivo del bucket deve avere una quota assegnata e la somma delle quote
+    assegnate (sui soli ticker ancora attivi) deve essere ~100%. Le quote
+    orfane (strumenti chiusi) sono escluse dalla somma e riportate in
+    stale_tickers per messaggistica UI."""
     tickers_by_bucket: dict[str, list[str]] = {"Core": [], "Difensivo": [], "Satellite": []}
     for ticker, bucket in instrument_buckets.items():
         tickers_by_bucket.setdefault(bucket, []).append(ticker)
@@ -1159,11 +1164,20 @@ def _compute_instrument_quota_status(
     for bucket in ("Core", "Difensivo", "Satellite"):
         active_tickers = set(tickers_by_bucket.get(bucket, []))
         quotas = dict(instrument_quotas.get(bucket, {}) or {})
-        missing_tickers = sorted(active_tickers - set(quotas.keys()))
-        stale_tickers = sorted(set(quotas.keys()) - active_tickers)
-        live_quotas = {t: w for t, w in quotas.items() if t in active_tickers}
-        sum_target = sum(max(0.0, _safe_float(w, 0.0)) for w in live_quotas.values())
-        valid = not missing_tickers and (not active_tickers or abs(sum_target - 1.0) < 1e-6)
+        if not quotas:
+            # Mai configurato per questo bucket: feature inattiva, nessun
+            # blocco a prescindere dal numero di strumenti posseduti.
+            valid = True
+            missing_tickers: list[str] = []
+            stale_tickers: list[str] = []
+            live_quotas: dict[str, float] = {}
+            sum_target = 0.0
+        else:
+            missing_tickers = sorted(active_tickers - set(quotas.keys()))
+            stale_tickers = sorted(set(quotas.keys()) - active_tickers)
+            live_quotas = {t: w for t, w in quotas.items() if t in active_tickers}
+            sum_target = sum(max(0.0, _safe_float(w, 0.0)) for w in live_quotas.values())
+            valid = not missing_tickers and (not active_tickers or abs(sum_target - 1.0) < 1e-6)
         bucket_total = max(0.0, _safe_float(bucket_weights.get(bucket), 0.0))
         current_in_bucket = {
             t: round(max(0.0, _safe_float(current_weights.get(t), 0.0)) / bucket_total, 15) if bucket_total > 0 else 0.0
