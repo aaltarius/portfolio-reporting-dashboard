@@ -154,6 +154,8 @@ DEFAULT_SATOR_SETTINGS: dict[str, Any] = {
     "band_tolerance_pp": 0.03,
     "deficit_pac_only": False,
     "bucket_first_allocation": False,
+    "instrument_quotas": {"Core": {}, "Difensivo": {}, "Satellite": {}},
+    "instrument_quota_tolerance_pp": 0.05,
 }
 
 
@@ -197,6 +199,22 @@ def ensure_sator_settings(settings: dict[str, Any] | None) -> dict[str, Any]:
         for nature in CAP_MORBIDO_NATURA
     }
     merged["concentration_caps"] = caps
+
+    raw_quotas = merged.get("instrument_quotas", {}) or {}
+    norm_quotas: dict[str, dict[str, float]] = {"Core": {}, "Difensivo": {}, "Satellite": {}}
+    if isinstance(raw_quotas, dict):
+        for bucket in ("Core", "Difensivo", "Satellite"):
+            bucket_raw = raw_quotas.get(bucket, {})
+            if isinstance(bucket_raw, dict):
+                for ticker, weight in bucket_raw.items():
+                    tk = str(ticker or "").strip().upper()
+                    w = _safe_float(weight, -1.0)
+                    if tk and 0.0 <= w <= 1.0:
+                        norm_quotas[bucket][tk] = w
+    merged["instrument_quotas"] = norm_quotas
+    merged["instrument_quota_tolerance_pp"] = float(
+        min(0.20, max(0.0, _safe_float(merged.get("instrument_quota_tolerance_pp"), 0.05)))
+    )
 
     weights_raw = merged.get("score_weights", {}) or {}
     weights = {k: max(0.0, _safe_float(weights_raw.get(k), PESI_DIMENSIONI[k])) for k in PESI_DIMENSIONI}
