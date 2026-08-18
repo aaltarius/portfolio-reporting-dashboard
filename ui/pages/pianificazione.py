@@ -321,6 +321,24 @@ def _render_btp_exclusion_toggle(data: dict, settings: dict) -> frozenset[str]:
     return held_non_pac_tickers(data, state_df)
 
 
+def _render_quota_invalid_banner(quota_status: dict) -> None:
+    invalid_buckets = [
+        (bucket, status) for bucket, status in quota_status.items() if not status.get("valid", True)
+    ]
+    if not invalid_buckets:
+        return
+    details = "; ".join(
+        f"{bucket}: manca la quota per {', '.join(status['missing_tickers'])}"
+        if status["missing_tickers"]
+        else f"{bucket}: somma quote {status['sum_target']*100:.0f}% invece di 100%"
+        for bucket, status in invalid_buckets
+    )
+    st.error(
+        "Quote interne non valide — SATOR non propone acquisti per questi bucket finché non le aggiorni "
+        f"da \"Quote & impostazioni\" in sidebar. {details}."
+    )
+
+
 def _render_portfolio_objective_section(ctx: SimpleNamespace, theme, exclude_tickers: frozenset[str] = frozenset()) -> None:
     settings = ctx.settings
     data = ctx.data
@@ -978,6 +996,9 @@ def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             )
         with profile_step("Pianificazione", "btp_exclusion_toggle"):
             exclude_tickers = _render_btp_exclusion_toggle(data, settings)
+        with profile_step("Pianificazione", "quota_invalid_banner"):
+            from core.services.sator import compute_instrument_quota_status
+            _render_quota_invalid_banner(compute_instrument_quota_status(data, settings))
         with st.container():
             with profile_step("Pianificazione", "obiettivo_section"):
                 _render_portfolio_objective_section(ctx, theme, exclude_tickers)
