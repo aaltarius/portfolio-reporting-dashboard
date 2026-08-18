@@ -1127,6 +1127,51 @@ def _compute_bucket_weights(
     return out
 
 
+def _compute_instrument_quota_status(
+    instrument_buckets: dict[str, str],
+    current_weights: dict[str, float],
+    bucket_weights: dict[str, float],
+    instrument_quotas: dict[str, dict[str, float]],
+) -> dict[str, dict[str, Any]]:
+    """Validita' e scostamento delle quote target per strumento dentro ogni
+    bucket. Un bucket e' valido se ogni suo strumento attivo ha una quota
+    assegnata e la somma delle quote assegnate (sui soli ticker ancora
+    attivi) e' ~100%. Le quote orfane (strumenti chiusi) sono escluse dalla
+    somma e riportate in stale_tickers per messaggistica UI."""
+    tickers_by_bucket: dict[str, list[str]] = {"Core": [], "Difensivo": [], "Satellite": []}
+    for ticker, bucket in instrument_buckets.items():
+        tickers_by_bucket.setdefault(bucket, []).append(ticker)
+
+    out: dict[str, dict[str, Any]] = {}
+    for bucket in ("Core", "Difensivo", "Satellite"):
+        active_tickers = set(tickers_by_bucket.get(bucket, []))
+        quotas = dict(instrument_quotas.get(bucket, {}) or {})
+        missing_tickers = sorted(active_tickers - set(quotas.keys()))
+        stale_tickers = sorted(set(quotas.keys()) - active_tickers)
+        live_quotas = {t: w for t, w in quotas.items() if t in active_tickers}
+        sum_target = sum(max(0.0, _safe_float(w, 0.0)) for w in live_quotas.values())
+        valid = not missing_tickers and (not active_tickers or abs(sum_target - 1.0) < 1e-6)
+        bucket_total = max(0.0, _safe_float(bucket_weights.get(bucket), 0.0))
+        current_in_bucket = {
+            t: round(max(0.0, _safe_float(current_weights.get(t), 0.0)) / bucket_total, 15) if bucket_total > 0 else 0.0
+            for t in active_tickers
+        }
+        deviations_pp = {
+            t: round((current_in_bucket.get(t, 0.0) - _safe_float(live_quotas[t], 0.0)) * 100.0, 15)
+            for t in live_quotas
+        }
+        out[bucket] = {
+            "valid": valid,
+            "missing_tickers": missing_tickers,
+            "stale_tickers": stale_tickers,
+            "sum_target": sum_target,
+            "current_weights": current_in_bucket,
+            "target_weights": {t: _safe_float(w, 0.0) for t, w in live_quotas.items()},
+            "deviations_pp": deviations_pp,
+        }
+    return out
+
+
 def _non_pac_held_tickers(data: dict[str, Any], held_tickers: set[str]) -> frozenset[str]:
     """Ticker posseduti non ad accumulo (oggi: categoria GOV, es. BTP).
 
