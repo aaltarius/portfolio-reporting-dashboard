@@ -13,7 +13,7 @@ import json
 import logging
 from html import escape
 
-from fastapi import APIRouter, Form
+from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from core.services.sator import compute_instrument_buckets, compute_instrument_quota_status, ensure_sator_settings
@@ -36,8 +36,8 @@ h2{font-size:.75rem;font-weight:800;text-transform:uppercase;letter-spacing:.06e
 .qi-row label{flex:1;font-weight:600}
 .qi-row input{width:100px;padding:6px 8px;border:1px solid var(--slate-300);border-radius:8px}
 .qi-sum{font-weight:700;margin-top:8px}
-.alert-ok{background:var(--emerald-50,#ecfdf5);color:var(--emerald-700,#047857);padding:10px 14px;border-radius:10px;margin-bottom:14px}
-.alert-warn{background:var(--rose-50,#fff1f2);color:var(--rose-700,#be123c);padding:10px 14px;border-radius:10px;margin-bottom:14px}
+.alert-ok{background:var(--green-50);color:var(--green-800);padding:10px 14px;border-radius:10px;margin-bottom:14px}
+.alert-warn{background:var(--red-50);color:var(--red-700);padding:10px 14px;border-radius:10px;margin-bottom:14px}
 .btn-salva{padding:9px 24px;background:var(--indigo-500);color:var(--white);border:none;border-radius:9px;font-size:.9rem;font-weight:700;cursor:pointer}
 </style>"""
 
@@ -94,7 +94,14 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "") -> str:
     for bucket in _BUCKETS:
         s = status[bucket]
         stato_label = "valido" if s["valid"] else "NON VALIDO"
-        status_rows.append(f"<tr><td>{bucket}</td><td>{stato_label}</td><td>{s['sum_target']*100:.1f}%</td></tr>")
+        stale = s.get("stale_tickers") or []
+        note = (
+            f"quota orfana su {', '.join(escape(t) for t in stale)}, rimuovila o riassegnala"
+            if stale else ""
+        )
+        status_rows.append(
+            f"<tr><td>{bucket}</td><td>{stato_label}</td><td>{s['sum_target']*100:.1f}%</td><td>{note}</td></tr>"
+        )
 
     caps = cfg["concentration_caps"]
     caps_rows = "".join(
@@ -144,7 +151,7 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "") -> str:
   </form>
   <div class="qi-card">
     <h2>Stato attuale</h2>
-    <table><thead><tr><th>Bucket</th><th>Stato</th><th>Somma quote</th></tr></thead>
+    <table><thead><tr><th>Bucket</th><th>Stato</th><th>Somma quote</th><th>Note</th></tr></thead>
     <tbody>{"".join(status_rows)}</tbody></table>
   </div>
   {settings_section}
@@ -172,6 +179,7 @@ async def get_quote_interne(ok: str = "", err: str = ""):
 
 @router.post("/quote-interne", response_class=HTMLResponse)
 async def post_quote_interne(
+    request: Request,
     azione: str = Form(""),
     quotas_json: str = Form(""),
     w_fit: str = Form("30"), w_mom: str = Form("25"), w_risk: str = Form("20"),
@@ -192,11 +200,31 @@ async def post_quote_interne(
         total = sum(weights.values())
         if total > 0:
             weights = {k: v / total for k, v in weights.items()}
+
+        # I cap di concentrazione (cap_<natura>) non sono dichiarati come
+        # parametri Form individuali (le natura sono dinamiche, vedi
+        # CAP_MORBIDO_NATURA in core/services/sator.py): letti dal form
+        # grezzo, stesso pattern di ui/form_server/strumenti.py
+        # (post_strumenti, campi cand_N dinamici).
+        form_data = dict(await request.form())
+        caps: dict[str, float] = {}
+        for key, value in form_data.items():
+            if not key.startswith("cap_"):
+                continue
+            natura = key[len("cap_"):]
+            try:
+                pct = float(value)
+            except (TypeError, ValueError):
+                continue
+            caps[natura] = max(1.0, min(100.0, pct)) / 100.0
+
         settings = load_settings()
         settings.setdefault("sator", {})
         settings["sator"]["score_weights"] = weights
         settings["sator"]["bucket_first_allocation"] = bool(bucket_first_allocation)
         settings["sator"]["band_tolerance_pp"] = max(0.0, min(20.0, float(band_tolerance_pp or 0))) / 100.0
+        if caps:
+            settings["sator"]["concentration_caps"] = caps
         try:
             save_settings(settings)
         except Exception as exc:
@@ -215,11 +243,24 @@ async def post_quote_interne(
     if not isinstance(parsed, dict):
         return HTMLResponse(_render_quote_interne_page(err_msg="Dati quote non validi."))
 
+    # Opt-in per bucket (garanzia centrale della feature, confermata dal
+    # proprietario del progetto): un bucket dove l'utente ha lasciato tutti i
+    # valori a 0/vuoto va trattato come "mai configurato", non come una
+    # richiesta di 0% ovunque - altrimenti sarebbe impossibile salvare le
+    # quote di un solo bucket lasciando gli altri due intonsi (collectQuotas()
+    # lato client invia sempre tutti e tre i bucket con 0 per i campi vuoti).
+    # Un bucket "toccato" (almeno un valore > 0) resta invece soggetto alla
+    # regola stretta e viene validato/scritto per intero, zeri espliciti
+    # compresi (uno zero esplicito su uno strumento posseduto e' un target
+    # valido, diverso da "quota mancante").
     for bucket, weights in parsed.items():
         if bucket not in _BUCKETS or not isinstance(weights, dict):
             continue
-        total = sum(float(v or 0.0) for v in weights.values())
-        if weights and abs(total - 100.0) > 0.5:
+        numeric_weights = {str(t or "").strip().upper(): float(v or 0.0) for t, v in weights.items()}
+        if not any(v > 0 for v in numeric_weights.values()):
+            continue  # bucket non toccato: nessuna validazione, resta opt-out
+        total = sum(numeric_weights.values())
+        if abs(total - 100.0) > 0.5:
             return HTMLResponse(_render_quote_interne_page(
                 err_msg=f"Le quote di {bucket} non somma a 100 (somma attuale: {total:.1f})."
             ))
@@ -230,10 +271,31 @@ async def post_quote_interne(
     for bucket, weights in parsed.items():
         if bucket not in _BUCKETS or not isinstance(weights, dict):
             continue
-        for ticker, weight in weights.items():
-            tk = str(ticker or "").strip().upper()
-            if tk:
-                normalized[bucket][tk] = round(float(weight or 0.0) / 100.0, 6)
+        numeric_weights = {
+            str(ticker or "").strip().upper(): float(weight or 0.0)
+            for ticker, weight in weights.items()
+            if str(ticker or "").strip()
+        }
+        if not any(v > 0 for v in numeric_weights.values()):
+            continue  # bucket non toccato (tutti zero/vuoti): resta {} come se mai configurato
+
+        # Normalizza a somma esattamente 1.0 (il form accetta +-0.5pp di
+        # tolleranza attorno a 100, ma _compute_instrument_quota_status in
+        # core/services/sator.py richiede abs(sum_target - 1.0) < 1e-6: cio'
+        # che viene salvato deve gia' essere esatto). Metodo del resto
+        # piu' grande: arrotonda tutti i ticker tranne quello di peso
+        # maggiore, poi quest'ultimo assorbe il residuo cosi' la somma
+        # finale non si discosta da 1.0 per errori di arrotondamento.
+        total = sum(numeric_weights.values())
+        tickers = list(numeric_weights.keys())
+        top_ticker = max(tickers, key=lambda t: numeric_weights[t])
+        fracs: dict[str, float] = {}
+        for tk in tickers:
+            if tk == top_ticker:
+                continue
+            fracs[tk] = round(numeric_weights[tk] / total, 6)
+        fracs[top_ticker] = round(1.0 - sum(fracs.values()), 6)
+        normalized[bucket] = fracs
     settings["sator"]["instrument_quotas"] = normalized
 
     try:
