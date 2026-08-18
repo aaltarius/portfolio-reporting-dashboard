@@ -526,6 +526,8 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
 .bucket-alloc-natura svg{width:14px;height:14px;color:var(--natura-color);flex:none}
 .bucket-alloc-mini-track{position:relative;height:6px;border-radius:4px;background:color-mix(in srgb, var(--ptf-text) 10%, var(--ptf-surface));min-width:70px}
 .bucket-alloc-mini-fill{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--tone);opacity:.8}
+.bucket-alloc-instrument-row.warn .bucket-alloc-mini-fill{background:var(--ptf-warning)}
+.bucket-alloc-instrument-row.bad .bucket-alloc-mini-fill{background:var(--ptf-danger)}
 .bucket-alloc-mini-caption{display:block;margin-top:3px;font-size:0.72rem;color:var(--ptf-muted)}
 .bucket-alloc-watchlist-row td{
   padding:7px 14px;border-top:1px dashed color-mix(in srgb, var(--ptf-border) 55%, transparent);

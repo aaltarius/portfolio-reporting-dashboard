@@ -14,6 +14,7 @@ from core.cache import invalidate_portfolio_cache
 from core.finance import compute_portfolio_state
 from core.services.sator import (
     compute_current_bucket_mix,
+    compute_instrument_quota_status,
     ensure_sator_metadata,
     ensure_sator_settings,
     build_portfolio_rings_frame,
@@ -112,6 +113,18 @@ def _section_line() -> None:
     return render_section_line_shared()
 
 
+def _instrument_scost_severity(delta_pp: float, tolerance_pp: float) -> str:
+    """Tolleranza per-strumento configurabile (settings["sator"]["instrument_quota_tolerance_pp"]),
+    a differenza di _bucket_scost_severity che ha soglie fisse per il bucket aggregato."""
+    d = abs(delta_pp)
+    tol = max(0.1, tolerance_pp)
+    if d <= tol:
+        return "ok"
+    if d <= tol * 2:
+        return "warn"
+    return "bad"
+
+
 def _bucket_scost_severity(delta_pp: float) -> str:
     """Tolleranza di ribilanciamento: entro 3pp = ok, entro 8pp = attenzione,
     oltre = fuori target."""
@@ -131,14 +144,17 @@ def _build_bucket_allocation_table_html(
     objective_key: dict[str, str],
     theme,
     watchlist_reminders: dict[str, list[str]] | None = None,
+    quota_status: dict[str, dict] | None = None,
+    instrument_tolerance_pp: float = 5.0,
 ) -> str:
     """Tabella unica Core/Difensivo/Satellite: una riga-bucket con barra
-    obiettivo-vs-attuale (fill = attuale, tacca = obiettivo) seguita dalle
-    righe-natura del bucket (strumenti aggregati per natura: importo sommato,
-    peso riferito al gruppo natura, non al singolo strumento). Sostituisce
-    sia il vecchio box testuale "Lettura dell'allocazione" sia il box
-    "Strumenti per bucket": un solo oggetto visivo invece di grafico + due
-    box di testo."""
+    obiettivo-vs-attuale (fill = attuale, tacca = obiettivo) seguita da una
+    riga per strumento (non piu' aggregata per natura): importo del singolo
+    ticker, barra mini con fill = peso attuale sul bucket e tacca = quota di
+    riferimento (quando definita in "Quote & impostazioni"), didascalia
+    "Attuale X% · Target Y%". Sostituisce sia il vecchio box testuale
+    "Lettura dell'allocazione" sia il box "Strumenti per bucket": un solo
+    oggetto visivo invece di grafico + due box di testo."""
     total_value = float(bucket_totals.sum())
     body_rows: list[str] = []
     for b in ("Core", "Difensivo", "Satellite"):
@@ -171,28 +187,39 @@ def _build_bucket_allocation_table_html(
         </tr>''')
         if not sub.empty:
             sub = sub.copy()
-            sub["natura"] = sub["natura"].apply(lambda v: str(v) if v else "Esposizione diversificata")
             sub = sub.sort_values("value", ascending=False)
-            natura_groups = (
-                sub.groupby("natura", sort=False)
-                .agg(value=("value", "sum"), tickers=("ticker", lambda s: ", ".join(s.astype(str))))
-                .sort_values("value", ascending=False)
-            )
-            for natura_label, grp in natura_groups.iterrows():
+            bucket_quota = (quota_status or {}).get(b, {})
+            targets = bucket_quota.get("target_weights", {})
+            deviations = bucket_quota.get("deviations_pp", {})
+            for _, row in sub.iterrows():
+                ticker = str(row["ticker"])
+                natura_label = str(row["natura"]) if row["natura"] else "Esposizione diversificata"
                 natura_color, natura_svg = get_natura_visual(natura_label)
-                group_value = float(grp["value"])
-                pct_of_bucket = (group_value / bucket_value * 100.0) if bucket_value > 0 else 0.0
-                tickers_html = grp["tickers"]
+                instrument_value = float(row["value"])
+                current_pct = (instrument_value / bucket_value * 100.0) if bucket_value > 0 else 0.0
+                has_target = ticker in targets
+                target_pct = targets.get(ticker, 0.0) * 100.0
+                deviation_pp = deviations.get(ticker, 0.0)
+                severity = _instrument_scost_severity(deviation_pp, instrument_tolerance_pp) if has_target else "ok"
+                target_tick = (
+                    f'<div class="bucket-alloc-bar-target" style="left:{min(max(target_pct, 0.0), 100.0):.2f}%"></div>'
+                    if has_target else ""
+                )
+                caption = (
+                    f"Attuale {current_pct:.0f}% &middot; Target {target_pct:.0f}%"
+                    if has_target else f"Attuale {current_pct:.0f}%"
+                )
                 body_rows.append(f'''
-                <tr class="bucket-alloc-instrument-row" style="--tone:{tone}">
+                <tr class="bucket-alloc-instrument-row {severity}" style="--tone:{tone}">
                   <td><span class="bucket-alloc-natura" style="--natura-color:{natura_color}">{natura_svg}{natura_label}</span></td>
-                  <td class="bucket-alloc-ticker">{tickers_html}</td>
-                  <td class="num">{fmt_eur_it(group_value, 2)}</td>
+                  <td class="bucket-alloc-ticker">{escape(ticker)}</td>
+                  <td class="num">{fmt_eur_it(instrument_value, 2)}</td>
                   <td>
                     <div class="bucket-alloc-mini-track">
-                      <div class="bucket-alloc-mini-fill" style="width:{pct_of_bucket:.2f}%"></div>
+                      <div class="bucket-alloc-mini-fill" style="width:{min(max(current_pct, 0.0), 100.0):.2f}%"></div>
+                      {target_tick}
                     </div>
-                    <span class="bucket-alloc-mini-caption">{pct_of_bucket:.0f}% del bucket</span>
+                    <span class="bucket-alloc-mini-caption">{caption}</span>
                   </td>
                 </tr>''')
         for reminder_natura in reminders_for_bucket:
@@ -225,9 +252,14 @@ def _render_bucket_allocation_table(
     objective_key: dict[str, str],
     theme,
     watchlist_reminders: dict[str, list[str]] | None = None,
+    quota_status: dict[str, dict] | None = None,
+    instrument_tolerance_pp: float = 5.0,
 ) -> None:
     st.markdown(
-        _build_bucket_allocation_table_html(rings_df, bucket_totals, current_mix, objective, objective_key, theme, watchlist_reminders),
+        _build_bucket_allocation_table_html(
+            rings_df, bucket_totals, current_mix, objective, objective_key, theme,
+            watchlist_reminders, quota_status, instrument_tolerance_pp,
+        ),
         unsafe_allow_html=True,
     )
 
@@ -817,7 +849,11 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
                 for b in ("Core", "Difensivo", "Satellite")
             }
             watchlist_reminders = compute_watchlist_reminders(data, state_df, exclude_tickers=exclude_tickers)
-            _render_bucket_allocation_table(rings_df, bucket_totals, current_mix, objective, objective_key, theme, watchlist_reminders)
+            _render_bucket_allocation_table(
+                rings_df, bucket_totals, current_mix, objective, objective_key, theme, watchlist_reminders,
+                quota_status=compute_instrument_quota_status(data, settings),
+                instrument_tolerance_pp=ensure_sator_settings(settings)["instrument_quota_tolerance_pp"] * 100.0,
+            )
     render_section_title(
         "Prossimo acquisto: mappa decisionale",
         comment="Dati dall'ultima fotografia SATOR salvata dalla pagina SATOR attiva in sidebar, non da un'analisi dal vivo dentro Streamlit.",
