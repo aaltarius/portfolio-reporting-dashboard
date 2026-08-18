@@ -176,6 +176,7 @@ class SatorContext:
     include_fee_instruments: bool
     liquidita: float
     concentration_severity: float = 1.0
+    blocked_buckets_quota: frozenset[str] = frozenset()
 
 
 # --------------------------------------------------------------------------- #
@@ -546,6 +547,12 @@ def run_sator_analysis(
     current_weights = _compute_current_weights(state_df)
     nature_weights = _compute_nature_weights(data, state_df, current_weights)
     bucket_weights = _compute_bucket_weights(data, state_df, current_weights)
+    held_tickers = _tickers_posseduti(state_df)
+    instrument_buckets = compute_instrument_buckets(data, held_tickers)
+    quota_status = _compute_instrument_quota_status(
+        instrument_buckets, current_weights, bucket_weights, cfg["instrument_quotas"],
+    )
+    blocked_buckets_quota = frozenset(b for b, s in quota_status.items() if not s["valid"])
     nature_weights_excl: dict[str, float] | None = None
     bucket_weights_excl: dict[str, float] | None = None
     if cfg["deficit_pac_only"]:
@@ -567,6 +574,7 @@ def run_sator_analysis(
         correlations=correlations, selected_categories=allowed,
         include_fee_instruments=bool(include_fee_instruments), liquidita=liquidita,
         concentration_severity=concentration_severity,
+        blocked_buckets_quota=blocked_buckets_quota,
     )
 
     ranking = _score_universe(ctx, cfg)
@@ -586,7 +594,7 @@ def run_sator_analysis(
     }
     return {
         "summary": summary, "ranking": ranking, "alerts": alerts, "scenarios": {},
-        "sator_settings": cfg, "returns_frame": returns_frame,
+        "sator_settings": cfg, "returns_frame": returns_frame, "quota_status": quota_status,
     }
 
 
@@ -1170,6 +1178,23 @@ def _compute_instrument_quota_status(
             "deviations_pp": deviations_pp,
         }
     return out
+
+
+def compute_instrument_quota_status(data: dict[str, Any], settings: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Entry point standalone (non richiede un'analisi SATOR completa):
+    usato dal banner di Pianificazione e dalla pagina /quote-interne."""
+    cfg = ensure_sator_settings(settings)
+    state = compute_portfolio_state(data, include_closed=True)
+    state_df = state.get("df", pd.DataFrame())
+    if isinstance(data.get("_positions_df"), pd.DataFrame) and not data["_positions_df"].empty:
+        state_df = data["_positions_df"].copy()
+    held_tickers = _tickers_posseduti(state_df)
+    instrument_buckets = compute_instrument_buckets(data, held_tickers)
+    current_weights = _compute_current_weights(state_df)
+    bucket_weights = _compute_bucket_weights(data, state_df, current_weights)
+    return _compute_instrument_quota_status(
+        instrument_buckets, current_weights, bucket_weights, cfg["instrument_quotas"],
+    )
 
 
 def _non_pac_held_tickers(data: dict[str, Any], held_tickers: set[str]) -> frozenset[str]:
