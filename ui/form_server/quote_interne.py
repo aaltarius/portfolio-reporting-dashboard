@@ -16,7 +16,12 @@ from html import escape
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from core.services.sator import compute_instrument_buckets, compute_instrument_quota_status, ensure_sator_settings
+from core.services.sator import (
+    compute_instrument_buckets,
+    compute_instrument_quota_status,
+    compute_instrument_reference_ranges,
+    ensure_sator_settings,
+)
 from ui.form_server.shell import STREAMLIT_URL, _ROOT_VARS_BLOCK
 
 logger = logging.getLogger("portafoglio.form_server.quote_interne")
@@ -36,6 +41,7 @@ h2{font-size:.75rem;font-weight:800;text-transform:uppercase;letter-spacing:.06e
 .qi-row label{flex:1;font-weight:600}
 .qi-row input{width:100px;padding:6px 8px;border:1px solid var(--slate-300);border-radius:8px}
 .qi-sum{font-weight:700;margin-top:8px}
+.qi-hint{color:var(--slate-500);font-size:.78rem;margin-left:8px}
 .alert-ok{background:var(--green-50);color:var(--green-800);padding:10px 14px;border-radius:10px;margin-bottom:14px}
 .alert-warn{background:var(--red-50);color:var(--red-700);padding:10px 14px;border-radius:10px;margin-bottom:14px}
 .btn-salva{padding:9px 24px;background:var(--indigo-500);color:var(--white);border:none;border-radius:9px;font-size:.9rem;font-weight:700;cursor:pointer}
@@ -67,6 +73,7 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "") -> str:
     cfg = ensure_sator_settings(settings)
     tickers_by_bucket = _bucket_tickers(data)
     status = compute_instrument_quota_status(data, settings)
+    reference_ranges = compute_instrument_reference_ranges(data, settings, tickers_by_bucket)
 
     ok_html = f'<div class="alert-ok">{escape(ok_msg)}</div>' if ok_msg else ""
     err_html = f'<div class="alert-warn">{escape(err_msg)}</div>' if err_msg else ""
@@ -78,11 +85,17 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "") -> str:
         if not tickers:
             bucket_sections.append(f'<div class="qi-card"><h2>{bucket}</h2><p>Nessuno strumento posseduto in questo bucket.</p></div>')
             continue
+        bucket_ranges = reference_ranges.get(bucket, {})
         rows = "".join(
             f'<div class="qi-row"><label>{escape(ticker)}</label>'
             f'<input type="number" min="0" max="100" step="0.5" '
             f'data-bucket="{bucket}" data-ticker="{escape(ticker)}" '
-            f'value="{quotas.get(ticker, 0.0) * 100:.1f}" class="qi-input"></div>'
+            f'value="{quotas.get(ticker, 0.0) * 100:.1f}" class="qi-input">'
+            + (
+                f'<span class="qi-hint">riferimento indicativo: 0&ndash;{bucket_ranges[ticker][1] * 100:.0f}%</span>'
+                if ticker in bucket_ranges else ""
+            )
+            + '</div>'
             for ticker in tickers
         )
         bucket_sections.append(

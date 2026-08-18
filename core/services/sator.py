@@ -1216,6 +1216,61 @@ def compute_instrument_quota_status(data: dict[str, Any], settings: dict[str, An
     )
 
 
+_BUCKET_OBJECTIVE_KEY = {"Core": "core", "Difensivo": "difensivo", "Satellite": "satellite"}
+
+
+def compute_instrument_reference_ranges(
+    data: dict[str, Any],
+    settings: dict[str, Any],
+    bucket_tickers: dict[str, list[str]],
+) -> dict[str, dict[str, tuple[float, float]]]:
+    """Forbice di riferimento (0.0, max) per ogni strumento di ogni bucket,
+    puramente indicativa - nessun impatto su validita'/blocco SATOR (quello
+    resta _compute_instrument_quota_status, invariato). Richiesta esplicita
+    dell'utente dopo il merge di quote-interne-bucket: "dare un indirizzo e
+    coerenza" partendo dai limiti di concentrazione per natura gia'
+    esistenti (settings["sator"]["concentration_caps"]), non un vincolo.
+
+    Formula: cap_natura / peso_target_del_bucket (clampato a 1.0), diviso in
+    parti uguali tra gli strumenti dello stesso bucket che condividono la
+    stessa natura SATOR (non l'etichetta visiva item["natura"] - la natura
+    tecnica gia' usata per i cap, es. "azionario_emergenti"). Nature non
+    mappate usano CAP_MORBIDO_DEFAULT, stessa convenzione di _score_fit
+    (riga 734). Bucket con peso target 0 non produce alcuna forbice (nessun
+    denominatore su cui riproporzionare)."""
+    cfg = ensure_sator_settings(settings)
+    caps = cfg["concentration_caps"]
+    objective = settings.get("portfolio_objective", {}) or {}
+    master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
+    items_by_ticker = {
+        str(item.get("ticker") or "").strip().upper(): item
+        for item in data.get("strumenti", []) or []
+    }
+
+    out: dict[str, dict[str, tuple[float, float]]] = {}
+    for bucket, tickers in bucket_tickers.items():
+        bucket_target = _safe_float(objective.get(_BUCKET_OBJECTIVE_KEY.get(bucket, ""), 0.0), 0.0)
+        ranges: dict[str, tuple[float, float]] = {}
+        if bucket_target > 0 and tickers:
+            nature_by_ticker: dict[str, str] = {}
+            for ticker in tickers:
+                item = items_by_ticker.get(ticker, {})
+                sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
+                inf = infer_sator_metadata(item, True)
+                nature_by_ticker[ticker] = _meta_strutturale(sator, inf, "nature")
+            nature_counts: dict[str, int] = {}
+            for nature in nature_by_ticker.values():
+                nature_counts[nature] = nature_counts.get(nature, 0) + 1
+            for ticker in tickers:
+                nature = nature_by_ticker[ticker]
+                cap = caps.get(nature, CAP_MORBIDO_DEFAULT)
+                max_bucket_relative = min(1.0, cap / bucket_target)
+                count = max(1, nature_counts.get(nature, 1))
+                ranges[ticker] = (0.0, max_bucket_relative / count)
+        out[bucket] = ranges
+    return out
+
+
 def _non_pac_held_tickers(data: dict[str, Any], held_tickers: set[str]) -> frozenset[str]:
     """Ticker posseduti non ad accumulo (oggi: categoria GOV, es. BTP).
 
