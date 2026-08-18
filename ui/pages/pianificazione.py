@@ -370,6 +370,29 @@ def _render_quota_invalid_banner(quota_status: dict) -> None:
     )
 
 
+def _render_quota_unconfigured_reminder(quota_status: dict) -> None:
+    """Avviso informativo (non bloccante, st.info) per bucket che possiedono
+    strumenti ma non hanno ancora nessuna quota interna configurata - a
+    differenza di _render_quota_invalid_banner (st.error, bucket opt-in ma
+    con copertura incompleta o somma sbagliata), qui il bucket e' valido a
+    tutti gli effetti (comportamento opt-in confermato dall'utente): SATOR
+    continua a funzionare, ma senza un segnale l'utente non si accorge mai
+    che la feature esiste per quel bucket. Richiesto esplicitamente
+    dall'utente dopo il merge - "volevo un avviso vero e proprio", non solo
+    un'etichetta diversa."""
+    unconfigured = [
+        bucket for bucket, status in quota_status.items()
+        if status.get("valid", True) and not status.get("target_weights") and status.get("current_weights")
+    ]
+    if not unconfigured:
+        return
+    st.info(
+        "Non hai ancora impostato le quote interne per " + ", ".join(unconfigured) + ": "
+        "SATOR continua a funzionare normalmente, ma non puoi tracciare le proporzioni tra "
+        "gli strumenti di questi bucket. Configurale quando vuoi da \"Quote & impostazioni\" in sidebar."
+    )
+
+
 def _render_portfolio_objective_section(ctx: SimpleNamespace, theme, exclude_tickers: frozenset[str] = frozenset()) -> None:
     settings = ctx.settings
     data = ctx.data
@@ -1033,7 +1056,9 @@ def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             exclude_tickers = _render_btp_exclusion_toggle(data, settings)
         with profile_step("Pianificazione", "quota_invalid_banner"):
             from core.services.sator import compute_instrument_quota_status
-            _render_quota_invalid_banner(compute_instrument_quota_status(data, settings))
+            quota_status_for_banners = compute_instrument_quota_status(data, settings)
+            _render_quota_invalid_banner(quota_status_for_banners)
+            _render_quota_unconfigured_reminder(quota_status_for_banners)
         with st.container():
             with profile_step("Pianificazione", "obiettivo_section"):
                 _render_portfolio_objective_section(ctx, theme, exclude_tickers)
