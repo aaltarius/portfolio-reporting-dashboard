@@ -96,6 +96,39 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "") -> str:
         stato_label = "valido" if s["valid"] else "NON VALIDO"
         status_rows.append(f"<tr><td>{bucket}</td><td>{stato_label}</td><td>{s['sum_target']*100:.1f}%</td></tr>")
 
+    caps = cfg["concentration_caps"]
+    caps_rows = "".join(
+        f'<div class="qi-row"><label>{escape(nature.replace("_", " "))}</label>'
+        f'<input type="number" min="1" max="100" step="1" name="cap_{escape(nature)}" '
+        f'value="{caps[nature]*100:.0f}"></div>'
+        for nature in sorted(caps.keys())
+    )
+    weights = cfg["score_weights"]
+    settings_section = f"""
+  <form method="post" action="/quote-interne">
+    <input type="hidden" name="azione" value="salva_impostazioni">
+    <div class="qi-card"><h2>Limiti di concentrazione per asset class</h2>{caps_rows}</div>
+    <div class="qi-card"><h2>Allocazione budget per bucket (avanzato)</h2>
+      <div class="qi-row"><label>Dividi il budget per deficit di bucket</label>
+        <input type="checkbox" name="bucket_first_allocation" value="1" {"checked" if cfg["bucket_first_allocation"] else ""}></div>
+      <div class="qi-row"><label>Tolleranza banda attorno al target (pp)</label>
+        <input type="number" name="band_tolerance_pp" min="0" max="20" step="0.5" value="{cfg['band_tolerance_pp']*100:.1f}"></div>
+    </div>
+    <div class="qi-card"><h2>Pesi del punteggio SATOR</h2>
+      <div class="qi-row"><label>Fit allocativo %</label><input type="number" name="w_fit" min="0" max="100" step="1" value="{weights['strategic_fit']*100:.0f}"></div>
+      <div class="qi-row"><label>Momentum %</label><input type="number" name="w_mom" min="0" max="100" step="1" value="{weights['tactical_momentum']*100:.0f}"></div>
+      <div class="qi-row"><label>Rischio %</label><input type="number" name="w_risk" min="0" max="100" step="1" value="{weights['risk_efficiency']*100:.0f}"></div>
+      <div class="qi-row"><label>Diversificazione %</label><input type="number" name="w_div" min="0" max="100" step="1" value="{weights['diversification_benefit']*100:.0f}"></div>
+      <div class="qi-row"><label>Costo %</label><input type="number" name="w_cost" min="0" max="100" step="1" value="{weights['cost_efficiency']*100:.0f}"></div>
+    </div>
+    <button type="submit" class="btn-salva">Salva impostazioni</button>
+  </form>
+  <div class="qi-card"><h2>Come funziona il calcolo interno</h2>
+    <p>Momentum: media pesata dei rendimenti a 1/3/6/12 mesi (10/35/35/20%) — <code>_score_momentum</code>.<br>
+    Rischio: volatilita' (40%) + drawdown massimo (30%) + rendimento/rischio a 12 mesi (30%) — <code>_score_risk</code>.<br>
+    Costo: bonus zero commissioni/PAC, malus TER/spread — <code>_score_cost</code>.</p>
+  </div>"""
+
     return f"""<!DOCTYPE html>
 <html lang="it">
 <head><meta charset="utf-8"><title>Quote & impostazioni</title>{_CSS}</head>
@@ -114,6 +147,7 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "") -> str:
     <table><thead><tr><th>Bucket</th><th>Stato</th><th>Somma quote</th></tr></thead>
     <tbody>{"".join(status_rows)}</tbody></table>
   </div>
+  {settings_section}
   <p><a href="{STREAMLIT_URL}">&larr; Torna all'app</a></p>
 </div>
 <script>
@@ -137,7 +171,39 @@ async def get_quote_interne(ok: str = "", err: str = ""):
 
 
 @router.post("/quote-interne", response_class=HTMLResponse)
-async def post_quote_interne(azione: str = Form(""), quotas_json: str = Form("")):
+async def post_quote_interne(
+    azione: str = Form(""),
+    quotas_json: str = Form(""),
+    w_fit: str = Form("30"), w_mom: str = Form("25"), w_risk: str = Form("20"),
+    w_div: str = Form("15"), w_cost: str = Form("10"),
+    bucket_first_allocation: str = Form(""),
+    band_tolerance_pp: str = Form("3"),
+):
+    from persistence.storage import load_settings, save_settings
+
+    if azione == "salva_impostazioni":
+        weights = {
+            "strategic_fit": max(0.0, float(w_fit or 0)),
+            "tactical_momentum": max(0.0, float(w_mom or 0)),
+            "risk_efficiency": max(0.0, float(w_risk or 0)),
+            "diversification_benefit": max(0.0, float(w_div or 0)),
+            "cost_efficiency": max(0.0, float(w_cost or 0)),
+        }
+        total = sum(weights.values())
+        if total > 0:
+            weights = {k: v / total for k, v in weights.items()}
+        settings = load_settings()
+        settings.setdefault("sator", {})
+        settings["sator"]["score_weights"] = weights
+        settings["sator"]["bucket_first_allocation"] = bool(bucket_first_allocation)
+        settings["sator"]["band_tolerance_pp"] = max(0.0, min(20.0, float(band_tolerance_pp or 0))) / 100.0
+        try:
+            save_settings(settings)
+        except Exception as exc:
+            logger.error("Errore salvataggio impostazioni SATOR: %s", exc, exc_info=True)
+            return HTMLResponse(_render_quote_interne_page(err_msg=f"Errore durante il salvataggio: {exc}"))
+        return RedirectResponse("/quote-interne?ok=Impostazioni%20salvate.", status_code=303)
+
     if azione != "salva_quote":
         return HTMLResponse(_render_quote_interne_page(err_msg="Azione non riconosciuta."))
 
@@ -157,8 +223,6 @@ async def post_quote_interne(azione: str = Form(""), quotas_json: str = Form("")
             return HTMLResponse(_render_quote_interne_page(
                 err_msg=f"Le quote di {bucket} non somma a 100 (somma attuale: {total:.1f})."
             ))
-
-    from persistence.storage import load_settings, save_settings
 
     settings = load_settings()
     settings.setdefault("sator", {})

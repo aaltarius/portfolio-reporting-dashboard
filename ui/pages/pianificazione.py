@@ -270,30 +270,7 @@ def _save_portfolio_objective_settings_from_state() -> None:
     st.session_state["obj_satellite"] = objective["satellite"] * 100
     st.session_state["obj_preset"] = "-"
 
-    sator_cfg = ensure_sator_settings(settings)
-    caps = dict(sator_cfg["concentration_caps"])
-    cap_edits = {
-        nature: _state_float(f"cap_{nature}", float(value) * 100.0) / 100.0
-        for nature, value in caps.items()
-    }
-    weights = {
-        "strategic_fit": _state_float("w_fit", 0.0),
-        "tactical_momentum": _state_float("w_mom", 0.0),
-        "risk_efficiency": _state_float("w_risk", 0.0),
-        "diversification_benefit": _state_float("w_div", 0.0),
-        "cost_efficiency": _state_float("w_cost", 0.0),
-    }
-    weight_total = sum(max(0.0, value) for value in weights.values())
-
     settings["portfolio_objective"] = objective
-    settings.setdefault("sator", {})["concentration_caps"] = cap_edits
-    settings["sator"]["bucket_first_allocation"] = bool(st.session_state.get("sator_bucket_first_allocation", False))
-    settings["sator"]["band_tolerance_pp"] = max(0.0, min(20.0, _state_float("sator_band_tolerance_pp", 3.0))) / 100.0
-    if weight_total > 0:
-        settings["sator"]["score_weights"] = {
-            key: max(0.0, value) / weight_total
-            for key, value in weights.items()
-        }
     save_settings(settings)
     st.session_state["_settings_runtime"] = settings
     invalidate_portfolio_cache("impostazioni obiettivo portafoglio salvate")
@@ -347,7 +324,6 @@ def _render_btp_exclusion_toggle(data: dict, settings: dict) -> frozenset[str]:
 def _render_portfolio_objective_section(ctx: SimpleNamespace, theme, exclude_tickers: frozenset[str] = frozenset()) -> None:
     settings = ctx.settings
     data = ctx.data
-    sator_cfg = ensure_sator_settings(settings)
     objective = settings.get("portfolio_objective", {"core": 0.55, "difensivo": 0.25, "satellite": 0.20})
 
     render_section_title(
@@ -367,57 +343,6 @@ def _render_portfolio_objective_section(ctx: SimpleNamespace, theme, exclude_tic
         sat_pct = c3.number_input("Satellite %", min_value=0.0, max_value=100.0, step=1.0,
                                    value=float(st.session_state.get("obj_satellite", objective["satellite"] * 100)), key="obj_satellite")
 
-        with st.expander("Limiti di concentrazione per asset class", expanded=False):
-            caps = dict(sator_cfg["concentration_caps"])
-            cap_edits: dict[str, float] = {}
-            for nature in sorted(caps.keys()):
-                cap_edits[nature] = st.number_input(
-                    nature.replace("_", " "), min_value=1.0, max_value=100.0, step=1.0,
-                    value=float(caps[nature] * 100), key=f"cap_{nature}",
-                )
-
-        with st.expander("Allocazione budget per bucket (avanzato)", expanded=False):
-            st.caption(
-                "Se attivo, il budget per il prossimo acquisto viene diviso tra Core/Difensivo/"
-                "Satellite in proporzione a quanto ciascuno e' sotto il proprio target, invece che "
-                "assegnato allo strumento col punteggio migliore su tutto l'universo. I bucket sopra "
-                "la banda massima non ricevono budget."
-            )
-            bucket_first = st.checkbox(
-                "Dividi il budget per deficit di bucket prima di scegliere gli strumenti",
-                value=bool(sator_cfg["bucket_first_allocation"]),
-                key="sator_bucket_first_allocation",
-            )
-            band_tolerance = st.number_input(
-                "Tolleranza banda attorno al target (pp)", min_value=0.0, max_value=20.0, step=0.5,
-                value=float(sator_cfg["band_tolerance_pp"] * 100.0),
-                key="sator_band_tolerance_pp",
-                help="Un bucket entro questa distanza dal target non e' considerato ne' urgente ne' bloccato.",
-            )
-            st.caption(
-                "L'esclusione dei BTP/titoli non ad accumulo (per il deficit di bucket e per "
-                "tutta la pagina) si controlla ora col checkbox in cima alla pagina, non piu' qui."
-            )
-
-        with st.expander("Pesi del punteggio SATOR", expanded=False):
-            weights = dict(sator_cfg["score_weights"])
-            w_fit = st.number_input("Fit allocativo %", min_value=0.0, max_value=100.0, step=1.0, value=float(weights["strategic_fit"] * 100), key="w_fit")
-            w_mom = st.number_input("Momentum %", min_value=0.0, max_value=100.0, step=1.0, value=float(weights["tactical_momentum"] * 100), key="w_mom")
-            w_risk = st.number_input("Rischio %", min_value=0.0, max_value=100.0, step=1.0, value=float(weights["risk_efficiency"] * 100), key="w_risk")
-            w_div = st.number_input("Diversificazione %", min_value=0.0, max_value=100.0, step=1.0, value=float(weights["diversification_benefit"] * 100), key="w_div")
-            w_cost = st.number_input("Costo %", min_value=0.0, max_value=100.0, step=1.0, value=float(weights["cost_efficiency"] * 100), key="w_cost")
-
-        with st.expander("Come funziona il calcolo interno (non modificabile)", expanded=False):
-            st.markdown(
-                "<ul style='margin:0;padding-left:18px;list-style:disc'>"
-                "<li style='margin-bottom:8px'><b>Momentum</b>: media pesata dei rendimenti a 1/3/6/12 mesi (10/35/35/20%) — funzione <code>_score_momentum</code> in core/services/sator.py.</li>"
-                "<li style='margin-bottom:8px'><b>Rischio</b>: volatilita' (40%) + drawdown massimo (30%) + rendimento/rischio a 12 mesi (30%) — funzione <code>_score_risk</code> in core/services/sator.py.</li>"
-                "<li style='margin-bottom:8px'><b>Costo</b>: bonus zero commissioni/PAC, malus TER/spread, penalita' se il prezzo satura il budget — funzione <code>_score_cost</code> in core/services/sator.py.</li>"
-                "<li>Per modificare questi dettagli serve intervenire direttamente nel codice: qui sopra trovi obiettivo, cap e pesi, che sono invece tuoi.</li>"
-                "</ul>",
-                unsafe_allow_html=True,
-            )
-
         st.form_submit_button(
             "Salva obiettivo e aggiorna analisi",
             width="stretch",
@@ -429,6 +354,7 @@ def _render_portfolio_objective_section(ctx: SimpleNamespace, theme, exclude_tic
         current_mix = compute_current_bucket_mix(data, state_df, exclude_tickers=exclude_tickers)
     with profile_step("Pianificazione", "obiettivo_chart"):
         _render_objective_mix_chart(objective, current_mix, theme)
+    st.caption("Limiti di concentrazione, pesi SATOR e quote interne per bucket: vai su **Quote & impostazioni** dalla sidebar.")
 
 
 def _render_objective_mix_chart(objective: dict, current_mix: dict, theme) -> None:
