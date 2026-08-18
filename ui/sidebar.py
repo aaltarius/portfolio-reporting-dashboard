@@ -720,5 +720,8 @@ def render_sidebar(data: dict) -> None:
         if st.button("🧠 SATOR", width="stretch"):
             _open_form_server_page("sator", "SATOR")
 
+        if st.button("📐 Quote & impostazioni", width="stretch"):
+            _open_form_server_page("quote-interne", "Quote & impostazioni")
+
         if st.button("🔒 Privacy", width="stretch"):
             _open_form_server_page("privacy", "Privacy")
