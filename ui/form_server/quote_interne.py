@@ -39,7 +39,7 @@ h2{font-size:.75rem;font-weight:800;text-transform:uppercase;letter-spacing:.06e
 .alert-ok{background:var(--emerald-50,#ecfdf5);color:var(--emerald-700,#047857);padding:10px 14px;border-radius:10px;margin-bottom:14px}
 .alert-warn{background:var(--rose-50,#fff1f2);color:var(--rose-700,#be123c);padding:10px 14px;border-radius:10px;margin-bottom:14px}
 .btn-salva{padding:9px 24px;background:var(--indigo-500);color:var(--white);border:none;border-radius:9px;font-size:.9rem;font-weight:700;cursor:pointer}
-"""
+</style>"""
 
 
 def _bucket_tickers(data: dict) -> dict[str, list[str]]:
@@ -98,7 +98,7 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "") -> str:
 
     return f"""<!DOCTYPE html>
 <html lang="it">
-<head><meta charset="utf-8"><title>Quote & impostazioni</title><style>{_CSS}</style></head>
+<head><meta charset="utf-8"><title>Quote & impostazioni</title>{_CSS}</head>
 <body>
 <div class="qi">
   <h1>Quote interne per bucket</h1>
