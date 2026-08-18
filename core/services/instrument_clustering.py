@@ -104,7 +104,12 @@ def build_instrument_map(
     settings: dict[str, Any] | None,
     *,
     precomputed_result: dict[str, Any] | None = None,
+    exclude_tickers: frozenset[str] = frozenset(),
 ) -> InstrumentMapResult:
+    """exclude_tickers: ticker rimossi dall'universo SATOR prima di costruire
+    scatter e coppie ridondanti (toggle "Escludi BTP/GOV" della pagina
+    Pianificazione, calcolato una sola volta a monte e passato qui - vedi
+    core/services/sator.py::held_non_pac_tickers)."""
     settings = settings or {}
     if precomputed_result is not None:
         result = precomputed_result
@@ -112,6 +117,8 @@ def build_instrument_map(
         cfg = ensure_sator_settings(settings)
         result = run_sator_analysis(data, settings, budget=cfg["default_budget"])
     ranking = result.get("ranking", pd.DataFrame())
+    if exclude_tickers and ranking is not None and not ranking.empty:
+        ranking = ranking[~ranking["ticker"].astype(str).isin(exclude_tickers)]
     returns_frame = result.get("returns_frame", pd.DataFrame())
     return InstrumentMapResult(
         scatter_df=_build_scatter_df(ranking),

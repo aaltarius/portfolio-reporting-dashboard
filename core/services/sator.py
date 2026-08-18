@@ -1127,6 +1127,17 @@ def _non_pac_held_tickers(data: dict[str, Any], held_tickers: set[str]) -> froze
     return frozenset(out)
 
 
+def held_non_pac_tickers(data: dict[str, Any], state_df: pd.DataFrame) -> frozenset[str]:
+    """Ticker posseduti non ad accumulo (BTP/GOV): unica fonte per il toggle
+    "Escludi BTP/GOV" della pagina Pianificazione, riusata dal deficit di
+    bucket (run_sator_analysis, cfg["deficit_pac_only"]) e da ogni altro
+    grafico/tabella della pagina che deve rispettare lo stesso toggle -
+    nessuna seconda formula, solo _tickers_posseduti + _non_pac_held_tickers,
+    gia' testate."""
+    held = _tickers_posseduti(state_df)
+    return _non_pac_held_tickers(data, held)
+
+
 def _compute_bucket_deficits(
     bucket_weights: dict[str, float],
     objective: dict[str, float],
@@ -1166,18 +1177,29 @@ def _compute_bucket_deficits(
     return deficits, blocked
 
 
-def compute_current_bucket_mix(data: dict[str, Any], state_df: pd.DataFrame) -> dict[str, float]:
+def compute_current_bucket_mix(
+    data: dict[str, Any], state_df: pd.DataFrame, *, exclude_tickers: frozenset[str] = frozenset()
+) -> dict[str, float]:
     """Mix Core/Difensivo/Satellite del portafoglio attuale (percentuale del
-    controvalore totale). Chiamata sia da SATOR sia dalla UI di Pianificazione."""
+    controvalore totale). Chiamata sia da SATOR sia dalla UI di Pianificazione.
+
+    exclude_tickers: stesso meccanismo di _compute_bucket_weights (nessuna
+    rinormalizzazione), usato dal toggle "Escludi BTP/GOV" della pagina
+    Pianificazione per il grafico obiettivo-vs-mix."""
     current_weights = _compute_current_weights(state_df)
-    return _compute_bucket_weights(data, state_df, current_weights)
+    return _compute_bucket_weights(data, state_df, current_weights, exclude_tickers=exclude_tickers)
 
 
-def build_portfolio_rings_frame(data: dict[str, Any], state_df: pd.DataFrame) -> pd.DataFrame:
+def build_portfolio_rings_frame(
+    data: dict[str, Any], state_df: pd.DataFrame, *, exclude_tickers: frozenset[str] = frozenset()
+) -> pd.DataFrame:
     """Una riga per strumento posseduto: ticker, name, bucket (Core/Difensivo/
     Satellite), natura (classificazione arricchimento, campo strumento["natura"]),
     value (controvalore totale). Base dati per il donut ad anelli concentrici
-    della Dashboard decisionale in Pianificazione."""
+    della Dashboard decisionale in Pianificazione.
+
+    exclude_tickers: ticker posseduti da omettere del tutto (toggle "Escludi
+    BTP/GOV" della pagina Pianificazione)."""
     columns = ["ticker", "name", "bucket", "natura", "value"]
     held = _tickers_posseduti(state_df)
     if not held:
@@ -1192,7 +1214,7 @@ def build_portfolio_rings_frame(data: dict[str, Any], state_df: pd.DataFrame) ->
     rows = []
     for item in data.get("strumenti", []) or []:
         ticker = str(item.get("ticker") or "").strip().upper()
-        if ticker not in held:
+        if ticker not in held or ticker in exclude_tickers:
             continue
         value = controvalore_map.get(ticker, 0.0)
         if value <= 0:
@@ -1207,18 +1229,23 @@ def build_portfolio_rings_frame(data: dict[str, Any], state_df: pd.DataFrame) ->
     return pd.DataFrame(rows, columns=columns) if rows else pd.DataFrame(columns=columns)
 
 
-def compute_watchlist_reminders(data: dict[str, Any], state_df: pd.DataFrame) -> dict[str, list[str]]:
+def compute_watchlist_reminders(
+    data: dict[str, Any], state_df: pd.DataFrame, *, exclude_tickers: frozenset[str] = frozenset()
+) -> dict[str, list[str]]:
     """Bucket -> nature in stato SATOR 'watchlist' non gia' coperte da uno
     strumento posseduto nello stesso bucket. Promemoria puro (nessun ticker
     o importo): segnala un'area seguita ma non ancora presidiata, per la
-    tabella "Allocazione: bucket e strumenti" in Pianificazione."""
+    tabella "Allocazione: bucket e strumenti" in Pianificazione.
+
+    exclude_tickers: un ticker posseduto ma escluso (toggle "Escludi
+    BTP/GOV") non "copre" piu' la propria natura agli occhi del promemoria."""
     held = _tickers_posseduti(state_df)
     master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
 
     held_natura_by_bucket: dict[str, set[str]] = {"Core": set(), "Difensivo": set(), "Satellite": set()}
     for item in data.get("strumenti", []) or []:
         ticker = str(item.get("ticker") or "").strip().upper()
-        if not ticker or ticker not in held:
+        if not ticker or ticker not in held or ticker in exclude_tickers:
             continue
         sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
         inf = infer_sator_metadata(item, True)
@@ -1260,11 +1287,17 @@ def latest_sator_decision(items: list[dict[str, Any]]) -> dict[str, Any] | None:
     return max(items, key=lambda it: str(it.get("created_at") or ""))
 
 
-def build_next_purchase_bubble_frame(data: dict[str, Any]) -> tuple[pd.DataFrame, list[str]]:
+def build_next_purchase_bubble_frame(
+    data: dict[str, Any], *, exclude_tickers: frozenset[str] = frozenset()
+) -> tuple[pd.DataFrame, list[str]]:
     """Legge l'ultima fotografia SATOR salvata (per created_at) e ritorna il
     frame per la mappa a bolle dei prossimi acquisti, piu' la lista di ticker
     esclusi per dati insufficienti (fotografia pre-esistente senza i punteggi,
-    o strumento non piu' presente in data["strumenti"])."""
+    o strumento non piu' presente in data["strumenti"]).
+
+    exclude_tickers: righe ordine per ticker esclusi dal toggle "Escludi
+    BTP/GOV" spariscono dalla mappa, senza finire nella lista 'missing'
+    (categoria diversa: dati insufficienti, non esclusione utente)."""
     columns = [
         "ticker", "name", "bucket", "importo", "diversification_benefit", "risk_efficiency",
         "target_improvement_pp", "post_nature_weight", "nature_cap", "cap_headroom_after_pp",
@@ -1283,7 +1316,7 @@ def build_next_purchase_bubble_frame(data: dict[str, Any]) -> tuple[pd.DataFrame
     missing: list[str] = []
     for line in latest.get("order_lines", []) or []:
         ticker = str(line.get("ticker") or "").strip().upper()
-        if not ticker:
+        if not ticker or ticker in exclude_tickers:
             continue
         risk = line.get("risk_efficiency")
         div = line.get("diversification_benefit")

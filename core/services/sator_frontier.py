@@ -302,8 +302,15 @@ def build_sator_frontier(
     manual_slider_pct: float = 0.0,
     n_scenarios: int = N_SCENARIOS_DEFAULT,
     seed: int | None = None,
+    exclude_tickers: frozenset[str] = frozenset(),
 ) -> SatorFrontierResult:
+    """exclude_tickers: ticker rimossi dall'universo simulato (e quindi dal
+    portafoglio "Attuale"/"Proposta SATOR") prima di ogni calcolo - toggle
+    "Escludi BTP/GOV" della pagina Pianificazione, calcolato una sola volta a
+    monte (vedi core/services/sator.py::held_non_pac_tickers)."""
     ranking = precomputed_result.get("ranking", pd.DataFrame())
+    if exclude_tickers and ranking is not None and not ranking.empty:
+        ranking = ranking[~ranking["ticker"].astype(str).isin(exclude_tickers)]
     returns_frame = precomputed_result.get("returns_frame", pd.DataFrame())
     cfg = precomputed_result.get("sator_settings", {}) or {}
     if ranking is None or ranking.empty:

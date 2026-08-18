@@ -19,6 +19,7 @@ from core.services.sator import (
     build_portfolio_rings_frame,
     compute_watchlist_reminders,
     build_next_purchase_bubble_frame,
+    held_non_pac_tickers,
     latest_sator_decision,
     run_sator_analysis,
 )
@@ -288,7 +289,6 @@ def _save_portfolio_objective_settings_from_state() -> None:
     settings.setdefault("sator", {})["concentration_caps"] = cap_edits
     settings["sator"]["bucket_first_allocation"] = bool(st.session_state.get("sator_bucket_first_allocation", False))
     settings["sator"]["band_tolerance_pp"] = max(0.0, min(20.0, _state_float("sator_band_tolerance_pp", 3.0))) / 100.0
-    settings["sator"]["deficit_pac_only"] = bool(st.session_state.get("sator_deficit_pac_only", False))
     if weight_total > 0:
         settings["sator"]["score_weights"] = {
             key: max(0.0, value) / weight_total
@@ -300,7 +300,51 @@ def _save_portfolio_objective_settings_from_state() -> None:
     queue_success("Obiettivo di portafoglio salvato. Cruscotti, Analitica e SATOR useranno subito il nuovo target.")
 
 
-def _render_portfolio_objective_section(ctx: SimpleNamespace, theme) -> None:
+def _save_deficit_pac_only_from_state() -> None:
+    """Salva subito il toggle "Escludi BTP/GOV" (chiave invariata,
+    settings["sator"]["deficit_pac_only"]): non e' dentro il form obiettivo,
+    aggiorna al click via on_change - stessa azione esplicita dell'utente
+    gia' prevista dalla regola madre (01_REGOLE_NON_NEGOZIABILI.md, §0), non
+    un rerun a sorpresa."""
+    settings = load_settings()
+    settings.setdefault("sator", {})["deficit_pac_only"] = bool(
+        st.session_state.get("pianificazione_deficit_pac_only", False)
+    )
+    save_settings(settings)
+    st.session_state["_settings_runtime"] = settings
+    invalidate_portfolio_cache("toggle esclusione BTP/GOV in Pianificazione")
+
+
+def _render_btp_exclusion_toggle(data: dict, settings: dict) -> frozenset[str]:
+    """Checkbox unico in cima alla pagina Pianificazione (fuori da qualunque
+    form): pilota settings["sator"]["deficit_pac_only"], la stessa chiave
+    gia' usata per il deficit di bucket in SATOR, ora estesa a ogni
+    grafico/tabella della pagina. Ritorna l'insieme di ticker BTP/GOV
+    posseduti da escludere (frozenset vuoto se il toggle e' spento), calcolato
+    una sola volta qui e da passare esplicitamente a valle - stesso pattern
+    gia' usato per chiusi_tickers/active_fetch_tickers (ui/runtime_context.py,
+    core/domain/instrument_status.py)."""
+    sator_cfg = ensure_sator_settings(settings)
+    st.checkbox(
+        "Escludi BTP/GOV da tutta la pagina Pianificazione",
+        value=bool(sator_cfg["deficit_pac_only"]),
+        key="pianificazione_deficit_pac_only",
+        help=(
+            "Se attivo, i titoli non ad accumulo posseduti (BTP/GOV) sono esclusi da ogni grafico "
+            "e tabella di questa pagina: obiettivo-vs-mix, allocazione, mappa strumenti, frontiera "
+            "rischio/rendimento, confronto strumenti, spiegazione del voto SATOR e deficit di bucket."
+        ),
+        on_change=_save_deficit_pac_only_from_state,
+    )
+    active = bool(st.session_state.get("pianificazione_deficit_pac_only", sator_cfg["deficit_pac_only"]))
+    if not active:
+        return frozenset()
+    st.warning("BTP esclusi volutamente da tutti i calcoli e grafici di questa pagina.")
+    state_df = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
+    return held_non_pac_tickers(data, state_df)
+
+
+def _render_portfolio_objective_section(ctx: SimpleNamespace, theme, exclude_tickers: frozenset[str] = frozenset()) -> None:
     settings = ctx.settings
     data = ctx.data
     sator_cfg = ensure_sator_settings(settings)
@@ -350,11 +394,9 @@ def _render_portfolio_objective_section(ctx: SimpleNamespace, theme) -> None:
                 key="sator_band_tolerance_pp",
                 help="Un bucket entro questa distanza dal target non e' considerato ne' urgente ne' bloccato.",
             )
-            deficit_pac_only = st.checkbox(
-                "Ignora i BTP/titoli non ad accumulo nel calcolo del deficit di bucket",
-                value=bool(sator_cfg["deficit_pac_only"]),
-                key="sator_deficit_pac_only",
-                help="Se attivo, il peso di un bucket per questo calcolo conta solo gli strumenti che si possono accumulare nel tempo (ETF/ETC), non i BTP.",
+            st.caption(
+                "L'esclusione dei BTP/titoli non ad accumulo (per il deficit di bucket e per "
+                "tutta la pagina) si controlla ora col checkbox in cima alla pagina, non piu' qui."
             )
 
         with st.expander("Pesi del punteggio SATOR", expanded=False):
@@ -384,7 +426,7 @@ def _render_portfolio_objective_section(ctx: SimpleNamespace, theme) -> None:
 
     with profile_step("Pianificazione", "obiettivo_state_mix"):
         state_df = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
-        current_mix = compute_current_bucket_mix(data, state_df)
+        current_mix = compute_current_bucket_mix(data, state_df, exclude_tickers=exclude_tickers)
     with profile_step("Pianificazione", "obiettivo_chart"):
         _render_objective_mix_chart(objective, current_mix, theme)
 
@@ -699,7 +741,7 @@ def _render_sator_reference_summary(latest: dict, theme, data: dict, decisions: 
     st.markdown(_build_sator_reference_summary_html(latest, theme, data, decisions), unsafe_allow_html=True)
 
 
-def _render_instrument_comparison_section(ctx: SimpleNamespace) -> None:
+def _render_instrument_comparison_section(ctx: SimpleNamespace, exclude_tickers: frozenset[str] = frozenset()) -> None:
     """Confronto normalizzato tra strumenti, con overlay benchmark opzionale
     quando e' selezionato un solo strumento. Si aggiorna subito ad ogni
     cambio di selezione/periodo (nessun bottone "Costruisci grafico", a
@@ -716,7 +758,7 @@ def _render_instrument_comparison_section(ctx: SimpleNamespace) -> None:
         st.info("Nessuno storico prezzi disponibile.")
         return
 
-    all_tickers = get_all_historical_tickers(data)
+    all_tickers = get_all_historical_tickers(data, exclude_tickers=exclude_tickers)
     # Stesso formato etichetta della vecchia sezione "Performance normalizzata"
     # in Cruscotti/Benchmark (rimossa in Task 10): "(In portafoglio)" /
     # "(Fuori portafoglio)" nel widget, non solo nel grafico dopo la scelta.
@@ -767,6 +809,7 @@ def _render_instrument_comparison_section(ctx: SimpleNamespace) -> None:
     with profile_step("Pianificazione/Confronto", "build_comparison_frame", count=len(selected)):
         series = build_comparison_frame(
             data, selected, start_date=start_date, align_starts=align_starts, benchmark_for=benchmark_for,
+            exclude_tickers=exclude_tickers,
         )
 
     plotted = {s.ticker for s in series if not s.is_benchmark}
@@ -785,7 +828,7 @@ def _render_instrument_comparison_section(ctx: SimpleNamespace) -> None:
         st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
-def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
+def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tickers: frozenset[str] = frozenset()) -> None:
     """Dashboard decisionale basata sul portafoglio corrente e sull'ultima
     fotografia SATOR salvata su disco dalla pagina standalone in sidebar."""
     data = ctx.data
@@ -793,7 +836,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
     with profile_step("Pianificazione/SATOR", "state_and_rings"):
         ensure_sator_metadata(data)
         state_df = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
-        rings_df = build_portfolio_rings_frame(data, state_df)
+        rings_df = build_portfolio_rings_frame(data, state_df, exclude_tickers=exclude_tickers)
 
     held_tickers = set(rings_df["ticker"]) if not rings_df.empty else set()
     warnings: list[str] = []
@@ -829,7 +872,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
                 b: (float(bucket_totals.get(b, 0.0)) / total_value if total_value > 0 else 0.0)
                 for b in ("Core", "Difensivo", "Satellite")
             }
-            watchlist_reminders = compute_watchlist_reminders(data, state_df)
+            watchlist_reminders = compute_watchlist_reminders(data, state_df, exclude_tickers=exclude_tickers)
             _render_bucket_allocation_table(rings_df, bucket_totals, current_mix, objective, objective_key, theme, watchlist_reminders)
     render_section_title(
         "Prossimo acquisto: mappa decisionale",
@@ -840,7 +883,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
         decisions_state = load_sator_decisions()
         latest_decision = latest_sator_decision(decisions_state.get("items") or [])
     with profile_step("Pianificazione/SATOR", "decision_bubble_frame"):
-        bubble_df, missing_tickers = build_next_purchase_bubble_frame(data)
+        bubble_df, missing_tickers = build_next_purchase_bubble_frame(data, exclude_tickers=exclude_tickers)
     if not (decisions_state.get("items") or []):
         st.info("Nessuna fotografia SATOR salvata: apri SATOR dalla sidebar e salva una decisione per popolare questa mappa.")
     elif bubble_df.empty:
@@ -878,7 +921,9 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
             sator_result = None
     with profile_step("Pianificazione/SATOR", "instrument_map"):
         try:
-            instrument_map = build_instrument_map(data, settings, precomputed_result=sator_result) if sator_result is not None else None
+            instrument_map = build_instrument_map(
+                data, settings, precomputed_result=sator_result, exclude_tickers=exclude_tickers,
+            ) if sator_result is not None else None
         except Exception:
             instrument_map = None
     if instrument_map is None:
@@ -931,6 +976,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
             frontier_result = build_sator_frontier(
                 data, settings, precomputed_result=sator_result,
                 lookback_months=_horizon_options[_horizon_label], manual_slider_pct=_manual_pct / 100.0,
+                exclude_tickers=exclude_tickers,
             ) if sator_result is not None else None
         except Exception:
             frontier_result = None
@@ -967,6 +1013,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
             explanations = build_sator_explanations(
                 sator_result.get("ranking", pd.DataFrame()),
                 weights=sator_result.get("sator_settings", {}).get("score_weights"),
+                exclude_tickers=exclude_tickers,
             ) if sator_result is not None else []
         except Exception:
             explanations = []
@@ -983,7 +1030,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme) -> None:
             variant="bottom",
         )
 
-    _render_instrument_comparison_section(ctx)
+    _render_instrument_comparison_section(ctx, exclude_tickers)
 
 
 def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
@@ -1003,14 +1050,16 @@ def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 "pianificazione",
                 theme,
             )
+        with profile_step("Pianificazione", "btp_exclusion_toggle"):
+            exclude_tickers = _render_btp_exclusion_toggle(data, settings)
         with st.container():
             with profile_step("Pianificazione", "obiettivo_section"):
-                _render_portfolio_objective_section(ctx, theme)
+                _render_portfolio_objective_section(ctx, theme, exclude_tickers)
 
         _section_line()
         with st.container():
             with profile_step("Pianificazione", "decision_dashboard_section"):
-                _render_decision_dashboard_section(ctx, theme)
+                _render_decision_dashboard_section(ctx, theme, exclude_tickers)
 
         with profile_step("Pianificazione", "footer"):
             back_to_top()

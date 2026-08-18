@@ -62,15 +62,24 @@ def resolve_period_start_date(sorted_dates: list[str], period: str) -> str:
     return computed if computed >= first else first
 
 
-def get_all_historical_tickers(data: dict[str, Any]) -> list[dict[str, Any]]:
+def get_all_historical_tickers(
+    data: dict[str, Any], *, exclude_tickers: frozenset[str] = frozenset()
+) -> list[dict[str, Any]]:
     """Ritorna tutti i ticker mai presenti in storico_prezzi, con flag
-    active = "possiedo quote ora" (da held_tickers, non dal campo stato)."""
+    active = "possiedo quote ora" (da held_tickers, non dal campo stato).
+
+    exclude_tickers: ticker omessi del tutto dalle opzioni selezionabili nel
+    Confronto strumenti (toggle "Escludi BTP/GOV" della pagina Pianificazione)."""
     storico: dict[str, dict[str, float]] = data.get("storico_prezzi") or {}
     active_set = held_tickers(data)
     all_tickers: set[str] = set()
     for prices in storico.values():
         all_tickers.update(prices.keys())
-    return [{"ticker": tk, "active": tk in active_set} for tk in sorted(all_tickers)]
+    return [
+        {"ticker": tk, "active": tk in active_set}
+        for tk in sorted(all_tickers)
+        if tk not in exclude_tickers
+    ]
 
 
 def _normalized_series(
@@ -101,15 +110,23 @@ def build_comparison_frame(
     start_date: str | None = None,
     align_starts: bool = False,
     benchmark_for: str | None = None,
+    exclude_tickers: frozenset[str] = frozenset(),
 ) -> list[ComparisonSeries]:
     """Costruisce le serie normalizzate per il confronto multi-strumento di
     Pianificazione, con overlay opzionale del benchmark assegnato a un
-    singolo strumento (benchmark_for)."""
+    singolo strumento (benchmark_for).
+
+    exclude_tickers: filtro difensivo (toggle "Escludi BTP/GOV" della pagina
+    Pianificazione) - le opzioni selezionabili sono gia' filtrate a monte da
+    get_all_historical_tickers, questo e' un secondo filtro sulla stessa
+    fonte nel caso `tickers` contenga comunque un ticker escluso."""
     result: list[ComparisonSeries] = []
     # Stesso segnale "active" gia' calcolato da get_all_historical_tickers
     # (held_tickers da core.domain.positions): non reimplementarlo qui.
     active_set = held_tickers(data)
     for ticker in tickers:
+        if ticker in exclude_tickers:
+            continue
         price_df = instrument_price_history(data, ticker)
         series = _normalized_series(price_df, "strumento", start_date=start_date, align_starts=align_starts)
         if series is None:

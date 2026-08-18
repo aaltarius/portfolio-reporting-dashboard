@@ -52,11 +52,19 @@ def _build_summary_text(contributions: list[FactorContribution]) -> str:
 
 
 def build_sator_explanations(
-    ranking: pd.DataFrame, weights: dict[str, float] | None = None
+    ranking: pd.DataFrame,
+    weights: dict[str, float] | None = None,
+    *,
+    exclude_tickers: frozenset[str] = frozenset(),
 ) -> list[InstrumentExplanation]:
+    """exclude_tickers: righe rimosse prima di costruire le spiegazioni
+    (toggle "Escludi BTP/GOV" della pagina Pianificazione, calcolato una sola
+    volta a monte - vedi core/services/sator.py::held_non_pac_tickers)."""
     required_cols = {"ticker", "name", "voto", *PESI_DIMENSIONI.keys()}
     if ranking is None or ranking.empty or not required_cols.issubset(set(ranking.columns)):
         return []
+    if exclude_tickers:
+        ranking = ranking[~ranking["ticker"].astype(str).isin(exclude_tickers)]
 
     explanations: list[InstrumentExplanation] = []
     for _, row in ranking.iterrows():
