@@ -216,8 +216,7 @@ def _build_bucket_allocation_table_html(
                   <td class="num">{fmt_eur_it(instrument_value, 2)}</td>
                   <td>
                     <div class="bucket-alloc-mini-track">
-                      <div class="bucket-alloc-mini-fill" style="width:{min(max(current_pct, 0.0), 100.0):.2f}%"></div>
-                      {target_tick}
+                      <div class="bucket-alloc-mini-fill" style="width:{min(max(current_pct, 0.0), 100.0):.2f}%"></div>{target_tick}
                     </div>
                     <span class="bucket-alloc-mini-caption">{caption}</span>
                   </td>

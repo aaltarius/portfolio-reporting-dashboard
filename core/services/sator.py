@@ -1290,11 +1290,25 @@ def compute_current_bucket_mix(
     """Mix Core/Difensivo/Satellite del portafoglio attuale (percentuale del
     controvalore totale). Chiamata sia da SATOR sia dalla UI di Pianificazione.
 
-    exclude_tickers: stesso meccanismo di _compute_bucket_weights (nessuna
-    rinormalizzazione), usato dal toggle "Escludi BTP/GOV" della pagina
-    Pianificazione per il grafico obiettivo-vs-mix."""
+    exclude_tickers: a differenza di _compute_bucket_weights (usato per il
+    deficit di bucket in SATOR, dove i pesi grezzi non vanno MAI
+    rinormalizzati - richiesta esplicita dell'utente), qui il risultato e'
+    una percentuale di composizione mostrata all'utente (grafico
+    obiettivo-vs-mix, toggle "Escludi BTP/GOV" in Pianificazione): quando
+    alcuni ticker sono esclusi, i pesi restanti vengono rinormalizzati per
+    sommare a 100% di cio' che resta visibile, non del portafoglio intero -
+    altrimenti le barre "Attuale" non chiuderebbero al 100%. Nessun'altra
+    chiamata a questa funzione passa exclude_tickers non vuoto oggi
+    (core/services/portfolio_insights.py:165 non lo passa affatto), quindi
+    la rinormalizzazione non tocca alcun percorso SATOR."""
     current_weights = _compute_current_weights(state_df)
-    return _compute_bucket_weights(data, state_df, current_weights, exclude_tickers=exclude_tickers)
+    raw = _compute_bucket_weights(data, state_df, current_weights, exclude_tickers=exclude_tickers)
+    if not exclude_tickers:
+        return raw
+    total = sum(raw.values())
+    if total <= 0:
+        return raw
+    return {bucket: weight / total for bucket, weight in raw.items()}
 
 
 def build_portfolio_rings_frame(
