@@ -640,6 +640,11 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
         unit_price = _safe_float(item.get("prezzo"), latest.get(ticker, 0.0))
         if unit_price <= 0:
             continue
+
+        role_for_bucket = _meta_strutturale(sator, inf, "role")
+        if _role_bucket(role_for_bucket) in ctx.blocked_buckets_quota:
+            continue
+
         nature = _meta_strutturale(sator, inf, "nature")
         metrics = metrics_batch.get(ticker, {k: np.nan for k in ("ret_1m", "ret_3m", "ret_6m", "ret_12m", "vol", "drawdown", "rend_vol", "n_punti")})
         peso_natura = ctx.nature_weights.get(nature, 0.0)
