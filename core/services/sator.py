@@ -1402,17 +1402,19 @@ def build_portfolio_rings_frame(
     data: dict[str, Any], state_df: pd.DataFrame, *, exclude_tickers: frozenset[str] = frozenset()
 ) -> pd.DataFrame:
     """Una riga per strumento posseduto: ticker, name, bucket (Core/Difensivo/
-    Satellite), natura (classificazione arricchimento, campo strumento["natura"]),
-    value (controvalore totale). Base dati per il donut ad anelli concentrici
-    della Dashboard decisionale in Pianificazione.
+    Satellite), natura (testo libero legacy, campo strumento["natura"]),
+    nature (codice tassonomia SATOR inferito da infer_sator_metadata, vedi
+    SATOR_NATURE_VALUES), value (controvalore totale). Base dati per il donut
+    ad anelli concentrici della Dashboard decisionale in Pianificazione.
 
     exclude_tickers: ticker posseduti da omettere del tutto (toggle "Escludi
     BTP/GOV" della pagina Pianificazione)."""
-    columns = ["ticker", "name", "bucket", "natura", "value"]
+    columns = ["ticker", "name", "bucket", "natura", "nature", "value"]
     held = _tickers_posseduti(state_df)
     if not held:
         return pd.DataFrame(columns=columns)
     buckets = compute_instrument_buckets(data, held)
+    master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
     controvalore_map: dict[str, float] = {}
     if state_df is not None and not state_df.empty and "Ticker" in state_df.columns and "Controvalore" in state_df.columns:
         for _, row in state_df.iterrows():
@@ -1427,11 +1429,15 @@ def build_portfolio_rings_frame(
         value = controvalore_map.get(ticker, 0.0)
         if value <= 0:
             continue
+        sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
+        inf = infer_sator_metadata(item, True)
+        nature = _meta_strutturale(sator, inf, "nature")
         rows.append({
             "ticker": ticker,
             "name": str(item.get("nome") or ticker),
             "bucket": buckets.get(ticker, "Satellite"),
             "natura": str(item.get("natura") or "Esposizione diversificata"),
+            "nature": nature,
             "value": value,
         })
     return pd.DataFrame(rows, columns=columns) if rows else pd.DataFrame(columns=columns)
@@ -1440,17 +1446,18 @@ def build_portfolio_rings_frame(
 def compute_watchlist_reminders(
     data: dict[str, Any], state_df: pd.DataFrame, *, exclude_tickers: frozenset[str] = frozenset()
 ) -> dict[str, list[str]]:
-    """Bucket -> nature in stato SATOR 'watchlist' non gia' coperte da uno
-    strumento posseduto nello stesso bucket. Promemoria puro (nessun ticker
-    o importo): segnala un'area seguita ma non ancora presidiata, per la
+    """Bucket -> codici nature SATOR (SATOR_NATURE_VALUES, non piu' testo
+    libero) in stato SATOR 'watchlist' non gia' coperte da uno strumento
+    posseduto nello stesso bucket. Promemoria puro (nessun ticker o
+    importo): segnala un'area seguita ma non ancora presidiata, per la
     tabella "Allocazione: bucket e strumenti" in Pianificazione.
 
     exclude_tickers: un ticker posseduto ma escluso (toggle "Escludi
-    BTP/GOV") non "copre" piu' la propria natura agli occhi del promemoria."""
+    BTP/GOV") non "copre" piu' la propria nature agli occhi del promemoria."""
     held = _tickers_posseduti(state_df)
     master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
 
-    held_natura_by_bucket: dict[str, set[str]] = {"Core": set(), "Difensivo": set(), "Satellite": set()}
+    held_nature_by_bucket: dict[str, set[str]] = {"Core": set(), "Difensivo": set(), "Satellite": set()}
     for item in data.get("strumenti", []) or []:
         ticker = str(item.get("ticker") or "").strip().upper()
         if not ticker or ticker not in held or ticker in exclude_tickers:
@@ -1459,8 +1466,8 @@ def compute_watchlist_reminders(
         inf = infer_sator_metadata(item, True)
         role = _meta_strutturale(sator, inf, "role")
         bucket = _role_bucket(role)
-        natura = str(item.get("natura") or "Esposizione diversificata")
-        held_natura_by_bucket.setdefault(bucket, set()).add(natura)
+        nature = _meta_strutturale(sator, inf, "nature")
+        held_nature_by_bucket.setdefault(bucket, set()).add(nature)
 
     reminders: dict[str, list[str]] = {"Core": [], "Difensivo": [], "Satellite": []}
     seen_by_bucket: dict[str, set[str]] = {"Core": set(), "Difensivo": set(), "Satellite": set()}
@@ -1475,13 +1482,13 @@ def compute_watchlist_reminders(
             continue
         role = _meta_strutturale(sator, inf, "role")
         bucket = _role_bucket(role)
-        natura = str(item.get("natura") or "Esposizione diversificata")
-        if natura in held_natura_by_bucket.get(bucket, set()):
+        nature = _meta_strutturale(sator, inf, "nature")
+        if nature in held_nature_by_bucket.get(bucket, set()):
             continue
-        if natura in seen_by_bucket.setdefault(bucket, set()):
+        if nature in seen_by_bucket.setdefault(bucket, set()):
             continue
-        seen_by_bucket[bucket].add(natura)
-        reminders.setdefault(bucket, []).append(natura)
+        seen_by_bucket[bucket].add(nature)
+        reminders.setdefault(bucket, []).append(nature)
 
     for bucket_key in reminders:
         reminders[bucket_key] = sorted(reminders[bucket_key])
