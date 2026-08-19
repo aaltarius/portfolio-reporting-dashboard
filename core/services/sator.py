@@ -1361,17 +1361,27 @@ def compute_instrument_quota_status(
     toccata dal toggle "Escludi BTP/GOV" (held_non_pac_tickers) - i ticker
     esclusi non contano come "attivi" nel loro bucket, quindi non richiedono
     una quota e non pesano sulla somma. Aggiunto perche' /quote-interne
-    mostrava ancora i BTP anche col toggle attivo su Pianificazione."""
+    mostrava ancora i BTP anche col toggle attivo su Pianificazione.
+
+    Ticker con bucket_exposure_user_edited=True (appartenenza a bucket
+    divisa manualmente su piu' bucket, vedi resolve_instrument_bucket_exposure)
+    sono esclusi allo stesso modo: non richiedono una quota interna in
+    nessun bucket e non pesano sulla somma-100% di nessun bucket. Decisione
+    esplicita dell'utente - far convivere la divisione frazionata
+    dell'appartenenza a bucket con la validazione delle quote interne e'
+    fuori scopo per questo sotto-progetto ed e' rimandato."""
     cfg = ensure_sator_settings(settings)
     state = compute_portfolio_state(data, include_closed=True)
     state_df = state.get("df", pd.DataFrame())
     if isinstance(data.get("_positions_df"), pd.DataFrame) and not data["_positions_df"].empty:
         state_df = data["_positions_df"].copy()
     held_tickers = _tickers_posseduti(state_df)
+    master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
     instrument_buckets = {
         ticker: bucket
         for ticker, bucket in compute_instrument_buckets(data, held_tickers).items()
         if ticker not in exclude_tickers
+        and not bool((master.get(ticker, {}).get("manual_overrides") or {}).get("sator", {}).get("bucket_exposure_user_edited"))
     }
     current_weights = _compute_current_weights(state_df)
     bucket_weights = _compute_bucket_weights(data, state_df, current_weights, exclude_tickers=exclude_tickers)
