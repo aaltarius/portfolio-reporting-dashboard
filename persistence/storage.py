@@ -18,7 +18,7 @@ from core.asset_categories import (
     normalize_category_code,
     normalize_category_selection,
 )
-from core.benchmark_registry import LEGACY_BENCH, resolve_instrument_benchmark
+from core.benchmark_registry import LEGACY_BENCH
 
 logger = logging.getLogger("portafoglio.persistence.storage")
 
@@ -1091,8 +1091,6 @@ def _build_instrument_master(strumenti, benchmark_data=None):
             continue
         raw_type = s.get("tipo", "")
         mc = macro_cat(raw_type)
-        bench = resolve_instrument_benchmark(s, raw_type=raw_type, category=mc, prefer_master=False)
-        bench_tk, bench_lbl = bench.ticker or None, bench.label or None
         out[tk] = {
             "ticker": tk,
             "isin": s.get("isin"),
@@ -1103,8 +1101,8 @@ def _build_instrument_master(strumenti, benchmark_data=None):
             "sub_asset_class": raw_type or mc,
             "currency": "EUR",
             "country_area": "Italia" if mc == "GOV" else "Globale",
-            "benchmark_code": bench_tk,
-            "benchmark_label": bench_lbl,
+            "benchmark_code": None,
+            "benchmark_label": None,
             "source_quality": "derived",
             "manual_overrides": {}
         }

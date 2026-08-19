@@ -172,10 +172,12 @@ def resolve_instrument_benchmark(
     cat = _norm(category or master.get("macro_category") or _macro_from_type(typ)).upper()
 
     if prefer_master:
-        mt = _norm(master.get("benchmark_code"))
-        ml = _norm(master.get("benchmark_label"))
-        if mt or ml:
-            return BenchmarkAssignment(mt, ml or mt or "Benchmark concettuale", "anagrafica", "Media")
+        overrides = (master.get("manual_overrides") or {}).get("sator") or {}
+        if overrides.get("benchmark_user_edited"):
+            mt = _norm(overrides.get("benchmark_code"))
+            ml = _norm(overrides.get("benchmark_label"))
+            if mt or ml:
+                return BenchmarkAssignment(mt, ml or mt or "Benchmark concettuale", "anagrafica", "Alta")
 
     if tk in BENCHMARK_BY_TICKER:
         return BENCHMARK_BY_TICKER[tk]
