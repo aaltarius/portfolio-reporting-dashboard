@@ -163,6 +163,28 @@ _STATIC_VISUALS: dict[str, tuple[str, str]] = {
     "Esposizione diversificata": _DIVERSIFICATA,
 }
 
+_NATURE_VISUALS: dict[str, tuple[str, str, str]] = {
+    "azionario_globale_core": (*_GLOBALE_CORE, "Azionario globale core"),
+    "azionario_emergenti": (*_EMERGENTI, "Mercati emergenti"),
+    "azionario_paese_singolo": (*_AZIONARIO_PAESE_SINGOLO, "Azionario paese singolo"),
+    "monetario": (*_LIQUIDITA, "Liquidità"),
+    "bond_governativo": (*_OBBLIGAZIONARIO, "Obbligazionario / reddito"),
+    "bond_globale": (*_OBBLIGAZIONARIO, "Obbligazionario / reddito"),
+    "oro": (*_BENE_RIFUGIO, "Bene rifugio"),
+    "tecnologia_ai": (*_INNOVAZIONE, "Innovazione"),
+    "healthcare": (*_SALUTE, "Salute"),
+    "energia": (*_ENERGIA, "Energia"),
+    "metalli_miniere": (*_METALLI, "Metalli e miniere"),
+    "commodities": (*_COMMODITIES, "Materie prime"),
+    "italia": (*_AZIONARIO_PAESE_SINGOLO, "Azionario Italia"),
+    "quality_factor": (*_QUALITY, "Fattore qualità"),
+    "real_estate": (*_IMMOBILIARE, "Immobiliare"),
+    "difesa_sicurezza": (*_DIFESA, "Difesa / sicurezza"),
+    "criptovalute": (*_CRIPTOVALUTE, "Criptovalute"),
+    "fondo_pac": (*_FONDO_GESTITO, "Fondo gestito / multi-asset"),
+    "altro": (*_DIVERSIFICATA, "Esposizione diversificata"),
+}
+
 
 def get_natura_visual(label: str) -> tuple[str, str]:
     """Ritorna (colore_hex, markup_svg) per un'etichetta di natura. Le
@@ -174,3 +196,14 @@ def get_natura_visual(label: str) -> tuple[str, str]:
     if label.startswith("Azionario ") and label != "Azionario globale core":
         return _AZIONARIO_PAESE_SINGOLO
     return _DIVERSIFICATA
+
+
+def get_nature_visual(nature: str) -> tuple[str, str, str]:
+    """Ritorna (colore_hex, markup_svg, etichetta_display) per una nature
+    SATOR (non un'etichetta libera - vedi CAP_MORBIDO_NATURA/SATOR_NATURE_VALUES
+    in core/services/sator.py). Sostituisce la doppia inferenza testuale
+    indipendente (natura tecnica SATOR + natura visiva classify_natura):
+    un solo calcolo, un'etichetta/icona sempre coerente col ruolo."""
+    if nature in _NATURE_VISUALS:
+        return _NATURE_VISUALS[nature]
+    return (*_DIVERSIFICATA, "Esposizione diversificata")
