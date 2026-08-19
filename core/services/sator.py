@@ -302,7 +302,7 @@ def infer_sator_metadata(item: dict[str, Any], in_portfolio: bool) -> dict[str, 
         nature, role, confidence = "quality_factor", "core_regionale", "alta"
     elif "real estate" in name or "immobil" in name or "reit" in name or "property" in name or tk_in("xdre", "iwda"):
         nature, role, confidence = "real_estate", "satellite_tematico", "alta"
-    elif "artificial" in name or "intelligence" in name or "big data" in name or "robot" in name or "semicond" in name or tk_in("xaix", "ai4u", "aiq", "rbot", "smh"):
+    elif "artificial" in name or "intelligence" in name or "big data" in name or "robot" in name or "semicond" in name or "information technology" in name or tk_in("xaix", "ai4u", "aiq", "rbot", "smh"):
         nature, role, confidence = "tecnologia_ai", "satellite_crescita", "alta"
     elif "energy" in name or "energia" in name or "oil" in name or "petrol" in name or tk_in("enrg", "wnrg", "ius"):
         nature, role, confidence = "energia", "satellite_tematico", "alta"

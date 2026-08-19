@@ -60,3 +60,21 @@ def test_unrecognized_instrument_has_low_confidence():
     item = {"ticker": "ZZZZ.XX", "nome": "Strumento Sconosciuto Ignoto", "tipo": "ETF"}
     result = infer_sator_metadata(item, True)
     assert result["confidence"] == "bassa"
+
+
+def test_information_technology_sector_etf_gets_tecnologia_ai_nature():
+    # Task 5 (2026-08-19-classificazione-arricchimento-unificato): gap reale
+    # trovato confrontando la nature risolta contro i dati reali del
+    # portafoglio. XDWT.MI ("Xtrackers MSCI World Information Technology
+    # UCITS ETF") non matchava nessuna delle keyword del ramo tecnologia/AI
+    # ("artificial", "intelligence", "big data", "robot", "semicond" + ticker
+    # noti): il nome conteneva "World", quindi cadeva nel ramo successivo
+    # "azionario_globale_core" invece di "tecnologia_ai" - fondendo
+    # visivamente questo ETF settoriale tech con il core globale generico
+    # (es. SWDA.MI) nel donut di Pianificazione. "information technology" e'
+    # l'unica stringa 'tech' presente nell'intero universo strumenti reale
+    # (29 strumenti, verificato) quindi l'aggiunta della keyword non
+    # introduce falsi positivi sugli altri strumenti del portafoglio.
+    item = {"ticker": "XDWT.MI", "nome": "Xtrackers MSCI World Information Technology UCITS ETF", "tipo": "ETF IA"}
+    result = infer_sator_metadata(item, True)
+    assert result["nature"] == "tecnologia_ai"
