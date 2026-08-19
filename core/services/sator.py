@@ -279,46 +279,59 @@ def infer_sator_metadata(item: dict[str, Any], in_portfolio: bool) -> dict[str, 
     tkl = ticker.split(".")[0].lower()
     name = str(item.get("nome") or ticker).lower()
     category = macro_cat(str(item.get("tipo") or ""))
-    nature, role = "altro", "altro"
+    nature, role, confidence = "altro", "altro", "bassa"
 
     def tk_in(*codici: str) -> bool:
         return any(c in tkl for c in codici)
 
     if category == "GOV":
-        nature, role = "bond_governativo", "bond"
+        nature, role, confidence = "bond_governativo", "bond", "alta"
     elif category == "FND":
-        nature, role = "fondo_pac", "core_difensivo"
+        nature, role, confidence = "fondo_pac", "core_difensivo", "media"
+    elif "bitcoin" in name or "crypto" in name or "criptovalut" in name or tk_in("btc", "ib1t"):
+        nature, role, confidence = "criptovalute", "satellite_tematico", "alta"
+    elif "defence" in name or "defense" in name or "difesa" in name or "military" in name or "aerospace" in name:
+        nature, role, confidence = "difesa_sicurezza", "satellite_tematico", "alta"
     elif "money" in name or "overnight" in name or "monetar" in name or tk_in("xeon", "csh", "ern", "smart"):
-        nature, role = "monetario", "liquidita"
+        nature, role, confidence = "monetario", "liquidita", "alta"
     elif "gold" in name or "oro " in name or " oro" in name or "physical gold" in name or tk_in("xgdu", "sgld", "gold", "phau", "sgbs"):
-        nature, role = "oro", "oro"
+        nature, role, confidence = "oro", "oro", "alta"
     elif "health" in name or "salute" in name or "medical" in name or tk_in("xdwh", "hlt", "wely"):
-        nature, role = "healthcare", "satellite_difensivo"
+        nature, role, confidence = "healthcare", "satellite_difensivo", "alta"
     elif "quality" in name or "qualit" in name or tk_in("iwqu", "iwfq", "iqsa"):
-        nature, role = "quality_factor", "core_regionale"
+        nature, role, confidence = "quality_factor", "core_regionale", "alta"
     elif "real estate" in name or "immobil" in name or "reit" in name or "property" in name or tk_in("xdre", "iwda"):
-        nature, role = "real_estate", "satellite_tematico"
+        nature, role, confidence = "real_estate", "satellite_tematico", "alta"
     elif "artificial" in name or "intelligence" in name or "big data" in name or "robot" in name or "semicond" in name or tk_in("xaix", "ai4u", "aiq", "rbot", "smh"):
-        nature, role = "tecnologia_ai", "satellite_crescita"
+        nature, role, confidence = "tecnologia_ai", "satellite_crescita", "alta"
     elif "energy" in name or "energia" in name or "oil" in name or "petrol" in name or tk_in("enrg", "wnrg", "ius"):
-        nature, role = "energia", "satellite_tematico"
+        nature, role, confidence = "energia", "satellite_tematico", "alta"
     elif "metal" in name or "mining" in name or "miner" in name or "miniere" in name or tk_in("famamw", "spgp", "gdx"):
-        nature, role = "metalli_miniere", "satellite_tematico"
+        nature, role, confidence = "metalli_miniere", "satellite_tematico", "alta"
     elif "commodity" in name or "commodities" in name or "materie prime" in name or "broad commodit" in name or tk_in("xdbc", "cmod", "icom"):
-        nature, role = "commodities", "satellite_tematico"
+        nature, role, confidence = "commodities", "satellite_tematico", "alta"
     elif "ftse mib" in name or "italia" in name or "italy" in name or "mib" in name or tk_in("etfmib", "midx"):
-        nature, role = "italia", "satellite_tematico"
-    elif "emerging" in name or "emergenti" in name or "emerg" in name or tk_in("xmme", "emim", "iemg", "vfem"):
-        nature, role = "azionario_emergenti", "core_regionale"
+        nature, role, confidence = "italia", "satellite_tematico", "alta"
     elif "aggregate" in name or "bond" in name or "obbligaz" in name or "treasury" in name or "govt" in name or "bund" in name or tk_in("xbae", "aggh", "vagf", "eunh"):
-        nature, role = "bond_globale", "bond"
+        # Controllato PRIMA di "emerging": un fondo "EM Bond"/"Emerging
+        # Markets Bond" e' prima di tutto un'obbligazione. Fix del bug di
+        # specificita' (in precedenza "emerging" vinceva sempre, anche su
+        # fondi obbligazionari mercati emergenti).
+        nature, role, confidence = "bond_globale", "bond", "alta"
+    elif "emerging" in name or "emergenti" in name or "emerg" in name or tk_in("xmme", "emim", "iemg", "vfem"):
+        nature, role, confidence = "azionario_emergenti", "core_regionale", "alta"
     elif ("world" in name or "all-world" in name or "all world" in name or "global" in name or "msci acwi" in name or "developed" in name
           or tk_in("swda", "vwce", "iwda", "sppw", "vwrl", "eunl")):
-        nature, role = "azionario_globale_core", "core_globale"
+        nature, role, confidence = "azionario_globale_core", "core_globale", "alta"
+    elif any(tok in name for tok in ("india", "china", "cina", "brazil", "brasile", "japan", "giappone", "smallcap", "small cap", "ex mega", "single country")):
+        # Paese singolo o segmento equity specifico (small cap, ex-mega-cap):
+        # non e' "core globale" solo perche' e' azionario - e' una scommessa
+        # di stile/paese, va in Satellite.
+        nature, role, confidence = "azionario_paese_singolo", "satellite_tematico", "media"
     elif category in ("ETF", "ETC"):
         # non riconosciuto: resta "altro" e finisce in un gruppo dedicato, NON
         # forzato nel core globale (era questo a falsare i confronti)
-        nature, role = "altro", "satellite_tematico"
+        nature, role, confidence = "altro", "satellite_tematico", "bassa"
 
     # Costo: letto dai campi arricchimento dello strumento (tab Strumenti ->
     # Arricchimento), non da un editor separato — cosi' il flusso sidebar/
@@ -331,6 +344,7 @@ def infer_sator_metadata(item: dict[str, Any], in_portfolio: bool) -> dict[str, 
         "state": "in_portafoglio" if in_portfolio else "watchlist",
         "nature": nature,
         "role": role,
+        "confidence": confidence,
         "comparison_group": _infer_comparison_group(nature, role, ticker, name),
         "function_label": _infer_function_label(nature, role),
         "commission_mode": "zero_commissioni" if zero_commission else "standard",
@@ -2104,6 +2118,9 @@ def _infer_comparison_group(nature: str, role: str, ticker: str, name: str) -> s
         "italia": "azionario_italia",
         "quality_factor": "fattoriali",
         "real_estate": "real_estate",
+        "criptovalute": "criptovalute",
+        "difesa_sicurezza": "difesa_sicurezza",
+        "azionario_paese_singolo": "azionario_paese_singolo",
     }
     if nature in mapping:
         return mapping[nature]
@@ -2130,6 +2147,9 @@ def _infer_function_label(nature: str, role: str) -> str:
         "quality_factor": "fattore qualita",
         "real_estate": "asset immobiliari",
         "fondo_pac": "linea PAC / fondo",
+        "criptovalute": "satellite crypto",
+        "difesa_sicurezza": "satellite difesa / sicurezza",
+        "azionario_paese_singolo": "azionario paese singolo / stile",
     }
     if nature in mapping:
         return mapping[nature]
