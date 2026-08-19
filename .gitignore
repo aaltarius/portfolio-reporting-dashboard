@@ -59,6 +59,9 @@ data/config/
 docs/
 tests/
 
+# Workspace di lavoro di subagent-driven-development (ledger, brief, diff di review)
+.superpowers/
+
 # Documenti interni di sviluppo
 HANDOFF_LUNEDI.md
 portfolio_dashboard_brief_per_altra_ai_v2.md
