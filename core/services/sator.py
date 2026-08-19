@@ -1205,6 +1205,25 @@ def compute_instrument_buckets(data: dict[str, Any], held_tickers: set[str] | No
     return out
 
 
+def compute_instrument_bucket_exposures(data: dict[str, Any], held_tickers: set[str] | None = None) -> dict[str, dict[str, float]]:
+    """Ticker -> {bucket: frazione}. Analoga a compute_instrument_buckets ma
+    pesata: per strumenti senza override e' sempre {bucket_primario: 1.0},
+    identica informazione di compute_instrument_buckets in forma diversa.
+    Usata SOLO dagli aggregatori che sommano controvalori/percentuali tra
+    bucket (mix bucket corrente, grafico a ciambella) - il motore SATOR
+    continua a usare compute_instrument_buckets (bucket singolo), invariato
+    in questo sotto-progetto."""
+    out: dict[str, dict[str, float]] = {}
+    for item in data.get("strumenti", []) or []:
+        ticker = str(item.get("ticker") or "").strip().upper()
+        if not ticker:
+            continue
+        if held_tickers is not None and ticker not in held_tickers:
+            continue
+        out[ticker] = resolve_instrument_bucket_exposure(data, item, ticker in (held_tickers or set()))
+    return out
+
+
 _BUCKET_OBJECTIVE_KEYS = {"Core": "core", "Difensivo": "difensivo", "Satellite": "satellite"}
 
 
