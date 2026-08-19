@@ -1545,11 +1545,17 @@ def compute_current_bucket_mix(
 def build_portfolio_rings_frame(
     data: dict[str, Any], state_df: pd.DataFrame, *, exclude_tickers: frozenset[str] = frozenset()
 ) -> pd.DataFrame:
-    """Una riga per strumento posseduto: ticker, name, bucket (Core/Difensivo/
-    Satellite), natura (testo libero legacy, campo strumento["natura"]),
-    nature (codice tassonomia SATOR inferito da infer_sator_metadata, vedi
-    SATOR_NATURE_VALUES), value (controvalore totale). Base dati per il donut
-    ad anelli concentrici della Dashboard decisionale in Pianificazione.
+    """Una riga per (strumento, bucket) posseduto: ticker, name, bucket
+    (Core/Difensivo/Satellite), natura (testo libero legacy), nature
+    (codice tassonomia SATOR), value (controvalore attribuito a quel
+    bucket). Uno strumento senza bucket_exposure diviso produce UNA riga
+    con il controvalore pieno (identico al comportamento precedente);
+    uno strumento con bucket_exposure diviso produce una riga per ogni
+    bucket con frazione > 0, con value proporzionale. Base dati per il
+    donut ad anelli concentrici e per la tabella di allocazione bucket
+    della Dashboard decisionale in Pianificazione - entrambi i consumatori
+    filtrano gia' per colonna "bucket" e sommano "value", quindi ereditano
+    la divisione senza modifiche proprie.
 
     exclude_tickers: ticker posseduti da omettere del tutto (toggle "Escludi
     BTP/GOV" della pagina Pianificazione)."""
@@ -1557,7 +1563,7 @@ def build_portfolio_rings_frame(
     held = _tickers_posseduti(state_df)
     if not held:
         return pd.DataFrame(columns=columns)
-    buckets = compute_instrument_buckets(data, held)
+    exposures = compute_instrument_bucket_exposures(data, held)
     controvalore_map: dict[str, float] = {}
     if state_df is not None and not state_df.empty and "Ticker" in state_df.columns and "Controvalore" in state_df.columns:
         for _, row in state_df.iterrows():
@@ -1573,14 +1579,20 @@ def build_portfolio_rings_frame(
         if value <= 0:
             continue
         nature = resolve_instrument_nature(data, item, True)
-        rows.append({
-            "ticker": ticker,
-            "name": str(item.get("nome") or ticker),
-            "bucket": buckets.get(ticker, "Satellite"),
-            "natura": str(item.get("natura") or "Esposizione diversificata"),
-            "nature": nature,
-            "value": value,
-        })
+        natura_legacy = str(item.get("natura") or "Esposizione diversificata")
+        name = str(item.get("nome") or ticker)
+        exposure = exposures.get(ticker, {"Satellite": 1.0})
+        for bucket, frac in exposure.items():
+            if frac <= 0:
+                continue
+            rows.append({
+                "ticker": ticker,
+                "name": name,
+                "bucket": bucket,
+                "natura": natura_legacy,
+                "nature": nature,
+                "value": value * frac,
+            })
     return pd.DataFrame(rows, columns=columns) if rows else pd.DataFrame(columns=columns)
 
 

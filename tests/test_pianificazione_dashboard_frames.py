@@ -109,6 +109,49 @@ class TestBuildPortfolioRingsFrame:
         df = build_portfolio_rings_frame(data, state_df)
         assert set(df["bucket"]) == {"Core", "Difensivo"}
 
+    def test_build_portfolio_rings_frame_splits_instrument_into_multiple_rows(self, project_root):
+        data = {
+            "instrument_master": {
+                "FAM-FLEX": {
+                    "manual_overrides": {
+                        "sator": {
+                            "bucket_exposure": {"Core": 0.6, "Difensivo": 0.4, "Satellite": 0.0},
+                            "bucket_exposure_user_edited": True,
+                        }
+                    }
+                }
+            },
+            "strumenti": [
+                {"ticker": "FAM-FLEX", "nome": "FAM Series Flexible", "tipo": "Fondo Bilan. Flessibile"},
+            ],
+        }
+        state_df = pd.DataFrame([{"Ticker": "FAM-FLEX", "Quote": 10.0, "Controvalore": 1000.0}])
+
+        df = build_portfolio_rings_frame(data, state_df)
+
+        assert len(df) == 2  # una riga Core, una riga Difensivo (Satellite=0 esclusa)
+        core_row = df[df["bucket"] == "Core"].iloc[0]
+        dif_row = df[df["bucket"] == "Difensivo"].iloc[0]
+        assert core_row["value"] == 600.0
+        assert dif_row["value"] == 400.0
+        assert core_row["ticker"] == "FAM-FLEX"
+        assert dif_row["ticker"] == "FAM-FLEX"
+
+    def test_build_portfolio_rings_frame_unchanged_for_instrument_without_override(self, project_root):
+        """Non-regressione esplicita: una riga sola, valore pieno, come oggi."""
+        data = {
+            "instrument_master": {},
+            "strumenti": [
+                {"ticker": "SWDA.MI", "nome": "iShares Core MSCI World", "tipo": "ETF Az. Globale"},
+            ],
+        }
+        state_df = pd.DataFrame([{"Ticker": "SWDA.MI", "Quote": 10.0, "Controvalore": 1000.0}])
+
+        df = build_portfolio_rings_frame(data, state_df)
+
+        assert len(df) == 1
+        assert df.iloc[0]["value"] == 1000.0
+
 
 from core.services.sator import latest_sator_decision
 
