@@ -180,6 +180,88 @@ def _fs_render_dati_completi_fields(strumento: dict) -> str:
     return "".join(rows)
 
 
+def _fs_classif_badge(is_manual: bool, confidence: str = "") -> str:
+    """Badge auto/manuale per i campi di classificazione (ruolo, benchmark),
+    stessa palette gia' usata dal badge fonte in _fs_render_dati_completi_fields
+    (colors = {"auto": "#0ea5e9", ..., "manuale": "#f59e0b"}) per coerenza
+    visiva nella stessa pagina."""
+    if is_manual:
+        return (
+            '<span style="font-size:10px;padding:1px 6px;border-radius:9px;'
+            'background:#f59e0b;color:#fff;margin-left:6px;">Impostato manualmente</span>'
+        )
+    label = f"Automatico (confidenza: {escape(str(confidence or 'n/d'))})"
+    return (
+        f'<span style="font-size:10px;padding:1px 6px;border-radius:9px;'
+        f'background:#0ea5e9;color:#fff;margin-left:6px;">{label}</span>'
+    )
+
+
+def _fs_render_classificazione_section(data: dict, strumento: dict, tk_escaped: str, tk_raw: str) -> str:
+    """Editor manuale unico per ruolo strategico SATOR e benchmark dello
+    strumento selezionato nella tab Arricchimento. Scrive su
+    manual_overrides.sator (letto da core.services.sator._meta_strutturale
+    per il ruolo e da core.benchmark_registry.resolve_instrument_benchmark
+    per il benchmark) — mai sul vecchio enrichment_source/campo natura, che
+    restano un meccanismo separato e fuori dall'ambito di questa sezione."""
+    from core.services.sator import infer_sator_metadata, SATOR_ROLE_VALUES
+    from core.benchmark_registry import resolve_instrument_benchmark
+
+    master_all = data.get("instrument_master", {})
+    master_all = master_all if isinstance(master_all, dict) else {}
+    master_entry = master_all.get(tk_raw, {})
+    master_entry = master_entry if isinstance(master_entry, dict) else {}
+    sator_overrides = (master_entry.get("manual_overrides") or {}).get("sator") or {}
+    role_user_edited = bool(sator_overrides.get("user_edited"))
+    benchmark_user_edited = bool(sator_overrides.get("benchmark_user_edited"))
+
+    inf = infer_sator_metadata(strumento, True)
+    if role_user_edited and sator_overrides.get("role") not in (None, ""):
+        effective_role = str(sator_overrides.get("role"))
+    else:
+        effective_role = str(inf.get("role") or "altro")
+    confidence = str(inf.get("confidence") or "")
+
+    bm = resolve_instrument_benchmark(strumento, master_entry=master_entry, prefer_master=True)
+
+    role_options = "".join(
+        f'<option value="{escape(r)}"{" selected" if r == effective_role else ""}>{escape(r)}</option>'
+        for r in SATOR_ROLE_VALUES
+    )
+
+    field_style = (
+        "width:100%;padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;"
+        "font-size:13px;margin-top:3px;box-sizing:border-box;"
+    )
+
+    return f"""
+    <h2>Classificazione</h2>
+    <form method="POST" action="/strumenti" autocomplete="off" style="margin-bottom:10px">
+      <input type="hidden" name="azione" value="salva_classificazione">
+      <input type="hidden" name="ticker" value="{tk_escaped}">
+      <div style="margin-bottom:10px;">
+        <label style="font-size:12px;font-weight:600;color:#64748b;">Ruolo strategico{_fs_classif_badge(role_user_edited, confidence)}</label>
+        <select name="role" style="{field_style}">
+          {role_options}
+        </select>
+      </div>
+      <div style="margin-bottom:10px;">
+        <label style="font-size:12px;font-weight:600;color:#64748b;">Benchmark codice{_fs_classif_badge(benchmark_user_edited, bm.confidence)}</label>
+        <input name="benchmark_code" value="{escape(bm.ticker)}" placeholder="es. IWDA.AS" style="{field_style}">
+      </div>
+      <div style="margin-bottom:10px;">
+        <label style="font-size:12px;font-weight:600;color:#64748b;">Benchmark etichetta{_fs_classif_badge(benchmark_user_edited, bm.confidence)}</label>
+        <input name="benchmark_label" value="{escape(bm.label)}" placeholder="es. MSCI World" style="{field_style}">
+      </div>
+      <button type="submit" class="btn-confirm" style="margin-top:6px">&#128190; Salva classificazione</button>
+    </form>
+    <form method="POST" action="/strumenti" autocomplete="off" style="margin-bottom:26px">
+      <input type="hidden" name="azione" value="ricalcola_automatico">
+      <input type="hidden" name="ticker" value="{tk_escaped}">
+      <button type="submit" class="btn-sm">&#8630; Ricalcola automaticamente</button>
+    </form>"""
+
+
 def _fs_parse_flex_date(value: str) -> str:
     """Converte una data GG/MM/AAAA o YYYY-MM-DD in ISO YYYY-MM-DD. Stringa vuota -> vuota.
 
@@ -613,8 +695,10 @@ def _render_strumenti_page(
 
     if strumento_arricchimento is not None:
         _tk_sel = escape(strumento_arricchimento.get("ticker", ""))
+        _tk_raw = strumento_arricchimento.get("ticker", "")
         _stato_sel = escape(_enrichment_status_label(strumento_arricchimento))
         _fields_html = _fs_render_dati_completi_fields(strumento_arricchimento)
+        _classificazione_html = _fs_render_classificazione_section(data, strumento_arricchimento, _tk_sel, _tk_raw)
         arricchimento_dettaglio = f"""
     <div class="hint" style="margin:14px 0 20px">Stato: <b>{_stato_sel}</b></div>
 
@@ -639,7 +723,9 @@ def _render_strumenti_page(
       <input type="hidden" name="ticker" value="{_tk_sel}">
       {_fields_html}
       <button type="submit" class="btn-confirm" style="margin-top:14px">&#128190; Salva modifiche</button>
-    </form>"""
+    </form>
+
+    {_classificazione_html}"""
     else:
         arricchimento_dettaglio = '<div class="hint" style="margin-top:14px">Seleziona uno strumento per arricchirlo, importare un PDF Fineco o modificarne i dati a mano.</div>'
 
@@ -1030,5 +1116,56 @@ async def post_strumenti(
         save_data(d)
         from urllib.parse import quote as urlquote
         return RedirectResponse(f"/strumenti?tab=arricchimento&ticker={urlquote(ticker)}&ok={urlquote('Modifiche salvate.')}", status_code=303)
+
+    elif azione == "salva_classificazione":
+        ticker = ticker.strip()
+        if not ticker:
+            return err_page("Ticker non specificato.", "arricchimento")
+        try:
+            d = _ld()
+        except Exception as exc:
+            return err_page(str(exc), "arricchimento", ticker)
+        strumento = next((s for s in (d.get("strumenti") or []) if s.get("ticker") == ticker), None)
+        if strumento is None:
+            return err_page("Strumento non trovato.", "arricchimento")
+        form_data = dict(await request.form())
+        role_val = str(form_data.get("role") or "").strip()
+        benchmark_code_val = str(form_data.get("benchmark_code") or "").strip()
+        benchmark_label_val = str(form_data.get("benchmark_label") or "").strip()
+        master = d.setdefault("instrument_master", {})
+        entry = master.setdefault(ticker, {})
+        overrides = entry.setdefault("manual_overrides", {}).setdefault("sator", {})
+        if role_val:
+            overrides["role"] = role_val
+            overrides["user_edited"] = True
+        if benchmark_code_val or benchmark_label_val:
+            overrides["benchmark_code"] = benchmark_code_val or None
+            overrides["benchmark_label"] = benchmark_label_val or None
+            overrides["benchmark_user_edited"] = True
+        save_data(d)
+        from urllib.parse import quote as urlquote
+        return RedirectResponse(f"/strumenti?tab=arricchimento&ticker={urlquote(ticker)}&ok={urlquote('Classificazione aggiornata.')}", status_code=303)
+
+    elif azione == "ricalcola_automatico":
+        ticker = ticker.strip()
+        if not ticker:
+            return err_page("Ticker non specificato.", "arricchimento")
+        try:
+            d = _ld()
+        except Exception as exc:
+            return err_page(str(exc), "arricchimento", ticker)
+        master = d.get("instrument_master", {})
+        entry = master.get(ticker)
+        if entry is not None:
+            overrides = entry.get("manual_overrides", {}).get("sator")
+            if overrides:
+                overrides.pop("role", None)
+                overrides["user_edited"] = False
+                overrides.pop("benchmark_code", None)
+                overrides.pop("benchmark_label", None)
+                overrides["benchmark_user_edited"] = False
+        save_data(d)
+        from urllib.parse import quote as urlquote
+        return RedirectResponse(f"/strumenti?tab=arricchimento&ticker={urlquote(ticker)}&ok={urlquote('Ripristinato il calcolo automatico.')}", status_code=303)
 
     return err_page("Azione non riconosciuta.", "add")
