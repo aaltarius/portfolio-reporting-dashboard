@@ -207,7 +207,7 @@ def _fs_render_classificazione_section(data: dict, strumento: dict, tk_escaped: 
     master -> manual_overrides.sator -> infer_sator_metadata) — mai sul
     vecchio enrichment_source/campo natura, che restano un meccanismo
     separato e fuori dall'ambito di questa sezione."""
-    from core.services.sator import infer_sator_metadata, resolve_instrument_role, SATOR_ROLE_VALUES, SATOR_ROLE_LABELS
+    from core.services.sator import infer_sator_metadata, resolve_instrument_role, resolve_instrument_bucket_exposure, SATOR_ROLE_VALUES, SATOR_ROLE_LABELS
     from core.benchmark_registry import resolve_instrument_benchmark
 
     master_all = data.get("instrument_master", {})
@@ -222,6 +222,12 @@ def _fs_render_classificazione_section(data: dict, strumento: dict, tk_escaped: 
     confidence = str(infer_sator_metadata(strumento, True).get("confidence") or "")
 
     bm = resolve_instrument_benchmark(strumento, master_entry=master_entry, prefer_master=True)
+
+    effective_exposure = resolve_instrument_bucket_exposure(data, strumento, True)
+    exposure_user_edited = bool(sator_overrides.get("bucket_exposure_user_edited"))
+    core_pct = round(effective_exposure.get("Core", 0.0) * 100.0, 2)
+    dif_pct = round(effective_exposure.get("Difensivo", 0.0) * 100.0, 2)
+    sat_pct = round(effective_exposure.get("Satellite", 0.0) * 100.0, 2)
 
     role_options = "".join(
         f'<option value="{escape(r)}"{" selected" if r == effective_role else ""}>{escape(SATOR_ROLE_LABELS.get(r, r))}</option>'
@@ -253,6 +259,21 @@ def _fs_render_classificazione_section(data: dict, strumento: dict, tk_escaped: 
         <input name="benchmark_label" value="{escape(bm.label)}" placeholder="es. MSCI World" style="{field_style}">
       </div>
       <button type="submit" class="btn-confirm" style="margin-top:6px">&#128190; Salva classificazione</button>
+    </form>
+    <h2>Esposizione tra bucket</h2>
+    <div style="font-size:12px;color:#64748b;margin-bottom:8px">Percentuale di questo strumento attribuita a ciascun bucket (somma 100%). Lascia 100% su un solo bucket se lo strumento non e' multi-asset.{_fs_classif_badge(exposure_user_edited, "100% nel bucket primario")}</div>
+    <form method="POST" action="/strumenti" autocomplete="off" style="margin-bottom:26px">
+      <input type="hidden" name="azione" value="salva_bucket_exposure">
+      <input type="hidden" name="ticker" value="{tk_escaped}">
+      <div style="display:flex;gap:10px;margin-bottom:10px;">
+        <div style="flex:1"><label style="font-size:12px;font-weight:600;color:#64748b;">Core %</label>
+          <input name="bucket_core" type="number" step="0.01" min="0" max="100" value="{core_pct}" style="{field_style}"></div>
+        <div style="flex:1"><label style="font-size:12px;font-weight:600;color:#64748b;">Difensivo %</label>
+          <input name="bucket_difensivo" type="number" step="0.01" min="0" max="100" value="{dif_pct}" style="{field_style}"></div>
+        <div style="flex:1"><label style="font-size:12px;font-weight:600;color:#64748b;">Satellite %</label>
+          <input name="bucket_satellite" type="number" step="0.01" min="0" max="100" value="{sat_pct}" style="{field_style}"></div>
+      </div>
+      <button type="submit" class="btn-confirm" style="margin-top:6px">&#128190; Salva esposizione</button>
     </form>
     <form method="POST" action="/strumenti" autocomplete="off" style="margin-bottom:26px">
       <input type="hidden" name="azione" value="ricalcola_automatico">
@@ -1186,6 +1207,57 @@ async def post_strumenti(
         from urllib.parse import quote as urlquote
         return RedirectResponse(f"/strumenti?tab=arricchimento&ticker={urlquote(ticker)}&ok={urlquote('Classificazione aggiornata.')}", status_code=303)
 
+    elif azione == "salva_bucket_exposure":
+        ticker = ticker.strip()
+        if not ticker:
+            return err_page("Ticker non specificato.", "arricchimento")
+        try:
+            d = _ld()
+        except Exception as exc:
+            return err_page(str(exc), "arricchimento", ticker)
+        strumento = next((s for s in (d.get("strumenti") or []) if s.get("ticker") == ticker), None)
+        if strumento is None:
+            return err_page("Strumento non trovato.", "arricchimento")
+        form_data = dict(await request.form())
+
+        from core.services.sator import resolve_instrument_bucket_exposure
+
+        def _parse_pct(raw) -> float:
+            try:
+                return max(0.0, float(str(raw).strip().replace(",", ".")) / 100.0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        submitted = {
+            "Core": _parse_pct(form_data.get("bucket_core")),
+            "Difensivo": _parse_pct(form_data.get("bucket_difensivo")),
+            "Satellite": _parse_pct(form_data.get("bucket_satellite")),
+        }
+        submitted_total = sum(submitted.values())
+
+        # Somma non-100%: scartato in sicurezza, nessuna scrittura - stesso
+        # principio di validazione gia' applicato al ruolo (Task 8 del
+        # sotto-progetto 1).
+        if abs(submitted_total - 1.0) < 1e-6:
+            current_exposure = resolve_instrument_bucket_exposure(d, strumento, True)
+            # Scrittura solo-se-cambiato: il form e' sempre precompilato con
+            # i valori attualmente effettivi, quindi un submit senza
+            # modifiche reali deve essere un no-op - stesso bug critico gia'
+            # corretto per ruolo/benchmark nel sotto-progetto 1.
+            changed = any(
+                abs(submitted.get(b, 0.0) - current_exposure.get(b, 0.0)) > 1e-6
+                for b in ("Core", "Difensivo", "Satellite")
+            )
+            if changed:
+                master = d.setdefault("instrument_master", {})
+                entry = master.setdefault(ticker, {})
+                overrides = entry.setdefault("manual_overrides", {}).setdefault("sator", {})
+                overrides["bucket_exposure"] = submitted
+                overrides["bucket_exposure_user_edited"] = True
+                save_data(d)
+        from urllib.parse import quote as urlquote
+        return RedirectResponse(f"/strumenti?tab=arricchimento&ticker={urlquote(ticker)}&ok={urlquote('Esposizione tra bucket aggiornata.')}", status_code=303)
+
     elif azione == "ricalcola_automatico":
         ticker = ticker.strip()
         if not ticker:
@@ -1204,6 +1276,8 @@ async def post_strumenti(
                 overrides.pop("benchmark_code", None)
                 overrides.pop("benchmark_label", None)
                 overrides["benchmark_user_edited"] = False
+                overrides.pop("bucket_exposure", None)
+                overrides["bucket_exposure_user_edited"] = False
                 # Nessun override trovato = nulla da resettare: evita un
                 # backup-bundle + riscrittura completa a vuoto per un no-op.
                 save_data(d)
