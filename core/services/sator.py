@@ -424,6 +424,32 @@ def resolve_instrument_role(data: dict[str, Any], item: dict[str, Any], in_portf
     return _resolve_instrument_meta(data, item, in_portfolio, "role")
 
 
+def resolve_instrument_bucket_exposure(data: dict[str, Any], item: dict[str, Any], in_portfolio: bool) -> dict[str, float]:
+    """Esposizione effettiva ai bucket Core/Difensivo/Satellite per uno
+    strumento (auto + override manuale). Default (nessun override): 100%
+    nel bucket primario derivato da resolve_instrument_role - identico al
+    comportamento di compute_instrument_buckets per chi non usa la
+    feature. bucket_exposure_user_edited e' un flag indipendente da
+    user_edited (ruolo) e benchmark_user_edited: mai condiviso, per non
+    ripetere il bug del sotto-progetto 1 dove un flag condiviso riattivava
+    campi dormienti non richiesti."""
+    ticker = str(item.get("ticker") or "").strip().upper()
+    master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
+    sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
+    override = sator.get("bucket_exposure")
+    if bool(sator.get("bucket_exposure_user_edited")) and isinstance(override, dict) and override:
+        cleaned = {
+            k: max(0.0, _safe_float(v, 0.0))
+            for k, v in override.items()
+            if k in ("Core", "Difensivo", "Satellite")
+        }
+        total = sum(cleaned.values())
+        if cleaned and abs(total - 1.0) < 1e-6:
+            return cleaned
+    role = resolve_instrument_role(data, item, in_portfolio)
+    return {_role_bucket(role): 1.0}
+
+
 # --------------------------------------------------------------------------- #
 # Editor universo (metadati modificabili dall'utente)
 # --------------------------------------------------------------------------- #
