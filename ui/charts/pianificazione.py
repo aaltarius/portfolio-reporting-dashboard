@@ -7,7 +7,7 @@ from core.config import COLORS
 from core.services.instrument_comparison import ComparisonSeries
 from ui.charts.runtime import finalize_chart
 from ui.formatting import fmt_eur_it, fmt_pct_it
-from ui.charts.natura_icons import get_natura_visual
+from ui.charts.natura_icons import get_nature_visual
 from ui.theme import bucket_color, macro_color, INSTRUMENT_PALETTE, P
 
 
@@ -142,22 +142,23 @@ def build_allocation_rings_chart(rings_df: pd.DataFrame, objective: dict, theme)
         inner_colors.append(bucket_color(bucket, theme))
         inner_hover.append(f"{bucket}<br>{fmt_eur_it(total, 2)}")
 
-        natura_groups: dict[str, dict[str, object]] = {}
+        nature_groups: dict[str, dict[str, object]] = {}
         for _, row in sub.iterrows():
-            natura = str(row["natura"])
-            group = natura_groups.setdefault(natura, {"value": 0.0, "items": []})
+            nature = str(row["nature"])
+            group = nature_groups.setdefault(nature, {"value": 0.0, "items": []})
             group["value"] = float(group["value"]) + float(row["value"])
             group["items"].append((str(row["ticker"]), float(row["value"])))
-        for natura, group in natura_groups.items():
-            outer_labels.append(natura)
+        for nature, group in nature_groups.items():
+            nature_color, _icon_svg, nature_label = get_nature_visual(nature)
+            outer_labels.append(nature_label)
             outer_values.append(float(group["value"]))
-            outer_colors.append(get_natura_visual(natura)[0])
+            outer_colors.append(nature_color)
             outer_hover.append(
                 "<br>".join(
-                    [f"<b>{natura}</b>"] + [f"{tk}: {fmt_eur_it(v, 2)}" for tk, v in group["items"]]
+                    [f"<b>{nature_label}</b>"] + [f"{tk}: {fmt_eur_it(v, 2)}" for tk, v in group["items"]]
                 )
             )
-            natura_totals[natura] = natura_totals.get(natura, 0.0) + float(group["value"])
+            natura_totals[nature_label] = natura_totals.get(nature_label, 0.0) + float(group["value"])
 
     grand_total = sum(inner_values) or 1.0
     fig.add_trace(go.Pie(

@@ -355,6 +355,19 @@ def infer_sator_metadata(item: dict[str, Any], in_portfolio: bool) -> dict[str, 
     }
 
 
+def resolve_instrument_nature(data: dict[str, Any], item: dict[str, Any], in_portfolio: bool) -> str:
+    """Nature SATOR risolta per un singolo strumento (auto + override manuale),
+    stesso pattern gia' usato internamente da compute_instrument_buckets/
+    compute_watchlist_reminders. Punto di accesso pubblico per la UI, che non
+    deve importare _meta_strutturale (privata) ne' reimplementare la
+    risoluzione master -> manual_overrides.sator -> infer_sator_metadata."""
+    ticker = str(item.get("ticker") or "").strip().upper()
+    master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
+    sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
+    inf = infer_sator_metadata(item, in_portfolio)
+    return _meta_strutturale(sator, inf, "nature")
+
+
 # --------------------------------------------------------------------------- #
 # Editor universo (metadati modificabili dall'utente)
 # --------------------------------------------------------------------------- #

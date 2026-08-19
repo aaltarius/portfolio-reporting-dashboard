@@ -10,8 +10,9 @@ from core.render_profiler import profile_step
 from persistence.storage import macro_cat
 from core.finance import build_ptf_df
 from core.instrument_classification import is_nav_fund
+from core.services.sator import resolve_instrument_nature
 from ui.charts.instrument_badges import ISSUER_BADGE_CSS, commission_badge, issuer_badge
-from ui.charts.natura_icons import get_natura_visual
+from ui.charts.natura_icons import get_nature_visual
 from ui.formatting import fmt_num_it, fmt_pct_it
 from ui.streamlit_compat import iframe_height_for_rows, iframe_scroll_for_rows, render_html_iframe
 from ui.theme import macro_color
@@ -81,8 +82,8 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
         holding_sort = "0" if in_portfolio else "1"
         holding_color = COLORS["success"] if in_portfolio else "#9CA3AF"
         row_background = "" if in_portfolio else "background:#f3f4f6;"
-        nature_label = str(info.get("natura") or "Esposizione diversificata")
-        nature_color, icon_svg = get_natura_visual(nature_label)
+        nature = resolve_instrument_nature(data, info, in_portfolio)
+        nature_color, icon_svg, nature_label = get_nature_visual(nature)
         # "Zero commissioni" esiste solo come campo per ETF/ETC (vedi
         # ui/form_server/strumenti.py): per le altre categorie il badge non è
         # applicabile, non va mostrato di default solo perché il campo manca.

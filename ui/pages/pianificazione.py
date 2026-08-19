@@ -22,6 +22,7 @@ from core.services.sator import (
     build_next_purchase_bubble_frame,
     held_non_pac_tickers,
     latest_sator_decision,
+    resolve_instrument_nature,
     run_sator_analysis,
 )
 from core.services.instrument_clustering import build_instrument_map
@@ -32,7 +33,7 @@ from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it
 from ui.i18n import t
 from ui.page_chrome import render_page_intro as render_page_intro_shared, render_section_line as render_section_line_shared
 from ui.components import render_section_title, back_to_top, legend_block
-from ui.charts.natura_icons import get_natura_visual
+from ui.charts.natura_icons import get_nature_visual
 from core.instrument_classification import suggest_tipo_correction
 from core.render_profiler import profile_step
 from ui.charts.pianificazione import (
@@ -193,8 +194,8 @@ def _build_bucket_allocation_table_html(
             deviations = bucket_quota.get("deviations_pp", {})
             for _, row in sub.iterrows():
                 ticker = str(row["ticker"])
-                natura_label = str(row["natura"]) if row["natura"] else "Esposizione diversificata"
-                natura_color, natura_svg = get_natura_visual(natura_label)
+                nature = str(row["nature"]) if row["nature"] else "altro"
+                natura_color, natura_svg, natura_label = get_nature_visual(nature)
                 instrument_value = float(row["value"])
                 current_pct = (instrument_value / bucket_value * 100.0) if bucket_value > 0 else 0.0
                 has_target = ticker in targets
@@ -221,11 +222,11 @@ def _build_bucket_allocation_table_html(
                     <span class="bucket-alloc-mini-caption">{caption}</span>
                   </td>
                 </tr>''')
-        for reminder_natura in reminders_for_bucket:
-            natura_color, natura_svg = get_natura_visual(reminder_natura)
+        for reminder_nature in reminders_for_bucket:
+            natura_color, natura_svg, reminder_label = get_nature_visual(reminder_nature)
             body_rows.append(f'''
             <tr class="bucket-alloc-watchlist-row" style="--tone:{tone}">
-              <td><span class="bucket-alloc-natura" style="--natura-color:{natura_color}">{natura_svg}{reminder_natura}</span></td>
+              <td><span class="bucket-alloc-natura" style="--natura-color:{natura_color}">{natura_svg}{reminder_label}</span></td>
               <td class="bucket-alloc-ticker"></td>
               <td class="num">{fmt_eur_it(0.0, 2)}</td>
               <td><span class="bucket-alloc-mini-caption">In osservazione</span></td>
@@ -652,8 +653,8 @@ def _build_sator_reference_summary_html(latest: dict, theme, data: dict, decisio
             f'</div>'
         )
 
-    natura_by_ticker = {
-        str(item.get("ticker") or "").strip().upper(): str(item.get("natura") or "").strip() or "Esposizione diversificata"
+    nature_by_ticker = {
+        str(item.get("ticker") or "").strip().upper(): resolve_instrument_nature(data, item, True)
         for item in (data.get("strumenti") or [])
     }
 
@@ -673,8 +674,8 @@ def _build_sator_reference_summary_html(latest: dict, theme, data: dict, decisio
         for line in order_lines:
             ticker = str(line.get("ticker", ""))
             name = str(line.get("name") or "").strip() or ticker
-            natura_label = natura_by_ticker.get(ticker.strip().upper(), "Esposizione diversificata")
-            natura_color, natura_svg = get_natura_visual(natura_label)
+            nature = nature_by_ticker.get(ticker.strip().upper(), "altro")
+            natura_color, natura_svg, natura_label = get_nature_visual(nature)
             bucket = str(line.get("bucket") or "Satellite")
             bucket_tone = bucket_color(bucket, theme)
             if bucket in buckets_rendered:

@@ -8,9 +8,10 @@ from datetime import date
 import pandas as pd
 from core.config import COLORS
 from core.domain.calendar import CEDOLA_FREQ_MONTHS, CEDOLA_FREQ_PAYMENTS, TAX_RATE_GOV_PCT, build_btp_calendar
+from core.services.sator import resolve_instrument_nature
 from persistence.storage import macro_cat
 from ui.charts.instrument_badges import ISSUER_BADGE_CSS, commission_badge, issuer_badge
-from ui.charts.natura_icons import get_natura_visual
+from ui.charts.natura_icons import get_nature_visual
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it
 from ui.streamlit_compat import iframe_height_for_rows, render_html_iframe
 from ui.theme import CATEGORY_COLORS, macro_color
@@ -654,8 +655,8 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
         tipo_code = macro_cat(tipo)
         nome = str(row.get("Strumento", ""))
         info = info_map.get(tk, {})
-        natura_label = str(info.get("natura") or "Esposizione diversificata")
-        natura_color, natura_svg = get_natura_visual(natura_label)
+        nature = resolve_instrument_nature(data, info, True)
+        natura_color, natura_svg, natura_label = get_nature_visual(nature)
         # "Zero commissioni" esiste solo come campo per ETF/ETC: per le altre
         # categorie il badge non e' applicabile, non va mostrato di default.
         comm_badge = commission_badge(info.get("zero_commissioni")) if tipo_code in ("ETF", "ETC") else ""
@@ -970,8 +971,9 @@ def render_weekly_pl_table(result, da, data):
         tk = row["ticker"]
         col = _cat_col(row["tipo"])
         tipo_code = macro_cat(row["tipo"])
-        natura_label = str(info_map.get(tk, {}).get("natura") or "Esposizione diversificata")
-        natura_color, natura_svg = get_natura_visual(natura_label)
+        info = info_map.get(tk, {})
+        nature = resolve_instrument_nature(data, info, True)
+        natura_color, natura_svg, natura_label = get_nature_visual(nature)
         # "Zero commissioni" esiste solo come campo per ETF/ETC: per le altre
         # categorie il badge non e' applicabile, non va mostrato di default.
         comm_badge = commission_badge(info_map.get(tk, {}).get("zero_commissioni")) if tipo_code in ("ETF", "ETC") else ""
