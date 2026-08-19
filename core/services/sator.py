@@ -368,6 +368,18 @@ def resolve_instrument_nature(data: dict[str, Any], item: dict[str, Any], in_por
     return _meta_strutturale(sator, inf, "nature")
 
 
+def resolve_instrument_role(data: dict[str, Any], item: dict[str, Any], in_portfolio: bool) -> str:
+    """Ruolo SATOR risolto per un singolo strumento (auto + override manuale),
+    stesso pattern di resolve_instrument_nature. Punto di accesso pubblico per
+    la UI, che non deve importare _meta_strutturale (privata) ne' reimplementare
+    la risoluzione master -> manual_overrides.sator -> infer_sator_metadata."""
+    ticker = str(item.get("ticker") or "").strip().upper()
+    master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
+    sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
+    inf = infer_sator_metadata(item, in_portfolio)
+    return _meta_strutturale(sator, inf, "role")
+
+
 # --------------------------------------------------------------------------- #
 # Editor universo (metadati modificabili dall'utente)
 # --------------------------------------------------------------------------- #

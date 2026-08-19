@@ -200,11 +200,14 @@ def _fs_classif_badge(is_manual: bool, confidence: str = "") -> str:
 def _fs_render_classificazione_section(data: dict, strumento: dict, tk_escaped: str, tk_raw: str) -> str:
     """Editor manuale unico per ruolo strategico SATOR e benchmark dello
     strumento selezionato nella tab Arricchimento. Scrive su
-    manual_overrides.sator (letto da core.services.sator._meta_strutturale
+    manual_overrides.sator (letto da core.services.sator.resolve_instrument_role
     per il ruolo e da core.benchmark_registry.resolve_instrument_benchmark
-    per il benchmark) — mai sul vecchio enrichment_source/campo natura, che
-    restano un meccanismo separato e fuori dall'ambito di questa sezione."""
-    from core.services.sator import infer_sator_metadata, SATOR_ROLE_VALUES
+    per il benchmark — entrambi i punti di accesso pubblici gia' pensati
+    apposta perche' la UI non debba reimplementare la risoluzione
+    master -> manual_overrides.sator -> infer_sator_metadata) — mai sul
+    vecchio enrichment_source/campo natura, che restano un meccanismo
+    separato e fuori dall'ambito di questa sezione."""
+    from core.services.sator import infer_sator_metadata, resolve_instrument_role, SATOR_ROLE_VALUES
     from core.benchmark_registry import resolve_instrument_benchmark
 
     master_all = data.get("instrument_master", {})
@@ -215,12 +218,8 @@ def _fs_render_classificazione_section(data: dict, strumento: dict, tk_escaped: 
     role_user_edited = bool(sator_overrides.get("user_edited"))
     benchmark_user_edited = bool(sator_overrides.get("benchmark_user_edited"))
 
-    inf = infer_sator_metadata(strumento, True)
-    if role_user_edited and sator_overrides.get("role") not in (None, ""):
-        effective_role = str(sator_overrides.get("role"))
-    else:
-        effective_role = str(inf.get("role") or "altro")
-    confidence = str(inf.get("confidence") or "")
+    effective_role = resolve_instrument_role(data, strumento, True)
+    confidence = str(infer_sator_metadata(strumento, True).get("confidence") or "")
 
     bm = resolve_instrument_benchmark(strumento, master_entry=master_entry, prefer_master=True)
 
