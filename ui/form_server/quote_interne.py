@@ -21,6 +21,7 @@ from core.services.sator import (
     compute_instrument_quota_status,
     compute_instrument_reference_ranges,
     ensure_sator_settings,
+    held_non_pac_tickers,
 )
 from ui.form_server.shell import STREAMLIT_URL, _ROOT_VARS_BLOCK
 
@@ -48,7 +49,7 @@ h2{font-size:.75rem;font-weight:800;text-transform:uppercase;letter-spacing:.06e
 </style>"""
 
 
-def _bucket_tickers(data: dict) -> dict[str, list[str]]:
+def _bucket_tickers(data: dict, *, exclude_tickers: frozenset[str] = frozenset()) -> dict[str, list[str]]:
     from core.services.sator import _tickers_posseduti  # riuso privato intenzionale, stesso file di dominio
     from core.finance import compute_portfolio_state
 
@@ -59,6 +60,8 @@ def _bucket_tickers(data: dict) -> dict[str, list[str]]:
     buckets = compute_instrument_buckets(data, held)
     out: dict[str, list[str]] = {b: [] for b in _BUCKETS}
     for ticker, bucket in buckets.items():
+        if ticker in exclude_tickers:
+            continue
         out.setdefault(bucket, []).append(ticker)
     for b in out:
         out[b].sort()
@@ -66,13 +69,24 @@ def _bucket_tickers(data: dict) -> dict[str, list[str]]:
 
 
 def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "") -> str:
+    from core.finance import compute_portfolio_state
     from persistence.storage import load_data, load_settings
 
     data = load_data()
     settings = load_settings()
     cfg = ensure_sator_settings(settings)
-    tickers_by_bucket = _bucket_tickers(data)
-    status = compute_instrument_quota_status(data, settings)
+    # Stesso toggle "Escludi BTP/GOV" gia' attivo su Pianificazione
+    # (settings["sator"]["deficit_pac_only"], persistito): /quote-interne
+    # deve rispettarlo allo stesso modo, altrimenti i BTP restano
+    # visibili/editabili qui anche quando l'utente li ha esclusi altrove.
+    exclude_tickers: frozenset[str] = frozenset()
+    if cfg["deficit_pac_only"]:
+        state_df = compute_portfolio_state(data, include_closed=True).get("df")
+        if data.get("_positions_df") is not None and not data["_positions_df"].empty:
+            state_df = data["_positions_df"]
+        exclude_tickers = held_non_pac_tickers(data, state_df)
+    tickers_by_bucket = _bucket_tickers(data, exclude_tickers=exclude_tickers)
+    status = compute_instrument_quota_status(data, settings, exclude_tickers=exclude_tickers)
     reference_ranges = compute_instrument_reference_ranges(data, settings, tickers_by_bucket)
 
     ok_html = f'<div class="alert-ok">{escape(ok_msg)}</div>' if ok_msg else ""
@@ -134,6 +148,11 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "") -> str:
       <div class="qi-row"><label>Tolleranza banda attorno al target (pp)</label>
         <input type="number" name="band_tolerance_pp" min="0" max="20" step="0.5" value="{cfg['band_tolerance_pp']*100:.1f}"></div>
     </div>
+    <div class="qi-card"><h2>Tolleranza quote interne per strumento</h2>
+      <p>Scostamento in punti percentuali (tra quota attuale e quota di riferimento di un singolo strumento) entro cui la tabella "Attuale/Target" di Pianificazione lo colora ok invece che avviso/critico. Non influisce sul blocco di SATOR (quello richiede sempre somma esatta al 100%), solo sul colore.</p>
+      <div class="qi-row"><label>Tolleranza per strumento (pp)</label>
+        <input type="number" name="instrument_quota_tolerance_pp" min="0" max="20" step="0.5" value="{cfg['instrument_quota_tolerance_pp']*100:.1f}"></div>
+    </div>
     <div class="qi-card"><h2>Pesi del punteggio SATOR</h2>
       <div class="qi-row"><label>Fit allocativo %</label><input type="number" name="w_fit" min="0" max="100" step="1" value="{weights['strategic_fit']*100:.0f}"></div>
       <div class="qi-row"><label>Momentum %</label><input type="number" name="w_mom" min="0" max="100" step="1" value="{weights['tactical_momentum']*100:.0f}"></div>
@@ -156,6 +175,9 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "") -> str:
 <div class="qi">
   <h1>Quote interne per bucket</h1>
   {ok_html}{err_html}
+  {settings_section}
+  <h2 style="margin-top:24px">Quote per bucket</h2>
+  <p>Il riferimento indicativo accanto a ogni campo usa i limiti di concentrazione impostati sopra.</p>
   <form method="post" action="/quote-interne" onsubmit="return collectQuotas()">
     <input type="hidden" name="azione" value="salva_quote">
     <input type="hidden" name="quotas_json" id="quotas_json">
@@ -167,7 +189,6 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "") -> str:
     <table><thead><tr><th>Bucket</th><th>Stato</th><th>Somma quote</th><th>Note</th></tr></thead>
     <tbody>{"".join(status_rows)}</tbody></table>
   </div>
-  {settings_section}
   <p><a href="{STREAMLIT_URL}">&larr; Torna all'app</a></p>
 </div>
 <script>
@@ -199,6 +220,7 @@ async def post_quote_interne(
     w_div: str = Form("15"), w_cost: str = Form("10"),
     bucket_first_allocation: str = Form(""),
     band_tolerance_pp: str = Form("3"),
+    instrument_quota_tolerance_pp: str = Form("5"),
 ):
     from persistence.storage import load_settings, save_settings
 
@@ -236,6 +258,7 @@ async def post_quote_interne(
         settings["sator"]["score_weights"] = weights
         settings["sator"]["bucket_first_allocation"] = bool(bucket_first_allocation)
         settings["sator"]["band_tolerance_pp"] = max(0.0, min(20.0, float(band_tolerance_pp or 0))) / 100.0
+        settings["sator"]["instrument_quota_tolerance_pp"] = max(0.0, min(20.0, float(instrument_quota_tolerance_pp or 0))) / 100.0
         if caps:
             settings["sator"]["concentration_caps"] = caps
         try:

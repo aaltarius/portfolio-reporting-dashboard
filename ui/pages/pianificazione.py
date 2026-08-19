@@ -873,7 +873,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
             watchlist_reminders = compute_watchlist_reminders(data, state_df, exclude_tickers=exclude_tickers)
             _render_bucket_allocation_table(
                 rings_df, bucket_totals, current_mix, objective, objective_key, theme, watchlist_reminders,
-                quota_status=compute_instrument_quota_status(data, settings),
+                quota_status=compute_instrument_quota_status(data, settings, exclude_tickers=exclude_tickers),
                 instrument_tolerance_pp=ensure_sator_settings(settings)["instrument_quota_tolerance_pp"] * 100.0,
             )
     render_section_title(
@@ -1056,7 +1056,7 @@ def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             exclude_tickers = _render_btp_exclusion_toggle(data, settings)
         with profile_step("Pianificazione", "quota_invalid_banner"):
             from core.services.sator import compute_instrument_quota_status
-            quota_status_for_banners = compute_instrument_quota_status(data, settings)
+            quota_status_for_banners = compute_instrument_quota_status(data, settings, exclude_tickers=exclude_tickers)
             _render_quota_invalid_banner(quota_status_for_banners)
             _render_quota_unconfigured_reminder(quota_status_for_banners)
         with st.container():

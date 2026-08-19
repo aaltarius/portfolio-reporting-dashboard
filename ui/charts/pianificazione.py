@@ -79,8 +79,13 @@ def build_objective_mix_chart(objective: dict, current_mix: dict, theme) -> go.F
             x=["Obiettivo", "Attuale"],
             y=[ob, att],
             marker_color=bucket_color(bucket, theme),
-            text=[fmt_pct_it(ob / 100.0, 1) if ob >= 4 else "", fmt_pct_it(att / 100.0, 1) if att >= 4 else ""],
-            textposition="inside",
+            text=[fmt_pct_it(ob / 100.0, 1), fmt_pct_it(att / 100.0, 1)],
+            # Segmento troppo stretto per contenere il testo (<4%): la
+            # percentuale si sposta fuori dalla barra invece di sparire -
+            # prima veniva sostituita con stringa vuota, rendendo
+            # invisibile un bucket piccolo (es. Satellite) anche se il
+            # segmento era comunque disegnato (bug segnalato dall'utente).
+            textposition=["inside" if ob >= 4 else "outside", "inside" if att >= 4 else "outside"],
             hovertemplate=f"{bucket}: %{{y:.1f}}%<extra></extra>",
         ))
     return finalize_chart(fig, "pianificazione_obiettivo_mix", layout_updates={"barmode": "stack"})

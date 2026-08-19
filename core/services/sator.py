@@ -1199,18 +1199,30 @@ def _compute_instrument_quota_status(
     return out
 
 
-def compute_instrument_quota_status(data: dict[str, Any], settings: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def compute_instrument_quota_status(
+    data: dict[str, Any], settings: dict[str, Any], *, exclude_tickers: frozenset[str] = frozenset(),
+) -> dict[str, dict[str, Any]]:
     """Entry point standalone (non richiede un'analisi SATOR completa):
-    usato dal banner di Pianificazione e dalla pagina /quote-interne."""
+    usato dal banner di Pianificazione e dalla pagina /quote-interne.
+
+    exclude_tickers: stesso meccanismo gia' usato da ogni altra funzione
+    toccata dal toggle "Escludi BTP/GOV" (held_non_pac_tickers) - i ticker
+    esclusi non contano come "attivi" nel loro bucket, quindi non richiedono
+    una quota e non pesano sulla somma. Aggiunto perche' /quote-interne
+    mostrava ancora i BTP anche col toggle attivo su Pianificazione."""
     cfg = ensure_sator_settings(settings)
     state = compute_portfolio_state(data, include_closed=True)
     state_df = state.get("df", pd.DataFrame())
     if isinstance(data.get("_positions_df"), pd.DataFrame) and not data["_positions_df"].empty:
         state_df = data["_positions_df"].copy()
     held_tickers = _tickers_posseduti(state_df)
-    instrument_buckets = compute_instrument_buckets(data, held_tickers)
+    instrument_buckets = {
+        ticker: bucket
+        for ticker, bucket in compute_instrument_buckets(data, held_tickers).items()
+        if ticker not in exclude_tickers
+    }
     current_weights = _compute_current_weights(state_df)
-    bucket_weights = _compute_bucket_weights(data, state_df, current_weights)
+    bucket_weights = _compute_bucket_weights(data, state_df, current_weights, exclude_tickers=exclude_tickers)
     return _compute_instrument_quota_status(
         instrument_buckets, current_weights, bucket_weights, cfg["instrument_quotas"],
     )
