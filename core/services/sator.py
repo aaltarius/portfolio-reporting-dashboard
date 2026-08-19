@@ -96,6 +96,7 @@ NOME_FATTORE: dict[str, str] = {
 CAP_MORBIDO_NATURA: dict[str, float] = {
     "azionario_globale_core": 0.55,
     "azionario_emergenti": 0.15,
+    "azionario_paese_singolo": 0.08,
     "monetario": 0.20,
     "bond_governativo": 0.25,
     "bond_globale": 0.25,
@@ -108,6 +109,8 @@ CAP_MORBIDO_NATURA: dict[str, float] = {
     "italia": 0.10,
     "quality_factor": 0.12,
     "real_estate": 0.08,
+    "difesa_sicurezza": 0.06,
+    "criptovalute": 0.05,
 }
 CAP_MORBIDO_DEFAULT = 0.08
 
@@ -120,6 +123,7 @@ SATOR_NATURE_VALUES = tuple(CAP_MORBIDO_NATURA.keys()) + ("fondo_pac", "altro")
 SATOR_NATURE_LABELS: dict[str, str] = {
     "azionario_globale_core": "Azionario globale core",
     "azionario_emergenti": "Azionario emergenti",
+    "azionario_paese_singolo": "Azionario paese singolo",
     "monetario": "Monetario",
     "bond_governativo": "Obbligazionario governativo",
     "bond_globale": "Obbligazionario globale",
@@ -132,6 +136,8 @@ SATOR_NATURE_LABELS: dict[str, str] = {
     "italia": "Italia",
     "quality_factor": "Fattore qualità",
     "real_estate": "Immobiliare",
+    "difesa_sicurezza": "Difesa / sicurezza",
+    "criptovalute": "Criptovalute",
     "fondo_pac": "Fondo PAC",
     "altro": "Altro",
 }
