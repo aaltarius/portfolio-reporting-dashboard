@@ -1252,12 +1252,22 @@ def _compute_bucket_weights(
     current_weights: dict[str, float],
     *,
     exclude_tickers: frozenset[str] = frozenset(),
+    use_fractional_exposure: bool = False,
 ) -> dict[str, float]:
     """Peso per bucket (Core/Difensivo/Satellite) sul totale posseduto.
 
-    Uno strumento con bucket_exposure configurato (vedi
-    resolve_instrument_bucket_exposure) contribuisce proporzionalmente a
-    piu' bucket invece che per intero a uno solo.
+    use_fractional_exposure: di default False, ossia comportamento storico -
+    ogni strumento pesa per intero sul suo bucket primario
+    (compute_instrument_buckets), a prescindere da eventuali bucket_exposure
+    configurati. Il motore SATOR vero e proprio (run_sator_analysis,
+    build_sator_matrix_frame) chiama sempre con il default: la ripartizione
+    frazionata dell'appartenenza a bucket resta fuori scope per il motore in
+    questo sotto-progetto, che deve continuare a validare quote/deficit
+    esattamente come prima. Solo compute_current_bucket_mix (la vista "mix
+    corrente" mostrata all'utente, non usata per validare/bloccare alcunche')
+    passa True, usando compute_instrument_bucket_exposures per far
+    contribuire proporzionalmente a piu' bucket uno strumento con
+    bucket_exposure configurato (vedi resolve_instrument_bucket_exposure).
 
     exclude_tickers: se non vuoto, quei ticker vengono semplicemente
     esclusi dal calcolo - il loro valore non conta per nessun bucket e
@@ -1268,7 +1278,10 @@ def _compute_bucket_weights(
     BTP/GOV dal calcolo del deficit di bucket.
     """
     held = _tickers_posseduti(state_df)
-    exposures = compute_instrument_bucket_exposures(data, held)
+    if use_fractional_exposure:
+        exposures = compute_instrument_bucket_exposures(data, held)
+    else:
+        exposures = {ticker: {bucket: 1.0} for ticker, bucket in compute_instrument_buckets(data, held).items()}
     out: dict[str, float] = {"Core": 0.0, "Difensivo": 0.0, "Satellite": 0.0}
     for ticker, exposure in exposures.items():
         if ticker in exclude_tickers:
@@ -1508,7 +1521,9 @@ def compute_current_bucket_mix(
     (core/services/portfolio_insights.py:165 non lo passa affatto), quindi
     la rinormalizzazione non tocca alcun percorso SATOR."""
     current_weights = _compute_current_weights(state_df)
-    raw = _compute_bucket_weights(data, state_df, current_weights, exclude_tickers=exclude_tickers)
+    raw = _compute_bucket_weights(
+        data, state_df, current_weights, exclude_tickers=exclude_tickers, use_fractional_exposure=True,
+    )
     if not exclude_tickers:
         return raw
     total = sum(raw.values())

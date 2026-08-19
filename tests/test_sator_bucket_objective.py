@@ -67,11 +67,48 @@ def test_compute_bucket_weights_splits_value_for_instrument_with_bucket_exposure
     state_df = pd.DataFrame([{"Ticker": "FAM-FLEX", "Quote": 10.0, "Controvalore": 1000.0}])
     current_weights = {"FAM-FLEX": 1.0}  # 100% del portafoglio in questo unico strumento
 
-    result = _compute_bucket_weights(data, state_df, current_weights)
+    result = _compute_bucket_weights(data, state_df, current_weights, use_fractional_exposure=True)
 
     assert result["Core"] == 0.6
     assert result["Difensivo"] == 0.4
     assert result["Satellite"] == 0.0
+
+
+def test_compute_bucket_weights_default_ignores_bucket_exposure_override():
+    """Il motore SATOR vero (run_sator_analysis, build_sator_matrix_frame,
+    compute_instrument_quota_status) chiama _compute_bucket_weights senza
+    use_fractional_exposure, quindi con il default False: la ripartizione
+    frazionata dell'appartenenza a bucket resta fuori scope per il motore
+    in questo sotto-progetto. Questo test garantisce che, anche con un
+    bucket_exposure diviso configurato, il default continui a mettere il
+    100% del valore nel bucket primario - esattamente il comportamento
+    del motore prima di questo intero task (Task 3)."""
+    import pandas as pd
+    from core.services.sator import _compute_bucket_weights, compute_instrument_buckets
+
+    data = {
+        "instrument_master": {
+            "FAM-FLEX": {
+                "manual_overrides": {
+                    "sator": {
+                        "bucket_exposure": {"Core": 0.6, "Difensivo": 0.4, "Satellite": 0.0},
+                        "bucket_exposure_user_edited": True,
+                    }
+                }
+            }
+        },
+        "strumenti": [
+            {"ticker": "FAM-FLEX", "nome": "FAM Series Flexible", "tipo": "Fondo Bilan. Flessibile"},
+        ],
+    }
+    state_df = pd.DataFrame([{"Ticker": "FAM-FLEX", "Quote": 10.0, "Controvalore": 1000.0}])
+    current_weights = {"FAM-FLEX": 1.0}
+
+    primary_bucket = compute_instrument_buckets(data, {"FAM-FLEX"})["FAM-FLEX"]
+    result = _compute_bucket_weights(data, state_df, current_weights)  # nessun use_fractional_exposure = default False
+
+    assert result[primary_bucket] == 1.0
+    assert sum(v for k, v in result.items() if k != primary_bucket) == 0.0
 
 
 def test_compute_bucket_weights_unchanged_for_instrument_without_override(monkeypatch):
