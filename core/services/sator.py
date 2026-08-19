@@ -1255,6 +1255,10 @@ def _compute_bucket_weights(
 ) -> dict[str, float]:
     """Peso per bucket (Core/Difensivo/Satellite) sul totale posseduto.
 
+    Uno strumento con bucket_exposure configurato (vedi
+    resolve_instrument_bucket_exposure) contribuisce proporzionalmente a
+    piu' bucket invece che per intero a uno solo.
+
     exclude_tickers: se non vuoto, quei ticker vengono semplicemente
     esclusi dal calcolo - il loro valore non conta per nessun bucket e
     NON c'e' alcuna rinormalizzazione dei pesi restanti. Un bucket
@@ -1264,13 +1268,14 @@ def _compute_bucket_weights(
     BTP/GOV dal calcolo del deficit di bucket.
     """
     held = _tickers_posseduti(state_df)
-    buckets = compute_instrument_buckets(data, held)
+    exposures = compute_instrument_bucket_exposures(data, held)
     out: dict[str, float] = {"Core": 0.0, "Difensivo": 0.0, "Satellite": 0.0}
-    for ticker, bucket in buckets.items():
+    for ticker, exposure in exposures.items():
         if ticker in exclude_tickers:
             continue
         raw_weight = max(0.0, current_weights.get(ticker, 0.0))
-        out[bucket] = out.get(bucket, 0.0) + raw_weight
+        for bucket, frac in exposure.items():
+            out[bucket] = out.get(bucket, 0.0) + raw_weight * frac
     return out
 
 
