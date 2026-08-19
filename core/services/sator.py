@@ -284,45 +284,85 @@ def infer_sator_metadata(item: dict[str, Any], in_portfolio: bool) -> dict[str, 
     def tk_in(*codici: str) -> bool:
         return any(c in tkl for c in codici)
 
+    # Grading confidence a 3 livelli (spec del piano): "alta" SOLO per match
+    # esatto su ticker/ISIN via tk_in(...) (registro hardcoded, identificazione
+    # precisa); "media" per un match generico su pattern/keyword nel nome
+    # (indicativo, non un'identificazione certa); "bassa" per il fallback
+    # generico finale. Ogni ramo che in precedenza univa ticker esatto e
+    # keyword in una sola condizione OR (stessa confidence per entrambi) e'
+    # stato separato in due rami adiacenti - stessa posizione nella catena
+    # elif, quindi nessuna modifica alla priorita'/specificita' dei match,
+    # solo alla confidence assegnata.
     if category == "GOV":
         nature, role, confidence = "bond_governativo", "bond", "alta"
     elif category == "FND":
         nature, role, confidence = "fondo_pac", "core_difensivo", "media"
-    elif "bitcoin" in name or "crypto" in name or "criptovalut" in name or tk_in("btc", "ib1t"):
+    elif tk_in("btc", "ib1t"):
         nature, role, confidence = "criptovalute", "satellite_tematico", "alta"
+    elif "bitcoin" in name or "crypto" in name or "criptovalut" in name:
+        nature, role, confidence = "criptovalute", "satellite_tematico", "media"
     elif "defence" in name or "defense" in name or "difesa" in name or "military" in name or "aerospace" in name:
-        nature, role, confidence = "difesa_sicurezza", "satellite_tematico", "alta"
-    elif "money" in name or "overnight" in name or "monetar" in name or tk_in("xeon", "csh", "ern", "smart"):
+        # nessun ticker esatto noto per questo ramo: sempre un match a
+        # parole chiave nel nome, mai un'identificazione precisa
+        nature, role, confidence = "difesa_sicurezza", "satellite_tematico", "media"
+    elif tk_in("xeon", "csh", "ern", "smart"):
         nature, role, confidence = "monetario", "liquidita", "alta"
-    elif "gold" in name or "oro " in name or " oro" in name or "physical gold" in name or tk_in("xgdu", "sgld", "gold", "phau", "sgbs"):
+    elif "money" in name or "overnight" in name or "monetar" in name:
+        nature, role, confidence = "monetario", "liquidita", "media"
+    elif tk_in("xgdu", "sgld", "gold", "phau", "sgbs"):
         nature, role, confidence = "oro", "oro", "alta"
-    elif "health" in name or "salute" in name or "medical" in name or tk_in("xdwh", "hlt", "wely"):
+    elif "gold" in name or "oro " in name or " oro" in name or "physical gold" in name:
+        nature, role, confidence = "oro", "oro", "media"
+    elif tk_in("xdwh", "hlt", "wely"):
         nature, role, confidence = "healthcare", "satellite_difensivo", "alta"
-    elif "quality" in name or "qualit" in name or tk_in("iwqu", "iwfq", "iqsa"):
+    elif "health" in name or "salute" in name or "medical" in name:
+        nature, role, confidence = "healthcare", "satellite_difensivo", "media"
+    elif tk_in("iwqu", "iwfq", "iqsa"):
         nature, role, confidence = "quality_factor", "core_regionale", "alta"
-    elif "real estate" in name or "immobil" in name or "reit" in name or "property" in name or tk_in("xdre", "iwda"):
+    elif "quality" in name or "qualit" in name:
+        nature, role, confidence = "quality_factor", "core_regionale", "media"
+    elif tk_in("xdre", "iwda"):
         nature, role, confidence = "real_estate", "satellite_tematico", "alta"
-    elif "artificial" in name or "intelligence" in name or "big data" in name or "robot" in name or "semicond" in name or "information technology" in name or tk_in("xaix", "ai4u", "aiq", "rbot", "smh"):
+    elif "real estate" in name or "immobil" in name or "reit" in name or "property" in name:
+        nature, role, confidence = "real_estate", "satellite_tematico", "media"
+    elif tk_in("xaix", "ai4u", "aiq", "rbot", "smh"):
         nature, role, confidence = "tecnologia_ai", "satellite_crescita", "alta"
-    elif "energy" in name or "energia" in name or "oil" in name or "petrol" in name or tk_in("enrg", "wnrg", "ius"):
+    elif ("artificial" in name or "intelligence" in name or "big data" in name or "robot" in name
+          or "semicond" in name or "information technology" in name):
+        nature, role, confidence = "tecnologia_ai", "satellite_crescita", "media"
+    elif tk_in("enrg", "wnrg", "ius"):
         nature, role, confidence = "energia", "satellite_tematico", "alta"
-    elif "metal" in name or "mining" in name or "miner" in name or "miniere" in name or tk_in("famamw", "spgp", "gdx"):
+    elif "energy" in name or "energia" in name or "oil" in name or "petrol" in name:
+        nature, role, confidence = "energia", "satellite_tematico", "media"
+    elif tk_in("famamw", "spgp", "gdx"):
         nature, role, confidence = "metalli_miniere", "satellite_tematico", "alta"
-    elif "commodity" in name or "commodities" in name or "materie prime" in name or "broad commodit" in name or tk_in("xdbc", "cmod", "icom"):
+    elif "metal" in name or "mining" in name or "miner" in name or "miniere" in name:
+        nature, role, confidence = "metalli_miniere", "satellite_tematico", "media"
+    elif tk_in("xdbc", "cmod", "icom"):
         nature, role, confidence = "commodities", "satellite_tematico", "alta"
-    elif "ftse mib" in name or "italia" in name or "italy" in name or "mib" in name or tk_in("etfmib", "midx"):
+    elif "commodity" in name or "commodities" in name or "materie prime" in name or "broad commodit" in name:
+        nature, role, confidence = "commodities", "satellite_tematico", "media"
+    elif tk_in("etfmib", "midx"):
         nature, role, confidence = "italia", "satellite_tematico", "alta"
-    elif "aggregate" in name or "bond" in name or "obbligaz" in name or "treasury" in name or "govt" in name or "bund" in name or tk_in("xbae", "aggh", "vagf", "eunh"):
+    elif "ftse mib" in name or "italia" in name or "italy" in name or "mib" in name:
+        nature, role, confidence = "italia", "satellite_tematico", "media"
+    elif tk_in("xbae", "aggh", "vagf", "eunh"):
+        nature, role, confidence = "bond_globale", "bond", "alta"
+    elif "aggregate" in name or "bond" in name or "obbligaz" in name or "treasury" in name or "govt" in name or "bund" in name:
         # Controllato PRIMA di "emerging": un fondo "EM Bond"/"Emerging
         # Markets Bond" e' prima di tutto un'obbligazione. Fix del bug di
         # specificita' (in precedenza "emerging" vinceva sempre, anche su
         # fondi obbligazionari mercati emergenti).
-        nature, role, confidence = "bond_globale", "bond", "alta"
-    elif "emerging" in name or "emergenti" in name or "emerg" in name or tk_in("xmme", "emim", "iemg", "vfem"):
+        nature, role, confidence = "bond_globale", "bond", "media"
+    elif tk_in("xmme", "emim", "iemg", "vfem"):
         nature, role, confidence = "azionario_emergenti", "core_regionale", "alta"
-    elif ("world" in name or "all-world" in name or "all world" in name or "global" in name or "msci acwi" in name or "developed" in name
-          or tk_in("swda", "vwce", "iwda", "sppw", "vwrl", "eunl")):
+    elif "emerging" in name or "emergenti" in name or "emerg" in name:
+        nature, role, confidence = "azionario_emergenti", "core_regionale", "media"
+    elif tk_in("swda", "vwce", "iwda", "sppw", "vwrl", "eunl"):
         nature, role, confidence = "azionario_globale_core", "core_globale", "alta"
+    elif ("world" in name or "all-world" in name or "all world" in name or "global" in name
+          or "msci acwi" in name or "developed" in name):
+        nature, role, confidence = "azionario_globale_core", "core_globale", "media"
     elif any(tok in name for tok in ("india", "china", "cina", "brazil", "brasile", "japan", "giappone", "smallcap", "small cap", "ex mega", "single country")):
         # Paese singolo o segmento equity specifico (small cap, ex-mega-cap):
         # non e' "core globale" solo perche' e' azionario - e' una scommessa
@@ -355,17 +395,25 @@ def infer_sator_metadata(item: dict[str, Any], in_portfolio: bool) -> dict[str, 
     }
 
 
+def _resolve_instrument_meta(data: dict[str, Any], item: dict[str, Any], in_portfolio: bool, key: str) -> str:
+    """Nucleo condiviso di resolve_instrument_nature/resolve_instrument_role:
+    risolve un singolo campo strutturale (auto + override manuale) per uno
+    strumento, stesso pattern gia' usato internamente da
+    compute_instrument_buckets/compute_watchlist_reminders."""
+    ticker = str(item.get("ticker") or "").strip().upper()
+    master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
+    sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
+    inf = infer_sator_metadata(item, in_portfolio)
+    return _meta_strutturale(sator, inf, key)
+
+
 def resolve_instrument_nature(data: dict[str, Any], item: dict[str, Any], in_portfolio: bool) -> str:
     """Nature SATOR risolta per un singolo strumento (auto + override manuale),
     stesso pattern gia' usato internamente da compute_instrument_buckets/
     compute_watchlist_reminders. Punto di accesso pubblico per la UI, che non
     deve importare _meta_strutturale (privata) ne' reimplementare la
     risoluzione master -> manual_overrides.sator -> infer_sator_metadata."""
-    ticker = str(item.get("ticker") or "").strip().upper()
-    master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
-    sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
-    inf = infer_sator_metadata(item, in_portfolio)
-    return _meta_strutturale(sator, inf, "nature")
+    return _resolve_instrument_meta(data, item, in_portfolio, "nature")
 
 
 def resolve_instrument_role(data: dict[str, Any], item: dict[str, Any], in_portfolio: bool) -> str:
@@ -373,11 +421,7 @@ def resolve_instrument_role(data: dict[str, Any], item: dict[str, Any], in_portf
     stesso pattern di resolve_instrument_nature. Punto di accesso pubblico per
     la UI, che non deve importare _meta_strutturale (privata) ne' reimplementare
     la risoluzione master -> manual_overrides.sator -> infer_sator_metadata."""
-    ticker = str(item.get("ticker") or "").strip().upper()
-    master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
-    sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
-    inf = infer_sator_metadata(item, in_portfolio)
-    return _meta_strutturale(sator, inf, "role")
+    return _resolve_instrument_meta(data, item, in_portfolio, "role")
 
 
 # --------------------------------------------------------------------------- #
@@ -1439,7 +1483,6 @@ def build_portfolio_rings_frame(
     if not held:
         return pd.DataFrame(columns=columns)
     buckets = compute_instrument_buckets(data, held)
-    master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
     controvalore_map: dict[str, float] = {}
     if state_df is not None and not state_df.empty and "Ticker" in state_df.columns and "Controvalore" in state_df.columns:
         for _, row in state_df.iterrows():
@@ -1454,9 +1497,7 @@ def build_portfolio_rings_frame(
         value = controvalore_map.get(ticker, 0.0)
         if value <= 0:
             continue
-        sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
-        inf = infer_sator_metadata(item, True)
-        nature = _meta_strutturale(sator, inf, "nature")
+        nature = resolve_instrument_nature(data, item, True)
         rows.append({
             "ticker": ticker,
             "name": str(item.get("nome") or ticker),
@@ -1487,11 +1528,9 @@ def compute_watchlist_reminders(
         ticker = str(item.get("ticker") or "").strip().upper()
         if not ticker or ticker not in held or ticker in exclude_tickers:
             continue
-        sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
-        inf = infer_sator_metadata(item, True)
-        role = _meta_strutturale(sator, inf, "role")
+        role = resolve_instrument_role(data, item, True)
         bucket = _role_bucket(role)
-        nature = _meta_strutturale(sator, inf, "nature")
+        nature = resolve_instrument_nature(data, item, True)
         held_nature_by_bucket.setdefault(bucket, set()).add(nature)
 
     reminders: dict[str, list[str]] = {"Core": [], "Difensivo": [], "Satellite": []}
@@ -1505,9 +1544,9 @@ def compute_watchlist_reminders(
         state = _resolve_sator_state(sator.get("state"), inf["state"])
         if state != "watchlist":
             continue
-        role = _meta_strutturale(sator, inf, "role")
+        role = resolve_instrument_role(data, item, False)
         bucket = _role_bucket(role)
-        nature = _meta_strutturale(sator, inf, "nature")
+        nature = resolve_instrument_nature(data, item, False)
         if nature in held_nature_by_bucket.get(bucket, set()):
             continue
         if nature in seen_by_bucket.setdefault(bucket, set()):

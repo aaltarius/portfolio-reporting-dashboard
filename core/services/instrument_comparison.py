@@ -145,8 +145,12 @@ def build_comparison_frame(
         )
         if instrument is not None:
             raw_type = str(instrument.get("tipo") or "")
+            master_all = data.get("instrument_master", {})
+            master_all = master_all if isinstance(master_all, dict) else {}
+            master_entry = master_all.get(benchmark_for)
             assignment = resolve_instrument_benchmark(
-                instrument, raw_type=raw_type, category=macro_cat(raw_type), prefer_master=True,
+                instrument, raw_type=raw_type, category=macro_cat(raw_type),
+                master_entry=master_entry, prefer_master=True,
             )
             if assignment.has_benchmark:
                 bench_df = benchmark_price_history(data, assignment.ticker)

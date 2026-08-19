@@ -681,8 +681,12 @@ def get_cached_benchmark_series(
 def refresh_benchmark_cache(data: dict[str, Any], period: str = "2y", force: bool = False) -> int:
     """Aggiorna la cache benchmark per gli strumenti presenti, se mancante o stale."""
     benchmark_data = data.setdefault("benchmark_data", {})
+    _master_map = data.get("instrument_master", {})
+    _master_map = _master_map if isinstance(_master_map, dict) else {}
     target_tickers = {
-        resolve_instrument_benchmark(item, prefer_master=False).ticker
+        resolve_instrument_benchmark(
+            item, master_entry=_master_map.get(str(item.get("ticker") or "")), prefer_master=True,
+        ).ticker
         for item in data.get("strumenti", [])
         if isinstance(item, dict)
     }

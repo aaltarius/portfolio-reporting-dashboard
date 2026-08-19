@@ -62,6 +62,29 @@ def test_unrecognized_instrument_has_low_confidence():
     assert result["confidence"] == "bassa"
 
 
+def test_keyword_only_match_gets_media_confidence_not_alta():
+    # Finding 4 della review finale (2026-08-19): un ETF non presente nel
+    # registro hardcoded di ticker esatti (tk_in) ma riconosciuto solo per
+    # la parola "world" nel nome non e' un'identificazione precisa quanto un
+    # match su ticker noto: deve ricevere "media", non "alta". Ticker
+    # inventato apposta per non incrociare nessuna delle liste tk_in.
+    item = {"ticker": "ZWLD.MI", "nome": "iShares Core MSCI World Something UCITS ETF", "tipo": "ETF"}
+    result = infer_sator_metadata(item, True)
+    assert result["nature"] == "azionario_globale_core"
+    assert result["confidence"] == "media"
+
+
+def test_exact_ticker_match_keeps_alta_confidence():
+    # Controparte del test precedente: SWDA.MI e' nel registro tk_in esatto
+    # -> resta "alta" anche dopo la ri-graduazione (gia' coperto anche da
+    # test_inferred_metadata_has_confidence_field, ripetuto qui in coppia
+    # esplicita con il caso "media" per documentare il contrasto).
+    item = {"ticker": "SWDA.MI", "nome": "iShares Core MSCI World UCITS ETF", "tipo": "ETF"}
+    result = infer_sator_metadata(item, True)
+    assert result["nature"] == "azionario_globale_core"
+    assert result["confidence"] == "alta"
+
+
 def test_information_technology_sector_etf_gets_tecnologia_ai_nature():
     # Task 5 (2026-08-19-classificazione-arricchimento-unificato): gap reale
     # trovato confrontando la nature risolta contro i dati reali del

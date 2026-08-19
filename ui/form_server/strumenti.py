@@ -207,7 +207,7 @@ def _fs_render_classificazione_section(data: dict, strumento: dict, tk_escaped: 
     master -> manual_overrides.sator -> infer_sator_metadata) — mai sul
     vecchio enrichment_source/campo natura, che restano un meccanismo
     separato e fuori dall'ambito di questa sezione."""
-    from core.services.sator import infer_sator_metadata, resolve_instrument_role, SATOR_ROLE_VALUES
+    from core.services.sator import infer_sator_metadata, resolve_instrument_role, SATOR_ROLE_VALUES, SATOR_ROLE_LABELS
     from core.benchmark_registry import resolve_instrument_benchmark
 
     master_all = data.get("instrument_master", {})
@@ -224,7 +224,7 @@ def _fs_render_classificazione_section(data: dict, strumento: dict, tk_escaped: 
     bm = resolve_instrument_benchmark(strumento, master_entry=master_entry, prefer_master=True)
 
     role_options = "".join(
-        f'<option value="{escape(r)}"{" selected" if r == effective_role else ""}>{escape(r)}</option>'
+        f'<option value="{escape(r)}"{" selected" if r == effective_role else ""}>{escape(SATOR_ROLE_LABELS.get(r, r))}</option>'
         for r in SATOR_ROLE_VALUES
     )
 
@@ -1131,17 +1131,58 @@ async def post_strumenti(
         role_val = str(form_data.get("role") or "").strip()
         benchmark_code_val = str(form_data.get("benchmark_code") or "").strip()
         benchmark_label_val = str(form_data.get("benchmark_label") or "").strip()
-        master = d.setdefault("instrument_master", {})
-        entry = master.setdefault(ticker, {})
-        overrides = entry.setdefault("manual_overrides", {}).setdefault("sator", {})
-        if role_val:
-            overrides["role"] = role_val
-            overrides["user_edited"] = True
-        if benchmark_code_val or benchmark_label_val:
-            overrides["benchmark_code"] = benchmark_code_val or None
-            overrides["benchmark_label"] = benchmark_label_val or None
-            overrides["benchmark_user_edited"] = True
-        save_data(d)
+
+        from core.services.sator import resolve_instrument_role, SATOR_ROLE_VALUES
+        from core.benchmark_registry import resolve_instrument_benchmark
+
+        # Il form e' SEMPRE precompilato con i valori attualmente risolti
+        # (auto o gia' overridati): scrivere un override solo perche' il
+        # campo e' non vuoto significherebbe scriverne uno ad OGNI submit,
+        # anche senza alcuna modifica reale da parte dell'utente. Si scrive
+        # solo se il valore inviato DIFFERISCE da quello in vigore ora.
+        master_all = d.get("instrument_master", {})
+        master_all = master_all if isinstance(master_all, dict) else {}
+        existing_entry = master_all.get(ticker, {})
+        existing_entry = existing_entry if isinstance(existing_entry, dict) else {}
+
+        current_role = resolve_instrument_role(d, strumento, True)
+        current_bm = resolve_instrument_benchmark(strumento, master_entry=existing_entry, prefer_master=True)
+
+        # Ruolo: validato contro SATOR_ROLE_VALUES prima di considerarlo un
+        # cambiamento reale - un valore sconosciuto (POST malformato/manomesso)
+        # non deve mai finire scritto verbatim in produzione: resta un no-op
+        # sicuro sul campo ruolo, esattamente come se non fosse cambiato.
+        role_changed = role_val in SATOR_ROLE_VALUES and role_val != current_role
+        benchmark_submitted = bool(benchmark_code_val or benchmark_label_val)
+        benchmark_changed = benchmark_submitted and (
+            benchmark_code_val != (current_bm.ticker or "")
+            or benchmark_label_val != (current_bm.label or "")
+        )
+
+        if role_changed or benchmark_changed:
+            master = d.setdefault("instrument_master", {})
+            entry = master.setdefault(ticker, {})
+            overrides = entry.setdefault("manual_overrides", {}).setdefault("sator", {})
+            if role_changed:
+                overrides["role"] = role_val
+                overrides["user_edited"] = True
+                # nature/comparison_group/function_label sono SEMPRE derivati
+                # dal ruolo risolto, non editabili da questo form: rimuove
+                # eventuali chiavi legacy dormienti nello stesso dizionario
+                # (mai scritte da qui, ma potenzialmente presenti da un
+                # meccanismo precedente) PRIMA di alzare user_edited, cosi'
+                # il flag condiviso di _meta_strutturale non le riattiva mai
+                # in modo silenzioso (bug reale verificato su dati reali:
+                # salvare solo il ruolo di uno strumento riattivava una
+                # 'nature' dormiente sbagliata, cambiandone icona e cap).
+                overrides.pop("nature", None)
+                overrides.pop("comparison_group", None)
+                overrides.pop("function_label", None)
+            if benchmark_changed:
+                overrides["benchmark_code"] = benchmark_code_val or None
+                overrides["benchmark_label"] = benchmark_label_val or None
+                overrides["benchmark_user_edited"] = True
+            save_data(d)
         from urllib.parse import quote as urlquote
         return RedirectResponse(f"/strumenti?tab=arricchimento&ticker={urlquote(ticker)}&ok={urlquote('Classificazione aggiornata.')}", status_code=303)
 
@@ -1156,14 +1197,16 @@ async def post_strumenti(
         master = d.get("instrument_master", {})
         entry = master.get(ticker)
         if entry is not None:
-            overrides = entry.get("manual_overrides", {}).get("sator")
+            overrides = (entry.get("manual_overrides") or {}).get("sator")
             if overrides:
                 overrides.pop("role", None)
                 overrides["user_edited"] = False
                 overrides.pop("benchmark_code", None)
                 overrides.pop("benchmark_label", None)
                 overrides["benchmark_user_edited"] = False
-        save_data(d)
+                # Nessun override trovato = nulla da resettare: evita un
+                # backup-bundle + riscrittura completa a vuoto per un no-op.
+                save_data(d)
         from urllib.parse import quote as urlquote
         return RedirectResponse(f"/strumenti?tab=arricchimento&ticker={urlquote(ticker)}&ok={urlquote('Ripristinato il calcolo automatico.')}", status_code=303)
 

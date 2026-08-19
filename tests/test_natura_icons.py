@@ -27,3 +27,17 @@ def test_unknown_nature_falls_back_to_diversificata():
 def test_altro_falls_back_to_diversificata():
     _, _, label = get_nature_visual("altro")
     assert label == "Esposizione diversificata"
+
+
+def test_bond_governativo_and_bond_globale_have_distinct_labels():
+    """Finding 3 della review finale (2026-08-19): un portafoglio con
+    entrambe le nature (BTP + ETF obbligazionario globale) mostrava due
+    fette del donut indistinguibili (stessa etichetta, stesso colore)
+    perche' entrambe puntavano alla stessa etichetta libera "Obbligazionario
+    / reddito". Le etichette devono ora essere distinte (riusa le stringhe
+    gia' presenti in SATOR_NATURE_LABELS)."""
+    _, _, label_gov = get_nature_visual("bond_governativo")
+    _, _, label_glob = get_nature_visual("bond_globale")
+    assert label_gov != label_glob
+    assert label_gov == "Obbligazionario governativo"
+    assert label_glob == "Obbligazionario globale"

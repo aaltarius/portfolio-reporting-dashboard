@@ -507,6 +507,8 @@ def _build_quotazioni_category_ticker_bundles_payload(
     ETF non invalida piu' anche i ticker_bundles di GOV/FND/ETC.
     """
     info_map = {s["ticker"]: s for s in _data.get("strumenti", [])}
+    _master_map = _data.get("instrument_master", {})
+    _master_map = _master_map if isinstance(_master_map, dict) else {}
     _closed_set = frozenset(_closed_tickers) if _closed_tickers else None
     valid_tickers = get_valid_quote_tickers_by_category(_data, _dh_hist, closed_tickers=_closed_set)
     category_tickers = [
@@ -523,7 +525,9 @@ def _build_quotazioni_category_ticker_bundles_payload(
 
     benchmark_tickers = []
     for tk in category_tickers:
-        bench_assignment = resolve_instrument_benchmark(info_map.get(tk, {}), prefer_master=False)
+        bench_assignment = resolve_instrument_benchmark(
+            info_map.get(tk, {}), master_entry=_master_map.get(tk), prefer_master=True,
+        )
         if bench_assignment.ticker:
             benchmark_tickers.append(bench_assignment.ticker)
     benchmark_runtime_cache = _prefetch_benchmark_data(_data, benchmark_tickers)
@@ -548,7 +552,9 @@ def _build_quotazioni_category_ticker_bundles_payload(
         else:
             norm = (series / series.iloc[0]) * 100
         benchmark_series = None
-        bench_assignment = resolve_instrument_benchmark(info_map.get(tk, {}), prefer_master=False)
+        bench_assignment = resolve_instrument_benchmark(
+            info_map.get(tk, {}), master_entry=_master_map.get(tk), prefer_master=True,
+        )
         if bench_assignment.ticker:
             bd = _get_cached_benchmark_data(_data, bench_assignment.ticker, benchmark_runtime_cache)
             benchmark_series = _get_runtime_normalized_benchmark_series(
