@@ -52,6 +52,19 @@ _NS_GRAY_TEXT = "#999"
 _NEGATIVE_METRIC_RED = "#d9534f"
 _DEFAULT_CHART_BG = "#f9f9f9"
 
+# Testo esplicativo condiviso dalle due matrici di correlazione (per
+# strumento e per macro-categoria): stessa scala, stessa lettura, nessuna
+# ragione di avere due frasi diverse per lo stesso concetto (richiesta
+# esplicita 2026-08-20 — prima nessuna delle due spiegava il significato di
+# +1/-1, e il colorbar del grafico e' disattivato per non rubare spazio
+# alla matrice, quindi il testo e' l'unico riferimento disponibile).
+_CORRELATION_MATRIX_LEGEND = (
+    "+1 = i due strumenti si muovono sempre nella stessa direzione; "
+    "-1 = si muovono sempre in direzione opposta (uno compensa l'altro); "
+    "0 = nessuna relazione lineare tra i due. Colore pieno (rosso o blu) = "
+    "relazione forte; colore tenue vicino al bianco = relazione debole o assente."
+)
+
 
 def _render_risk_contribution_analitica(bundle: Any) -> None:
     """Render risk contribution chart from bundle."""
@@ -67,6 +80,12 @@ def _render_risk_contribution_analitica(bundle: Any) -> None:
 
     st.plotly_chart(risk_fig, width="stretch")
     legend_block("Se la barra del rischio è uguale o inferiore alla barra del peso, la situazione è equilibrata; se la supera, lo strumento pesa sulle oscillazioni più della sua quota.", variant="bottom")
+    _excluded_short_history = getattr(getattr(bundle, "analysis_bundle", None), "excluded_insufficient_history", [])
+    if _excluded_short_history:
+        st.caption(
+            f"Non mostrati (storico prezzi insufficiente, servono almeno 3 quotazioni proprie): "
+            f"{', '.join(_excluded_short_history)}."
+        )
 
 
 def _fmt_loss_metric(value: float) -> str:
@@ -120,10 +139,16 @@ def _render_monte_carlo_analitica(bundle: Any) -> None:
         " Lo storico disponibile è più corto dell'orizzonte a 24 mesi: il ricampionamento riusa gli stessi giorni più volte."
         if mc_result.extrapolated else ""
     )
+    excluded_note = (
+        f" Esclusi dalla simulazione {len(mc_result.excluded_tickers)} strumenti di apertura recente "
+        f"({fmt_pct_it(mc_result.excluded_weight, 0)} del portafoglio pesato: {', '.join(mc_result.excluded_tickers)}) "
+        f"perché non hanno ancora abbastanza quotazioni proprie."
+        if mc_result.excluded_tickers else ""
+    )
     st.caption(
         f"Simulazione basata su {mc_result.n_observations} osservazioni storiche reali del "
         f"portafoglio attuale, {mc_result.n_scenarios} scenari ricampionati (bootstrap storico, "
-        f"non un modello previsivo).{extrapolation_note}"
+        f"non un modello previsivo).{extrapolation_note}{excluded_note}"
     )
     legend_block("Ogni scenario è un percorso possibile ricostruito ricampionando la storia reale del portafoglio, non una previsione: la mediana è il centro della distribuzione simulata, le bande mostrano quanto può variare l'esito.", variant="bottom")
 
@@ -838,6 +863,12 @@ def _render_analitica(bundle: Any) -> None:
             "</div>"
         )
         legend_block(validation_explanation, variant="bottom")
+        _excluded_short_history = getattr(bundle.analysis_bundle, "excluded_insufficient_history", [])
+        if _excluded_short_history:
+            st.caption(
+                f"Non mostrati (storico prezzi insufficiente, servono almeno 3 quotazioni proprie): "
+                f"{', '.join(_excluded_short_history)}."
+            )
 
     _qr = summary_payload.get("quarterly_returns", [])
     _mr = summary_payload.get("monthly_returns", [])
@@ -1020,6 +1051,7 @@ def _render_analitica_market_structure(ctx: SimpleNamespace, settings: dict[str,
             strategy=cache_strategy,
         )
         st.plotly_chart(fig, width="stretch")
+        legend_block(_CORRELATION_MATRIX_LEGEND, variant="bottom")
 
     if analysis_bundle and analysis_bundle.corr_cat is not None and not analysis_bundle.corr_cat.empty:
         render_section_title(
@@ -1038,6 +1070,7 @@ def _render_analitica_market_structure(ctx: SimpleNamespace, settings: dict[str,
             strategy=cache_strategy,
         )
         st.plotly_chart(fig, width="stretch")
+        legend_block(_CORRELATION_MATRIX_LEGEND, variant="bottom")
 
 
 def _render_reddito_scadenze(ctx: SimpleNamespace, settings: dict[str, Any], theme, cache_strategy: Any, *, data_sig: str, theme_sig: str, charts_settings_sig: str) -> None:
