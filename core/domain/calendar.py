@@ -124,10 +124,20 @@ def _match_real_event(real_events: list[dict], target_date: pd.Timestamp, used: 
 
 def build_btp_calendar(data: dict) -> pd.DataFrame:
     """Build timeline rows for BTP purchase span, coupons and maturity."""
+    from core.domain.positions import calc_positions
+
     rows: list[dict] = []
     strumenti = data.get("strumenti", []) or []
     registro_eventi = data.get("registro_eventi", []) or []
     today = pd.Timestamp.today().normalize()
+    # Quantita' reale posseduta per ticker, dagli eventi (unica fonte di
+    # verita'): strumento.get("quantita") e' un campo statico facoltativo,
+    # popolato solo per i BTP inseriti con un vecchio flusso manuale — per
+    # uno strumento nuovo e' assente e ricadeva sul default 1.0, mostrando
+    # un rimborso a scadenza di "nominale x 1" invece di "nominale x quote
+    # reali possedute" (bug reale, 2026-08-20: BTP-1AG30, 200 quote
+    # possedute, rimborso mostrato 100 € invece di 20.000 €).
+    qty_by_ticker = {tk: info.get("qty", 0.0) for tk, info in calc_positions(data).items()}
 
     for strumento in strumenti:
         if not _is_btp(strumento.get("tipo", "")):
@@ -152,7 +162,7 @@ def build_btp_calendar(data: dict) -> pd.DataFrame:
 
         cedola_perc = _finite_float(strumento.get("cedola_perc"), 0.0)
         nominale = _finite_float(strumento.get("nominale"), 100.0, zero_as_default=True)
-        quantita = _finite_float(strumento.get("quantita"), 1.0, zero_as_default=True)
+        quantita = _finite_float(qty_by_ticker.get(ticker), 1.0, zero_as_default=True)
 
         cedola_freq = str(strumento.get("cedola_frequenza", "annuale") or "annuale").strip().lower()
         prima_cedola = (
