@@ -450,6 +450,23 @@ def resolve_instrument_bucket_exposure(data: dict[str, Any], item: dict[str, Any
     return {_role_bucket(role): 1.0}
 
 
+def resolve_instrument_no_sell(data: dict[str, Any], ticker: str) -> bool:
+    """Flag NO_SELL/posizione legacy per uno strumento: True solo se
+    esplicitamente impostato dall'utente (stesso pattern-guardia di
+    resolve_instrument_bucket_exposure — no_sell_user_edited e' un flag
+    indipendente, mai condiviso con altri campi di manual_overrides.sator,
+    per non ripetere il bug del sotto-progetto 1 dove un flag condiviso
+    riattivava valori dormienti di un campo diverso). Nessun impatto sul
+    motore SATOR: solo lettura per la UI (vedi
+    compute_instrument_operational_status)."""
+    ticker = str(ticker or "").strip().upper()
+    master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
+    sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
+    if not bool(sator.get("no_sell_user_edited")):
+        return False
+    return bool(sator.get("no_sell"))
+
+
 # --------------------------------------------------------------------------- #
 # Editor universo (metadati modificabili dall'utente)
 # --------------------------------------------------------------------------- #
