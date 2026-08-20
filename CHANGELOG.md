@@ -1,5 +1,226 @@
 # Changelog
 
+## 5.0-pre - Target strategico e posizione NO_SELL per strumento (sotto-progetto 3/11 revisione classificazione)
+
+- copre le voci 3+4 dell'ordine di priorità della "Revisione del modello di
+  classificazione e allocazione" (segue il sotto-progetto 2, appartenenza
+  frazionata ai bucket). Obiettivo: vedere affiancati peso attuale e target
+  strategico per ogni strumento, e poter segnalare una posizione
+  sovrappesata "per scelta" (legacy) senza generare l'impulso a venderla.
+- `resolve_instrument_no_sell(data, ticker)` (nuovo, `core/services/sator.py`):
+  legge il flag NO_SELL da `manual_overrides.sator`, sola lettura, nessun
+  campo dati nuovo oltre `no_sell`/`no_sell_user_edited`.
+- `compute_instrument_operational_status(data, settings)` (nuovo): calcola
+  peso attuale, target assoluto di portafoglio (`instrument_quotas[bucket][ticker]
+  * objective[bucket]` — mai confrontare direttamente la quota-di-bucket col
+  peso-di-portafoglio, denominatori diversi) e stato
+  (`in_target`/`sottopeso`/`sovrappeso`/`sovrappeso_no_sell`) per ogni
+  strumento posseduto. Nessun impatto sul motore SATOR (`run_sator_analysis`
+  e affini restano invariati).
+- `apply_classification_override` e `apply_bucket_exposure_override` estratte
+  dai rami POST di `ui/form_server/strumenti.py` (Classificazione →
+  Arricchimento) in `core/services/sator.py`: stessa identica logica di
+  scrittura, ora condivisa anche dalla nuova pagina — verificata
+  comportamentalmente invariata sull'editor originale con la suite di
+  non-regressione esistente.
+- Pagina "Quote & impostazioni" (`ui/form_server/quote_interne.py`)
+  ristrutturata da pannello singolo a 3 sottoschede: "Target & Stato" (peso
+  attuale, target strategico, checkbox NO_SELL, badge di stato per
+  strumento), "Ruolo & Benchmark" e "Esposizione Bucket" (tabelle
+  multi-riga, editing rapido per tutti gli strumenti in una sola vista,
+  invece dell'editor singolo-strumento di Strumenti → Arricchimento).
+- bug critico trovato in review e corretto prima del merge: la prima
+  versione di `apply_no_sell_from_form` scansionava l'intero catalogo
+  strumenti invece dei soli ticker con una checkbox NO_SELL renderizzata in
+  quella pagina — salvare una modifica qualsiasi alle quote poteva
+  cancellare silenziosamente il flag NO_SELL di uno strumento chiuso, mai
+  posseduto, o escluso in quel momento dal toggle BTP/GOV. Corretto
+  scopando la scrittura ai soli ticker effettivamente presenti nel submit,
+  con test di regressione dedicato.
+- review finale sull'intero branch: un secondo bug della stessa classe
+  (la tabella "Esposizione Bucket" arrotondava le percentuali a interi,
+  corrompendo silenziosamente split come 12,5%/87,5% in 12%/88% al primo
+  salvataggio di una riga qualsiasi) più 3 problemi di coerenza (il target
+  calcolato non veniva mai mostrato in UI; le tre sottoschede iteravano
+  popolazioni di strumenti diverse; il menu Ruolo usava chiavi tecniche
+  invece delle etichette italiane già in uso in `/strumenti`) — tutti
+  corretti in un'unica passata e ri-verificati prima del merge.
+
+## 5.0-pre - Correzioni sparse su BTP, P/L fantasma, Monte Carlo, matrici di correlazione e qualità dati
+
+- BTP: la quantità per il calcolo del rimborso a scadenza veniva letta dal
+  campo facoltativo `strumento["quantita"]` (popolato solo dai vecchi
+  flussi manuali, assente per uno strumento nuovo → default 1 quota). Ora
+  usa `core.domain.positions.calc_positions` come tutto il resto dell'app.
+  Timeline BTP ora ordinata per scadenza cronologica (non più alfabetico
+  per ticker), e il totale sotto la tabella eventi è scomposto in tre
+  righe (Totale / di cui incassato / di cui residuo) invece di un unico
+  numero che mischiava cedole già incassate e future.
+- bug reale con impatto finanziario diretto: una posizione senza alcuna
+  quotazione nota (es. BTP acquistato lo stesso giorno, prima ancora di
+  avere uno storico prezzi) veniva valorizzata a zero invece che al costo
+  di carico, generando una perdita fantasma in curva P/L (-18.312 € su un
+  caso reale). Nuovo comportamento neutro: in assenza di prezzo di mercato
+  il valore è il costo di carico (P/L zero finché non arriva una
+  quotazione reale). Bump firma cache dedicato perché una riga già
+  cacheata sotto lo schema precedente non si autocorregge da sola.
+- secondo bug reale con lo stesso impatto (-18.312 € di P/L fantasma): un
+  Acquisto auto-liquidato e il suo Versamento automatico non avevano alcun
+  collegamento strutturale — correggere prezzo/commissioni/data
+  dell'acquisto lasciava il versamento sul valore vecchio, sbilanciando la
+  partita di giro. Ora ogni Versamento automatico è collegato al trade che
+  finanzia (`linked_trade_event_id`) e viene risincronizzato automaticamente
+  quando il trade collegato viene modificato.
+- la firma dati strumento non includeva i campi cedola/scadenza: correggere
+  dati di una cedola sbagliata su un BTP già presente non invalidava la
+  cache, lasciando Timeline BTP e il KPI "Cedole attese 12 mesi" bloccati
+  sul valore vecchio a tempo indeterminato (stessa classe di bug già chiusa
+  una volta per il campo "natura"). Aggiunti scadenza, cedola_perc,
+  cedola_frequenza, prima_cedola, aliquota_cedola, nominale alla firma.
+  Anche la tabella yield prospettico GOV ora ordina per scadenza cronologica
+  invece che per cedole 12 mesi decrescenti.
+- Monte Carlo: il bootstrap richiedeva che TUTTI gli strumenti pesati
+  avessero un rendimento valido nello stesso giorno, quindi un solo
+  strumento appena aperto con poche quotazioni bloccava l'intera
+  simulazione anche con un portafoglio ricco di storico. Ora gli strumenti
+  con meno di 60 osservazioni proprie vengono esclusi dal paniere (pesi
+  riproporzionati sui restanti) invece di bloccare tutto, e la UI segnala
+  quali strumenti sono esclusi e che quota rappresentano. Stessa logica di
+  trasparenza estesa a metriche avanzate e contributo al rischio (uno
+  strumento con meno di 3 quotazioni proprie spariva senza spiegazione).
+- matrice di correlazione per strumento: l'altezza dinamica calcolata dal
+  builder veniva scartata e sovrascritta dall'altezza fissa pensata per la
+  matrice per categoria, rendendo illeggibile la matrice con 20+ strumenti;
+  corretto anche lo spazio bianco in eccesso sopra la matrice. Aggiunta
+  anche una legenda condivisa sotto entrambe le matrici che spiega il
+  significato di +1/-1/0 (prima nessun riferimento, colorbar disattivata).
+- eliminato un `RuntimeWarning` numpy nel calcolo correlazioni SATOR (un
+  titolo con pochissime quotazioni proprie faceva sollevare "Degrees of
+  freedom <= 0", scartato solo a valle — risultato finale già corretto, ma
+  il warning intasava i log).
+- tabella qualità dati strumenti: ora mostra il colore di categoria
+  (`ui.theme.macro_color`, come tutte le altre tabelle) e distingue gli
+  strumenti realmente in portafoglio da quelli solo osservati (colonna
+  "Ptf"), invece del rendering grezzo precedente. Le tabelle "Ultime
+  quotazioni aggiornate", "Controvalore del Portafoglio" e "Andamento
+  ultima settimana" ora si aprono ordinate per categoria alfabetica.
+
+## 5.0-pre - Appartenenza percentuale multipla ai bucket (sotto-progetto 2/11 revisione classificazione)
+
+- copre la voce 2 dell'ordine di priorità della revisione (segue il
+  sotto-progetto 1). Permette a uno strumento di appartenere per frazione a
+  più bucket Core/Difensivo/Satellite (es. un fondo bilanciato 60/40) invece
+  che a un solo bucket "primario" derivato dal ruolo.
+- `resolve_instrument_bucket_exposure`/`compute_instrument_bucket_exposures`
+  (nuove): esposizione frazionata per strumento e mappa aggregata
+  ticker→bucket pesata, con validazione somma=1.0 (tolleranza 1e-6) e
+  fallback sul bucket primario quando l'override è assente o malformato.
+- `_compute_bucket_weights` somma ora proporzionalmente per gli strumenti
+  con esposizione divisa, ma solo dietro un flag esplicito
+  `use_fractional_exposure` (default `False`): il motore SATOR vero
+  (`run_sator_analysis`, `blocked_buckets_quota`, `compute_instrument_quota_status`)
+  resta bucket-singolo e comportamentalmente invariato per vincolo di
+  scopo — solo la vista "mix corrente" per l'utente vede la frazione.
+  `build_portfolio_rings_frame` esplode una riga per (strumento, bucket) per
+  gli strumenti divisi, ereditata automaticamente dal grafico a ciambella e
+  dalla tabella di allocazione.
+- validazione delle quote interne: uno strumento con appartenenza divisa
+  viene escluso dal calcolo di validità di ogni bucket (non richiede una
+  quota in nessun bucket), e la sua vecchia quota — se ne aveva una prima
+  di dividersi — viene riservata nel calcolo della somma-100% degli altri
+  strumenti dello stesso bucket, invece di far scendere permanentemente
+  sotto 100% un bucket già corretto.
+- nuovo editor "Esposizione tra bucket" in Classificazione → Arricchimento:
+  scrittura solo-se-cambiato (stesso principio già applicato a
+  ruolo/benchmark), validazione somma≈100% con messaggio di rifiuto
+  distinto dal messaggio di successo (bug corretto: prima il redirect
+  mostrava sempre "aggiornata" anche quando la scrittura veniva scartata).
+
+## 5.0-pre - Motore di classificazione e arricchimento unificato (sotto-progetto 1/11 revisione classificazione)
+
+- copre la voce 1 dell'ordine di priorità della revisione. Introduce il
+  primo editor UI per `manual_overrides.sator.{role,benchmark_code,
+  benchmark_label,user_edited,benchmark_user_edited}` — meccanismo già letto
+  dal motore SATOR ma finora mai alimentato da nessuna interfaccia.
+- 3 nuove nature SATOR (criptovalute, difesa_sicurezza,
+  azionario_paese_singolo) per colmare i buchi della tassonomia visiva
+  legacy; corretta la specificità bond-vs-emerging in `infer_sator_metadata`
+  (un fondo "Emerging Markets Bond" finiva classificato come azionario) e
+  aggiunto un campo "confidence" (alta/media/bassa, alta solo per match
+  esatto su ticker/ISIN, non su semplice keyword); riconosciuta la keyword
+  "Information Technology" mancante nel ramo tecnologia/AI.
+- `get_nature_visual` sostituisce la vecchia icona keyed su etichetta
+  libera con una keyed sulla nature SATOR risolta; migrati i 7 chiamanti
+  reali (tabelle quotazioni/portafoglio, promemoria watchlist, donut di
+  Pianificazione). Nuovi `resolve_instrument_nature`/`resolve_instrument_role`
+  come punti di accesso pubblici unici, sostituendo duplicazioni manuali
+  della logica privata in più file.
+- editor manuale ruolo/benchmark nella tab Arricchimento: bug critico
+  trovato e corretto in review — il salvataggio scriveva un override ad
+  ogni submit anche senza modifiche reali (il form è sempre precompilato),
+  e poteva riattivare chiavi legacy dormienti condividendo lo stesso flag
+  `user_edited` di campi indipendenti. Corretto a scrittura solo-se-cambiato,
+  indipendente per ruolo e benchmark. Corretto anche un secondo bug: un
+  benchmark manuale impostato una volta restava "congelato" in
+  `instrument_master` e non veniva più aggiornato da correzioni successive
+  alle regole automatiche.
+- review finale: chiusi 8 finding aggiuntivi (4 punti reali dove un
+  benchmark override non veniva mai letto per mancanza di `master_entry`,
+  due nature con etichetta identica indistinguibili nel donut, validazione
+  del ruolo inviato contro i valori ammessi, etichette italiane leggibili
+  nel `<select>` ruolo invece del codice tecnico).
+
+## 5.0-pre - Editor quote target per strumento e pagina /quote-interne
+
+- primo modello dati e prima UI per le quote target SATOR per strumento
+  dentro ogni bucket: schema `instrument_quotas`/`instrument_quota_tolerance_pp`,
+  calcolo di validità per bucket (copertura totale + somma≈100%, opt-in:
+  un bucket mai configurato resta sempre valido), blocco dei candidati
+  SATOR nei bucket con quote non valide.
+- nuova pagina form-server `/quote-interne` (registrata in sidebar come
+  "Quote & impostazioni"): editor delle quote con validazione somma=100 lato
+  server, tabella di stato in sola lettura, forbice di riferimento
+  indicativa per strumento (dai limiti di concentrazione per natura già
+  esistenti), banner bloccante e avviso informativo per bucket con quote
+  mancanti o mai configurate. Le 4 sezioni di impostazioni SATOR avanzate
+  (limiti di concentrazione, allocazione budget, pesi punteggio, tolleranze)
+  spostate dagli expander di Pianificazione a questa pagina.
+- toggle unico "Escludi BTP/GOV" in cima a Pianificazione, propagato a ogni
+  grafico/tabella della pagina (sostituisce il vecchio checkbox limitato al
+  solo calcolo deficit di bucket). Tabella di allocazione bucket
+  ristrutturata a riga-per-ticker con barra attuale/tacca target.
+- review finale + due giri di correzioni segnalate dall'uso reale: quote di
+  concentrazione mai salvate, opt-in per bucket irraggiungibile, tolleranza
+  di validazione disallineata dal vincolo core, colori hardcoded al posto
+  dei token tema, toggle BTP non propagato a `/quote-interne`, testo HTML
+  che si rompeva su una riga vuota dentro `st.markdown`, percentuali del
+  grafico obiettivo-vs-mix non rinormalizzate quando si esclude un bucket.
+
+## 5.0-pre - Chiusura quasi totale della governance cache unica
+
+- deciso (richiesto dall'utente, 2026-08-17): `core/page_cache.py` resta il
+  magazzino L3 definitivo, nessuna riscrittura in `core/cache_store.py` —
+  decisione rimasta sospesa dal 2026-08-03 che bloccava implicitamente la
+  promozione di 21 artefatti ancora `pilot`.
+- censimento completo (non a campione) di tutti gli artefatti ancora
+  `pilot`: 14 già collegati correttamente al magazzino promossi subito
+  (solo verifica, nessun codice nuovo); `confronto.comparison_report` e
+  `summary.report_payload` collegati per la prima volta a
+  `get_or_build_registered_artifact` (prima ricostruiti ad ogni rerun o
+  dietro click senza passare dal magazzino); le schede di
+  `cruscotti.benchmark_frozen_analysis`/`accumuli_frozen_analysis`
+  corrette per riflettere il meccanismo di cache reale già in uso (la
+  cache c'era ed era corretta, solo la scheda del registro descriveva un
+  meccanismo sbagliato); `prebuild.registry_engine` verificato e promosso.
+- registro finale: 26 `registered_provider` (era 6 a inizio intervento),
+  1 solo `pilot` rimasto (`mercati.live_snapshot`, deliberatamente non
+  toccato: è un servizio in background incompatibile con l'architettura di
+  `get_or_build_registered_artifact`, e la sezione Mercati resta in
+  osservazione).
+- riordinata la pagina Pianificazione: "Confronto strumenti" (tool manuale)
+  spostato in fondo, dopo tutta la parte automatica di SATOR, per non
+  interrompere bruscamente il flusso di analisi.
+
 ## 5.0-pre - Alert di concentrazione BTP silenziati quando deficit_pac_only e' attivo
 
 - richiesta esplicita dell'utente (2026-08-16, confermata con domanda

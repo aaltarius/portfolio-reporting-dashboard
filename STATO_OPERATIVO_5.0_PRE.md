@@ -735,6 +735,67 @@ e `docs/superpowers/plans/2026-08-14-pianificazione-confronto-strumenti.md`.
   uno strumento non invalidava gli artefatti UI in cache. Gia' committato
   su `main` (`87f6ae9`), prima dell'apertura di questo branch.
 
+### Revisione del modello di classificazione e allocazione — sotto-progetti 1-3 e correzioni sparse (2026-08-17/21)
+
+Iniziativa separata dalla governance cache sopra, partita da un documento di
+revisione esterno (`Revisione del modello di classificazione e allocazione –
+Portfolio Intelligence.md`, root del repo — **eliminato su richiesta
+dell'utente il 2026-08-21**, dopo che i sotto-progetti sotto erano stati
+completati) con un ordine di priorita' a 11 voci in sezione 21. Dettaglio
+completo di ogni commit in `CHANGELOG.md` (voci in cima al file); qui solo il
+riepilogo di stato. Le spec/piani restano in `docs/superpowers/specs/` e
+`docs/superpowers/plans/` (gitignored, locali).
+
+- **Sotto-progetto 1 (voce 1, chiuso 2026-08-19)** — motore di
+  classificazione e arricchimento unificato: primo editor UI per
+  `manual_overrides.sator.{role,benchmark_code,benchmark_label,user_edited,
+  benchmark_user_edited}`, `resolve_instrument_role`/`resolve_instrument_nature`
+  come punti di accesso pubblici unici, `get_nature_visual` (icone keyed su
+  nature SATOR invece di etichetta libera), 3 nuove nature (criptovalute,
+  difesa/sicurezza, azionario paese singolo). Bug critico chiuso in review:
+  l'editor scriveva un override ad ogni submit anche senza modifiche reali,
+  rischiando di riattivare chiavi legacy dormienti — ora scrittura
+  solo-se-cambiato.
+- **Sotto-progetto 2 (voce 2, chiuso 2026-08-20)** — appartenenza percentuale
+  multipla ai bucket: `resolve_instrument_bucket_exposure`/
+  `compute_instrument_bucket_exposures`, editor "Esposizione tra bucket" in
+  Classificazione. Il motore SATOR vero resta bucket-singolo per vincolo di
+  scopo esplicito (flag `use_fractional_exposure`, default `False`, i 4
+  chiamanti del motore restano invariati) — solo la vista "mix corrente" e i
+  grafici a ciambella vedono la frazione.
+- **Sotto-progetto 3 (voci 3+4, chiuso 2026-08-21)** — target strategico e
+  posizione NO_SELL per strumento: `resolve_instrument_no_sell`,
+  `compute_instrument_operational_status` (stato in_target/sottopeso/
+  sovrappeso/sovrappeso_no_sell per strumento), pagina "Quote & impostazioni"
+  ristrutturata a 3 sottoschede (Target & Stato, Ruolo & Benchmark,
+  Esposizione Bucket). Eseguito con `subagent-driven-development`: 7 task,
+  un bug critico di perdita dati trovato e corretto in corso d'opera (NO_SELL
+  scritto su ticker non visibili in pagina), review finale sull'intero branch
+  con un secondo bug della stessa classe trovato e corretto prima del merge
+  (arrotondamento a intero della tabella Esposizione Bucket).
+- **Voci 5 e 11**: mai pianificate. Il documento sorgente e' stato eliminato
+  prima che il loro contenuto venisse letto/estratto in una spec — per
+  riprenderle serve che l'utente fornisca di nuovo il documento o descriva
+  direttamente cosa coprono.
+- **Voci 6-10** (nomi noti dalla spec del sotto-progetto 2: "Calcolare
+  l'esposizione effettiva", "Adeguare Strategic Analyzer", "Adeguare
+  Eligibility Engine", "Adeguare Rebalancing Engine", "Adeguare Purchase
+  Optimizer"): mai iniziate, deliberatamente rimandate. Toccano il motore
+  SATOR vero e proprio (scoring/blocco/ottimizzazione acquisti secondo
+  l'esposizione frazionata ai bucket), finora sempre escluso per vincolo
+  esplicito dai sotto-progetti 1-3 — sono il lavoro piu' delicato rimasto di
+  questa iniziativa. Vedi Priorita' 9 in sezione 5.
+- **Correzioni sparse non collegate alla revisione** (stessa finestra
+  temporale, bug segnalati dall'uso reale): quantita' BTP dagli eventi reali
+  invece del campo statico, Timeline BTP ordinata per scadenza, due bug
+  reali di P/L fantasma da posizione non quotata e da Versamento
+  automatico non sincronizzato con l'acquisto che finanzia (entrambi
+  -18.312€ su casi reali), firma dati strumento estesa ai campi
+  cedola/scadenza, Monte Carlo che non blocca piu' l'intera simulazione per
+  un solo strumento con storico insufficiente, dimensione dinamica della
+  matrice di correlazione, colore categoria e indicatore portafoglio nella
+  tabella qualita' dati. Dettaglio in `CHANGELOG.md`.
+
 ---
 
 ## 4. Ultima lettura performance
@@ -864,6 +925,25 @@ d'opera, non una revisione della priorita'):
 Con questo, Priorita' 7 e' di fatto esaurita: tutti i progetti pianificati
 sono chiusi o archiviati per scelta esplicita. Non riaprire il punto 5 senza
 una richiesta esplicita.
+
+### Priorita 9 - Revisione modello di classificazione e allocazione, voci residue
+
+Vedi "Revisione del modello di classificazione e allocazione — sotto-progetti
+1-3" in sezione 3 per cosa e' gia' chiuso (voci 1-4 dell'ordine di priorita'
+originale). Documento sorgente eliminato il 2026-08-21 (richiesta esplicita
+dell'utente, dopo il merge del sotto-progetto 3) — le voci sotto non hanno
+piu' una fonte scritta consultabile in questo repo.
+
+1. Voce 5 e voce 11 — nome/contenuto sconosciuti. Servono di nuovo il
+   documento originale o una descrizione diretta dall'utente prima di poter
+   pianificare qualunque lavoro su questi due punti.
+2. Voci 6-10 — "Calcolare l'esposizione effettiva", "Adeguare Strategic
+   Analyzer", "Adeguare Eligibility Engine", "Adeguare Rebalancing Engine",
+   "Adeguare Purchase Optimizer". Toccano il motore SATOR vero (scoring,
+   blocco, ottimizzazione acquisti) per fargli usare l'esposizione frazionata
+   ai bucket introdotta nel sotto-progetto 2, finora sempre esplicitamente
+   escluso — non forzare l'ordine dei sotto-progetti gia' seguito (1, 2, 3+4)
+   senza una richiesta esplicita dell'utente su quale riprendere.
 
 ### Priorita 8 - Irrobustimento e maturazione 5.0
 
