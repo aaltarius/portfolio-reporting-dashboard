@@ -467,6 +467,35 @@ def resolve_instrument_no_sell(data: dict[str, Any], ticker: str) -> bool:
     return bool(sator.get("no_sell"))
 
 
+def apply_no_sell_from_form(data: dict[str, Any], form_data: dict[str, Any]) -> bool:
+    """Legge tutti i campi 'no_sell_<TICKER>' da un form POST e scrive
+    l'override per ogni ticker il cui valore inviato differisce da
+    quello attuale. Un ticker posseduto il cui checkbox non e' stato
+    inviato (form HTML: checkbox non spuntata = campo assente) conta
+    come no_sell=False esplicito, non come 'non toccato' - stessa
+    semantica del resto della UI di questo form (submit completo, non
+    incrementale). Muta `data` in place, non chiama save_data. Ritorna
+    True se ha scritto qualcosa."""
+    strumenti_by_ticker = {
+        str(s.get("ticker") or "").strip().upper(): s
+        for s in (data.get("strumenti") or [])
+        if str(s.get("ticker") or "").strip()
+    }
+    changed_any = False
+    for ticker in strumenti_by_ticker:
+        submitted = bool(form_data.get(f"no_sell_{ticker}"))
+        current = resolve_instrument_no_sell(data, ticker)
+        if submitted == current:
+            continue
+        master = data.setdefault("instrument_master", {})
+        entry = master.setdefault(ticker, {})
+        overrides = entry.setdefault("manual_overrides", {}).setdefault("sator", {})
+        overrides["no_sell"] = submitted
+        overrides["no_sell_user_edited"] = True
+        changed_any = True
+    return changed_any
+
+
 def apply_classification_override(
     data: dict[str, Any], strumento: dict[str, Any], *,
     role_val: str, benchmark_code_val: str, benchmark_label_val: str,

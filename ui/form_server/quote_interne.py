@@ -17,13 +17,15 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from core.services.sator import (
+    apply_no_sell_from_form,
     compute_instrument_buckets,
+    compute_instrument_operational_status,
     compute_instrument_quota_status,
     compute_instrument_reference_ranges,
     ensure_sator_settings,
     held_non_pac_tickers,
 )
-from ui.form_server.shell import STREAMLIT_URL, _ROOT_VARS_BLOCK
+from ui.form_server.shell import STREAMLIT_URL, TAB_JS, _ROOT_VARS_BLOCK
 
 logger = logging.getLogger("portafoglio.form_server.quote_interne")
 
@@ -46,6 +48,19 @@ h2{font-size:.75rem;font-weight:800;text-transform:uppercase;letter-spacing:.06e
 .alert-ok{background:var(--green-50);color:var(--green-800);padding:10px 14px;border-radius:10px;margin-bottom:14px}
 .alert-warn{background:var(--red-50);color:var(--red-700);padding:10px 14px;border-radius:10px;margin-bottom:14px}
 .btn-salva{padding:9px 24px;background:var(--indigo-500);color:var(--white);border:none;border-radius:9px;font-size:.9rem;font-weight:700;cursor:pointer}
+.tabs{display:flex;gap:2px;border-bottom:2px solid var(--slate-200);margin-bottom:20px;margin-top:4px}
+.tab-btn{background:none;border:none;border-bottom:3px solid transparent;margin-bottom:-2px;padding:8px 14px;font-size:.87rem;font-weight:600;color:var(--slate-500);cursor:pointer;transition:color .15s,border-color .15s}
+.tab-btn.active{color:var(--indigo-500);border-bottom-color:var(--indigo-500)}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+.qi-table{width:100%;border-collapse:collapse;font-size:.85rem}
+.qi-table th{text-align:left;padding:8px;color:var(--slate-500);font-size:.72rem;text-transform:uppercase}
+.qi-table td{padding:6px 8px;border-top:1px solid var(--slate-200)}
+.stato-badge{padding:2px 8px;border-radius:999px;font-size:.75rem;font-weight:700}
+.stato-in_target{background:var(--green-50);color:var(--green-800)}
+.stato-sottopeso{background:var(--indigo-50);color:var(--indigo-700)}
+.stato-sovrappeso{background:var(--red-50);color:var(--red-700)}
+.stato-sovrappeso_no_sell{background:var(--amber-100);color:var(--amber-800)}
 </style>"""
 
 
@@ -68,7 +83,7 @@ def _bucket_tickers(data: dict, *, exclude_tickers: frozenset[str] = frozenset()
     return out
 
 
-def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "") -> str:
+def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_tab: str = "target") -> str:
     from core.finance import compute_portfolio_state
     from persistence.storage import load_data, load_settings
 
@@ -88,6 +103,7 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "") -> str:
     tickers_by_bucket = _bucket_tickers(data, exclude_tickers=exclude_tickers)
     status = compute_instrument_quota_status(data, settings, exclude_tickers=exclude_tickers)
     reference_ranges = compute_instrument_reference_ranges(data, settings, tickers_by_bucket)
+    operational_status = compute_instrument_operational_status(data, settings)
 
     ok_html = f'<div class="alert-ok">{escape(ok_msg)}</div>' if ok_msg else ""
     err_html = f'<div class="alert-warn">{escape(err_msg)}</div>' if err_msg else ""
@@ -100,11 +116,21 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "") -> str:
             bucket_sections.append(f'<div class="qi-card"><h2>{bucket}</h2><p>Nessuno strumento posseduto in questo bucket.</p></div>')
             continue
         bucket_ranges = reference_ranges.get(bucket, {})
+        _stato_label = {
+            "in_target": "In target", "sottopeso": "Sottopeso",
+            "sovrappeso": "Sovrappeso", "sovrappeso_no_sell": "Sovrappeso — NO_SELL",
+        }
         rows = "".join(
             f'<div class="qi-row"><label>{escape(ticker)}</label>'
+            f'<span style="width:90px;text-align:right">{operational_status.get(ticker, {}).get("peso_attuale", 0.0) * 100:.1f}%</span>'
             f'<input type="number" min="0" max="100" step="0.5" '
             f'data-bucket="{bucket}" data-ticker="{escape(ticker)}" '
             f'value="{quotas.get(ticker, 0.0) * 100:.1f}" class="qi-input">'
+            f'<label style="flex:0 0 auto"><input type="checkbox" name="no_sell_{escape(ticker)}" value="1" '
+            + ("checked" if operational_status.get(ticker, {}).get("no_sell") else "")
+            + '> NO_SELL</label>'
+            f'<span class="stato-badge stato-{operational_status.get(ticker, {}).get("stato", "in_target")}">'
+            f'{_stato_label.get(operational_status.get(ticker, {}).get("stato", "in_target"), "")}</span>'
             + (
                 f'<span class="qi-hint">riferimento indicativo: 0&ndash;{bucket_ranges[ticker][1] * 100:.0f}%</span>'
                 if ticker in bucket_ranges else ""
@@ -168,29 +194,46 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "") -> str:
     Costo: bonus zero commissioni/PAC, malus TER/spread — <code>_score_cost</code>.</p>
   </div>"""
 
-    return f"""<!DOCTYPE html>
-<html lang="it">
-<head><meta charset="utf-8"><title>Quote & impostazioni</title>{_CSS}</head>
-<body>
-<div class="qi">
-  <h1>Quote interne per bucket</h1>
-  {ok_html}{err_html}
+    def _tb(label: str, key: str) -> str:
+        cls = "tab-btn active" if key == active_tab else "tab-btn"
+        return f'<button class="{cls}" data-tg="qi" data-t="{key}" onclick="switchTab(\'qi\',\'{key}\')">{escape(label)}</button>'
+
+    def _tp(key: str, content: str) -> str:
+        cls = "tab-panel active" if key == active_tab else "tab-panel"
+        return f'<div class="{cls}" data-pg="qi" data-p="{key}">{content}</div>'
+
+    tab_target = f"""
   {settings_section}
-  <h2 style="margin-top:24px">Quote per bucket</h2>
-  <p>Il riferimento indicativo accanto a ogni campo usa i limiti di concentrazione impostati sopra.</p>
+  <h2 style="margin-top:24px">Quote per bucket — Target strategico</h2>
+  <p>Il riferimento indicativo accanto a ogni campo usa i limiti di concentrazione impostati sopra. Peso attuale e Stato sono calcolati, non editabili.</p>
   <form method="post" action="/quote-interne" onsubmit="return collectQuotas()">
     <input type="hidden" name="azione" value="salva_quote">
     <input type="hidden" name="quotas_json" id="quotas_json">
     {"".join(bucket_sections)}
-    <button type="submit" class="btn-salva">Salva quote</button>
+    <button type="submit" class="btn-salva">Salva target e NO_SELL</button>
   </form>
   <div class="qi-card">
     <h2>Stato attuale</h2>
     <table><thead><tr><th>Bucket</th><th>Stato</th><th>Somma quote</th><th>Note</th></tr></thead>
     <tbody>{"".join(status_rows)}</tbody></table>
+  </div>"""
+
+    return f"""<!DOCTYPE html>
+<html lang="it">
+<head><meta charset="utf-8"><title>Quote & impostazioni</title>{_CSS}</head>
+<body>
+<div class="qi">
+  <h1>Quote & impostazioni</h1>
+  {ok_html}{err_html}
+  <div class="tabs">
+    {_tb("Target & Stato", "target")}
+    {_tb("Ruolo & Benchmark", "ruolo")}
+    {_tb("Esposizione Bucket", "bucket")}
   </div>
+  {_tp("target", tab_target)}
   <p><a href="{STREAMLIT_URL}">&larr; Torna all'app</a></p>
 </div>
+{TAB_JS}
 <script>
 function collectQuotas() {{
   const buckets = {{}};
@@ -207,8 +250,8 @@ function collectQuotas() {{
 
 
 @router.get("/quote-interne", response_class=HTMLResponse)
-async def get_quote_interne(ok: str = "", err: str = ""):
-    return HTMLResponse(_render_quote_interne_page(ok_msg=ok, err_msg=err))
+async def get_quote_interne(ok: str = "", err: str = "", tab: str = "target"):
+    return HTMLResponse(_render_quote_interne_page(ok_msg=ok, err_msg=err, active_tab=tab))
 
 
 @router.post("/quote-interne", response_class=HTMLResponse)
@@ -222,7 +265,7 @@ async def post_quote_interne(
     band_tolerance_pp: str = Form("3"),
     instrument_quota_tolerance_pp: str = Form("5"),
 ):
-    from persistence.storage import load_settings, save_settings
+    from persistence.storage import load_data, load_settings, save_data, save_settings
 
     if azione == "salva_impostazioni":
         weights = {
@@ -333,6 +376,11 @@ async def post_quote_interne(
         fracs[top_ticker] = round(1.0 - sum(fracs.values()), 6)
         normalized[bucket] = fracs
     settings["sator"]["instrument_quotas"] = normalized
+
+    form_data_all = dict(await request.form())
+    data_for_no_sell = load_data()
+    if apply_no_sell_from_form(data_for_no_sell, form_data_all):
+        save_data(data_for_no_sell)
 
     try:
         save_settings(settings)
