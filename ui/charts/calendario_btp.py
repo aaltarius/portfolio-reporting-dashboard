@@ -37,7 +37,19 @@ def build_btp_calendar_figure(
     if df.empty:
         return go.Figure()
 
-    tickers = list(df["ticker"].dropna().astype(str).drop_duplicates())
+    # Ordine cronologico di scadenza (non alfabetico): la scadenza di ogni
+    # BTP e' la "data_fine" della sua riga "span". _duration_label e le
+    # posizioni y usano questo stesso ordine (via categoryarray sotto).
+    scadenza_by_ticker = (
+        df[df["tipo_riga"] == "span"]
+        .drop_duplicates(subset=["ticker"])
+        .set_index("ticker")["data_fine"]
+        .to_dict()
+    )
+    tickers = sorted(
+        df["ticker"].dropna().astype(str).drop_duplicates(),
+        key=lambda tk: scadenza_by_ticker.get(tk, pd.Timestamp.max),
+    )
     min_data = df["data"].min()
     max_data = df["data"].max()
     ticker_label_x = min_data - pd.Timedelta(days=40)
@@ -423,6 +435,20 @@ def render_btp_calendar_table(
     tot_imposte_v = sum(imp_nonnull) if imp_nonnull else float("nan")
     tot_netto = float(table_rows["_netto"].sum())
 
+    # Scomposizione incassato/residuo: il totale unico sommava indistintamente
+    # cedole/scadenze già incassate e future, un numero senza un significato
+    # finanziario chiaro (richiesta esplicita 2026-08-20).
+    incassata_mask = row_states == "incassata"
+    residuo_mask = ~incassata_mask
+    tot_lordo_inc = float(table_rows.loc[incassata_mask, "_lordo"].sum())
+    imp_inc_nonnull = [v for v, is_inc in zip(imposte_list, incassata_mask) if is_inc and v is not None]
+    tot_imposte_inc = sum(imp_inc_nonnull) if imp_inc_nonnull else float("nan")
+    tot_netto_inc = float(table_rows.loc[incassata_mask, "_netto"].sum())
+    tot_lordo_res = float(table_rows.loc[residuo_mask, "_lordo"].sum())
+    imp_res_nonnull = [v for v, is_inc in zip(imposte_list, incassata_mask) if not is_inc and v is not None]
+    tot_imposte_res = sum(imp_res_nonnull) if imp_res_nonnull else float("nan")
+    tot_netto_res = float(table_rows.loc[residuo_mask, "_netto"].sum())
+
     display_df = (
         table_rows[["ticker", "Data", "Evento", "_lordo", "_imposte", "_netto"]]
         .rename(columns={"ticker": "Ticker", "_lordo": "Lordo", "_imposte": "Imposte", "_netto": "Netto"})
@@ -480,21 +506,37 @@ def render_btp_calendar_table(
     }
     render_styled_table(styler, height="content", column_config=column_config)
 
-    # ── Totale come riga fissa e non ordinabile, separata dalla tabella
+    # ── Totali come righe fisse e non ordinabili, separate dalla tabella
     #    eventi: st.dataframe riordina l'intero corpo dati al click
-    #    sull'intestazione, quindi una riga di totale inclusa nella stessa
-    #    tabella si sposterebbe insieme alle altre. Resa anch'essa con
+    #    sull'intestazione, quindi righe di totale incluse nella stessa
+    #    tabella si sposterebbero insieme alle altre. Rese anch'esse con
     #    st.dataframe (stesso motore, stesse larghezze) così le colonne
-    #    restano allineate; con una sola riga non c'è nulla da riordinare.
-    totale_df = pd.DataFrame([{
-        "Ticker": "Totale", "Data": "", "Evento": "",
-        "Lordo": tot_lordo, "Imposte": tot_imposte_v, "Netto": tot_netto,
-    }])
+    #    restano allineate. Tre righe: totale complessivo, di cui già
+    #    incassato (barrato in rosso, stesso stile delle righe incassate
+    #    sopra) e di cui ancora residuo — il totale unico da solo mischiava
+    #    importi già riscossi e futuri in un numero senza significato
+    #    finanziario chiaro.
+    totale_df = pd.DataFrame([
+        {"Ticker": "Totale", "Data": "", "Evento": "",
+         "Lordo": tot_lordo, "Imposte": tot_imposte_v, "Netto": tot_netto},
+        {"Ticker": _strike_text("di cui incassato"), "Data": "", "Evento": "",
+         "Lordo": tot_lordo_inc, "Imposte": tot_imposte_inc, "Netto": tot_netto_inc},
+        {"Ticker": "di cui residuo", "Data": "", "Evento": "",
+         "Lordo": tot_lordo_res, "Imposte": tot_imposte_res, "Netto": tot_netto_res},
+    ])
+
+    def _totale_row_style(row: pd.Series) -> list[str]:
+        idx = row.name
+        if idx == 1:  # di cui incassato
+            return ["color:#DC2626;text-decoration:line-through;font-weight:700;" for _ in row.index]
+        return ["font-weight:700;" for _ in row.index]
+
     totale_styler = (
         totale_df.style
         .hide(axis="index")
-        .set_properties(**{"font-weight": "700"})
+        .apply(_totale_row_style, axis=1)
         .format({"Lordo": _fmt_money, "Imposte": _fmt_money, "Netto": _fmt_money})
+        .format(_fmt_money_strike, subset=pd.IndexSlice[[1], ["Lordo", "Imposte", "Netto"]])
     )
     totale_column_config = {
         col: st.column_config.Column(label=" ", width=width)
