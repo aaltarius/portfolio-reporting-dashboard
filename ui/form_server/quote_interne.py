@@ -105,21 +105,49 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
     reference_ranges = compute_instrument_reference_ranges(data, settings, tickers_by_bucket)
     operational_status = compute_instrument_operational_status(data, settings)
 
-    from core.services.sator import SATOR_ROLE_VALUES, resolve_instrument_role
+    # Stessa popolazione di strumenti per tutte e tre le sottoschede (Finding
+    # 3 della review finale): "Ruolo & Benchmark" ed "Esposizione Bucket"
+    # iteravano l'intero catalogo storico di data["strumenti"] (chiusi e mai
+    # posseduti compresi), mentre "Target & Stato" mostra solo i posseduti
+    # via tickers_by_bucket. Riusiamo qui lo stesso insieme gia' calcolato
+    # sopra invece di richiamare active_fetch_tickers(data) (il filtro
+    # canonico per "strumenti attivi" da CLAUDE.md): tickers_by_bucket e' un
+    # sottoinsieme piu' specifico (posseduti + rispetta gia' il toggle
+    # "Escludi BTP/GOV" via exclude_tickers), quindi garantisce che le tre
+    # schede mostrino esattamente gli stessi ticker, non solo popolazioni
+    # sovrapponibili.
+    held_tickers_all: set[str] = {tk for tks in tickers_by_bucket.values() for tk in tks}
+
+    from core.services.sator import SATOR_ROLE_VALUES, SATOR_ROLE_LABELS, resolve_instrument_role
     from core.benchmark_registry import resolve_instrument_benchmark
 
     all_strumenti = data.get("strumenti", []) or []
     role_rows = []
     for s in all_strumenti:
         tk = str(s.get("ticker") or "").strip()
-        if not tk:
+        if not tk or tk.upper() not in held_tickers_all:
             continue
         current_role = resolve_instrument_role(data, s, True)
         current_bm = resolve_instrument_benchmark(s, master_entry=(data.get("instrument_master", {}) or {}).get(tk, {}), prefer_master=True)
-        role_options = "".join(
-            f'<option value="{escape(r)}" {"selected" if r == current_role else ""}>{escape(r)}</option>'
-            for r in sorted(SATOR_ROLE_VALUES)
+        # Stesse etichette italiane e stesso ordine di /strumenti (Finding 4):
+        # SATOR_ROLE_LABELS per il testo visibile, SATOR_ROLE_VALUES nel suo
+        # ordine di dichiarazione nativo (non alfabetico - "altro" e' l'ultimo
+        # valore dichiarato, ma sarebbe il primo in ordine alfabetico e quindi
+        # la scelta di default del browser se nessuna opzione risultasse
+        # "selected"). Se il ruolo memorizzato non e' un valore valido
+        # (caso legacy/anomalo), lo antepone come opzione gia' selezionata
+        # cosi' un submit che non tocca questa riga resta un no-op invece di
+        # riassegnare silenziosamente "altro".
+        role_option_list = []
+        if current_role not in SATOR_ROLE_VALUES:
+            role_option_list.append(
+                f'<option value="{escape(current_role)}" selected>{escape(current_role)} (non riconosciuto)</option>'
+            )
+        role_option_list.extend(
+            f'<option value="{escape(r)}" {"selected" if r == current_role else ""}>{escape(SATOR_ROLE_LABELS.get(r, r))}</option>'
+            for r in SATOR_ROLE_VALUES
         )
+        role_options = "".join(role_option_list)
         role_rows.append(
             f'<tr><td>{escape(tk)}</td>'
             f'<td><select name="role_{escape(tk)}">{role_options}</select></td>'
@@ -140,14 +168,20 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
     bexp_rows = []
     for s in all_strumenti:
         tk = str(s.get("ticker") or "").strip()
-        if not tk:
+        if not tk or tk.upper() not in held_tickers_all:
             continue
         current_exp = resolve_instrument_bucket_exposure(data, s, True)
+        # 2 decimali e step 0.01, come l'editor singolo-strumento in
+        # ui/form_server/strumenti.py (Finding 1): con :.0f/step="1" uno
+        # split non intero (es. 12,5%/87,5%) veniva mostrato arrotondato e
+        # riscritto arrotondato al primo salvataggio di QUALUNQUE riga della
+        # tabella, anche una non toccata dall'utente (il form batch invia
+        # sempre tutte le righe).
         bexp_rows.append(
             f'<tr><td>{escape(tk)}</td>'
-            f'<td><input type="number" min="0" max="100" step="1" name="bexp_core_{escape(tk)}" value="{current_exp.get("Core", 0.0) * 100:.0f}"></td>'
-            f'<td><input type="number" min="0" max="100" step="1" name="bexp_difensivo_{escape(tk)}" value="{current_exp.get("Difensivo", 0.0) * 100:.0f}"></td>'
-            f'<td><input type="number" min="0" max="100" step="1" name="bexp_satellite_{escape(tk)}" value="{current_exp.get("Satellite", 0.0) * 100:.0f}"></td>'
+            f'<td><input type="number" min="0" max="100" step="0.01" name="bexp_core_{escape(tk)}" value="{current_exp.get("Core", 0.0) * 100:.2f}"></td>'
+            f'<td><input type="number" min="0" max="100" step="0.01" name="bexp_difensivo_{escape(tk)}" value="{current_exp.get("Difensivo", 0.0) * 100:.2f}"></td>'
+            f'<td><input type="number" min="0" max="100" step="0.01" name="bexp_satellite_{escape(tk)}" value="{current_exp.get("Satellite", 0.0) * 100:.2f}"></td>'
             f'</tr>'
         )
 
@@ -174,9 +208,28 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
             "in_target": "In target", "sottopeso": "Sottopeso",
             "sovrappeso": "Sovrappeso", "sovrappeso_no_sell": "Sovrappeso — NO_SELL",
         }
+        # Intestazione di colonna esplicita (Finding 2 della review finale):
+        # prima il target strategico calcolato non veniva mai mostrato, e il
+        # peso attuale (frazione di PORTAFOGLIO INTERO) affiancava senza
+        # etichette la quota target di bucket (frazione DI BUCKET) - due
+        # numeri con denominatori diversi, non confrontabili direttamente
+        # secondo il vincolo di progetto. Stesso ordine flex delle righe dati
+        # sotto, cosi' le etichette restano allineate alle colonne.
+        header_row = (
+            '<div class="qi-row" style="font-size:.72rem;text-transform:uppercase;'
+            'font-weight:800;color:var(--slate-500)">'
+            '<label>Ticker</label>'
+            '<span style="width:90px;text-align:right">Peso attuale</span>'
+            '<span style="width:90px;text-align:right">Target strategico</span>'
+            '<span style="width:100px">Quota target (bucket)</span>'
+            '<span style="flex:0 0 auto">NO_SELL</span>'
+            '<span>Stato</span>'
+            '</div>'
+        )
         rows = "".join(
             f'<div class="qi-row"><label>{escape(ticker)}</label>'
             f'<span style="width:90px;text-align:right">{operational_status.get(ticker, {}).get("peso_attuale", 0.0) * 100:.1f}%</span>'
+            f'<span style="width:90px;text-align:right">{operational_status.get(ticker, {}).get("target", 0.0) * 100:.1f}%</span>'
             f'<input type="number" min="0" max="100" step="0.5" '
             f'data-bucket="{bucket}" data-ticker="{escape(ticker)}" '
             f'value="{quotas.get(ticker, 0.0) * 100:.1f}" class="qi-input">'
@@ -193,7 +246,7 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
             for ticker in tickers
         )
         bucket_sections.append(
-            f'<div class="qi-card"><h2>{bucket}</h2>{rows}'
+            f'<div class="qi-card"><h2>{bucket}</h2>{header_row}{rows}'
             f'<div class="qi-sum" id="sum-{bucket}">Somma: --</div></div>'
         )
 
@@ -490,6 +543,12 @@ async def post_quote_interne_ruolo_benchmark(request: Request):
 async def post_quote_interne_bucket_exposure(request: Request):
     from core.services.sator import apply_bucket_exposure_override
     from persistence.storage import load_data, save_data
+    # _fs_parse_pct e' la fonte di verita' unica per il parsing di queste tre
+    # percentuali (Finding 1 della review finale): gestisce la virgola
+    # decimale e non solleva mai eccezione su input non numerico, a
+    # differenza del `float(...)` grezzo usato qui in precedenza, che
+    # arrotondava/rompeva silenziosamente split non interi.
+    from ui.form_server.strumenti import _fs_parse_pct
 
     form_data = dict(await request.form())
     data = load_data()
@@ -500,9 +559,9 @@ async def post_quote_interne_bucket_exposure(request: Request):
         if not tk or f"bexp_core_{tk}" not in form_data:
             continue
         submitted = {
-            "Core": float(form_data.get(f"bexp_core_{tk}") or 0) / 100.0,
-            "Difensivo": float(form_data.get(f"bexp_difensivo_{tk}") or 0) / 100.0,
-            "Satellite": float(form_data.get(f"bexp_satellite_{tk}") or 0) / 100.0,
+            "Core": _fs_parse_pct(form_data.get(f"bexp_core_{tk}")),
+            "Difensivo": _fs_parse_pct(form_data.get(f"bexp_difensivo_{tk}")),
+            "Satellite": _fs_parse_pct(form_data.get(f"bexp_satellite_{tk}")),
         }
         changed, err = apply_bucket_exposure_override(data, s, submitted)
         any_changed = any_changed or changed

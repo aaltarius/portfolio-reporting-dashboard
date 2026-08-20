@@ -25,6 +25,20 @@ router = APIRouter()
 
 # ─── Helpers dominio ──────────────────────────────────────────────────────────
 
+def _fs_parse_pct(raw) -> float:
+    """Percentuale form (stringa, eventuale virgola decimale) -> frazione
+    0..1, mai un'eccezione su input non numerico/vuoto (torna 0.0). Fonte di
+    verita' unica per il parsing dei campi bucket_core/difensivo/satellite
+    di /strumenti e degli equivalenti bexp_* di /quote-interne (Finding 1
+    della review finale sul branch target-strategico-no-sell: la tabella
+    batch di /quote-interne usava un parsing grezzo a precisione intera che
+    corrompeva silenziosamente split non interi come 12,5%/87,5%)."""
+    try:
+        return max(0.0, float(str(raw).strip().replace(",", ".")) / 100.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _fs_linked_events(data: dict, ticker: str) -> list:
     from persistence.storage import get_registro_eventi
     return [ev for ev in get_registro_eventi(data) if str(ev.get("ticker", "") or "") == str(ticker or "")]
@@ -1176,16 +1190,10 @@ async def post_strumenti(
             return err_page("Strumento non trovato.", "arricchimento")
         form_data = dict(await request.form())
 
-        def _parse_pct(raw) -> float:
-            try:
-                return max(0.0, float(str(raw).strip().replace(",", ".")) / 100.0)
-            except (TypeError, ValueError):
-                return 0.0
-
         submitted = {
-            "Core": _parse_pct(form_data.get("bucket_core")),
-            "Difensivo": _parse_pct(form_data.get("bucket_difensivo")),
-            "Satellite": _parse_pct(form_data.get("bucket_satellite")),
+            "Core": _fs_parse_pct(form_data.get("bucket_core")),
+            "Difensivo": _fs_parse_pct(form_data.get("bucket_difensivo")),
+            "Satellite": _fs_parse_pct(form_data.get("bucket_satellite")),
         }
 
         from core.services.sator import apply_bucket_exposure_override
