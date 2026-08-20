@@ -329,6 +329,27 @@ def _filter_weekend_dates(ds: list[str]) -> list[str]:
     return [d for d in ds if pd.Timestamp(d).weekday() < 5]
 
 
+def _position_price_or_cost(last_valid_prices: dict[str, float], tk: str, stp: dict[str, float]) -> float:
+    """Prezzo di mercato per una posizione, o costo di carico se non e' mai
+    stata quotata: mai zero per una posizione realmente posseduta.
+
+    Un titolo senza alcuna quotazione nota (es. appena acquistato con data
+    retrodatata a un giorno privo di storico prezzi) non deve mai risultare
+    "valere zero" nella curva P/L — significherebbe leggere l'intero importo
+    pagato come perdita secca. In assenza di un prezzo di mercato noto, il
+    valore neutro e' il costo di carico: nessun P/L finche' non arriva una
+    quotazione reale. Bug reale, 2026-08-20: BTP-1AG30 con data di acquisto
+    corretta a un giorno senza prezzo storico mostrava -18.312 € di P/L
+    fantasma in tutti i grafici.
+    """
+    known = last_valid_prices.get(tk)
+    if known is not None:
+        return float(known)
+    qty = _safe_float(stp.get("qty", 0))
+    cost = _safe_float(stp.get("cost", 0))
+    return (cost / qty) if qty > 0 else 0.0
+
+
 def _build_portfolio_history_core(sto: dict, eventi: list) -> tuple[list[dict], dict]:
     """Righe storiche reali (mai dipendenti da strumenti[].prezzo) + stato
     finale (posizioni/cassa/capitale/realizzato/ultimo prezzo valido/
@@ -371,7 +392,7 @@ def _build_portfolio_history_core(sto: dict, eventi: list) -> tuple[list[dict], 
                 last_valid_prices[tk] = float(prezzo_raw)
                 prezzo = float(prezzo_raw)
             else:
-                prezzo = float(last_valid_prices.get(tk, 0.0))
+                prezzo = _position_price_or_cost(last_valid_prices, tk, stp)
             qty = _safe_float(stp.get("qty", 0))
             cost = _safe_float(stp.get("cost", 0))
             valore_aperto += qty * prezzo
@@ -470,7 +491,7 @@ def _build_synthetic_today_row(
             last_valid_prices[tk] = float(prezzo_raw)
             pr = float(prezzo_raw)
         else:
-            pr = float(last_valid_prices.get(tk, 0.0))
+            pr = _position_price_or_cost(last_valid_prices, tk, stp)
         q = _safe_float(stp.get("qty", 0))
         c = _safe_float(stp.get("cost", 0))
         valore_aperto_t += q * pr
@@ -503,12 +524,13 @@ def build_portfolio_history_df(data: dict[str, Any]) -> pd.DataFrame:
     # davvero funzione. I prezzi correnti influenzano solo la riga
     # sintetica "oggi" sotto, mai cache-ata.
     hist_sig = hashlib.md5(json.dumps({"sto": sto}, sort_keys=True, default=str).encode()).hexdigest()
-    # v8: l'indice date dello storico esclude ora sabato/domenica anche
-    # quando quella data esiste in storico_prezzi solo per uno strumento
-    # osservato (vedi _filter_weekend_dates) - bump obbligatorio per
-    # invalidare le righe gia' cache-ate sotto lo schema precedente, che
-    # potrebbero contenere righe weekend indebite.
-    cache_sig = f"portfolio_history_v8|{event_sig}|{hist_sig}"
+    # v9: una posizione senza prezzo noto (mai quotata) vale ora il suo
+    # costo di carico invece di zero (vedi _position_price_or_cost,
+    # 2026-08-20) - bump obbligatorio, altrimenti righe gia' cache-ate sotto
+    # lo schema precedente continuano a mostrare il vecchio P/L fantasma
+    # anche a strumenti/eventi/storico prezzi invariati (nessun altro input
+    # della firma cambierebbe da solo per riflettere il fix).
+    cache_sig = f"portfolio_history_v9|{event_sig}|{hist_sig}"
 
     cache = data.get("cache_storico_portafoglio", {}) or {}
     hp: list[dict] | None = None
