@@ -542,6 +542,14 @@ async def post_form(cart_data: str = Form("[]")):
                     raise ValueError("Quote, Prezzo e Importo devono essere tutti maggiori di zero.")
                 netto = -(imp_f + comm_f + tax_f) if evento == "ACQUISTO" else (imp_f - comm_f - tax_f)
 
+                # event_id del trade assegnato subito (non nel loop di flush
+                # piu' sotto) cosi' il Versamento automatico puo' riferirlo
+                # con linked_trade_event_id: senza questo collegamento, una
+                # successiva modifica del trade (prezzo/commissioni) in
+                # ui/form_server/gestione.py non ha modo di ritrovare e
+                # aggiornare il versamento gemello (bug reale, 2026-08-20).
+                trade_event_id = _new_event_id(data)
+
                 if auto_liq and evento == "ACQUISTO":
                     events_to_append.append({
                         "data": str(data_obj),
@@ -549,9 +557,11 @@ async def post_form(cart_data: str = Form("[]")):
                         "tipo_evento": "VERSAMENTO",
                         "importo_lordo": imp_f + comm_f + tax_f,
                         "importo_netto": imp_f + comm_f + tax_f,
+                        "linked_trade_event_id": trade_event_id,
                         "note": f"Versamento automatico per acquisto {ticker}",
                     })
                 events_to_append.append({
+                    "event_id": trade_event_id,
                     "data": str(data_obj),
                     "ticker": ticker,
                     "tipo_evento": evento,
@@ -614,7 +624,7 @@ async def post_form(cart_data: str = Form("[]")):
     # Salva tutto atomicamente
     try:
         for ev in events_to_append:
-            ev["event_id"] = _new_event_id(data)
+            ev.setdefault("event_id", _new_event_id(data))
             append_evento_portafoglio(data, ev)
         save_data(data)
     except ValueError as exc:

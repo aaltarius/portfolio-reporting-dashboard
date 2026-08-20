@@ -977,6 +977,12 @@ def _normalize_event_record(ev):
     for _split_field in ("capitale_liberato", "plusvalenza_lorda", "plusvalenza_netta"):
         if _split_field in ev:
             out[_split_field] = _safe_float(ev.get(_split_field), 0.0)
+    # Riferimento del Versamento automatico al trade che finanzia (vedi
+    # ui/form_server/inserisci.py e ui/form_server/gestione.py): senza questo
+    # collegamento esplicito, modificare il trade non ha modo di ritrovare e
+    # aggiornare il versamento gemello (bug reale, 2026-08-20).
+    if ev.get("linked_trade_event_id"):
+        out["linked_trade_event_id"] = str(ev["linked_trade_event_id"])
     if out["importo_netto"] in (None, ""):
         if tipo in {"ACQUISTO", "COMMISSIONE", "IMPOSTA", "PRELIEVO"}:
             if tipo == "ACQUISTO":

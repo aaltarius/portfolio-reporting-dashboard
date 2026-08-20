@@ -89,6 +89,34 @@ def _fs_delete_event(data: dict, event_id: str) -> bool:
     return True
 
 
+def _fs_sync_linked_versamento(data: dict, trade_ev: dict) -> None:
+    """Tiene allineato il Versamento automatico collegato a un trade modificato.
+
+    Un ACQUISTO auto-liquidato e il suo Versamento automatico (creato insieme
+    in ui/form_server/inserisci.py, legati da linked_trade_event_id sul
+    versamento) sono una singola "partita di giro": devono restare identici
+    in importo e data, altrimenti il flusso di cassa si spalma su due giorni
+    diversi e inquina qualunque calcolo di P/L basato sui flussi giornalieri
+    (bug reale, 2026-08-20). Prima di questo fix, modificare solo il trade
+    (es. aggiungere commissioni) lasciava il versamento sul valore/data
+    vecchi: nessun collegamento strutturale li teneva sincronizzati.
+    """
+    from persistence.storage import _normalize_event_record, _safe_float
+
+    trade_id = str(trade_ev.get("event_id", ""))
+    if not trade_id:
+        return
+    for ev in data.get("registro_eventi", []):
+        if str(ev.get("linked_trade_event_id", "")) != trade_id:
+            continue
+        if str(_normalize_event_record(ev).get("tipo_evento", "")) != "VERSAMENTO":
+            continue
+        ev["data"] = trade_ev.get("data")
+        importo = abs(_safe_float(trade_ev.get("importo_netto", 0)))
+        ev["importo_lordo"] = importo
+        ev["importo_netto"] = importo
+
+
 def _fs_update_event(data: dict, event_id: str, updates: dict) -> bool:
     from persistence.storage import _normalize_event_record, _safe_float, save_data
     event_id = str(event_id or "")
@@ -102,6 +130,7 @@ def _fs_update_event(data: dict, event_id: str, updates: dict) -> bool:
                 comm = _safe_float(ev.get("commissioni", 0))
                 imp = _safe_float(ev.get("imposte", 0))
                 ev["importo_netto"] = -(lordo + comm + imp) if tipo == "ACQUISTO" else (lordo - comm - imp)
+                _fs_sync_linked_versamento(data, ev)
             elif tipo in {"CEDOLA", "DIVIDENDO"}:
                 lordo = _safe_float(ev.get("importo_lordo", 0))
                 aliquota = _safe_float(ev.get("aliquota", 0))
