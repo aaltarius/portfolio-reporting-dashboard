@@ -135,6 +135,30 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
     <button type="submit" class="btn-salva">Salva ruolo e benchmark</button>
   </form>"""
 
+    from core.services.sator import resolve_instrument_bucket_exposure
+
+    bexp_rows = []
+    for s in all_strumenti:
+        tk = str(s.get("ticker") or "").strip()
+        if not tk:
+            continue
+        current_exp = resolve_instrument_bucket_exposure(data, s, True)
+        bexp_rows.append(
+            f'<tr><td>{escape(tk)}</td>'
+            f'<td><input type="number" min="0" max="100" step="1" name="bexp_core_{escape(tk)}" value="{current_exp.get("Core", 0.0) * 100:.0f}"></td>'
+            f'<td><input type="number" min="0" max="100" step="1" name="bexp_difensivo_{escape(tk)}" value="{current_exp.get("Difensivo", 0.0) * 100:.0f}"></td>'
+            f'<td><input type="number" min="0" max="100" step="1" name="bexp_satellite_{escape(tk)}" value="{current_exp.get("Satellite", 0.0) * 100:.0f}"></td>'
+            f'</tr>'
+        )
+
+    tab_bucket = f"""
+  <form method="post" action="/quote-interne-bucket-exposure">
+    <p class="qi-hint">Le tre percentuali di ogni riga devono sommare a 100.</p>
+    <table class="qi-table"><thead><tr><th>Ticker</th><th>Core %</th><th>Difensivo %</th><th>Satellite %</th></tr></thead>
+    <tbody>{"".join(bexp_rows)}</tbody></table>
+    <button type="submit" class="btn-salva">Salva esposizione tra bucket</button>
+  </form>"""
+
     ok_html = f'<div class="alert-ok">{escape(ok_msg)}</div>' if ok_msg else ""
     err_html = f'<div class="alert-warn">{escape(err_msg)}</div>' if err_msg else ""
 
@@ -262,6 +286,7 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
   </div>
   {_tp("target", tab_target)}
   {_tp("ruolo", tab_ruolo)}
+  {_tp("bucket", tab_bucket)}
   <p><a href="{STREAMLIT_URL}">&larr; Torna all'app</a></p>
 </div>
 {TAB_JS}
@@ -459,3 +484,35 @@ async def post_quote_interne_ruolo_benchmark(request: Request):
     if any_changed:
         save_data(data)
     return RedirectResponse("/quote-interne?ok=Ruolo%20e%20benchmark%20aggiornati.&tab=ruolo", status_code=303)
+
+
+@router.post("/quote-interne-bucket-exposure", response_class=HTMLResponse)
+async def post_quote_interne_bucket_exposure(request: Request):
+    from core.services.sator import apply_bucket_exposure_override
+    from persistence.storage import load_data, save_data
+
+    form_data = dict(await request.form())
+    data = load_data()
+    any_changed = False
+    errors: list[str] = []
+    for s in data.get("strumenti", []) or []:
+        tk = str(s.get("ticker") or "").strip()
+        if not tk or f"bexp_core_{tk}" not in form_data:
+            continue
+        submitted = {
+            "Core": float(form_data.get(f"bexp_core_{tk}") or 0) / 100.0,
+            "Difensivo": float(form_data.get(f"bexp_difensivo_{tk}") or 0) / 100.0,
+            "Satellite": float(form_data.get(f"bexp_satellite_{tk}") or 0) / 100.0,
+        }
+        changed, err = apply_bucket_exposure_override(data, s, submitted)
+        any_changed = any_changed or changed
+        if err:
+            errors.append(f"{tk}: {err}")
+    if any_changed:
+        save_data(data)
+    from urllib.parse import quote as urlquote
+    if errors:
+        return RedirectResponse(
+            f"/quote-interne?err={urlquote('; '.join(errors))}&tab=bucket", status_code=303,
+        )
+    return RedirectResponse("/quote-interne?ok=Esposizione%20tra%20bucket%20aggiornata.&tab=bucket", status_code=303)
