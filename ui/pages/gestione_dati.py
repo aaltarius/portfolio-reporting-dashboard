@@ -62,7 +62,8 @@ from ui.components import back_to_top, kpi_card, legend_block, render_styled_tab
 from ui.formatting import fmt_dt_it, fmt_date_only_it, fmt_num_it
 from ui.i18n import t
 from ui.page_chrome import render_page_intro as render_page_intro_shared, render_section_line as render_section_line_shared
-from ui.theme import get_theme_context
+from core.config import COLORS
+from ui.theme import get_theme_context, macro_color
 from ui.notifications import queue_info, queue_success, update_status
 from ui.ux_helpers import confirm_danger, render_danger_hint
 
@@ -566,7 +567,12 @@ def _render_arricchimento(data: dict, ctx) -> None:
             app_version=str(getattr(ctx, "app_version", "n/d")),
             schema_version=str(getattr(ctx, "schema_version", "n/d")),
         )
-        + f"|quality_light_v2|asof={date.today().isoformat()}"
+        # v3: aggiunto il campo "in_portfolio" a build_instrument_quality_dataset
+        # (2026-08-20) — bump obbligatorio, altrimenti un artefatto gia' in
+        # cache (stessa firma dati, forma vecchia senza il campo) resta
+        # servito cosi' com'e' e la UI che legge quality["in_portfolio"]
+        # solleva KeyError (bug reale riscontrato in produzione).
+        + f"|quality_light_v3|asof={date.today().isoformat()}"
     )
     quality_sig_label = quality_sig.replace("|", "/")[-48:]
     with profile_step("Dati", "load/build qualita dati dataset", detail=f"sig={quality_sig_label}"):
@@ -585,6 +591,7 @@ def _render_arricchimento(data: dict, ctx) -> None:
     if not quality.empty:
         display = pd.DataFrame({
             "Ticker": quality["ticker"].astype(str),
+            "Ptf": quality["in_portfolio"].map(lambda v: "Sì" if bool(v) else "—"),
             "Cat": quality["category"].astype(str),
             "Qualità dati": quality["data_quality_label"].astype(str),
             "Arricchimento": quality["enrichment_completeness"].round().astype(int),
@@ -602,13 +609,36 @@ def _render_arricchimento(data: dict, ctx) -> None:
 
         row_h = 35
         table_h = 38 + len(display) * row_h
-        st.dataframe(
-            display,
-            width="stretch",
-            hide_index=True,
+
+        # Colore di categoria (stesso registro centralizzato usato ovunque
+        # nell'app, ui.theme.macro_color) su Ticker/Cat, e distinzione visiva
+        # "in portafoglio" vs "solo osservato" sulla colonna Ptf — prima
+        # assenti in questa tabella (richiesta esplicita 2026-08-20).
+        def _style_quality_row(row: pd.Series) -> list[str]:
+            cat_color = macro_color(str(row.get("Cat", "")))
+            in_ptf = str(row.get("Ptf", "")) == "Sì"
+            ptf_color = COLORS["success"] if in_ptf else "#9CA3AF"
+            styles = []
+            for col in row.index:
+                if col in {"Ticker", "Cat"}:
+                    styles.append(f"color:{cat_color};font-weight:700;")
+                elif col == "Ptf":
+                    styles.append(f"color:{ptf_color};font-weight:700;")
+                else:
+                    styles.append("")
+            return styles
+
+        styler = display.style.hide(axis="index").apply(_style_quality_row, axis=1)
+        render_styled_table(
+            styler,
             height=table_h,
             column_config={
                 "Ticker": st.column_config.TextColumn("Ticker", width=72),
+                "Ptf": st.column_config.TextColumn(
+                    "Ptf",
+                    width=36,
+                    help="Sì se lo strumento è realmente in portafoglio (quote possedute); — se è solo osservato/tracciato.",
+                ),
                 "Cat": st.column_config.TextColumn(
                     "Cat.",
                     width=42,

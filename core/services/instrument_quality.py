@@ -338,6 +338,17 @@ def build_instrument_quality_dataset(
         source = [item for item in source if str(item.get("stato", "aperto")) == "aperto"]
     tickers = [str(item.get("ticker") or "").strip() for item in source if str(item.get("ticker") or "").strip()]
     price_frame = build_price_frame_from_storico(data, tickers)
+    # Quote realmente possedute (fonte: registro_eventi, unica fonte di
+    # verita' per il possesso — vedi core/domain/positions.py): distingue
+    # uno strumento in portafoglio da uno solo osservato/tracciato ma mai
+    # acquistato. Best-effort: se `data` non porta un registro eventi
+    # utilizzabile, tutti gli strumenti risultano semplicemente "non in
+    # portafoglio" invece di far fallire il dataset.
+    try:
+        from core.domain.positions import calc_positions
+        positions = calc_positions(data) if data else {}
+    except Exception:
+        positions = {}
     trailing = compute_trailing_risk_return_metrics(tickers, price_frame) if include_financial_metrics else {}
     as_of_ts = _coerce_date(as_of) or pd.Timestamp(date.today())
 
@@ -363,11 +374,13 @@ def build_instrument_quality_dataset(
         score = _quality_score(len(series), stale_days, gap_ratio, metrics_available)
         category = infer_category_code(instrument.get("tipo", ""), default="ALTRO")
         trail = trailing.get(ticker, {})
+        held_qty = float(positions.get(ticker, {}).get("qty", 0.0) or 0.0)
         rows.append({
             "ticker": ticker,
             "name": str(instrument.get("nome") or ""),
             "category": category,
             "tipo": str(instrument.get("tipo") or ""),
+            "in_portfolio": abs(held_qty) > 1e-9,
             "enrichment_status": _enrichment_status(instrument),
             "enrichment_source_label": _enrichment_source_label(instrument),
             "enriched_at": str(instrument.get("enriched_at") or "")[:10],
