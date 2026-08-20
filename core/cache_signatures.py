@@ -36,6 +36,24 @@ def _normalize_positive_price(value: Any, *, digits: int) -> float | None:
     return round(price, digits)
 
 
+def _finite_float_or_none(value: Any, *, digits: int = 6) -> float | None:
+    """Come _normalize_positive_price ma senza scartare zero/negativi.
+
+    Usato per campi obbligazionari (cedola_perc, aliquota_cedola, nominale)
+    dove 0 e' un valore legittimo (es. zero-coupon) da distinguere comunque
+    da "assente" nella firma.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return round(number, digits)
+
+
 def _safe_hash(data: Any, max_depth: int = 3) -> str:
     """
     Create a deterministic SHA256 hash for any object.
@@ -139,6 +157,19 @@ def _normalized_instrument_signature_payload(strumenti: list[dict[str, Any]]) ->
             # l'icona vecchia a tempo indeterminato (bug trovato il
             # 2026-08-13 su IWQU.MI/XDEQ.MI/FAM-PU6).
             "natura": str(item.get("natura", "")).strip(),
+            # Senza questi campi, correggere i dati cedola di un BTP gia'
+            # presente (es. prima_cedola sbagliata di anni) non cambia la
+            # firma dati: la Timeline BTP e il KPI "Cedole attese 12 mesi"
+            # (core/domain/calendar.py::build_btp_calendar, che legge questi
+            # campi direttamente dallo strumento) restano bloccati sul
+            # valore vecchio a tempo indeterminato (stessa classe di bug di
+            # "natura" sopra, trovata il 2026-08-20).
+            "scadenza": str(item.get("scadenza", "") or "").strip(),
+            "cedola_perc": _finite_float_or_none(item.get("cedola_perc")),
+            "cedola_frequenza": str(item.get("cedola_frequenza", "") or "").strip(),
+            "prima_cedola": str(item.get("prima_cedola", "") or "").strip(),
+            "aliquota_cedola": _finite_float_or_none(item.get("aliquota_cedola")),
+            "nominale": _finite_float_or_none(item.get("nominale")),
         })
     return sorted(normalized, key=lambda row: (row["ticker"], row["isin"], row["tipo"]))
 
