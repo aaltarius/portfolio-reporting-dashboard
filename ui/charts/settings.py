@@ -1176,7 +1176,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'y2_nticks': 10,
      'y_tickformat': '.3~s',
      'y2_tickformat': '.3~s',
-     'y2_range': [0, 120000],
+     'y2_range': [0, 140000],
      'title': '<b>Spesa acquisti mensile</b>'},
 
     'operations_purchase_installments_by_value': {'type': 'bar',
@@ -1641,8 +1641,17 @@ CHARTS: dict[str, dict[str, Any]] = {
      'extrema_value_format': 'pct1_base100'},
 
     'analisi_correlation_heatmap': {'type': 'heatmap',
-     'height': 540,
-     'width': 540,
+     # height/width None (non 540 fisso): il builder calcola la dimensione
+     # in base al numero di strumenti/categorie (ui/charts/analisi.py::
+     # build_correlation_heatmap). Un valore fisso qui verrebbe applicato
+     # incondizionatamente da _apply_chart_chrome PRIMA che
+     # force_heatmap_labels_and_square intervenga, azzerando qualunque
+     # calcolo dinamico del builder (bug reale, 2026-08-20: matrice per
+     # strumenti schiacciata a 540px, illeggibile con molte righe/colonne).
+     # Stesso pattern gia' in uso per altri grafici a dimensione dinamica
+     # (vedi 'cruscotti_compact_category_dashboard' sopra).
+     'height': None,
+     'width': None,
      'square': True,
      'legend': 'off',
      'show_buttons': False,

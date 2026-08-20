@@ -67,7 +67,6 @@ def build_correlation_heatmap(correlation_df, chart_bg, height=470, bottom_margi
     dyn_height = max(height, min(640, 170 + labels_count * 34))
     dyn_bottom = max(bottom_margin, min(180, 30 + labels_count * 10))
     side_domain_pad = min(max(float(side_domain_pad), 0.0), 0.35)
-    _ = dyn_height, dyn_bottom, side_domain_pad
     colors = get_common_colors()
     fig = px.imshow(
         correlation_df,
@@ -77,13 +76,21 @@ def build_correlation_heatmap(correlation_df, chart_bg, height=470, bottom_margi
         zmax=1,
         aspect="auto",
     )
-    # La matrice e' quadrata a dimensione fissa (settings.py: height/width 540px
-    # per 'analisi_correlation_heatmap' e affini), quindi il lato della singola
-    # cella si riduce all'aumentare degli strumenti/categorie. Un font fisso a
-    # 12px trabocca dalla cella con molti strumenti (es. "-0.85" su celle da
-    # ~25-30px): scaliamo il font in base al lato cella stimato, con un minimo
-    # leggibile e un massimo pari alla dimensione precedente.
-    cell_px = 540 / max(labels_count, 1)
+    # La matrice deve crescere con il numero di strumenti/categorie, non
+    # restare fissa: settings.py fornisce solo il default per il caso
+    # piccolo (poche categorie). force_heatmap_labels_and_square
+    # (ui/charts/categories.py) da' priorita' a fig.layout.height/width se
+    # gia' impostati qui, quindi questo e' il punto in cui la dimensione
+    # dinamica va effettivamente applicata (prima non veniva mai scritta
+    # sulla figura: bug reale, 2026-08-20 — matrice per strumenti,
+    # tipicamente 20+ righe/colonne, schiacciata nel riquadro fisso da
+    # 540px pensato per poche categorie, celle e testo illeggibili).
+    fig.update_layout(height=dyn_height, width=dyn_height, margin=dict(b=dyn_bottom))
+    # Font scalato sulla dimensione cella reale (dyn_height), non piu' su
+    # un 540px presunto: con la matrice ora piu' grande per molti
+    # strumenti, il font puo' restare vicino al massimo leggibile invece
+    # di rimpicciolirsi senza motivo.
+    cell_px = dyn_height / max(labels_count, 1)
     font_size = int(max(8, min(12, cell_px * 0.3)))
     fig.update_traces(textfont=dict(size=font_size, color=colors["text"]), hovertemplate="<b>%{x} vs %{y}</b><br>Correlazione: %{z:.3f}<extra></extra>")
     return apply_settings(fig, "analisi_correlation_heatmap")

@@ -121,10 +121,28 @@ def force_heatmap_labels_and_square(fig, settings: dict[str, Any]) -> None:
 
     if bool(settings.get("square", False)):
         try:
-            h = int(settings.get("height") or getattr(fig.layout, "height", None) or 500)
-            w = int(settings.get("width") or h)
+            # Se il builder ha gia' impostato un'altezza sulla figura (es.
+            # dimensione dinamica in base al numero di righe/colonne, vedi
+            # ui/charts/analisi.py::build_correlation_heatmap), quella va
+            # rispettata: prima settings.get("height") vinceva sempre
+            # perche' e' truthy, azzerando qualunque calcolo dinamico del
+            # builder (bug reale, 2026-08-20). settings.py resta il default
+            # per i builder che non impostano nulla di proprio.
+            h = int(getattr(fig.layout, "height", None) or settings.get("height") or 500)
+            w = h  # 'square' impone lato uguale: mai una larghezza statica
+                   # disallineata dall'altezza dinamica appena calcolata.
             fig.update_layout(width=w, height=h, autosize=False)
-            fig.update_yaxes(scaleanchor="x", scaleratio=1, constrain="domain")
+            # constraintoward="top": i margini sinistro+destro (spazio per le
+            # etichette y) e alto+basso (spazio per le etichette x ruotate)
+            # non sono mai uguali, quindi l'area di plot prima del vincolo
+            # quadrato non e' mai quadrata. scaleanchor/scaleratio=1
+            # restringe la dimensione piu' grande (di norma l'altezza) per
+            # renderla quadrata: senza constraintoward lo spazio residuo si
+            # divide sopra E sotto la matrice (default "middle"), lasciando
+            # una fascia bianca ben visibile sopra (bug reale, 2026-08-20).
+            # "top" ancora la matrice in alto e spinge tutto il residuo in
+            # basso, dove le etichette ruotate occupano gia' margine.
+            fig.update_yaxes(scaleanchor="x", scaleratio=1, constrain="domain", constraintoward="top")
             fig.update_xaxes(constrain="domain")
         except Exception:
             pass
