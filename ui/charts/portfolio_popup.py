@@ -646,6 +646,14 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
         except Exception:
             return "0"
 
+    # Ordine di apertura richiesto esplicitamente (2026-08-20): prima chiave
+    # categoria alfabetica (GOV/FND/ecc.).
+    if "Tipo" in df.columns:
+        df = df.copy()
+        df["_macro_cat"] = df["Tipo"].map(macro_cat)
+        sort_cols = ["_macro_cat"] + (["Ticker"] if "Ticker" in df.columns else [])
+        df = df.sort_values(sort_cols, kind="stable").drop(columns="_macro_cat")
+
     rows_html = ""
     _total_ctv = float(pd.to_numeric(df["Controvalore"], errors="coerce").fillna(0).sum())
     _daily_deltas: list[float] = []
@@ -956,6 +964,10 @@ def render_weekly_pl_table(result, da, data):
     for i in range(n_days):
         vals = [r["deltas"][i] for r in rows if r["deltas"][i] is not None]
         day_extrema.append((max(vals), min(vals)) if vals else (None, None))
+
+    # Ordine di apertura richiesto esplicitamente (2026-08-20): prima chiave
+    # categoria alfabetica (GOV/FND/ecc.).
+    rows = sorted(rows, key=lambda r: (macro_cat(r.get("tipo", "")), str(r.get("ticker", ""))))
 
     day_ths = "".join(
         f'<th data-col="{5 + i}"'

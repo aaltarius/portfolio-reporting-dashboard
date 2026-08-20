@@ -35,6 +35,16 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
         holdings_map = {str(row.get("Ticker", "")): row for _, row in holdings_df.iterrows()}
     cat_map = {s.get("ticker", ""): s.get("tipo", "") for s in data.get("strumenti", [])}
 
+    # Ordine di apertura richiesto esplicitamente (2026-08-20): prima chiave
+    # Ptf (gia' applicata via sortQ(11) piu' sotto, ordinamento JS stabile),
+    # seconda chiave categoria alfabetica (GOV/FND/ecc.). Pre-ordiniamo qui
+    # per categoria: il sort JS lato client, essendo stabile, preserva
+    # quest'ordine come chiave secondaria dentro ciascun gruppo Ptf.
+    if "Ticker" in qdf.columns:
+        qdf = qdf.copy()
+        qdf["_macro_cat"] = qdf["Ticker"].map(lambda tk: macro_cat(cat_map.get(str(tk or ""), "")))
+        qdf = qdf.sort_values(["_macro_cat", "Ticker"], kind="stable").drop(columns="_macro_cat")
+
     def _cat_col(ticker):
         cat = macro_cat(cat_map.get(str(ticker or ""), ""))
         return macro_color(cat)
