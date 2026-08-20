@@ -1297,6 +1297,8 @@ def _compute_instrument_quota_status(
     current_weights: dict[str, float],
     bucket_weights: dict[str, float],
     instrument_quotas: dict[str, dict[str, float]],
+    *,
+    reserved_by_bucket: dict[str, float] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Validita' e scostamento delle quote target per strumento dentro ogni
     bucket. La feature e' opt-in per bucket: se instrument_quotas[bucket] e'
@@ -1307,7 +1309,18 @@ def _compute_instrument_quota_status(
     attivo del bucket deve avere una quota assegnata e la somma delle quote
     assegnate (sui soli ticker ancora attivi) deve essere ~100%. Le quote
     orfane (strumenti chiusi) sono escluse dalla somma e riportate in
-    stale_tickers per messaggistica UI."""
+    stale_tickers per messaggistica UI.
+
+    reserved_by_bucket: percentuale (frazione 0..1), per bucket, "riservata"
+    a strumenti esclusi da instrument_buckets perche' hanno una divisione tra
+    bucket (bucket_exposure) attiva - la loro vecchia quota interna resta
+    salvata ma va sottratta dal target-somma richiesto ai ticker ancora
+    attivi, altrimenti attivare la divisione farebbe scendere la somma delle
+    quote sotto 100% e invaliderebbe un bucket gia' correttamente
+    configurato (vedi compute_instrument_quota_status). Default None/vuoto:
+    nessuna riserva, target flat 1.0 - e' il caso usato da run_sator_analysis
+    (vedi sotto), che non conosce questo concetto."""
+    reserved = reserved_by_bucket or {}
     tickers_by_bucket: dict[str, list[str]] = {"Core": [], "Difensivo": [], "Satellite": []}
     for ticker, bucket in instrument_buckets.items():
         tickers_by_bucket.setdefault(bucket, []).append(ticker)
@@ -1329,7 +1342,8 @@ def _compute_instrument_quota_status(
             stale_tickers = sorted(set(quotas.keys()) - active_tickers)
             live_quotas = {t: w for t, w in quotas.items() if t in active_tickers}
             sum_target = sum(max(0.0, _safe_float(w, 0.0)) for w in live_quotas.values())
-            valid = not missing_tickers and (not active_tickers or abs(sum_target - 1.0) < 1e-6)
+            expected_sum = 1.0 - max(0.0, min(1.0, _safe_float(reserved.get(bucket), 0.0)))
+            valid = not missing_tickers and (not active_tickers or abs(sum_target - expected_sum) < 1e-6)
         bucket_total = max(0.0, _safe_float(bucket_weights.get(bucket), 0.0))
         current_in_bucket = {
             t: round(max(0.0, _safe_float(current_weights.get(t), 0.0)) / bucket_total, 15) if bucket_total > 0 else 0.0
@@ -1369,7 +1383,32 @@ def compute_instrument_quota_status(
     nessun bucket e non pesano sulla somma-100% di nessun bucket. Decisione
     esplicita dell'utente - far convivere la divisione frazionata
     dell'appartenenza a bucket con la validazione delle quote interne e'
-    fuori scopo per questo sotto-progetto ed e' rimandato."""
+    fuori scopo per questo sotto-progetto ed e' rimandato.
+
+    Se uno di questi ticker esclusi aveva GIA' una quota interna configurata
+    prima di attivare la divisione (caso reale: strumento presente da tempo
+    in un bucket con quote gia' complete al 100%), quella quota resta salvata
+    ma va "riservata" - sottratta dal target-somma richiesto ai ticker ancora
+    attivi del bucket - altrimenti il bucket, gia' correttamente configurato,
+    risulterebbe invalido dal nulla al solo attivarsi della divisione (bug
+    trovato dalla review finale: la spec, sezione 6, promette esplicitamente
+    che "la quota resta salvata ma viene ignorata ai fini della validazione
+    finche' la divisione tra bucket e' attiva"). Vedi reserved_by_bucket
+    calcolato sotto e passato a _compute_instrument_quota_status. I ticker
+    esclusi tramite exclude_tickers (es. toggle BTP/GOV di Pianificazione)
+    NON entrano in questo calcolo: sono un meccanismo di esclusione diverso
+    e non correlato, non toccato da questo fix.
+
+    Divergenza deliberata e accettata: il motore SATOR vero e proprio
+    (run_sator_analysis, blocked_buckets_quota) NON condivide ne' questa
+    riserva ne' l'esclusione dei ticker con bucket_exposure attiva - chiama
+    _compute_instrument_quota_status direttamente con il proprio
+    instrument_buckets (compute_instrument_buckets, non filtrato) e senza
+    reserved_by_bucket, quindi continua a richiedere una quota anche per uno
+    strumento diviso tra bucket nella propria logica di blocco, invariata
+    rispetto a prima di questo sotto-progetto. Questa funzione (usata dal
+    banner di Pianificazione e da /quote-interne, cioe' la validazione
+    "display") e il motore SATOR restano intenzionalmente non unificati."""
     cfg = ensure_sator_settings(settings)
     state = compute_portfolio_state(data, include_closed=True)
     state_df = state.get("df", pd.DataFrame())
@@ -1377,16 +1416,28 @@ def compute_instrument_quota_status(
         state_df = data["_positions_df"].copy()
     held_tickers = _tickers_posseduti(state_df)
     master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
-    instrument_buckets = {
-        ticker: bucket
-        for ticker, bucket in compute_instrument_buckets(data, held_tickers).items()
+    all_buckets = compute_instrument_buckets(data, held_tickers)
+    split_tickers = {
+        ticker
+        for ticker in all_buckets
         if ticker not in exclude_tickers
-        and not bool((master.get(ticker, {}).get("manual_overrides") or {}).get("sator", {}).get("bucket_exposure_user_edited"))
+        and bool((master.get(ticker, {}).get("manual_overrides") or {}).get("sator", {}).get("bucket_exposure_user_edited"))
     }
+    instrument_buckets = {
+        ticker: bucket for ticker, bucket in all_buckets.items()
+        if ticker not in exclude_tickers and ticker not in split_tickers
+    }
+    reserved_by_bucket: dict[str, float] = {}
+    for ticker in split_tickers:
+        bucket = all_buckets[ticker]
+        old_quota = _safe_float((cfg["instrument_quotas"].get(bucket, {}) or {}).get(ticker), 0.0)
+        if old_quota > 0:
+            reserved_by_bucket[bucket] = reserved_by_bucket.get(bucket, 0.0) + old_quota
     current_weights = _compute_current_weights(state_df)
     bucket_weights = _compute_bucket_weights(data, state_df, current_weights, exclude_tickers=exclude_tickers)
     return _compute_instrument_quota_status(
         instrument_buckets, current_weights, bucket_weights, cfg["instrument_quotas"],
+        reserved_by_bucket=reserved_by_bucket,
     )
 
 

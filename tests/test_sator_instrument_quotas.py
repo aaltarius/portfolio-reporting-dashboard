@@ -329,6 +329,79 @@ def test_compute_instrument_quota_status_excludes_ticker_with_bucket_exposure_ov
         assert "FAM-FLEX" not in bucket_status["target_weights"]
 
 
+def test_bucket_stays_valid_when_split_instrument_had_a_pre_existing_quota():
+    """Regressione trovata dalla review finale: attivare la divisione tra
+    bucket per uno strumento che aveva gia' una quota interna configurata
+    non deve invalidare permanentemente il bucket - la spec (sezione 6)
+    promette esplicitamente che la quota resta salvata ma viene ignorata
+    ai fini della validazione. FAM-FLEX e SWDA.MI risolvono entrambi nel
+    bucket "Core" (verificato con compute_instrument_buckets)."""
+    from core.services.sator import compute_instrument_buckets
+
+    data = {
+        "strumenti": [
+            {"ticker": "FAM-FLEX", "nome": "FAM Series Flexible", "tipo": "Fondo Bilan. Flessibile", "prezzo": 100.0},
+            {"ticker": "SWDA.MI", "nome": "iShares Core MSCI World", "tipo": "ETF", "prezzo": 90.0},
+        ],
+        "instrument_master": {
+            "FAM-FLEX": {
+                "manual_overrides": {
+                    "sator": {
+                        "bucket_exposure": {"Core": 0.6, "Difensivo": 0.4, "Satellite": 0.0},
+                        "bucket_exposure_user_edited": True,
+                    }
+                }
+            }
+        },
+        "_positions_df": pd.DataFrame([
+            {"Ticker": "FAM-FLEX", "Quote": 10.0, "Controvalore": 1000.0},
+            {"Ticker": "SWDA.MI", "Quote": 10.0, "Controvalore": 900.0},
+        ]),
+    }
+    # Verifica preliminare della fixture: entrambi devono risolvere nello
+    # stesso bucket "Core" prima di fidarsi del test sotto.
+    buckets = compute_instrument_buckets(data)
+    assert buckets["FAM-FLEX"] == "Core"
+    assert buckets["SWDA.MI"] == "Core"
+
+    settings = {"sator": {"instrument_quotas": {"Core": {"FAM-FLEX": 0.4, "SWDA.MI": 0.6}}}}
+
+    status = compute_instrument_quota_status(data, settings)
+
+    assert status["Core"]["valid"] is True
+    assert status["Core"]["missing_tickers"] == []
+    assert status["Core"]["sum_target"] == pytest.approx(0.6)
+
+
+def test_bucket_without_any_split_instrument_validates_exactly_as_before():
+    """Non-regressione: se nessuno strumento del bucket ha una divisione tra
+    bucket attiva, il fix del reserved-percentage non deve alterare nulla -
+    stesso comportamento pre-esistente (somma quote vs 100% flat)."""
+    data = {
+        "strumenti": [
+            {"ticker": "SWDA.MI", "nome": "iShares Core MSCI World", "tipo": "ETF", "prezzo": 90.0},
+            {"ticker": "XMME.MI", "nome": "iShares MSCI EM", "tipo": "ETF", "prezzo": 30.0},
+        ],
+        "instrument_master": {},
+        "_positions_df": pd.DataFrame([
+            {"Ticker": "SWDA.MI", "Quote": 10.0, "Controvalore": 900.0},
+            {"Ticker": "XMME.MI", "Quote": 10.0, "Controvalore": 300.0},
+        ]),
+    }
+    settings = {"sator": {"instrument_quotas": {"Core": {"SWDA.MI": 0.75, "XMME.MI": 0.25}}}}
+
+    status = compute_instrument_quota_status(data, settings)
+
+    assert status["Core"]["valid"] is True
+    assert status["Core"]["sum_target"] == pytest.approx(1.0)
+
+    # E lo stesso scenario con una somma NON al 100% deve restare invalido
+    # esattamente come prima (nessuna divisione bucket coinvolta).
+    settings_bad = {"sator": {"instrument_quotas": {"Core": {"SWDA.MI": 0.75, "XMME.MI": 0.10}}}}
+    status_bad = compute_instrument_quota_status(data, settings_bad)
+    assert status_bad["Core"]["valid"] is False
+
+
 def test_compute_instrument_quota_status_leaves_other_overrides_unaffected():
     """Solo bucket_exposure_user_edited=True esclude uno strumento. Altri
     flag di override manuale (es. user_edited del ruolo, o
