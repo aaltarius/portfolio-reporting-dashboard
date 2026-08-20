@@ -322,6 +322,21 @@ async def post_quote_interne(
     if not isinstance(parsed, dict):
         return HTMLResponse(_render_quote_interne_page(err_msg="Dati quote non validi."))
 
+    # Ticker ammessi a scrivere NO_SELL in questo submit: esattamente le
+    # chiavi di quotas_json, cioe' i ticker per cui _render_quote_interne_page
+    # ha renderizzato sia l'input quota sia la checkbox NO_SELL nello stesso
+    # ciclo (vedi Step 4). collectQuotas() lato client invia sempre tutte le
+    # righe visibili di ogni bucket (anche quelle a 0, anche nei bucket
+    # "non toccati"), quindi questo insieme coincide con "ticker mostrati in
+    # pagina in questo momento" - mai l'intero catalogo strumenti.
+    allowed_no_sell_tickers: set[str] = {
+        str(ticker or "").strip().upper()
+        for bucket, weights in parsed.items()
+        if bucket in _BUCKETS and isinstance(weights, dict)
+        for ticker in weights.keys()
+        if str(ticker or "").strip()
+    }
+
     # Opt-in per bucket (garanzia centrale della feature, confermata dal
     # proprietario del progetto): un bucket dove l'utente ha lasciato tutti i
     # valori a 0/vuoto va trattato come "mai configurato", non come una
@@ -379,7 +394,7 @@ async def post_quote_interne(
 
     form_data_all = dict(await request.form())
     data_for_no_sell = load_data()
-    if apply_no_sell_from_form(data_for_no_sell, form_data_all):
+    if apply_no_sell_from_form(data_for_no_sell, form_data_all, allowed_tickers=allowed_no_sell_tickers):
         save_data(data_for_no_sell)
 
     try:

@@ -467,22 +467,38 @@ def resolve_instrument_no_sell(data: dict[str, Any], ticker: str) -> bool:
     return bool(sator.get("no_sell"))
 
 
-def apply_no_sell_from_form(data: dict[str, Any], form_data: dict[str, Any]) -> bool:
-    """Legge tutti i campi 'no_sell_<TICKER>' da un form POST e scrive
-    l'override per ogni ticker il cui valore inviato differisce da
-    quello attuale. Un ticker posseduto il cui checkbox non e' stato
-    inviato (form HTML: checkbox non spuntata = campo assente) conta
-    come no_sell=False esplicito, non come 'non toccato' - stessa
-    semantica del resto della UI di questo form (submit completo, non
-    incrementale). Muta `data` in place, non chiama save_data. Ritorna
-    True se ha scritto qualcosa."""
+def apply_no_sell_from_form(
+    data: dict[str, Any], form_data: dict[str, Any], *, allowed_tickers: frozenset[str] | set[str],
+) -> bool:
+    """Legge i campi 'no_sell_<TICKER>' da un form POST e scrive
+    l'override SOLO per i ticker in `allowed_tickers` - l'insieme esatto
+    dei ticker per cui il chiamante ha effettivamente renderizzato una
+    checkbox NO_SELL in QUESTA pagina, in QUESTO submit (su
+    /quote-interne: le chiavi di quotas_json, cioe' esattamente i ticker
+    del ciclo che genera sia l'input quota sia la checkbox NO_SELL - vedi
+    _render_quote_interne_page). Bug reale corretto qui: iterare su TUTTO
+    `data["strumenti"]` (catalogo intero, inclusi strumenti chiusi, mai
+    posseduti, o esclusi dal toggle 'Escludi BTP/GOV' in quel momento)
+    trattava l'assenza del campo per un ticker MAI mostrato in pagina come
+    uno spegnimento esplicito dell'utente (checkbox non spuntata = campo
+    assente, semantica corretta SOLO per ticker che erano davvero in
+    pagina) - cancellando silenziosamente un NO_SELL=True impostato altrove
+    (es. Strumenti->Arricchimento) ad ogni submit del form quote, anche
+    senza che l'utente avesse mai visto quel ticker. Per un ticker in
+    allowed_tickers, checkbox non spuntata = campo assente conta comunque
+    come no_sell=False esplicito (submit completo, non incrementale, per
+    i soli ticker ammessi). Muta `data` in place, non chiama save_data.
+    Ritorna True se ha scritto qualcosa."""
     strumenti_by_ticker = {
         str(s.get("ticker") or "").strip().upper(): s
         for s in (data.get("strumenti") or [])
         if str(s.get("ticker") or "").strip()
     }
+    allowed_upper = {str(t or "").strip().upper() for t in allowed_tickers}
     changed_any = False
     for ticker in strumenti_by_ticker:
+        if ticker not in allowed_upper:
+            continue
         submitted = bool(form_data.get(f"no_sell_{ticker}"))
         current = resolve_instrument_no_sell(data, ticker)
         if submitted == current:
