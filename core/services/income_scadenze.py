@@ -177,7 +177,20 @@ def build_income_scadenze_summary(data: dict[str, Any], da: pd.DataFrame, calend
             })
         gov_details_df = pd.DataFrame(details)
         if not gov_details_df.empty:
-            gov_details_df = gov_details_df.sort_values("Cedole 12 mesi", ascending=False).reset_index(drop=True)
+            # Ordine cronologico di scadenza (non per cedola attesa
+            # decrescente): coerente con la Timeline BTP sulla stessa
+            # pagina (richiesta esplicita 2026-08-20).
+            scadenza_by_ticker = {
+                tk: pd.to_datetime(strumenti_map.get(tk, {}).get("scadenza"), errors="coerce")
+                for tk in gov_details_df["Ticker"]
+            }
+            gov_details_df = (
+                gov_details_df
+                .assign(_scadenza=gov_details_df["Ticker"].map(scadenza_by_ticker))
+                .sort_values("_scadenza", na_position="last", kind="stable")
+                .drop(columns="_scadenza")
+                .reset_index(drop=True)
+            )
 
     # Duration media ponderata per valore di mercato
     duration_media_ponderata: float | None = None
