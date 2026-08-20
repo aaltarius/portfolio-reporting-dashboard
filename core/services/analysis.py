@@ -13,6 +13,40 @@ from core.data_models import ThemeConfig
 from core.domain.risk import build_drawdown_series, build_category_drawdown_series
 
 
+def split_eligible_and_excluded_tickers(
+    strumenti: list[dict[str, Any]],
+    dh: pd.DataFrame,
+    positions: dict[str, dict[str, float]],
+) -> tuple[list[str], list[str]]:
+    """Separa i ticker posseduti in idonei/esclusi per il calcolo statistico.
+
+    Idoneo: posseduto (qty > 0), presente in dh, con almeno 3 quotazioni
+    valide — sotto questa soglia volatilita'/correlazione non sono
+    calcolabili in modo significativo (non e' un bug da correggere
+    abbassando la soglia).
+
+    Escluso-per-storico-insufficiente: posseduto ma non idoneo. Va sempre
+    segnalato all'utente (bug reale, 2026-08-20: uno strumento appena
+    acquistato spariva in silenzio da tabella metriche avanzate e grafico
+    contributo al rischio senza alcuna indicazione del perche').
+
+    Ritorna (ta, excluded_insufficient_history), entrambi ordinati.
+    """
+    ta = [
+        s["ticker"] for s in strumenti
+        if s["ticker"] in dh.columns
+        and dh[s["ticker"]].notna().sum() >= 3
+        and positions.get(s["ticker"], {}).get("qty", 0) > QTY_ZERO_EPS
+    ]
+    ta_set = set(ta)
+    excluded_insufficient_history = sorted(
+        s["ticker"] for s in strumenti
+        if positions.get(s["ticker"], {}).get("qty", 0) > QTY_ZERO_EPS
+        and s["ticker"] not in ta_set
+    )
+    return ta, excluded_insufficient_history
+
+
 def build_pl_delta_series(df_history: pd.DataFrame, theme: ThemeConfig) -> dict[str, list[Any]]:
     """
     Builds P/L delta series for the home daily bar chart.
@@ -416,6 +450,7 @@ def build_advanced_analysis_data(
         "cat_index_analysis": pd.DataFrame(),
         "corr": pd.DataFrame(),
         "corr_cat": pd.DataFrame(),
+        "excluded_insufficient_history": [],
     }
     recent_window = max(30, int(recent_window))
     if dh is None or dh.empty or len(dh) < 3:
@@ -425,15 +460,15 @@ def build_advanced_analysis_data(
     positions = calc_positions(data)
     position_starts = get_current_position_start_dates(data, positions)
     info_map = {s["ticker"]: s for s in strumenti}
-    ta = [
-        s["ticker"] for s in strumenti
-        if s["ticker"] in dh.columns
-        and dh[s["ticker"]].notna().sum() >= 3
-        and positions.get(s["ticker"], {}).get("qty", 0) > QTY_ZERO_EPS
-    ]
+    ta, excluded_insufficient_history = split_eligible_and_excluded_tickers(strumenti, dh, positions)
 
     if not ta:
-        return {**empty_result, "positions": positions, "info_map": info_map}
+        return {
+            **empty_result,
+            "positions": positions,
+            "info_map": info_map,
+            "excluded_insufficient_history": excluded_insufficient_history,
+        }
 
     stats = []
     for tk in ta:
@@ -512,6 +547,7 @@ def build_advanced_analysis_data(
         "cat_index_analysis": cat_index_analysis,
         "corr": corr,
         "corr_cat": corr_cat,
+        "excluded_insufficient_history": excluded_insufficient_history,
     }
 
 # build_analysis_overview_html rimossa il 2026-07-07: nessun chiamante nell'app

@@ -238,6 +238,7 @@ class AdvancedAnalysisDatasetBundle:
     cat_index_analysis: pd.DataFrame
     corr: pd.DataFrame
     corr_cat: pd.DataFrame
+    excluded_insufficient_history: list[str]
 
 
 @dataclass(slots=True)
@@ -716,8 +717,15 @@ def get_advanced_analysis_dataset_bundle(
     from core.series_utils import slice_recent
 
     selected_categories = ",".join(get_selected_category_codes(settings))
-    bundle_sig = f"{data_sig}|recent_window={int(recent_window)}|cats={selected_categories}|open_position_window_return_index_v3"
-    base_sig = f"{data_sig}|recent_window=full|cats={selected_categories}|open_position_window_return_index_v3"
+    # v4: aggiunto il campo "excluded_insufficient_history" al payload
+    # restituito da build_advanced_analysis_data (2026-08-20) — bump
+    # obbligatorio, altrimenti un artefatto gia' in cache (stessa firma
+    # dati, forma vecchia senza il campo) resta servito cosi' com'e' e
+    # AdvancedAnalysisDatasetBundle(...) solleva KeyError leggendo
+    # analysis_data["excluded_insufficient_history"] con .get() sicuro, ma
+    # meglio non fare mai affidamento sul fallback per un cambio di forma.
+    bundle_sig = f"{data_sig}|recent_window={int(recent_window)}|cats={selected_categories}|open_position_window_return_index_v4"
+    base_sig = f"{data_sig}|recent_window=full|cats={selected_categories}|open_position_window_return_index_v4"
     full_window = max(int(recent_window or 92), len(dh.index) if dh is not None else 0, len(dh_flow.index) if dh_flow is not None else 0)
     spec = get_cache_artifact_spec("cruscotti.advanced_analysis_data")
     signature = build_cache_artifact_signature(
@@ -773,6 +781,7 @@ def get_advanced_analysis_dataset_bundle(
         cat_index_analysis=analysis_data["cat_index_analysis"],
         corr=analysis_data["corr"],
         corr_cat=corr_cat,
+        excluded_insufficient_history=analysis_data.get("excluded_insufficient_history", []),
     )
     return bundle
 
