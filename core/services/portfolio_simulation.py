@@ -50,6 +50,8 @@ class PortfolioSimulationResult:
     extrapolated: bool
     fan_percentiles: pd.DataFrame
     horizons: list[HorizonMetrics]
+    excluded_tickers: tuple[str, ...] = ()
+    excluded_weight: float = 0.0
 
 
 def _unavailable(reason: str, n_observations: int) -> PortfolioSimulationResult:
@@ -62,6 +64,8 @@ def _unavailable(reason: str, n_observations: int) -> PortfolioSimulationResult:
         extrapolated=False,
         fan_percentiles=pd.DataFrame(columns=["trading_day", *_FAN_COLUMNS]),
         horizons=[],
+        excluded_tickers=(),
+        excluded_weight=0.0,
     )
 
 
@@ -80,17 +84,36 @@ def build_portfolio_simulation(
     if not tickers:
         return _unavailable("Nessuno strumento posseduto ha una storia prezzi disponibile.", 0)
 
-    simple_returns = build_simple_returns(price_frame, tickers)
-    # Restringe alla finestra comune a tutti i ticker effettivamente pesati:
-    # combine_weighted_returns fa fillna(0.0) sui buchi (comportamento voluto
-    # per SATOR, dove serve su finestre parziali), ma per il bootstrap Monte
-    # Carlo un giorno in cui uno strumento posseduto non ha ancora storico
-    # prezzi non e' un rendimento reale dello 0% con peso pieno: e' un dato
-    # mancante che, se lasciato, diluirebbe artificialmente la volatilita'
-    # del pool campionato. dropna(how="any") scarta quei giorni prima di
-    # combinare, cosi' n_observations riflette solo osservazioni vere.
-    simple_returns = simple_returns.dropna(how="any")
-    portfolio_returns = combine_weighted_returns(simple_returns, weights.reindex(tickers)).dropna()
+    simple_returns_all = build_simple_returns(price_frame, tickers)
+
+    # Uno strumento appena aperto (poche quotazioni proprie) non deve
+    # bloccare l'intero portafoglio: se restasse nel paniere, la finestra
+    # comune sotto (dropna(how="any") su TUTTI i ticker pesati) crollerebbe
+    # al suo storico corto anche per strumenti con anni di dati. Lo si
+    # esclude dal paniere simulato invece di abbassare la soglia o
+    # fabbricare rendimenti che non esistono ancora per lui.
+    per_ticker_obs = simple_returns_all.count()
+    eligible_tickers = [tk for tk in tickers if int(per_ticker_obs.get(tk, 0)) >= MIN_OBSERVATIONS]
+    excluded_tickers = [tk for tk in tickers if tk not in eligible_tickers]
+    excluded_weight = float(weights.reindex(excluded_tickers).fillna(0.0).sum()) if excluded_tickers else 0.0
+
+    if not eligible_tickers:
+        return _unavailable(
+            f"Storico insufficiente per una simulazione affidabile: nessuno strumento "
+            f"posseduto ha almeno {MIN_OBSERVATIONS} quotazioni proprie.",
+            0,
+        )
+
+    # Restringe alla finestra comune ai soli ticker ammessi: combine_weighted_returns
+    # fa fillna(0.0) sui buchi (comportamento voluto per SATOR, dove serve su
+    # finestre parziali), ma per il bootstrap Monte Carlo un giorno in cui uno
+    # strumento posseduto non ha ancora storico prezzi non e' un rendimento
+    # reale dello 0% con peso pieno: e' un dato mancante che, se lasciato,
+    # diluirebbe artificialmente la volatilita' del pool campionato.
+    # dropna(how="any") scarta quei giorni prima di combinare, cosi'
+    # n_observations riflette solo osservazioni vere.
+    simple_returns = simple_returns_all[eligible_tickers].dropna(how="any")
+    portfolio_returns = combine_weighted_returns(simple_returns, weights.reindex(eligible_tickers)).dropna()
 
     n_observations = int(len(portfolio_returns))
     if n_observations < MIN_OBSERVATIONS:
@@ -100,7 +123,12 @@ def build_portfolio_simulation(
             n_observations,
         )
 
-    initial_value = float(pd.to_numeric(risk_df["Controvalore"], errors="coerce").fillna(0.0).sum())
+    eligible_set = set(eligible_tickers)
+    initial_value = float(
+        pd.to_numeric(
+            risk_df.loc[risk_df["Ticker"].isin(eligible_set), "Controvalore"], errors="coerce"
+        ).fillna(0.0).sum()
+    )
     if initial_value <= 0:
         return _unavailable("Controvalore complessivo non disponibile.", n_observations)
 
@@ -145,4 +173,6 @@ def build_portfolio_simulation(
         extrapolated=n_observations < HORIZON_DAYS_MAX,
         fan_percentiles=fan_percentiles,
         horizons=horizons,
+        excluded_tickers=tuple(excluded_tickers),
+        excluded_weight=excluded_weight,
     )
