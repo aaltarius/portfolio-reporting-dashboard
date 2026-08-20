@@ -535,6 +535,46 @@ def apply_classification_override(
     return True
 
 
+def apply_bucket_exposure_override(
+    data: dict[str, Any], strumento: dict[str, Any], submitted: dict[str, float],
+) -> tuple[bool, str | None]:
+    """Valida (somma=100%, tolleranza 1e-6) e scrive bucket_exposure se
+    cambiato — logica estratta invariata dal ramo 'salva_bucket_exposure' di
+    ui/form_server/strumenti.py (sotto-progetto 3), ora condivisa da
+    /strumenti e /quote-interne. Muta `data` in place, non chiama
+    save_data. Ritorna (scritto, messaggio_errore): messaggio_errore non
+    None se la somma non torna, e in quel caso scritto e' sempre False — la
+    riga va scartata dal chiamante, non l'intera richiesta (diverso dal
+    ramo originale, pensato per un solo ticker per volta)."""
+    ticker = str(strumento.get("ticker") or "").strip()
+    if not ticker:
+        return False, "Ticker non specificato."
+
+    cleaned = {
+        "Core": max(0.0, _safe_float(submitted.get("Core"), 0.0)),
+        "Difensivo": max(0.0, _safe_float(submitted.get("Difensivo"), 0.0)),
+        "Satellite": max(0.0, _safe_float(submitted.get("Satellite"), 0.0)),
+    }
+    total = sum(cleaned.values())
+    if abs(total - 1.0) >= 1e-6:
+        return False, "Le percentuali devono sommare a 100% - modifica non salvata."
+
+    current_exposure = resolve_instrument_bucket_exposure(data, strumento, True)
+    changed = any(
+        abs(cleaned.get(b, 0.0) - current_exposure.get(b, 0.0)) > 1e-6
+        for b in ("Core", "Difensivo", "Satellite")
+    )
+    if not changed:
+        return False, None
+
+    master = data.setdefault("instrument_master", {})
+    entry = master.setdefault(ticker, {})
+    overrides = entry.setdefault("manual_overrides", {}).setdefault("sator", {})
+    overrides["bucket_exposure"] = cleaned
+    overrides["bucket_exposure_user_edited"] = True
+    return True, None
+
+
 # --------------------------------------------------------------------------- #
 # Editor universo (metadati modificabili dall'utente)
 # --------------------------------------------------------------------------- #
