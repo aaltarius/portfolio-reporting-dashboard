@@ -1382,6 +1382,77 @@ def _compute_instrument_quota_status(
     return out
 
 
+def compute_instrument_operational_status(
+    data: dict[str, Any], settings: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Peso attuale, target strategico (in termini assoluti di
+    portafoglio) e stato calcolato per ogni strumento posseduto. MAI
+    persistito, ricalcolato ad ogni chiamata. Nessun impatto su SATOR
+    (run_sator_analysis, blocked_buckets_quota) - solo lettura per la UI
+    di /quote-interne.
+
+    Conversione di denominatore (il punto delicato): instrument_quotas
+    e' la quota DENTRO il bucket (le quote di un bucket sommano ~100% tra
+    loro), current_weights e' il peso sul PORTAFOGLIO INTERO. Il target
+    va riportato a termini di portafoglio intero prima del confronto:
+    target_assoluto = instrument_quotas[bucket][ticker] * objective[bucket].
+
+    Strumenti con bucket_exposure divisa tra piu' bucket (sotto-progetto
+    2) sono esclusi dal risultato - stesso trattamento di
+    compute_instrument_quota_status, per lo stesso motivo (il concetto di
+    "il" bucket di uno strumento diviso non si applica).
+
+    Riusa la costante module-level _BUCKET_OBJECTIVE_KEY definita piu'
+    sotto in questo file (vedi compute_instrument_reference_ranges): la
+    risoluzione dei nomi in un corpo di funzione avviene a runtime, non
+    alla definizione, quindi l'ordine testuale non conta - evitato cosi'
+    di duplicare una costante identica gia' esistente nel modulo."""
+    cfg = ensure_sator_settings(settings)
+    state = compute_portfolio_state(data, include_closed=True)
+    state_df = state.get("df", pd.DataFrame())
+    if isinstance(data.get("_positions_df"), pd.DataFrame) and not data["_positions_df"].empty:
+        state_df = data["_positions_df"].copy()
+    held_tickers = _tickers_posseduti(state_df)
+    master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
+
+    all_buckets = compute_instrument_buckets(data, held_tickers)
+    split_tickers = {
+        ticker for ticker in all_buckets
+        if bool((master.get(ticker, {}).get("manual_overrides") or {}).get("sator", {}).get("bucket_exposure_user_edited"))
+    }
+    instrument_buckets = {tk: b for tk, b in all_buckets.items() if tk not in split_tickers}
+
+    current_weights = _compute_current_weights(state_df)
+    objective = settings.get("portfolio_objective", {}) or {}
+    quotas = cfg["instrument_quotas"]
+    tolerance = cfg["instrument_quota_tolerance_pp"]
+
+    out: dict[str, dict[str, Any]] = {}
+    for ticker, bucket in instrument_buckets.items():
+        bucket_target_pct = _safe_float(objective.get(_BUCKET_OBJECTIVE_KEY.get(bucket, ""), 0.0), 0.0)
+        quota_in_bucket = _safe_float((quotas.get(bucket, {}) or {}).get(ticker), 0.0)
+        target_assoluto = quota_in_bucket * bucket_target_pct
+        peso_attuale = _safe_float(current_weights.get(ticker), 0.0)
+        no_sell = resolve_instrument_no_sell(data, ticker)
+        delta = peso_attuale - target_assoluto
+        if abs(delta) < tolerance:
+            stato = "in_target"
+        elif delta <= -tolerance:
+            stato = "sottopeso"
+        elif no_sell:
+            stato = "sovrappeso_no_sell"
+        else:
+            stato = "sovrappeso"
+        out[ticker] = {
+            "bucket": bucket,
+            "peso_attuale": peso_attuale,
+            "target": target_assoluto,
+            "no_sell": no_sell,
+            "stato": stato,
+        }
+    return out
+
+
 def compute_instrument_quota_status(
     data: dict[str, Any], settings: dict[str, Any], *, exclude_tickers: frozenset[str] = frozenset(),
 ) -> dict[str, dict[str, Any]]:
