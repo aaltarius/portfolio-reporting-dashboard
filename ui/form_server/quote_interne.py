@@ -105,6 +105,36 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
     reference_ranges = compute_instrument_reference_ranges(data, settings, tickers_by_bucket)
     operational_status = compute_instrument_operational_status(data, settings)
 
+    from core.services.sator import SATOR_ROLE_VALUES, resolve_instrument_role
+    from core.benchmark_registry import resolve_instrument_benchmark
+
+    all_strumenti = data.get("strumenti", []) or []
+    role_rows = []
+    for s in all_strumenti:
+        tk = str(s.get("ticker") or "").strip()
+        if not tk:
+            continue
+        current_role = resolve_instrument_role(data, s, True)
+        current_bm = resolve_instrument_benchmark(s, master_entry=(data.get("instrument_master", {}) or {}).get(tk, {}), prefer_master=True)
+        role_options = "".join(
+            f'<option value="{escape(r)}" {"selected" if r == current_role else ""}>{escape(r)}</option>'
+            for r in sorted(SATOR_ROLE_VALUES)
+        )
+        role_rows.append(
+            f'<tr><td>{escape(tk)}</td>'
+            f'<td><select name="role_{escape(tk)}">{role_options}</select></td>'
+            f'<td><input type="text" name="benchmark_code_{escape(tk)}" value="{escape(current_bm.ticker or "")}" placeholder="es. SWDA.MI"></td>'
+            f'<td><input type="text" name="benchmark_label_{escape(tk)}" value="{escape(current_bm.label or "")}" placeholder="es. MSCI World"></td>'
+            f'</tr>'
+        )
+
+    tab_ruolo = f"""
+  <form method="post" action="/quote-interne-ruolo-benchmark">
+    <table class="qi-table"><thead><tr><th>Ticker</th><th>Ruolo</th><th>Benchmark ticker</th><th>Benchmark etichetta</th></tr></thead>
+    <tbody>{"".join(role_rows)}</tbody></table>
+    <button type="submit" class="btn-salva">Salva ruolo e benchmark</button>
+  </form>"""
+
     ok_html = f'<div class="alert-ok">{escape(ok_msg)}</div>' if ok_msg else ""
     err_html = f'<div class="alert-warn">{escape(err_msg)}</div>' if err_msg else ""
 
@@ -231,6 +261,7 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
     {_tb("Esposizione Bucket", "bucket")}
   </div>
   {_tp("target", tab_target)}
+  {_tp("ruolo", tab_ruolo)}
   <p><a href="{STREAMLIT_URL}">&larr; Torna all'app</a></p>
 </div>
 {TAB_JS}
@@ -404,3 +435,27 @@ async def post_quote_interne(
         return HTMLResponse(_render_quote_interne_page(err_msg=f"Errore durante il salvataggio: {exc}"))
 
     return RedirectResponse("/quote-interne?ok=Quote%20salvate.", status_code=303)
+
+
+@router.post("/quote-interne-ruolo-benchmark", response_class=HTMLResponse)
+async def post_quote_interne_ruolo_benchmark(request: Request):
+    from core.services.sator import apply_classification_override
+    from persistence.storage import load_data, save_data
+
+    form_data = dict(await request.form())
+    data = load_data()
+    any_changed = False
+    for s in data.get("strumenti", []) or []:
+        tk = str(s.get("ticker") or "").strip()
+        if not tk or f"role_{tk}" not in form_data:
+            continue
+        changed = apply_classification_override(
+            data, s,
+            role_val=str(form_data.get(f"role_{tk}") or ""),
+            benchmark_code_val=str(form_data.get(f"benchmark_code_{tk}") or ""),
+            benchmark_label_val=str(form_data.get(f"benchmark_label_{tk}") or ""),
+        )
+        any_changed = any_changed or changed
+    if any_changed:
+        save_data(data)
+    return RedirectResponse("/quote-interne?ok=Ruolo%20e%20benchmark%20aggiornati.&tab=ruolo", status_code=303)
