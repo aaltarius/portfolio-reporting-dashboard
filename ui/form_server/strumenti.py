@@ -1238,24 +1238,35 @@ async def post_strumenti(
         # Somma non-100%: scartato in sicurezza, nessuna scrittura - stesso
         # principio di validazione gia' applicato al ruolo (Task 8 del
         # sotto-progetto 1).
-        if abs(submitted_total - 1.0) < 1e-6:
-            current_exposure = resolve_instrument_bucket_exposure(d, strumento, True)
-            # Scrittura solo-se-cambiato: il form e' sempre precompilato con
-            # i valori attualmente effettivi, quindi un submit senza
-            # modifiche reali deve essere un no-op - stesso bug critico gia'
-            # corretto per ruolo/benchmark nel sotto-progetto 1.
-            changed = any(
-                abs(submitted.get(b, 0.0) - current_exposure.get(b, 0.0)) > 1e-6
-                for b in ("Core", "Difensivo", "Satellite")
-            )
-            if changed:
-                master = d.setdefault("instrument_master", {})
-                entry = master.setdefault(ticker, {})
-                overrides = entry.setdefault("manual_overrides", {}).setdefault("sator", {})
-                overrides["bucket_exposure"] = submitted
-                overrides["bucket_exposure_user_edited"] = True
-                save_data(d)
         from urllib.parse import quote as urlquote
+
+        if abs(submitted_total - 1.0) >= 1e-6:
+            # Scritta rifiutata: il redirect deve dirlo esplicitamente,
+            # altrimenti l'utente vede lo stesso messaggio di successo di un
+            # salvataggio riuscito senza sapere che la modifica e' stata
+            # scartata (finding della review finale sul branch).
+            return RedirectResponse(
+                f"/strumenti?tab=arricchimento&ticker={urlquote(ticker)}"
+                f"&err={urlquote('Le percentuali devono sommare a 100% - modifica non salvata.')}",
+                status_code=303,
+            )
+
+        current_exposure = resolve_instrument_bucket_exposure(d, strumento, True)
+        # Scrittura solo-se-cambiato: il form e' sempre precompilato con
+        # i valori attualmente effettivi, quindi un submit senza
+        # modifiche reali deve essere un no-op - stesso bug critico gia'
+        # corretto per ruolo/benchmark nel sotto-progetto 1.
+        changed = any(
+            abs(submitted.get(b, 0.0) - current_exposure.get(b, 0.0)) > 1e-6
+            for b in ("Core", "Difensivo", "Satellite")
+        )
+        if changed:
+            master = d.setdefault("instrument_master", {})
+            entry = master.setdefault(ticker, {})
+            overrides = entry.setdefault("manual_overrides", {}).setdefault("sator", {})
+            overrides["bucket_exposure"] = submitted
+            overrides["bucket_exposure_user_edited"] = True
+            save_data(d)
         return RedirectResponse(f"/strumenti?tab=arricchimento&ticker={urlquote(ticker)}&ok={urlquote('Esposizione tra bucket aggiornata.')}", status_code=303)
 
     elif azione == "ricalcola_automatico":
