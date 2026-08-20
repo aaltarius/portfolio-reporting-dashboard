@@ -2261,11 +2261,21 @@ def _compute_correlations(returns_frame: pd.DataFrame, portfolio_returns: pd.Ser
     rf = returns_frame.loc[common]
     pt = portfolio_returns.loc[common]
     valid_pairs = rf.notna().mul(pt.notna(), axis=0).sum()
-    corr_all = rf.corrwith(pt)
+    # Filtra le colonne con overlap sufficiente PRIMA di corrwith, non dopo:
+    # un titolo appena acquistato (es. 2 quotazioni) ha troppo poche
+    # osservazioni per una covarianza reale, e corrwith calcolato su tutte
+    # le colonne sollevava comunque "Degrees of freedom <= 0" da numpy per
+    # quella colonna, scartata solo a valle — risultato finale gia'
+    # corretto, ma warning inutile che puo' nascondere un warning vero
+    # (bug reale, 2026-08-20). Nessuna colonna idonea -> nessun calcolo.
+    eligible_cols = [col for col in rf.columns if valid_pairs.get(col, 0) >= 15]
+    if not eligible_cols:
+        return {}
+    corr_all = rf[eligible_cols].corrwith(pt)
     return {
         str(col): float(corr_all[col])
         for col in corr_all.index
-        if valid_pairs.get(col, 0) >= 15 and pd.notna(corr_all[col])
+        if pd.notna(corr_all[col])
     }
 
 
