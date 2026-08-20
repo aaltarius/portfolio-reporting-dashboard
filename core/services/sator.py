@@ -467,6 +467,74 @@ def resolve_instrument_no_sell(data: dict[str, Any], ticker: str) -> bool:
     return bool(sator.get("no_sell"))
 
 
+def apply_classification_override(
+    data: dict[str, Any], strumento: dict[str, Any], *,
+    role_val: str, benchmark_code_val: str, benchmark_label_val: str,
+) -> bool:
+    """Scrive l'override ruolo/benchmark per uno strumento se e solo se
+    differisce dal valore attualmente risolto — logica estratta invariata
+    dal ramo 'salva_classificazione' di ui/form_server/strumenti.py
+    (sotto-progetto 3), ora condivisa da /strumenti e /quote-interne. Muta
+    `data` in place, non chiama save_data: il chiamante decide quando
+    persistere (una volta per richiesta, anche con piu' righe in batch).
+    Ritorna True se ha scritto qualcosa."""
+    from core.benchmark_registry import resolve_instrument_benchmark
+
+    ticker = str(strumento.get("ticker") or "").strip()
+    if not ticker:
+        return False
+
+    role_val = str(role_val or "").strip()
+    benchmark_code_val = str(benchmark_code_val or "").strip()
+    benchmark_label_val = str(benchmark_label_val or "").strip()
+
+    master_all = data.get("instrument_master", {})
+    master_all = master_all if isinstance(master_all, dict) else {}
+    existing_entry = master_all.get(ticker, {})
+    existing_entry = existing_entry if isinstance(existing_entry, dict) else {}
+
+    current_role = resolve_instrument_role(data, strumento, True)
+    current_bm = resolve_instrument_benchmark(strumento, master_entry=existing_entry, prefer_master=True)
+
+    # Ruolo: validato contro SATOR_ROLE_VALUES prima di considerarlo un
+    # cambiamento reale - un valore sconosciuto (POST malformato/manomesso)
+    # non deve mai finire scritto verbatim in produzione: resta un no-op
+    # sicuro sul campo ruolo, esattamente come se non fosse cambiato.
+    role_changed = role_val in SATOR_ROLE_VALUES and role_val != current_role
+    benchmark_submitted = bool(benchmark_code_val or benchmark_label_val)
+    benchmark_changed = benchmark_submitted and (
+        benchmark_code_val != (current_bm.ticker or "")
+        or benchmark_label_val != (current_bm.label or "")
+    )
+
+    if not (role_changed or benchmark_changed):
+        return False
+
+    master = data.setdefault("instrument_master", {})
+    entry = master.setdefault(ticker, {})
+    overrides = entry.setdefault("manual_overrides", {}).setdefault("sator", {})
+    if role_changed:
+        overrides["role"] = role_val
+        overrides["user_edited"] = True
+        # nature/comparison_group/function_label sono SEMPRE derivati dal
+        # ruolo risolto, non editabili da questo form: rimuove eventuali
+        # chiavi legacy dormienti nello stesso dizionario (mai scritte da
+        # qui, ma potenzialmente presenti da un meccanismo precedente)
+        # PRIMA di alzare user_edited, cosi' il flag condiviso di
+        # _meta_strutturale non le riattiva mai in modo silenzioso (bug
+        # reale verificato su dati reali: salvare solo il ruolo di uno
+        # strumento riattivava una 'nature' dormiente sbagliata,
+        # cambiandone icona e cap).
+        overrides.pop("nature", None)
+        overrides.pop("comparison_group", None)
+        overrides.pop("function_label", None)
+    if benchmark_changed:
+        overrides["benchmark_code"] = benchmark_code_val or None
+        overrides["benchmark_label"] = benchmark_label_val or None
+        overrides["benchmark_user_edited"] = True
+    return True
+
+
 # --------------------------------------------------------------------------- #
 # Editor universo (metadati modificabili dall'utente)
 # --------------------------------------------------------------------------- #
