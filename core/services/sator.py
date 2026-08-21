@@ -1191,7 +1191,9 @@ def build_sator_matrix_frame(
         current_weights = _compute_current_weights(state_df)
         held = _tickers_posseduti(state_df)
         exclude = _non_pac_held_tickers(data, held) if cfg["deficit_pac_only"] else frozenset()
-        bucket_weights = _compute_bucket_weights(data, state_df, current_weights, exclude_tickers=exclude)
+        bucket_weights = _compute_bucket_weights(
+            data, state_df, current_weights, exclude_tickers=exclude, use_fractional_exposure=True,
+        )
         objective = settings.get("portfolio_objective", {}) if isinstance(settings, dict) else {}
         bands = _compute_bucket_bands(objective, cfg["band_tolerance_pp"])
         portfolio_value = _safe_float(work["portfolio_value"].iloc[0], 0.0) if "portfolio_value" in work.columns else 0.0
@@ -1441,8 +1443,9 @@ def _compute_bucket_weights(
     (compute_instrument_buckets), a prescindere da eventuali bucket_exposure
     configurati. run_sator_analysis (Task 1 del piano SATOR, 2026-08-21)
     chiama con use_fractional_exposure=True per far riflettere i pesi di
-    bucket l'esposizione frazionata; build_sator_matrix_frame continua con il
-    default per ora (verrà aggiornato in un task successivo). compute_current_bucket_mix
+    bucket l'esposizione frazionata; build_sator_matrix_frame (Task 4 dello
+    stesso piano) chiama anch'essa con use_fractional_exposure=True per il
+    calcolo del deficit di bucket. compute_current_bucket_mix
     (la vista "mix corrente" mostrata all'utente, non usata per validare/bloccare
     alcunche') passa True, usando compute_instrument_bucket_exposures per far
     contribuire proporzionalmente a piu' bucket uno strumento con
