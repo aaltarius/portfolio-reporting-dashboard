@@ -41,10 +41,10 @@ _CSS = CSS + """<style>
 .qi-row input{width:100px;padding:6px 8px;border:1px solid var(--slate-300);border-radius:8px}
 .qi-sum{font-weight:700;margin-top:8px}
 .qi-hint{color:var(--slate-500);font-size:.78rem;margin-left:8px}
-.btn-salva{padding:9px 24px;background:var(--indigo-500);color:var(--white);border:none;border-radius:9px;font-size:.9rem;font-weight:700;cursor:pointer}
+.btn-salva{display:block;margin-top:20px;padding:9px 24px;background:var(--indigo-500);color:var(--white);border:none;border-radius:9px;font-size:.9rem;font-weight:700;cursor:pointer}
 .qi-table{width:100%;border-collapse:collapse;font-size:.85rem}
 .qi-table th{text-align:left;padding:8px;color:var(--slate-500);font-size:.72rem;text-transform:uppercase}
-.qi-table td{padding:6px 8px;border-top:1px solid var(--slate-200)}
+.qi-table td{padding:6px 8px;border-top:1px solid var(--slate-200);vertical-align:top}
 .stato-badge{padding:2px 8px;border-radius:999px;font-size:.75rem;font-weight:700}
 .stato-in_target{background:var(--green-50);color:var(--green-800)}
 .stato-sottopeso{background:var(--indigo-50);color:var(--indigo-700)}
@@ -297,7 +297,7 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
             if stale else ""
         )
         status_rows.append(
-            f"<tr><td>{bucket}</td><td>{stato_label}</td><td>{s['sum_target']*100:.1f}%</td><td>{note}</td></tr>"
+            f"<tr><td>{escape(bucket)}</td><td>{escape(stato_label)}</td><td>{s['sum_target']*100:.1f}%</td><td>{note}</td></tr>"
         )
 
     caps = cfg["concentration_caps"]
@@ -308,7 +308,7 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
         for nature in sorted(caps.keys())
     )
     weights = cfg["score_weights"]
-    settings_section = f"""
+    tab_impostazioni = f"""
   <form method="post" action="/quote-interne">
     <input type="hidden" name="azione" value="salva_impostazioni">
     <div class="qi-card"><h2>Limiti di concentrazione per asset class</h2>{caps_rows}</div>
@@ -333,9 +333,9 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
     <button type="submit" class="btn-salva">Salva impostazioni</button>
   </form>
   <div class="qi-card"><h2>Come funziona il calcolo interno</h2>
-    <p>Momentum: media pesata dei rendimenti a 1/3/6/12 mesi (10/35/35/20%) — <code>_score_momentum</code>.<br>
-    Rischio: volatilita' (40%) + drawdown massimo (30%) + rendimento/rischio a 12 mesi (30%) — <code>_score_risk</code>.<br>
-    Costo: bonus zero commissioni/PAC, malus TER/spread — <code>_score_cost</code>.</p>
+    <div class="qi-row"><label>Momentum</label><span>media pesata dei rendimenti a 1/3/6/12 mesi (10/35/35/20%) — <code>_score_momentum</code></span></div>
+    <div class="qi-row"><label>Rischio</label><span>volatilità (40%) + drawdown massimo (30%) + rendimento/rischio a 12 mesi (30%) — <code>_score_risk</code></span></div>
+    <div class="qi-row"><label>Costo</label><span>bonus zero commissioni/PAC, malus TER/spread — <code>_score_cost</code></span></div>
   </div>"""
 
     def _tb(label: str, key: str) -> str:
@@ -347,9 +347,7 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
         return f'<div class="{cls}" data-pg="qi" data-p="{key}">{content}</div>'
 
     tab_target = f"""
-  {settings_section}
-  <h2 style="margin-top:24px">Quote per bucket — Target strategico</h2>
-  <p>Il riferimento indicativo accanto a ogni campo usa i limiti di concentrazione impostati sopra. Peso attuale e Stato sono calcolati, non editabili.</p>
+  <p>Il riferimento indicativo accanto a ogni campo usa i limiti di concentrazione impostati nella scheda Impostazioni. Peso attuale e Stato sono calcolati, non editabili.</p>
   <p class="qi-hint" style="display:block;margin:0 0 12px">La spunta <strong>NO_SELL</strong> blocca i nuovi acquisti suggeriti da SATOR per quello strumento (non genera mai un suggerimento di vendita): la posizione resta ferma e si diluisce da sola man mano che i nuovi versamenti vengono indirizzati verso altre componenti del portafoglio.</p>
   <form method="post" action="/quote-interne" onsubmit="return collectQuotas()">
     <input type="hidden" name="azione" value="salva_quote">
@@ -359,7 +357,7 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
   </form>
   <div class="qi-card">
     <h2>Stato attuale</h2>
-    <table><thead><tr><th>Bucket</th><th>Stato</th><th>Somma quote</th><th>Note</th></tr></thead>
+    <table class="qi-table"><thead><tr><th>Bucket</th><th>Stato</th><th>Somma quote</th><th>Note</th></tr></thead>
     <tbody>{"".join(status_rows)}</tbody></table>
   </div>"""
 
@@ -371,10 +369,12 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
   <h1>Quote & impostazioni</h1>
   {ok_html}{err_html}
   <div class="tabs">
+    {_tb("Impostazioni", "impostazioni")}
     {_tb("Target & Stato", "target")}
     {_tb("Ruolo & Benchmark", "ruolo")}
     {_tb("Esposizione Bucket", "bucket")}
   </div>
+  {_tp("impostazioni", tab_impostazioni)}
   {_tp("target", tab_target)}
   {_tp("ruolo", tab_ruolo)}
   {_tp("bucket", tab_bucket)}
@@ -455,19 +455,19 @@ async def post_quote_interne(
             save_settings(settings)
         except Exception as exc:
             logger.error("Errore salvataggio impostazioni SATOR: %s", exc, exc_info=True)
-            return HTMLResponse(_render_quote_interne_page(err_msg=f"Errore durante il salvataggio: {exc}"))
-        return RedirectResponse("/quote-interne?ok=Impostazioni%20salvate.", status_code=303)
+            return HTMLResponse(_render_quote_interne_page(err_msg=f"Errore durante il salvataggio: {exc}", active_tab="impostazioni"))
+        return RedirectResponse("/quote-interne?ok=Impostazioni%20salvate.&tab=impostazioni", status_code=303)
 
     if azione != "salva_quote":
-        return HTMLResponse(_render_quote_interne_page(err_msg="Azione non riconosciuta."))
+        return HTMLResponse(_render_quote_interne_page(err_msg="Azione non riconosciuta.", active_tab="target"))
 
     try:
         parsed = json.loads(quotas_json) if quotas_json.strip() else {}
     except json.JSONDecodeError:
-        return HTMLResponse(_render_quote_interne_page(err_msg="Dati quote non validi."))
+        return HTMLResponse(_render_quote_interne_page(err_msg="Dati quote non validi.", active_tab="target"))
 
     if not isinstance(parsed, dict):
-        return HTMLResponse(_render_quote_interne_page(err_msg="Dati quote non validi."))
+        return HTMLResponse(_render_quote_interne_page(err_msg="Dati quote non validi.", active_tab="target"))
 
     # Ticker ammessi a scrivere NO_SELL in questo submit: esattamente le
     # chiavi di quotas_json, cioe' i ticker per cui _render_quote_interne_page
@@ -503,7 +503,8 @@ async def post_quote_interne(
         total = sum(numeric_weights.values())
         if abs(total - 100.0) > 0.5:
             return HTMLResponse(_render_quote_interne_page(
-                err_msg=f"Le quote di {bucket} non somma a 100 (somma attuale: {total:.1f})."
+                err_msg=f"Le quote di {bucket} non somma a 100 (somma attuale: {total:.1f}).",
+                active_tab="target",
             ))
 
     settings = load_settings()
@@ -548,9 +549,9 @@ async def post_quote_interne(
         save_settings(settings)
     except Exception as exc:
         logger.error("Errore salvataggio quote interne: %s", exc, exc_info=True)
-        return HTMLResponse(_render_quote_interne_page(err_msg=f"Errore durante il salvataggio: {exc}"))
+        return HTMLResponse(_render_quote_interne_page(err_msg=f"Errore durante il salvataggio: {exc}", active_tab="target"))
 
-    return RedirectResponse("/quote-interne?ok=Quote%20salvate.", status_code=303)
+    return RedirectResponse("/quote-interne?ok=Quote%20salvate.&tab=target", status_code=303)
 
 
 @router.post("/quote-interne-ruolo-benchmark", response_class=HTMLResponse)
