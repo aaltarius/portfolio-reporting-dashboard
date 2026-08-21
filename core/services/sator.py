@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -183,6 +183,7 @@ class SatorContext:
     liquidita: float
     concentration_severity: float = 1.0
     blocked_buckets_quota: frozenset[str] = frozenset()
+    instrument_bucket_exposures: dict[str, dict[str, float]] = field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------- #
@@ -831,9 +832,10 @@ def run_sator_analysis(
 
     current_weights = _compute_current_weights(state_df)
     nature_weights = _compute_nature_weights(data, state_df, current_weights)
-    bucket_weights = _compute_bucket_weights(data, state_df, current_weights)
+    bucket_weights = _compute_bucket_weights(data, state_df, current_weights, use_fractional_exposure=True)
     held_tickers = _tickers_posseduti(state_df)
     instrument_buckets = compute_instrument_buckets(data, held_tickers)
+    instrument_bucket_exposures = compute_instrument_bucket_exposures(data, held_tickers=None)
     quota_status = _compute_instrument_quota_status(
         instrument_buckets, current_weights, bucket_weights, cfg["instrument_quotas"],
     )
@@ -860,6 +862,7 @@ def run_sator_analysis(
         include_fee_instruments=bool(include_fee_instruments), liquidita=liquidita,
         concentration_severity=concentration_severity,
         blocked_buckets_quota=blocked_buckets_quota,
+        instrument_bucket_exposures=instrument_bucket_exposures,
     )
 
     ranking = _score_universe(ctx, cfg)
