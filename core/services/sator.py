@@ -847,7 +847,7 @@ def run_sator_analysis(
         exclude_per_alerts = _non_pac_held_tickers(data, held_per_alerts)
         if exclude_per_alerts:
             nature_weights_excl = _compute_nature_weights(data, state_df, current_weights, exclude_tickers=exclude_per_alerts)
-            bucket_weights_excl = _compute_bucket_weights(data, state_df, current_weights, exclude_tickers=exclude_per_alerts)
+            bucket_weights_excl = _compute_bucket_weights(data, state_df, current_weights, exclude_tickers=exclude_per_alerts, use_fractional_exposure=True)
     portfolio_value = _compute_portfolio_value(state_df)
     portfolio_returns = _build_portfolio_return_series(returns_frame, state_df, current_weights)
     correlations = _compute_correlations(returns_frame, portfolio_returns)
@@ -962,6 +962,11 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
             "nature_weight": peso_natura,
             "unit_price": unit_price,
             "portfolio_correlation": ctx.correlations.get(ticker, np.nan),
+            # Popolata qui (non con una mappa successiva su df["ticker"]) cosi'
+            # e' gia' disponibile QUANDO df.apply calcola strategic_fit poco
+            # sotto: riusa lo stesso valore gia' risolto per l'eleggibilita',
+            # niente doppio calcolo (vedi finding Critical review finale).
+            "_bucket_exposure": exposure_for_eligibility,
             **metrics,
         })
 
@@ -988,7 +993,6 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
     df["voto"] = (1.0 + df["score_finale"] * 9.0).round(1)
     df["storico_sufficiente"] = df["n_punti"] >= max(MIN_PUNTI_STORICO, rolling_window)
     df["_bucket"] = df["role"].astype(str).map(_role_bucket)
-    df["_bucket_exposure"] = df["ticker"].map(lambda tk: ctx.instrument_bucket_exposures.get(tk) or {})
     df["bucket_weight"] = df["_bucket"].map(lambda b: _safe_float(ctx.bucket_weights.get(str(b)), 0.0))
     df["bucket_target"] = df["_bucket"].map(
         lambda b: _safe_float(portfolio_objective.get(_BUCKET_TO_OBJECTIVE_KEY.get(str(b), ""), 0.0), 0.0)
@@ -1391,10 +1395,13 @@ def compute_instrument_bucket_exposures(data: dict[str, Any], held_tickers: set[
     """Ticker -> {bucket: frazione}. Analoga a compute_instrument_buckets ma
     pesata: per strumenti senza override e' sempre {bucket_primario: 1.0},
     identica informazione di compute_instrument_buckets in forma diversa.
-    Usata SOLO dagli aggregatori che sommano controvalori/percentuali tra
-    bucket (mix bucket corrente, grafico a ciambella) - il motore SATOR
-    continua a usare compute_instrument_buckets (bucket singolo), invariato
-    in questo sotto-progetto."""
+    Usata dagli aggregatori che sommano controvalori/percentuali tra bucket
+    (mix bucket corrente, grafico a ciambella) E, dal Task 2 del piano SATOR
+    esposizione frazionata (2026-08-21, commit f183c2f), anche direttamente
+    da run_sator_analysis: governa l'eleggibilita' dei candidati sui bucket
+    bloccati e alimenta strategic_fit/_score_fit con la frazione di
+    esposizione per bucket di ogni strumento. compute_instrument_buckets
+    (bucket singolo) resta in uso altrove, non e' stata rimpiazzata."""
     out: dict[str, dict[str, float]] = {}
     for item in data.get("strumenti", []) or []:
         ticker = str(item.get("ticker") or "").strip().upper()
