@@ -930,7 +930,8 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
             continue
 
         role_for_bucket = _meta_strutturale(sator, inf, "role")
-        if _role_bucket(role_for_bucket) in ctx.blocked_buckets_quota:
+        exposure_for_eligibility = ctx.instrument_bucket_exposures.get(ticker) or {_role_bucket(role_for_bucket): 1.0}
+        if all(bucket in ctx.blocked_buckets_quota for bucket, frac in exposure_for_eligibility.items() if frac > 0):
             continue
 
         nature = _meta_strutturale(sator, inf, "nature")
@@ -987,6 +988,7 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
     df["voto"] = (1.0 + df["score_finale"] * 9.0).round(1)
     df["storico_sufficiente"] = df["n_punti"] >= max(MIN_PUNTI_STORICO, rolling_window)
     df["_bucket"] = df["role"].astype(str).map(_role_bucket)
+    df["_bucket_exposure"] = df["ticker"].map(lambda tk: ctx.instrument_bucket_exposures.get(tk) or {})
     df["bucket_weight"] = df["_bucket"].map(lambda b: _safe_float(ctx.bucket_weights.get(str(b)), 0.0))
     df["bucket_target"] = df["_bucket"].map(
         lambda b: _safe_float(portfolio_objective.get(_BUCKET_TO_OBJECTIVE_KEY.get(str(b), ""), 0.0), 0.0)
