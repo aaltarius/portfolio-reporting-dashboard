@@ -739,6 +739,10 @@ def refresh_benchmark_cache(data: dict[str, Any], period: str = "2y", force: boo
         try:
             bd = yf.Ticker(bench_ticker).history(period=period)
             if bd.empty:
+                logger.warning(
+                    "benchmark refresh: nessun dato storico per %s (ticker inesistente o sbagliato su Yahoo Finance)",
+                    bench_ticker,
+                )
                 continue
             fresh = {str(d.date()): float(v) for d, v in bd["Close"].items()}
             merged = {**existing, **fresh}

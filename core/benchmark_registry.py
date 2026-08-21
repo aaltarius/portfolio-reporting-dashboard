@@ -208,3 +208,19 @@ def resolve_instrument_benchmark(
         return BENCHMARK_BY_MACRO[cat]
 
     return BenchmarkAssignment("", "—", "assente", "Bassa")
+
+
+def known_benchmark_catalog() -> list[tuple[str, str]]:
+    """Coppie (ticker, label) uniche di tutti i benchmark noti nel
+    catalogo (BENCHMARK_BY_TICKER, BENCHMARK_BY_ISIN, BENCHMARK_BY_TYPE,
+    BENCHMARK_BY_MACRO), ordinate per ticker - per popolare un <datalist>
+    di scelta rapida nella UI. Il campo benchmark resta testo libero: la
+    lista aiuta a scegliere un valore noto senza impedire di inserirne
+    uno nuovo mai usato prima."""
+    seen: dict[str, str] = {}
+    for catalog in (BENCHMARK_BY_TICKER, BENCHMARK_BY_ISIN, BENCHMARK_BY_TYPE, BENCHMARK_BY_MACRO):
+        for assignment in catalog.values():
+            tk = str(assignment.ticker or "").strip()
+            if tk and tk not in seen:
+                seen[tk] = str(assignment.label or "").strip()
+    return sorted(seen.items())

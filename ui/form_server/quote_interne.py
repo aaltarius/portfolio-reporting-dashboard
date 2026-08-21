@@ -108,7 +108,7 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
     held_tickers_all: set[str] = {tk for tks in tickers_by_bucket.values() for tk in tks}
 
     from core.services.sator import SATOR_ROLE_VALUES, SATOR_ROLE_LABELS, infer_sator_metadata, resolve_instrument_role
-    from core.benchmark_registry import resolve_instrument_benchmark
+    from core.benchmark_registry import known_benchmark_catalog, resolve_instrument_benchmark
 
     all_strumenti = data.get("strumenti", []) or []
     role_rows = []
@@ -150,12 +150,17 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
         role_rows.append(
             f'<tr><td>{escape(tk)}</td>'
             f'<td><select name="role_{escape(tk)}">{role_options}</select>{role_auto_hint}</td>'
-            f'<td><input type="text" name="benchmark_code_{escape(tk)}" value="{escape(current_bm.ticker or "")}" placeholder="es. SWDA.MI"></td>'
+            f'<td><input type="text" name="benchmark_code_{escape(tk)}" value="{escape(current_bm.ticker or "")}" placeholder="es. SWDA.MI" list="benchmark-catalog"></td>'
             f'<td><input type="text" name="benchmark_label_{escape(tk)}" value="{escape(current_bm.label or "")}" placeholder="es. MSCI World">{bm_auto_hint}</td>'
             f'</tr>'
         )
 
+    benchmark_options = "".join(
+        f'<option value="{escape(tk)}">{escape(label)}</option>'
+        for tk, label in known_benchmark_catalog()
+    )
     tab_ruolo = f"""
+  <datalist id="benchmark-catalog">{benchmark_options}</datalist>
   <form method="post" action="/quote-interne-ruolo-benchmark">
     <table class="qi-table"><thead><tr><th>Ticker</th><th>Ruolo</th><th>Benchmark ticker</th><th>Benchmark etichetta</th></tr></thead>
     <tbody>{"".join(role_rows)}</tbody></table>
