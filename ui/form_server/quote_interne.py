@@ -107,7 +107,7 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
     # sovrapponibili.
     held_tickers_all: set[str] = {tk for tks in tickers_by_bucket.values() for tk in tks}
 
-    from core.services.sator import SATOR_ROLE_VALUES, SATOR_ROLE_LABELS, resolve_instrument_role
+    from core.services.sator import SATOR_ROLE_VALUES, SATOR_ROLE_LABELS, infer_sator_metadata, resolve_instrument_role
     from core.benchmark_registry import resolve_instrument_benchmark
 
     all_strumenti = data.get("strumenti", []) or []
@@ -118,6 +118,16 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
             continue
         current_role = resolve_instrument_role(data, s, True)
         current_bm = resolve_instrument_benchmark(s, master_entry=(data.get("instrument_master", {}) or {}).get(tk, {}), prefer_master=True)
+        auto_role = infer_sator_metadata(s, True)["role"]
+        auto_bm = resolve_instrument_benchmark(s, prefer_master=False)
+        role_auto_hint = (
+            f'<span class="qi-hint">(automatico: {escape(SATOR_ROLE_LABELS.get(auto_role, auto_role))})</span>'
+            if auto_role != current_role else ""
+        )
+        bm_auto_hint = (
+            f'<span class="qi-hint">(automatico: {escape(auto_bm.ticker or "—")} &mdash; {escape(auto_bm.label or "—")})</span>'
+            if (auto_bm.ticker, auto_bm.label) != (current_bm.ticker, current_bm.label) else ""
+        )
         # Stesse etichette italiane e stesso ordine di /strumenti (Finding 4):
         # SATOR_ROLE_LABELS per il testo visibile, SATOR_ROLE_VALUES nel suo
         # ordine di dichiarazione nativo (non alfabetico - "altro" e' l'ultimo
@@ -139,9 +149,9 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
         role_options = "".join(role_option_list)
         role_rows.append(
             f'<tr><td>{escape(tk)}</td>'
-            f'<td><select name="role_{escape(tk)}">{role_options}</select></td>'
+            f'<td><select name="role_{escape(tk)}">{role_options}</select>{role_auto_hint}</td>'
             f'<td><input type="text" name="benchmark_code_{escape(tk)}" value="{escape(current_bm.ticker or "")}" placeholder="es. SWDA.MI"></td>'
-            f'<td><input type="text" name="benchmark_label_{escape(tk)}" value="{escape(current_bm.label or "")}" placeholder="es. MSCI World"></td>'
+            f'<td><input type="text" name="benchmark_label_{escape(tk)}" value="{escape(current_bm.label or "")}" placeholder="es. MSCI World">{bm_auto_hint}</td>'
             f'</tr>'
         )
 
@@ -152,7 +162,7 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
     <button type="submit" class="btn-salva">Salva ruolo e benchmark</button>
   </form>"""
 
-    from core.services.sator import resolve_instrument_bucket_exposure
+    from core.services.sator import _role_bucket, resolve_instrument_bucket_exposure
 
     bexp_rows = []
     for s in all_strumenti:
@@ -160,6 +170,15 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
         if not tk or tk.upper() not in held_tickers_all:
             continue
         current_exp = resolve_instrument_bucket_exposure(data, s, True)
+        auto_role_bexp = infer_sator_metadata(s, True)["role"]
+        auto_exp = {b: (1.0 if _role_bucket(auto_role_bexp) == b else 0.0) for b in _BUCKETS}
+
+        def _bexp_hint(bucket: str) -> str:
+            auto_pct = auto_exp[bucket] * 100
+            cur_pct = current_exp.get(bucket, 0.0) * 100
+            if abs(auto_pct - cur_pct) < 0.005:
+                return ""
+            return f'<span class="qi-hint">(auto: {auto_pct:.2f}%)</span>'
         # 2 decimali e step 0.01, come l'editor singolo-strumento in
         # ui/form_server/strumenti.py (Finding 1): con :.0f/step="1" uno
         # split non intero (es. 12,5%/87,5%) veniva mostrato arrotondato e
@@ -168,9 +187,9 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
         # sempre tutte le righe).
         bexp_rows.append(
             f'<tr><td>{escape(tk)}</td>'
-            f'<td><input type="number" min="0" max="100" step="0.01" name="bexp_core_{escape(tk)}" value="{current_exp.get("Core", 0.0) * 100:.2f}"></td>'
-            f'<td><input type="number" min="0" max="100" step="0.01" name="bexp_difensivo_{escape(tk)}" value="{current_exp.get("Difensivo", 0.0) * 100:.2f}"></td>'
-            f'<td><input type="number" min="0" max="100" step="0.01" name="bexp_satellite_{escape(tk)}" value="{current_exp.get("Satellite", 0.0) * 100:.2f}"></td>'
+            f'<td><input type="number" min="0" max="100" step="0.01" name="bexp_core_{escape(tk)}" value="{current_exp.get("Core", 0.0) * 100:.2f}">{_bexp_hint("Core")}</td>'
+            f'<td><input type="number" min="0" max="100" step="0.01" name="bexp_difensivo_{escape(tk)}" value="{current_exp.get("Difensivo", 0.0) * 100:.2f}">{_bexp_hint("Difensivo")}</td>'
+            f'<td><input type="number" min="0" max="100" step="0.01" name="bexp_satellite_{escape(tk)}" value="{current_exp.get("Satellite", 0.0) * 100:.2f}">{_bexp_hint("Satellite")}</td>'
             f'</tr>'
         )
 
