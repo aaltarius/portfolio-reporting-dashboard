@@ -25,7 +25,7 @@ from core.services.sator import (
     ensure_sator_settings,
     held_non_pac_tickers,
 )
-from ui.form_server.shell import STREAMLIT_URL, TAB_JS, _ROOT_VARS_BLOCK
+from ui.form_server.shell import CSS, STREAMLIT_URL, TAB_JS
 
 logger = logging.getLogger("portafoglio.form_server.quote_interne")
 
@@ -33,26 +33,15 @@ router = APIRouter()
 
 _BUCKETS = ("Core", "Difensivo", "Satellite")
 
-_CSS = _ROOT_VARS_BLOCK + """
-*,*::before,*::after{box-sizing:border-box}
-body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--slate-100);color:var(--slate-800);margin:0;padding:16px 20px 60px;font-size:.9rem}
+_CSS = CSS + """<style>
 .qi{max-width:1100px;margin:0 auto}
 .qi-card{background:var(--white);border-radius:14px;padding:20px 24px;box-shadow:0 2px 10px var(--black-a06);margin-bottom:16px}
-h1{font-size:1.15rem;font-weight:800;margin:0 0 14px;color:var(--slate-800)}
-h2{font-size:.75rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--slate-500);margin:0 0 14px}
 .qi-row{display:flex;gap:14px;align-items:center;padding:6px 0}
 .qi-row label{flex:1;font-weight:600}
 .qi-row input{width:100px;padding:6px 8px;border:1px solid var(--slate-300);border-radius:8px}
 .qi-sum{font-weight:700;margin-top:8px}
 .qi-hint{color:var(--slate-500);font-size:.78rem;margin-left:8px}
-.alert-ok{background:var(--green-50);color:var(--green-800);padding:10px 14px;border-radius:10px;margin-bottom:14px}
-.alert-warn{background:var(--red-50);color:var(--red-700);padding:10px 14px;border-radius:10px;margin-bottom:14px}
 .btn-salva{padding:9px 24px;background:var(--indigo-500);color:var(--white);border:none;border-radius:9px;font-size:.9rem;font-weight:700;cursor:pointer}
-.tabs{display:flex;gap:2px;border-bottom:2px solid var(--slate-200);margin-bottom:20px;margin-top:4px}
-.tab-btn{background:none;border:none;border-bottom:3px solid transparent;margin-bottom:-2px;padding:8px 14px;font-size:.87rem;font-weight:600;color:var(--slate-500);cursor:pointer;transition:color .15s,border-color .15s}
-.tab-btn.active{color:var(--indigo-500);border-bottom-color:var(--indigo-500)}
-.tab-panel{display:none}
-.tab-panel.active{display:block}
 .qi-table{width:100%;border-collapse:collapse;font-size:.85rem}
 .qi-table th{text-align:left;padding:8px;color:var(--slate-500);font-size:.72rem;text-transform:uppercase}
 .qi-table td{padding:6px 8px;border-top:1px solid var(--slate-200)}

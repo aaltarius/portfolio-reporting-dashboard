@@ -14,7 +14,7 @@ from fastapi import APIRouter, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from ui.charts.instrument_badges import commission_badge
-from ui.form_server.shell import STREAMLIT_URL, _ROOT_VARS_BLOCK
+from ui.form_server.shell import CSS, STREAMLIT_URL
 
 logger = logging.getLogger("portafoglio.form_server.sator")
 
@@ -23,8 +23,7 @@ router = APIRouter()
 _SATOR_DEFAULT_CATS = ["ETF", "ETC"]
 _SATOR_ALL_CATS = ["ETF", "ETC", "FONDO", "AZIONE", "BTP", "ALTRO"]
 
-_SATOR_CSS = _ROOT_VARS_BLOCK + """
-*,*::before,*::after{box-sizing:border-box}
+_SATOR_CSS = CSS + """<style>
 body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--slate-100);color:var(--slate-800);margin:0;padding:16px 20px 60px;font-size:.9rem}
 .sp{max-width:1440px;margin:0 auto}
 .sp-card{background:var(--white);border-radius:14px;padding:20px 24px;box-shadow:0 2px 10px var(--black-a06);margin-bottom:16px}
@@ -170,8 +169,6 @@ select:focus,input:focus{border-color:var(--indigo-500);box-shadow:0 0 0 3px var
 .hist-actual-grid{display:grid;grid-template-columns:minmax(120px,1fr) 78px 94px 104px;gap:7px;align-items:end;margin-top:7px}
 .hist-actual-grid label{font-size:.65rem;text-transform:uppercase;letter-spacing:.04em;color:var(--slate-400);font-weight:800}
 .hist-actual-grid input{font-size:.78rem;padding:6px 8px}
-.alert-warn{background:var(--amber-50);border:1px solid var(--amber-300);border-radius:8px;padding:10px 14px;color:var(--amber-800);font-size:.84rem;margin-bottom:12px}
-.alert-ok{background:var(--green-50);border:1px solid var(--green-300);border-radius:8px;padding:10px 14px;color:var(--green-800);font-size:.84rem;margin-bottom:12px}
 .notice{background:var(--blue-50);border:1px solid var(--blue-200);border-radius:8px;padding:8px 14px;color:var(--blue-700);font-size:.8rem;margin-bottom:10px;display:none}
 .empty-state{text-align:center;color:var(--slate-400);font-size:.84rem;padding:28px 0}
 .legend-box{display:flex;flex-wrap:wrap;gap:6px 16px;background:var(--slate-50);border:1px solid var(--slate-200);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:.74rem;color:var(--slate-600)}

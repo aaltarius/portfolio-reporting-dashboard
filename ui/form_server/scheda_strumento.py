@@ -11,11 +11,11 @@ from html import escape
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 
-from ui.form_server.shell import _ROOT_VARS_BLOCK
+from ui.form_server.shell import CSS
 
 router = APIRouter()
 
-_SCHEDA_CSS = _ROOT_VARS_BLOCK + """
+_SCHEDA_CSS = CSS + """<style>
   *{box-sizing:border-box;margin:0;padding:0;}
   body{font-family:system-ui,-apple-system,sans-serif;background:var(--page-bg);color:var(--slate-900);padding:20px;}
   .page{max-width:780px;margin:0 auto;}
@@ -31,9 +31,9 @@ _SCHEDA_CSS = _ROOT_VARS_BLOCK + """
   .hdr-meta{font-size:12px;color:var(--slate-400);}
   /* Alerts */
   .alert{padding:9px 14px;border-radius:8px;font-size:13px;margin-bottom:12px;}
-  .alert-ok{background:var(--green-50);color:var(--green-600);border:1px solid var(--green-200);}
-  .alert-err{background:var(--red-50);color:var(--red-600);border:1px solid var(--red-200);}
-  .alert-warn{background:var(--amber-50);color:var(--amber-700);border:1px solid var(--amber-200);}
+  .alert-ok{background:var(--green-50);color:var(--green-800);border:1px solid var(--green-300);}
+  .alert-err{background:var(--red-50);color:var(--red-700);border:1px solid var(--red-300);}
+  .alert-warn{background:var(--amber-50);color:var(--amber-800);border:1px solid var(--amber-300);}
   /* Actions bar */
   .actions{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;}
   .btn{display:inline-block;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;cursor:pointer;border:none;white-space:nowrap;}
@@ -85,7 +85,8 @@ _SCHEDA_CSS = _ROOT_VARS_BLOCK + """
   .sc-orange{color:var(--orange-700);} .sc-bar-orange{background:var(--orange-500);}
   .sc-red{color:var(--red-600);} .sc-bar-red{background:var(--red-500);}
   /* Footer */
-  .foot{text-align:center;margin-top:20px;padding-bottom:10px;}"""
+  .foot{text-align:center;margin-top:20px;padding-bottom:10px;}
+</style>"""
 
 
 def _render_scheda_strumento(strumento: dict) -> str:
@@ -153,7 +154,7 @@ def _render_scheda_strumento(strumento: dict) -> str:
     def _html_open() -> str:
         return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Scheda {ticker}</title>
-<style>{_SCHEDA_CSS}</style></head><body><div class="page">
+{_SCHEDA_CSS}</head><body><div class="page">
 <div class="hdr">
   <div style="font-size:12px;font-weight:700;color:var(--slate-400);letter-spacing:.06em;margin-bottom:4px;">{ticker}</div>
   <div class="hdr-name">{nome}</div>
