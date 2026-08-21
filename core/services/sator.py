@@ -1432,13 +1432,12 @@ def _compute_bucket_weights(
     use_fractional_exposure: di default False, ossia comportamento storico -
     ogni strumento pesa per intero sul suo bucket primario
     (compute_instrument_buckets), a prescindere da eventuali bucket_exposure
-    configurati. Il motore SATOR vero e proprio (run_sator_analysis,
-    build_sator_matrix_frame) chiama sempre con il default: la ripartizione
-    frazionata dell'appartenenza a bucket resta fuori scope per il motore in
-    questo sotto-progetto, che deve continuare a validare quote/deficit
-    esattamente come prima. Solo compute_current_bucket_mix (la vista "mix
-    corrente" mostrata all'utente, non usata per validare/bloccare alcunche')
-    passa True, usando compute_instrument_bucket_exposures per far
+    configurati. run_sator_analysis (Task 1 del piano SATOR, 2026-08-21)
+    chiama con use_fractional_exposure=True per far riflettere i pesi di
+    bucket l'esposizione frazionata; build_sator_matrix_frame continua con il
+    default per ora (verrà aggiornato in un task successivo). compute_current_bucket_mix
+    (la vista "mix corrente" mostrata all'utente, non usata per validare/bloccare
+    alcunche') passa True, usando compute_instrument_bucket_exposures per far
     contribuire proporzionalmente a piu' bucket uno strumento con
     bucket_exposure configurato (vedi resolve_instrument_bucket_exposure).
 
