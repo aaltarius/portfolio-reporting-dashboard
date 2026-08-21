@@ -1377,7 +1377,7 @@ def _compute_marginal_purchase_metrics(
                 b_post_weight = b_weight
             if b_target > 0:
                 target_improvement += frac * (abs(b_weight - b_target) - abs(b_post_weight - b_target))
-            bucket_weight_display += frac * b_weight
+            bucket_weight_display += frac * b_post_weight
             bucket_target_display += frac * b_target
         post_bucket_weight = bucket_weight_display
         bucket_target = bucket_target_display
