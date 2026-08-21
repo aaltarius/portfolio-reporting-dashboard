@@ -1324,8 +1324,26 @@ def _data_quality_label(n_punti: Any) -> str:
     return "Assente"
 
 
-def _compute_marginal_purchase_metrics(row: pd.Series, amount: float) -> dict[str, float]:
+def _compute_marginal_purchase_metrics(
+    row: pd.Series,
+    amount: float,
+    *,
+    bucket_weights: dict[str, float] | None = None,
+    bucket_targets: dict[str, float] | None = None,
+) -> dict[str, float]:
     """Effetto marginale di una singola riga d'acquisto sul portafoglio attuale.
+
+    bucket_weights/bucket_targets (opzionali, default None): quando
+    presenti (solo dal percorso bucket_first_allocation, sotto-progetto 5
+    "Purchase Optimizer"), il miglioramento verso il target di bucket e'
+    calcolato come SOMMA PESATA sui bucket a cui lo strumento appartiene
+    (row["_bucket_exposure"]) - mai una media dei pesi/target prima di
+    calcolare lo scostamento, che cancellerebbe un sovrappeso in un bucket
+    con un sottopeso nell'altro nascondendo entrambi (stesso principio gia'
+    validato da _score_fit, sotto-progetto 4). Quando assenti (default,
+    percorso _suggested_quotes fuori da bucket_first_allocation), il
+    comportamento resta quello storico: un solo bucket, letto dalle
+    colonne bucket_weight/bucket_target del ranking (bucket primario).
 
     Restituisce numeri post-acquisto usati dalla tabella SATOR e dalla
     fotografia salvata: cosi' ranking, storico e dashboard decisionale leggono
@@ -1334,23 +1352,46 @@ def _compute_marginal_purchase_metrics(row: pd.Series, amount: float) -> dict[st
     amount = max(0.0, _safe_float(amount, 0.0))
     portfolio_value = max(0.0, _safe_float(row.get("portfolio_value"), 0.0))
     total_after = portfolio_value + amount
-    bucket_weight = max(0.0, _safe_float(row.get("bucket_weight"), 0.0))
-    bucket_target = max(0.0, _safe_float(row.get("bucket_target"), 0.0))
     nature_weight = max(0.0, _safe_float(row.get("nature_weight"), 0.0))
     nature_cap = max(0.0, _safe_float(row.get("nature_cap"), CAP_MORBIDO_DEFAULT))
 
     if total_after > 0:
-        post_bucket_weight = ((bucket_weight * portfolio_value) + amount) / total_after
         post_nature_weight = ((nature_weight * portfolio_value) + amount) / total_after
     else:
-        post_bucket_weight = bucket_weight
         post_nature_weight = nature_weight
-
-    if bucket_target > 0:
-        target_improvement = abs(bucket_weight - bucket_target) - abs(post_bucket_weight - bucket_target)
-    else:
-        target_improvement = 0.0
     cap_headroom_after = nature_cap - post_nature_weight if nature_cap > 0 else 0.0
+
+    if bucket_weights is not None and bucket_targets is not None:
+        exposure = row.get("_bucket_exposure") or {}
+        target_improvement = 0.0
+        bucket_weight_display = 0.0
+        bucket_target_display = 0.0
+        for bucket, frac in exposure.items():
+            if frac <= 0:
+                continue
+            b_weight = max(0.0, _safe_float(bucket_weights.get(bucket), 0.0))
+            b_target = max(0.0, _safe_float(bucket_targets.get(_BUCKET_TO_OBJECTIVE_KEY.get(bucket, ""), 0.0)))
+            if total_after > 0:
+                b_post_weight = ((b_weight * portfolio_value) + amount * frac) / total_after
+            else:
+                b_post_weight = b_weight
+            if b_target > 0:
+                target_improvement += frac * (abs(b_weight - b_target) - abs(b_post_weight - b_target))
+            bucket_weight_display += frac * b_weight
+            bucket_target_display += frac * b_target
+        post_bucket_weight = bucket_weight_display
+        bucket_target = bucket_target_display
+    else:
+        bucket_weight = max(0.0, _safe_float(row.get("bucket_weight"), 0.0))
+        bucket_target = max(0.0, _safe_float(row.get("bucket_target"), 0.0))
+        if total_after > 0:
+            post_bucket_weight = ((bucket_weight * portfolio_value) + amount) / total_after
+        else:
+            post_bucket_weight = bucket_weight
+        target_improvement = (
+            (abs(bucket_weight - bucket_target) - abs(post_bucket_weight - bucket_target))
+            if bucket_target > 0 else 0.0
+        )
 
     return {
         "target_improvement_pp": round(target_improvement * 100.0, 2),
