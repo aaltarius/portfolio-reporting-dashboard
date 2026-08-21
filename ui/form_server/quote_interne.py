@@ -41,7 +41,7 @@ _CSS = CSS + """<style>
 .qi-row input{width:100px;padding:6px 8px;border:1px solid var(--slate-300);border-radius:8px}
 .qi-sum{font-weight:700;margin-top:8px}
 .qi-hint{color:var(--slate-500);font-size:.78rem;margin-left:8px}
-.btn-salva{display:block;margin-top:20px;padding:9px 24px;background:var(--indigo-500);color:var(--white);border:none;border-radius:9px;font-size:.9rem;font-weight:700;cursor:pointer}
+.btn-salva{display:block;margin:20px 0;padding:9px 24px;background:var(--indigo-500);color:var(--white);border:none;border-radius:9px;font-size:.9rem;font-weight:700;cursor:pointer}
 .qi-table{width:100%;border-collapse:collapse;font-size:.85rem}
 .qi-table th{text-align:left;padding:8px;color:var(--slate-500);font-size:.72rem;text-transform:uppercase}
 .qi-table td{padding:6px 8px;border-top:1px solid var(--slate-200);vertical-align:top}
