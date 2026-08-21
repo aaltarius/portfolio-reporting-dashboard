@@ -735,7 +735,7 @@ e `docs/superpowers/plans/2026-08-14-pianificazione-confronto-strumenti.md`.
   uno strumento non invalidava gli artefatti UI in cache. Gia' committato
   su `main` (`87f6ae9`), prima dell'apertura di questo branch.
 
-### Revisione del modello di classificazione e allocazione — sotto-progetti 1-3 e correzioni sparse (2026-08-17/21)
+### Revisione del modello di classificazione e allocazione — sotto-progetti 1-5 e correzioni sparse (2026-08-17/21)
 
 Iniziativa separata dalla governance cache sopra, partita da un documento di
 revisione esterno (`Revisione del modello di classificazione e allocazione –
@@ -773,18 +773,94 @@ riepilogo di stato. Le spec/piani restano in `docs/superpowers/specs/` e
   scritto su ticker non visibili in pagina), review finale sull'intero branch
   con un secondo bug della stessa classe trovato e corretto prima del merge
   (arrotondamento a intero della tabella Esposizione Bucket).
-- **Voci 5 e 11**: mai pianificate. Il documento sorgente e' stato eliminato
-  prima che il loro contenuto venisse letto/estratto in una spec — per
-  riprenderle serve che l'utente fornisca di nuovo il documento o descriva
-  direttamente cosa coprono.
-- **Voci 6-10** (nomi noti dalla spec del sotto-progetto 2: "Calcolare
-  l'esposizione effettiva", "Adeguare Strategic Analyzer", "Adeguare
-  Eligibility Engine", "Adeguare Rebalancing Engine", "Adeguare Purchase
-  Optimizer"): mai iniziate, deliberatamente rimandate. Toccano il motore
-  SATOR vero e proprio (scoring/blocco/ottimizzazione acquisti secondo
-  l'esposizione frazionata ai bucket), finora sempre escluso per vincolo
-  esplicito dai sotto-progetti 1-3 — sono il lavoro piu' delicato rimasto di
-  questa iniziativa. Vedi Priorita' 9 in sezione 5.
+- **Sotto-progetto 4 (voci 6-9, chiuso 2026-08-21)** — esposizione
+  frazionata reale nel motore SATOR: `SatorContext.instrument_bucket_exposures`,
+  eleggibilita' generalizzata (uno strumento diviso resta candidabile se
+  almeno un bucket a cui appartiene e' valido), `_score_fit` pesa la
+  penalita' di sovrappeso-bucket sulla frazione di esposizione, deficit di
+  bucket frazionato quando `bucket_first_allocation` e' attivo. Eseguito con
+  `subagent-driven-development`: 4 task, un bug Critical trovato dalla
+  review finale (la colonna `_bucket_exposure` veniva creata DOPO essere
+  stata letta da `_score_fit`, rendendo l'intero task inerte in produzione
+  — errore di ordinamento nella spec/piano stessi, non
+  dell'implementatore, corretto con verifica empirica e test di
+  integrazione dedicato) piu' 2 Important (un terzo punto di chiamata a
+  `_compute_bucket_weights` mai reso frazionario, un docstring gemello
+  rimasto falso). Voce 10 (Purchase Optimizer) esplicitamente rimandata a
+  un sotto-progetto 5 futuro — vedi sotto.
+- **Documento sorgente recuperato (2026-08-21)**: il file originale era
+  stato eliminato dalla root del repo su richiesta esplicita dell'utente,
+  ma il suo contenuto integrale (22 sezioni) era ancora presente nel
+  transcript di sessione (era stato letto per intero all'inizio della
+  conversazione) — recuperato e salvato in
+  `docs/portfolio-intelligence/Revisione del modello di classificazione e
+  allocazione – Portfolio Intelligence.md` (gitignored, come tutto
+  `docs/`). Le voci 5 e 11, di cui si era temporaneamente perso il
+  contenuto, sono quindi note di nuovo:
+  - **Voce 5** — "Rendere configurabili i limiti di concentrazione" (sezioni
+    11-12 del documento): i limiti di concentrazione per natura/tema
+    (oggi `CAP_MORBIDO_NATURA`, hardcoded in `core/services/sator.py`)
+    dovrebbero entrare nella Portfolio Policy configurabile, e il motore
+    dovrebbe verificarli sulla **somma delle esposizioni effettive**
+    (non sulla sola categoria nominale dello strumento) con una semantica
+    esplicita per tipo di limite (`DIRECT_EXPOSURE_LIMIT` /
+    `EFFECTIVE_EXPOSURE_LIMIT` / `THEMATIC_OVERWEIGHT_LIMIT`) — per
+    distinguere es. la tecnologia strutturale gia' contenuta in un ETF
+    core globale dalla tecnologia aggiuntiva presa con ETF settoriali
+    dedicati.
+  - **Voce 11** — "Aggiungere look-through automatico in una fase
+    successiva" (sezione 6, "Livello 2"): il sotto-progetto 2
+    (`bucket_exposure`) ha gia' costruito il "Livello 1" descritto dal
+    documento originale (mapping manuale/configurabile dell'esposizione
+    per strumento). Il "Livello 2" e' calcolare automaticamente, quando
+    disponibili dati affidabili sulla composizione reale di fondi/ETF, la
+    stessa scomposizione (azioni/obbligazioni/settori/paesi/valute/duration)
+    senza inserimento manuale — con possibilita' di verifica/sovrascrittura
+    manuale. Esplicitamente l'ultima voce della sequenza originale, non
+    urgente.
+- **Voci 6-10** (nomi confermati dal documento recuperato, sezione 21
+  "Priorita' di sviluppo": "Calcolare l'esposizione effettiva", "Adeguare
+  Strategic Analyzer", "Adeguare Eligibility Engine", "Adeguare
+  Rebalancing Engine", "Adeguare Purchase Optimizer"): **tutte chiuse**
+  (6-9 dal sotto-progetto 4, 10 dal sotto-progetto 5 — sotto). Resta solo
+  la voce 11 (look-through automatico), esplicitamente rimandata dal
+  documento sorgente stesso, non urgente.
+- **Sotto-progetto 5 / "10bis" (voce 10 + 5 problemi UI/integrazione
+  segnalati dall'utente, chiuso 2026-08-21)** — Purchase Optimizer con
+  esposizione frazionata reale: `_dominant_bucket` fa competere uno
+  strumento diviso tra bucket nel sotto-budget di quello con deficit
+  maggiore (non solo il suo bucket primario), `_compute_marginal_purchase_metrics`
+  pesa il miglioramento verso il target sulla somma pesata per bucket
+  (mai una media, stesso principio del sotto-progetto 4), i nuovi
+  parametri (`bucket_weights`/`bucket_targets`) sono filati fino alla
+  colonna "Prio" mostrata in tabella — trovato in fase di piano che quel
+  ricalcolo non era mai stato scoped al percorso pesato. Esteso su
+  richiesta esplicita dell'utente ("un unico intervento 10bis completo")
+  con 4 problemi reali trovati rivedendo il lavoro dei sotto-progetti
+  1-4: coerenza grafica tra le 3 pagine del form-server (`sator.py`,
+  `quote_interne.py`, `scheda_strumento.py` ricostruivano ciascuna il
+  proprio CSS invece di riusare `shell.CSS` — un bug di colore reale
+  incluso, `.alert-warn` rosso invece di ambra); NO_SELL collegato
+  davvero al motore SATOR (`_score_universe` ora esclude dal ranking un
+  nuovo acquisto, prima il flag influenzava solo un'etichetta UI); valore
+  automatico mostrato accanto a ruolo/benchmark/esposizione bucket quando
+  forzati manualmente; selettore benchmark da catalogo esistente
+  (`<datalist>`, campo resta testo libero) + log su fetch storico vuoto.
+  Eseguito con `subagent-driven-development`, 9 task + 1 ondata di fix
+  dalla review finale (sul modello piu' capace, dispatchata dopo tutti i
+  9 task): trovati e corretti un fallback asimmetrico su
+  `_bucket_exposure` (il ramo pesato azzerava le metriche invece di
+  degradare al bucket primario come gia' fa `_score_fit` — non
+  raggiungibile in produzione oggi, ma incoerenza interna reale) e un
+  `master_entry` mancante nel calcolo del valore benchmark "automatico"
+  (poteva mostrare una forzatura inesistente). La review finale ha anche
+  sollevato una tensione di design non risolta qui, lasciata a decisione
+  esplicita dell'utente: NO_SELL esclude lo strumento dall'**intero**
+  ranking SATOR (quindi anche dalla frontiera rischio/rendimento e dalla
+  mappa strumenti), non solo dai nuovi acquisti — fedele al testo della
+  spec originale, ma in tensione con l'uso tipico (una posizione storica
+  che dovrebbe restare visibile nel portafoglio attuale). Nessun dato
+  reale usa oggi NO_SELL, quindi il rischio e' dormiente.
 - **Correzioni sparse non collegate alla revisione** (stessa finestra
   temporale, bug segnalati dall'uso reale): quantita' BTP dagli eventi reali
   invece del campo statico, Timeline BTP ordinata per scadenza, due bug
@@ -926,24 +1002,44 @@ Con questo, Priorita' 7 e' di fatto esaurita: tutti i progetti pianificati
 sono chiusi o archiviati per scelta esplicita. Non riaprire il punto 5 senza
 una richiesta esplicita.
 
-### Priorita 9 - Revisione modello di classificazione e allocazione, voci residue
+### Priorita 9 - Revisione modello di classificazione e allocazione, voce residua
 
 Vedi "Revisione del modello di classificazione e allocazione — sotto-progetti
-1-3" in sezione 3 per cosa e' gia' chiuso (voci 1-4 dell'ordine di priorita'
-originale). Documento sorgente eliminato il 2026-08-21 (richiesta esplicita
-dell'utente, dopo il merge del sotto-progetto 3) — le voci sotto non hanno
-piu' una fonte scritta consultabile in questo repo.
+1-5" in sezione 3 per cosa e' gia' chiuso (voci 1-4 e 6-10 dell'ordine di
+priorita' originale — la voce 10, Purchase Optimizer, e' stata chiusa dal
+sotto-progetto 5/"10bis" il 2026-08-21). Documento sorgente eliminato dalla
+root il 2026-08-21 (richiesta esplicita dell'utente) ma **recuperato lo
+stesso giorno** dal transcript di sessione (era stato letto per intero
+all'inizio della conversazione) e salvato in
+`docs/portfolio-intelligence/Revisione del modello di classificazione e
+allocazione – Portfolio Intelligence.md` (gitignored) — tutte le 22
+sezioni sono di nuovo consultabili per intero.
 
-1. Voce 5 e voce 11 — nome/contenuto sconosciuti. Servono di nuovo il
-   documento originale o una descrizione diretta dall'utente prima di poter
-   pianificare qualunque lavoro su questi due punti.
-2. Voci 6-10 — "Calcolare l'esposizione effettiva", "Adeguare Strategic
-   Analyzer", "Adeguare Eligibility Engine", "Adeguare Rebalancing Engine",
-   "Adeguare Purchase Optimizer". Toccano il motore SATOR vero (scoring,
-   blocco, ottimizzazione acquisti) per fargli usare l'esposizione frazionata
-   ai bucket introdotta nel sotto-progetto 2, finora sempre esplicitamente
-   escluso — non forzare l'ordine dei sotto-progetti gia' seguito (1, 2, 3+4)
-   senza una richiesta esplicita dell'utente su quale riprendere.
+1. **Voce 11 — look-through automatico**, unica voce residua dell'intera
+   sequenza 1-11, esplicitamente "fase successiva" nel documento originale
+   (sezione 6, "Livello 2"): calcolo automatico della composizione reale
+   di fondi/ETF (azioni/obbligazioni/settori/paesi/valute/duration) quando
+   saranno disponibili dati affidabili, sopra il "Livello 1" manuale gia'
+   costruito dal sotto-progetto 2 (`bucket_exposure`). Non urgente per
+   esplicita indicazione del documento sorgente — dipende da una fonte
+   dati esterna non ancora identificata.
+2. **Decisione aperta segnalata dalla review finale del sotto-progetto 5**
+   (non e' un bug, e' una scelta di design da fare esplicitamente): oggi
+   NO_SELL esclude lo strumento dall'**intero** ranking SATOR
+   (`_score_universe`), non solo dai nuovi acquisti — quindi sparisce
+   anche dalla frontiera rischio/rendimento "Attuale"
+   (`sator_frontier.py`) e dalla Mappa strumenti
+   (`instrument_clustering.py`). Fedele al testo della spec (sezione 9 del
+   documento sorgente: "escluso dal ranking"), ma in tensione con l'uso
+   tipico di NO_SELL (una posizione storica sovrappesata che dovrebbe
+   restare visibile nel portafoglio attuale, non solo bloccata per i
+   nuovi acquisti). Nessun dato reale usa oggi NO_SELL (verificato), quindi
+   dormiente — ma va deciso esplicitamente prima che qualcuno lo attivi:
+   se la scelta e' "resta visibile ovunque tranne che come candidato
+   d'acquisto", la correzione tocca `_score_universe` (non escludere dal
+   ranking, solo forzare `Sug=0`/decision score nullo) e verosimilmente
+   anche `build_sator_decision_record` (oggi esplicitamente escluso dal
+   perimetro del sotto-progetto 5 dai vincoli globali del piano).
 
 ### Priorita 8 - Irrobustimento e maturazione 5.0
 

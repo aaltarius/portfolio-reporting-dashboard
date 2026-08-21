@@ -1,5 +1,121 @@
 # Changelog
 
+## 5.0-pre - Purchase Optimizer con esposizione frazionata reale, coerenza grafica form-server, NO_SELL nel motore SATOR (sotto-progetto 5/"10bis", 11 revisione classificazione)
+
+- chiude la voce 10 dell'ordine di priorità della revisione (Purchase
+  Optimizer), l'ultima ancora aperta della sequenza obbligatoria 1-10 dopo
+  il sotto-progetto 4. Un strumento con esposizione frazionata ai bucket
+  (es. 65% Core / 35% Difensivo) poteva prima competere per un nuovo
+  acquisto SOLO nel sotto-budget del suo bucket primario: se quel bucket
+  era saturo/bloccato, lo strumento non poteva mai essere comprato per
+  aiutare l'altro bucket a cui pure apparteneva, anche con un deficit
+  enorme lì.
+- `_dominant_bucket(exposure, eligible_buckets, bucket_deficits)`: per ogni
+  riga, assegna lo strumento al bucket — tra quelli a cui appartiene ed è
+  eleggibile — con il deficit euro maggiore. Per uno strumento non diviso
+  collassa esattamente al comportamento di sempre.
+- `_compute_marginal_purchase_metrics` guadagna `bucket_weights`/
+  `bucket_targets` opzionali (default `None`, percorso di default
+  invariato): quando presenti, il miglioramento verso il target è la
+  somma pesata sui bucket toccati — mai una media dei pesi/target prima
+  di calcolare lo scostamento, stesso principio già validato dal
+  sotto-progetto 4 per `_score_fit`. I due parametri sono filati fino
+  alla colonna "Prio" mostrata in tabella e alla motivazione testuale —
+  trovato in fase di piano che quel ricalcolo (un terzo punto di chiamata
+  mai scoped al percorso pesato) avrebbe altrimenti mostrato una priorità
+  incoerente con la decisione reale per uno strumento diviso.
+- esteso su richiesta esplicita dell'utente ("un unico intervento 10bis
+  completo") con 4 problemi reali segnalati rivedendo il lavoro dei
+  sotto-progetti 1-4:
+  - **coerenza grafica tra le pagine del form-server**: `sator.py`,
+    `quote_interne.py` e `scheda_strumento.py` ricostruivano ciascuna il
+    proprio foglio di stile invece di riusare `shell.CSS` — un bug di
+    colore reale incluso (`.alert-warn` in rosso invece che in ambra, non
+    distinguibile visivamente da un errore).
+  - **NO_SELL collegato davvero al motore SATOR**: `_score_universe` ora
+    esclude dal ranking un nuovo acquisto per uno strumento NO_SELL —
+    prima il flag influenzava solo un'etichetta nella UI, mai
+    l'eleggibilità reale. Aggiunta anche una nota esplicativa accanto
+    alla spunta, prima priva di qualunque testo.
+  - **valore automatico accanto al valore in vigore** per le tabelle
+    "Ruolo & Benchmark" ed "Esposizione Bucket" — mostrato solo quando
+    diverge dal valore effettivo, per non affollare la tabella quando non
+    c'è alcuna forzatura manuale.
+  - **selettore benchmark da catalogo esistente** (`<datalist>`, il campo
+    resta testo libero — nessuna perdita della possibilità di inserirne
+    uno nuovo) + log di avviso quando il fetch dello storico prezzi di un
+    benchmark torna vuoto (prima silenziosamente saltato).
+- eseguito con `subagent-driven-development`: 9 task + un'ondata di fix
+  dalla review finale sull'intero branch (sul modello più capace,
+  dispatchata dopo tutti i 9 task). Bug trovati e corretti prima del
+  merge: `post_bucket_weight` nel ramo pesato restituiva il valore
+  pre-acquisto invece che post-acquisto (Task 2); il test end-to-end
+  "flagship" passava per un motivo estraneo al fix reale, senza che il
+  suo bucket primario fosse davvero bloccato (Task 4); un fallback
+  asimmetrico su `_bucket_exposure` che azzerava silenziosamente le
+  metriche nel ramo pesato invece di degradare al bucket primario come
+  già fa `_score_fit` (non raggiungibile in produzione oggi, ma
+  incoerenza interna reale); un valore benchmark "automatico" calcolato
+  senza `master_entry`, che poteva mostrare una forzatura manuale
+  inesistente.
+- **decisione di design lasciata aperta dalla review finale** (non un
+  bug): NO_SELL esclude oggi lo strumento dall'intero ranking SATOR, non
+  solo dai nuovi acquisti — quindi sparisce anche dalla frontiera
+  rischio/rendimento "Attuale" e dalla Mappa strumenti. Fedele al testo
+  della spec, ma in tensione con l'uso tipico (una posizione storica che
+  dovrebbe restare visibile nel portafoglio attuale). Nessun dato reale
+  usa oggi NO_SELL — vedi sezione "Priorità 9" in `STATO_OPERATIVO_5.0_PRE.md`
+  per i dettagli e le opzioni di correzione.
+
+## 5.0-pre - Esposizione frazionata reale nel motore SATOR (sotto-progetto 4/11 revisione classificazione)
+
+- copre le voci 6-9 dell'ordine di priorità della revisione (segue il
+  sotto-progetto 3, target strategico e NO_SELL). Il sotto-progetto 2
+  aveva introdotto l'esposizione frazionata ai bucket (uno strumento può
+  appartenere per frazione a più bucket Core/Difensivo/Satellite) ma solo
+  per gli aggregatori di visualizzazione — il motore SATOR vero
+  continuava a vedere ogni strumento come 100% nel suo bucket primario.
+  Questo sotto-progetto chiude il divario per 4 pezzi del motore, uno per
+  voce, senza formule nuove: ogni funzione generalizzata degenera
+  esattamente al comportamento di oggi per uno strumento senza divisione
+  configurata.
+- `SatorContext` guadagna `instrument_bucket_exposures` (mappa
+  ticker→bucket→frazione per l'intero universo, non solo i posseduti);
+  `run_sator_analysis` calcola ora i propri `bucket_weights` con
+  l'esposizione frazionata (riuso del flag `use_fractional_exposure` già
+  esistente dal sotto-progetto 2, prima sempre `False` per il motore).
+- eleggibilità (voce 8, Eligibility Engine): uno strumento diviso resta
+  candidabile finché almeno uno dei bucket a cui appartiene ha quote
+  interne valide, non solo il suo bucket primario.
+- punteggio Fit (voce 7, Strategic Analyzer): la penalità di sovrappeso-bucket
+  è ora la media pesata sulla frazione di esposizione di ciascun bucket
+  toccato, invece del solo bucket primario — uno strumento diviso 65%
+  Core/35% Difensivo con Core sovrappesato e Difensivo no viene penalizzato
+  solo per la sua vera quota in Core.
+- deficit di bucket (voce 9, Rebalancing Engine): quando l'impostazione
+  opt-in `bucket_first_allocation` è attiva, il calcolo del deficit euro
+  per bucket riflette anch'esso la composizione frazionata reale.
+- voce 10 (Purchase Optimizer) esplicitamente rimandata a un sotto-progetto
+  5 futuro: l'allocazione degli acquisti resta a bucket singolo, è il
+  pezzo più delicato (un acquisto di uno strumento diviso dovrebbe
+  "pagare" da più sotto-budget di bucket senza doppio conteggio — problema
+  algoritmico distinto, non risolvibile con lo stesso pattern delle altre
+  3 voci).
+- bug critico trovato dalla review finale sull'intero branch e corretto
+  prima del merge: la colonna `_bucket_exposure` veniva creata DOPO essere
+  già stata letta dal calcolo del punteggio Fit, rendendo l'intera
+  generalizzazione della voce 7 inerte in produzione (ogni strumento,
+  diviso o no, veniva sempre valutato come 100% nel suo bucket primario) —
+  errore di ordinamento nella spec/piano stessi, non dell'implementazione;
+  trovato con verifica empirica sul motore reale, corretto spostando il
+  popolamento della colonna dentro il ciclo di costruzione delle righe
+  (prima del calcolo dei punteggi) con un test di integrazione dedicato
+  che passa per `run_sator_analysis` reale, non per una riga costruita a
+  mano. Corretto in stesso giro anche un terzo punto di chiamata mai
+  aggiornato (alimentava un alert di sovrappeso-bucket con un gate non
+  frazionato, rischiando di sopprimere un alert reale per uno strumento
+  diviso) e un docstring gemello rimasto falso.
+
 ## 5.0-pre - Target strategico e posizione NO_SELL per strumento (sotto-progetto 3/11 revisione classificazione)
 
 - copre le voci 3+4 dell'ordine di priorità della "Revisione del modello di
