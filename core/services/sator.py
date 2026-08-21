@@ -2144,6 +2144,21 @@ def _suggested_quotes(ranking_df: pd.DataFrame, budget: float, *, max_lines: int
     return quote
 
 
+def _dominant_bucket(
+    exposure: dict[str, float], eligible_buckets: list[str], bucket_deficits: dict[str, float],
+) -> str | None:
+    """Tra i bucket a cui lo strumento appartiene (frazione > 0) E che sono
+    eleggibili (non bloccati, deficit positivo), quello col deficit euro
+    maggiore - li' dove il denaro serve di piu'. Per uno strumento non
+    diviso (un solo bucket in exposure) collassa al suo unico bucket,
+    IDENTICO al comportamento di oggi (filtro df["_bucket"] == bucket).
+    None se nessuno dei bucket a cui appartiene e' eleggibile."""
+    candidati = [b for b, frac in exposure.items() if frac > 0 and b in eligible_buckets]
+    if not candidati:
+        return None
+    return max(candidati, key=lambda b: bucket_deficits.get(b, 0.0))
+
+
 def _suggested_quotes_by_bucket(
     ranking_df: pd.DataFrame,
     budget: float,
@@ -2195,6 +2210,19 @@ def _suggested_quotes_by_bucket(
         bucket for bucket, deficit in bucket_deficits.items()
         if bucket not in blocked_buckets and deficit > 0
     ]
+    if "_bucket_exposure" in df.columns:
+        dominant_bucket = df["_bucket_exposure"].map(
+            lambda exposure: _dominant_bucket(exposure or {}, eligible_buckets, bucket_deficits)
+        )
+    else:
+        # Colonna assente (non solo vuota): DataFrame costruito a mano fuori
+        # dalla pipeline reale (run_sator_analysis la popola sempre dal
+        # sotto-progetto 4), es. fixture di test preesistenti. Degrada a
+        # esposizione 100% nel bucket primario per ogni riga - identico al
+        # comportamento df["_bucket"] == bucket di prima di questo task.
+        dominant_bucket = df["_bucket"].map(
+            lambda b: _dominant_bucket({b: 1.0}, eligible_buckets, bucket_deficits)
+        )
     sub_budgets = {b: budget * bucket_deficits[b] / total_deficit for b in eligible_buckets}
     speso_per_bucket: dict[str, float] = {}
     for bucket in eligible_buckets:
@@ -2202,7 +2230,7 @@ def _suggested_quotes_by_bucket(
         if sub_budget <= 0:
             speso_per_bucket[bucket] = 0.0
             continue
-        bucket_df = df.loc[df["_bucket"] == bucket]
+        bucket_df = df.loc[dominant_bucket == bucket]
         if bucket_df.empty:
             speso_per_bucket[bucket] = 0.0
             continue
@@ -2221,7 +2249,7 @@ def _suggested_quotes_by_bucket(
         for bucket in saturated:
             extra = leftover * bucket_deficits[bucket] / saturated_deficit_total
             new_sub_budget = speso_per_bucket[bucket] + extra
-            bucket_df = df.loc[df["_bucket"] == bucket]
+            bucket_df = df.loc[dominant_bucket == bucket]
             if bucket_df.empty:
                 continue
             bucket_quote = _suggested_quotes(bucket_df, new_sub_budget, max_lines=max_lines_per_bucket)
