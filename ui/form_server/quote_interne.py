@@ -111,6 +111,7 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
     from core.benchmark_registry import known_benchmark_catalog, resolve_instrument_benchmark
 
     all_strumenti = data.get("strumenti", []) or []
+    benchmark_catalog_map: dict[str, str] = {tk.upper(): label for tk, label in known_benchmark_catalog()}
     role_rows = []
     for s in all_strumenti:
         tk = str(s.get("ticker") or "").strip()
@@ -120,14 +121,14 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
         current_bm = resolve_instrument_benchmark(s, master_entry=(data.get("instrument_master", {}) or {}).get(tk, {}), prefer_master=True)
         auto_role = infer_sator_metadata(s, True)["role"]
         auto_bm = resolve_instrument_benchmark(s, master_entry=(data.get("instrument_master", {}) or {}).get(tk, {}), prefer_master=False)
-        role_auto_hint = (
-            f'<span class="qi-hint">(automatico: {escape(SATOR_ROLE_LABELS.get(auto_role, auto_role))})</span>'
-            if auto_role != current_role else ""
-        )
-        bm_auto_hint = (
-            f'<span class="qi-hint">(automatico: {escape(auto_bm.ticker or "—")} &mdash; {escape(auto_bm.label or "—")})</span>'
-            if (auto_bm.ticker, auto_bm.label) != (current_bm.ticker, current_bm.label) else ""
-        )
+        # Mostrato sempre, non solo quando diverge (richiesto esplicitamente
+        # dall'utente: deve restare un punto di riferimento fisso anche dopo
+        # piu' modifiche manuali successive, non solo al primo scostamento).
+        role_auto_hint = f'<span class="qi-hint">Automatico: {escape(SATOR_ROLE_LABELS.get(auto_role, auto_role))}</span>'
+        # Il ticker e' in catalogo se ha un'etichetta nota: in quel caso
+        # l'etichetta si auto-compila via JS (vedi tab_ruolo) e diventa
+        # sola-lettura, cosi' i due campi non possono mai disallinearsi.
+        ticker_in_catalog = current_bm.ticker.upper() in benchmark_catalog_map
         # Stesse etichette italiane e stesso ordine di /strumenti (Finding 4):
         # SATOR_ROLE_LABELS per il testo visibile, SATOR_ROLE_VALUES nel suo
         # ordine di dichiarazione nativo (non alfabetico - "altro" e' l'ultimo
@@ -147,11 +148,12 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
             for r in SATOR_ROLE_VALUES
         )
         role_options = "".join(role_option_list)
+        bm_auto_hint = f'<span class="qi-hint">Automatico: {escape(auto_bm.ticker or "—")} &mdash; {escape(auto_bm.label or "—")}</span>'
         role_rows.append(
             f'<tr><td>{escape(tk)}</td>'
-            f'<td><select name="role_{escape(tk)}">{role_options}</select>{role_auto_hint}</td>'
-            f'<td><input type="text" name="benchmark_code_{escape(tk)}" value="{escape(current_bm.ticker or "")}" placeholder="es. SWDA.MI" list="benchmark-catalog"></td>'
-            f'<td><input type="text" name="benchmark_label_{escape(tk)}" value="{escape(current_bm.label or "")}" placeholder="es. MSCI World">{bm_auto_hint}</td>'
+            f'<td><select name="role_{escape(tk)}">{role_options}</select><br>{role_auto_hint}</td>'
+            f'<td><input type="text" class="bm-ticker" data-row="{escape(tk)}" name="benchmark_code_{escape(tk)}" value="{escape(current_bm.ticker or "")}" placeholder="es. SWDA.MI" list="benchmark-catalog"></td>'
+            f'<td><input type="text" class="bm-label" data-row="{escape(tk)}" name="benchmark_label_{escape(tk)}" value="{escape(current_bm.label or "")}" placeholder="es. MSCI World" {"readonly" if ticker_in_catalog else ""}><br>{bm_auto_hint}</td>'
             f'</tr>'
         )
 
@@ -159,13 +161,40 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
         f'<option value="{escape(tk)}">{escape(label)}</option>'
         for tk, label in known_benchmark_catalog()
     )
+    # ticker->etichetta esposto in JS (stesso catalogo di known_benchmark_catalog,
+    # nessuna seconda fonte di verita'): quando l'utente sceglie/scrive un ticker
+    # noto, l'etichetta si auto-compila e diventa sola-lettura, cosi' i due campi
+    # non possono mai disallinearsi (richiesto esplicitamente dall'utente - "li
+    # farei viaggiare insieme"). Per un ticker non in catalogo l'etichetta resta
+    # modificabile: serve un nome descrittivo scelto dall'utente.
+    benchmark_catalog_js = json.dumps(benchmark_catalog_map)
     tab_ruolo = f"""
   <datalist id="benchmark-catalog">{benchmark_options}</datalist>
   <form method="post" action="/quote-interne-ruolo-benchmark">
     <table class="qi-table"><thead><tr><th>Ticker</th><th>Ruolo</th><th>Benchmark ticker</th><th>Benchmark etichetta</th></tr></thead>
     <tbody>{"".join(role_rows)}</tbody></table>
     <button type="submit" class="btn-salva">Salva ruolo e benchmark</button>
-  </form>"""
+  </form>
+  <script>
+  (function() {{
+    var CATALOG = {benchmark_catalog_js};
+    function syncLabel(tickerInput) {{
+      var row = tickerInput.dataset.row;
+      var labelInput = document.querySelector('input.bm-label[data-row="' + row + '"]');
+      if (!labelInput) return;
+      var tk = tickerInput.value.trim().toUpperCase();
+      if (Object.prototype.hasOwnProperty.call(CATALOG, tk)) {{
+        labelInput.value = CATALOG[tk];
+        labelInput.readOnly = true;
+      }} else {{
+        labelInput.readOnly = false;
+      }}
+    }}
+    document.querySelectorAll('input.bm-ticker').forEach(function(el) {{
+      el.addEventListener('input', function() {{ syncLabel(el); }});
+    }});
+  }})();
+  </script>"""
 
     from core.services.sator import _role_bucket, resolve_instrument_bucket_exposure
 
@@ -177,13 +206,14 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
         current_exp = resolve_instrument_bucket_exposure(data, s, True)
         auto_role_bexp = infer_sator_metadata(s, True)["role"]
         auto_exp = {b: (1.0 if _role_bucket(auto_role_bexp) == b else 0.0) for b in _BUCKETS}
-
-        def _bexp_hint(bucket: str) -> str:
-            auto_pct = auto_exp[bucket] * 100
-            cur_pct = current_exp.get(bucket, 0.0) * 100
-            if abs(auto_pct - cur_pct) < 0.005:
-                return ""
-            return f'<span class="qi-hint">(auto: {auto_pct:.2f}%)</span>'
+        # Proposta automatica sempre visibile accanto al ticker, come testo
+        # fisso non modificabile (richiesto esplicitamente dall'utente): un
+        # unico riferimento immutabile, indipendente da quante volte le 3
+        # caselle sotto vengono ritoccate manualmente - non piu' un hint
+        # per-casella che scompariva appena il valore in vigore combaciava.
+        auto_exp_summary = " / ".join(
+            f'{auto_exp[b] * 100:.0f}% {b}' for b in _BUCKETS if auto_exp[b] > 0
+        ) or "nessuna proposta"
         # 2 decimali e step 0.01, come l'editor singolo-strumento in
         # ui/form_server/strumenti.py (Finding 1): con :.0f/step="1" uno
         # split non intero (es. 12,5%/87,5%) veniva mostrato arrotondato e
@@ -191,10 +221,10 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
         # tabella, anche una non toccata dall'utente (il form batch invia
         # sempre tutte le righe).
         bexp_rows.append(
-            f'<tr><td>{escape(tk)}</td>'
-            f'<td><input type="number" min="0" max="100" step="0.01" name="bexp_core_{escape(tk)}" value="{current_exp.get("Core", 0.0) * 100:.2f}">{_bexp_hint("Core")}</td>'
-            f'<td><input type="number" min="0" max="100" step="0.01" name="bexp_difensivo_{escape(tk)}" value="{current_exp.get("Difensivo", 0.0) * 100:.2f}">{_bexp_hint("Difensivo")}</td>'
-            f'<td><input type="number" min="0" max="100" step="0.01" name="bexp_satellite_{escape(tk)}" value="{current_exp.get("Satellite", 0.0) * 100:.2f}">{_bexp_hint("Satellite")}</td>'
+            f'<tr><td>{escape(tk)}<br><span class="qi-hint">Automatico: {escape(auto_exp_summary)}</span></td>'
+            f'<td><input type="number" min="0" max="100" step="0.01" name="bexp_core_{escape(tk)}" value="{current_exp.get("Core", 0.0) * 100:.2f}"></td>'
+            f'<td><input type="number" min="0" max="100" step="0.01" name="bexp_difensivo_{escape(tk)}" value="{current_exp.get("Difensivo", 0.0) * 100:.2f}"></td>'
+            f'<td><input type="number" min="0" max="100" step="0.01" name="bexp_satellite_{escape(tk)}" value="{current_exp.get("Satellite", 0.0) * 100:.2f}"></td>'
             f'</tr>'
         )
 
@@ -221,45 +251,39 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
             "in_target": "In target", "sottopeso": "Sottopeso",
             "sovrappeso": "Sovrappeso", "sovrappeso_no_sell": "Sovrappeso — NO_SELL",
         }
-        # Intestazione di colonna esplicita (Finding 2 della review finale):
-        # prima il target strategico calcolato non veniva mai mostrato, e il
-        # peso attuale (frazione di PORTAFOGLIO INTERO) affiancava senza
-        # etichette la quota target di bucket (frazione DI BUCKET) - due
-        # numeri con denominatori diversi, non confrontabili direttamente
-        # secondo il vincolo di progetto. Stesso ordine flex delle righe dati
-        # sotto, cosi' le etichette restano allineate alle colonne.
-        header_row = (
-            '<div class="qi-row" style="font-size:.72rem;text-transform:uppercase;'
-            'font-weight:800;color:var(--slate-500)">'
-            '<label>Ticker</label>'
-            '<span style="width:90px;text-align:right">Peso attuale</span>'
-            '<span style="width:90px;text-align:right">Target strategico</span>'
-            '<span style="width:100px">Quota target (bucket)</span>'
-            '<span style="flex:0 0 auto">NO_SELL</span>'
-            '<span>Stato</span>'
-            '</div>'
-        )
+        # Tabella vera (Finding scheda "Target & Stato" segnalato dall'utente
+        # dopo il Task 6: questa scheda era rimasta all'impaginazione a
+        # <div> flessibili di prima, mai convertita come le altre due
+        # ("Ruolo & Benchmark", "Esposizione Bucket") - intestazione e
+        # righe erano costruite con figli diversi (span vs input vs
+        # label+checkbox), quindi le colonne non si allineavano affatto.
         rows = "".join(
-            f'<div class="qi-row"><label>{escape(ticker)}</label>'
-            f'<span style="width:90px;text-align:right">{operational_status.get(ticker, {}).get("peso_attuale", 0.0) * 100:.1f}%</span>'
-            f'<span style="width:90px;text-align:right">{operational_status.get(ticker, {}).get("target", 0.0) * 100:.1f}%</span>'
-            f'<input type="number" min="0" max="100" step="0.5" '
+            f'<tr><td>{escape(ticker)}</td>'
+            f'<td style="text-align:right">{operational_status.get(ticker, {}).get("peso_attuale", 0.0) * 100:.1f}%</td>'
+            f'<td style="text-align:right">{operational_status.get(ticker, {}).get("target", 0.0) * 100:.1f}%</td>'
+            f'<td><input type="number" min="0" max="100" step="0.5" '
             f'data-bucket="{bucket}" data-ticker="{escape(ticker)}" '
             f'value="{quotas.get(ticker, 0.0) * 100:.1f}" class="qi-input">'
-            f'<label style="flex:0 0 auto"><input type="checkbox" name="no_sell_{escape(ticker)}" value="1" '
-            + ("checked" if operational_status.get(ticker, {}).get("no_sell") else "")
-            + '> NO_SELL</label>'
-            f'<span class="stato-badge stato-{operational_status.get(ticker, {}).get("stato", "in_target")}">'
-            f'{_stato_label.get(operational_status.get(ticker, {}).get("stato", "in_target"), "")}</span>'
             + (
-                f'<span class="qi-hint">riferimento indicativo: 0&ndash;{bucket_ranges[ticker][1] * 100:.0f}%</span>'
+                f'<br><span class="qi-hint">riferimento indicativo: 0&ndash;{bucket_ranges[ticker][1] * 100:.0f}%</span>'
                 if ticker in bucket_ranges else ""
             )
-            + '</div>'
+            + '</td>'
+            f'<td style="text-align:center"><input type="checkbox" name="no_sell_{escape(ticker)}" value="1" '
+            + ("checked" if operational_status.get(ticker, {}).get("no_sell") else "")
+            + '></td>'
+            f'<td><span class="stato-badge stato-{operational_status.get(ticker, {}).get("stato", "in_target")}">'
+            f'{_stato_label.get(operational_status.get(ticker, {}).get("stato", "in_target"), "")}</span></td>'
+            '</tr>'
             for ticker in tickers
         )
         bucket_sections.append(
-            f'<div class="qi-card"><h2>{bucket}</h2>{header_row}{rows}'
+            f'<div class="qi-card"><h2>{bucket}</h2>'
+            '<table class="qi-table"><thead><tr>'
+            '<th>Ticker</th><th style="text-align:right">Peso attuale</th>'
+            '<th style="text-align:right">Target strategico</th><th>Quota target (bucket)</th>'
+            '<th style="text-align:center">NO_SELL</th><th>Stato</th>'
+            f'</tr></thead><tbody>{rows}</tbody></table>'
             f'<div class="qi-sum" id="sum-{bucket}">Somma: --</div></div>'
         )
 
