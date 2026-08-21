@@ -302,6 +302,7 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
   {settings_section}
   <h2 style="margin-top:24px">Quote per bucket — Target strategico</h2>
   <p>Il riferimento indicativo accanto a ogni campo usa i limiti di concentrazione impostati sopra. Peso attuale e Stato sono calcolati, non editabili.</p>
+  <p class="qi-hint" style="display:block;margin:0 0 12px">La spunta <strong>NO_SELL</strong> blocca i nuovi acquisti suggeriti da SATOR per quello strumento (non genera mai un suggerimento di vendita): la posizione resta ferma e si diluisce da sola man mano che i nuovi versamenti vengono indirizzati verso altre componenti del portafoglio.</p>
   <form method="post" action="/quote-interne" onsubmit="return collectQuotas()">
     <input type="hidden" name="azione" value="salva_quote">
     <input type="hidden" name="quotas_json" id="quotas_json">

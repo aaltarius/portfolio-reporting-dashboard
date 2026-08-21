@@ -457,9 +457,9 @@ def resolve_instrument_no_sell(data: dict[str, Any], ticker: str) -> bool:
     resolve_instrument_bucket_exposure — no_sell_user_edited e' un flag
     indipendente, mai condiviso con altri campi di manual_overrides.sator,
     per non ripetere il bug del sotto-progetto 1 dove un flag condiviso
-    riattivava valori dormienti di un campo diverso). Nessun impatto sul
-    motore SATOR: solo lettura per la UI (vedi
-    compute_instrument_operational_status)."""
+    riattivava valori dormienti di un campo diverso). Usata sia dal motore
+    SATOR (_score_universe, esclude dal ranking un nuovo acquisto) sia
+    dalla UI (compute_instrument_operational_status)."""
     ticker = str(ticker or "").strip().upper()
     master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
     sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
@@ -932,6 +932,9 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
         role_for_bucket = _meta_strutturale(sator, inf, "role")
         exposure_for_eligibility = ctx.instrument_bucket_exposures.get(ticker) or {_role_bucket(role_for_bucket): 1.0}
         if all(bucket in ctx.blocked_buckets_quota for bucket, frac in exposure_for_eligibility.items() if frac > 0):
+            continue
+
+        if resolve_instrument_no_sell(ctx.data, ticker):
             continue
 
         nature = _meta_strutturale(sator, inf, "nature")
