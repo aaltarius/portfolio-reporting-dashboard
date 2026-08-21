@@ -1190,6 +1190,8 @@ def build_sator_matrix_frame(
     # "bucket_weight" NON e' un requisito reale: i pesi sono sempre ricalcolati
     # da zero via _compute_bucket_weights piu' sotto, mai letti da questa colonna.
     bucket_columns_ok = "_bucket" in work.columns and "portfolio_value" in work.columns
+    purchase_bucket_weights: dict[str, float] | None = None
+    purchase_bucket_targets: dict[str, float] | None = None
     if cfg is not None and cfg["bucket_first_allocation"] and bucket_columns_ok:
         state_df = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
         current_weights = _compute_current_weights(state_df)
@@ -1214,6 +1216,8 @@ def build_sator_matrix_frame(
             work, budget, deficits, blocked, max_lines_per_bucket=len(work),
             bucket_weights=bucket_weights, bucket_targets=objective,
         )
+        purchase_bucket_weights = bucket_weights
+        purchase_bucket_targets = objective
     else:
         if cfg is not None and cfg["bucket_first_allocation"] and not bucket_columns_ok:
             missing = [c for c in ("_bucket", "portfolio_value") if c not in work.columns]
@@ -1226,7 +1230,10 @@ def build_sator_matrix_frame(
 
     ranghi = pd.to_numeric(work["rango_gruppo"], errors="coerce").fillna(0).astype(int).tolist()
     marginal = [
-        _compute_marginal_purchase_metrics(work.iloc[i], int(suggerite[i]) * _safe_float(work.iloc[i].get("unit_price"), 0.0))
+        _compute_marginal_purchase_metrics(
+            work.iloc[i], int(suggerite[i]) * _safe_float(work.iloc[i].get("unit_price"), 0.0),
+            bucket_weights=purchase_bucket_weights, bucket_targets=purchase_bucket_targets,
+        )
         for i in range(len(work))
     ]
     decision_amounts = [
@@ -1236,11 +1243,17 @@ def build_sator_matrix_frame(
         for i in range(len(work))
     ]
     decision_scores = [
-        _purchase_decision_score(work.iloc[i], decision_amounts[i])
+        _purchase_decision_score(
+            work.iloc[i], decision_amounts[i],
+            bucket_weights=purchase_bucket_weights, bucket_targets=purchase_bucket_targets,
+        )
         for i in range(len(work))
     ]
     decision_reasons = [
-        _decision_reason(work.iloc[i], decision_amounts[i])
+        _decision_reason(
+            work.iloc[i], decision_amounts[i],
+            bucket_weights=purchase_bucket_weights, bucket_targets=purchase_bucket_targets,
+        )
         for i in range(len(work))
     ]
 
@@ -2101,8 +2114,12 @@ def _purchase_decision_score(
     return float(np.clip(decision, 0.0, 1.0))
 
 
-def _decision_reason(row: pd.Series, amount: float) -> str:
-    metrics = _compute_marginal_purchase_metrics(row, amount)
+def _decision_reason(
+    row: pd.Series, amount: float, *,
+    bucket_weights: dict[str, float] | None = None,
+    bucket_targets: dict[str, float] | None = None,
+) -> str:
+    metrics = _compute_marginal_purchase_metrics(row, amount, bucket_weights=bucket_weights, bucket_targets=bucket_targets)
     target_pp = _safe_float(metrics.get("target_improvement_pp"), 0.0)
     headroom_pp = _safe_float(metrics.get("cap_headroom_after_pp"), 0.0)
     quality_label = str(row.get("data_quality_label") or _data_quality_label(row.get("n_punti", 0)))
