@@ -1381,7 +1381,7 @@ def _compute_marginal_purchase_metrics(
     cap_headroom_after = nature_cap - post_nature_weight if nature_cap > 0 else 0.0
 
     if bucket_weights is not None and bucket_targets is not None:
-        exposure = row.get("_bucket_exposure") or {}
+        exposure = row.get("_bucket_exposure") or {_role_bucket(str(row.get("role"))): 1.0}
         target_improvement = 0.0
         bucket_weight_display = 0.0
         bucket_target_display = 0.0

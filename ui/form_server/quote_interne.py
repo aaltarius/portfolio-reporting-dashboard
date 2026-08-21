@@ -119,7 +119,7 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
         current_role = resolve_instrument_role(data, s, True)
         current_bm = resolve_instrument_benchmark(s, master_entry=(data.get("instrument_master", {}) or {}).get(tk, {}), prefer_master=True)
         auto_role = infer_sator_metadata(s, True)["role"]
-        auto_bm = resolve_instrument_benchmark(s, prefer_master=False)
+        auto_bm = resolve_instrument_benchmark(s, master_entry=(data.get("instrument_master", {}) or {}).get(tk, {}), prefer_master=False)
         role_auto_hint = (
             f'<span class="qi-hint">(automatico: {escape(SATOR_ROLE_LABELS.get(auto_role, auto_role))})</span>'
             if auto_role != current_role else ""
