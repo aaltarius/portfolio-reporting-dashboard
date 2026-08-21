@@ -1032,12 +1032,17 @@ def _score_fit(
     if str(row.get("role")) in {"core_globale", "core_regionale", "core_difensivo"}:
         score += 0.05
     if bucket_weights and bucket_targets:
-        bucket = _role_bucket(str(row.get("role")))
-        target = _safe_float(bucket_targets.get(_BUCKET_TO_OBJECTIVE_KEY.get(bucket, ""), 0.0))
-        peso_bucket = _safe_float(bucket_weights.get(bucket), 0.0)
-        if target > 0:
-            eccesso_bucket = max(0.0, (peso_bucket / target) - 1.0)
-            score -= float(np.clip(eccesso_bucket * 0.15, 0.0, 0.20)) * severita
+        exposure = row.get("_bucket_exposure") or {_role_bucket(str(row.get("role"))): 1.0}
+        penalty = 0.0
+        for bucket, frac in exposure.items():
+            if frac <= 0:
+                continue
+            target = _safe_float(bucket_targets.get(_BUCKET_TO_OBJECTIVE_KEY.get(bucket, ""), 0.0))
+            peso_bucket = _safe_float(bucket_weights.get(bucket), 0.0)
+            if target > 0:
+                eccesso_bucket = max(0.0, (peso_bucket / target) - 1.0)
+                penalty += frac * float(np.clip(eccesso_bucket * 0.15, 0.0, 0.20))
+        score -= penalty * severita
     return float(np.clip(score, 0.0, 1.0))
 
 
