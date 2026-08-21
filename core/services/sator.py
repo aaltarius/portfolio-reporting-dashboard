@@ -1210,7 +1210,10 @@ def build_sator_matrix_frame(
                 {k: {kk: round(vv, 4) for kk, vv in v.items()} for k, v in bands.items()},
                 sorted(blocked),
             )
-        suggerite = _suggested_quotes_by_bucket(work, budget, deficits, blocked, max_lines_per_bucket=len(work))
+        suggerite = _suggested_quotes_by_bucket(
+            work, budget, deficits, blocked, max_lines_per_bucket=len(work),
+            bucket_weights=bucket_weights, bucket_targets=objective,
+        )
     else:
         if cfg is not None and cfg["bucket_first_allocation"] and not bucket_columns_ok:
             missing = [c for c in ("_bucket", "portfolio_value") if c not in work.columns]
@@ -2060,7 +2063,11 @@ def build_next_purchase_bubble_frame(
     return frame, missing
 
 
-def _purchase_decision_score(row: pd.Series, amount: float) -> float:
+def _purchase_decision_score(
+    row: pd.Series, amount: float, *,
+    bucket_weights: dict[str, float] | None = None,
+    bucket_targets: dict[str, float] | None = None,
+) -> float:
     """Priorita' operativa dell'acquisto, distinta dal voto dello strumento.
 
     Il voto resta un giudizio qualitativo sullo strumento. Questo punteggio
@@ -2069,7 +2076,7 @@ def _purchase_decision_score(row: pd.Series, amount: float) -> float:
     una metrica 0-1 usata solo per decidere cosa finanziare con il budget.
     """
     amount = max(0.0, _safe_float(amount, 0.0))
-    metrics = _compute_marginal_purchase_metrics(row, amount)
+    metrics = _compute_marginal_purchase_metrics(row, amount, bucket_weights=bucket_weights, bucket_targets=bucket_targets)
     target_pp = _safe_float(metrics.get("target_improvement_pp"), 0.0)
     headroom_pp = _safe_float(metrics.get("cap_headroom_after_pp"), 0.0)
     quality = _safe_float(row.get("data_quality_score"), _data_quality_score(row.get("n_punti", 0)))
@@ -2116,7 +2123,12 @@ def _decision_reason(row: pd.Series, amount: float) -> str:
     return "; ".join(parts) + "."
 
 
-def _suggested_quotes(ranking_df: pd.DataFrame, budget: float, *, max_lines: int = MAX_LINEE_SUGGERITE) -> list[int]:
+def _suggested_quotes(
+    ranking_df: pd.DataFrame, budget: float, *,
+    max_lines: int = MAX_LINEE_SUGGERITE,
+    bucket_weights: dict[str, float] | None = None,
+    bucket_targets: dict[str, float] | None = None,
+) -> list[int]:
     """Allocazione suggerita a quote intere, guidata dall'utilita' marginale.
 
     Il voto continua a ordinare la qualita' degli strumenti, ma le quote
@@ -2139,7 +2151,7 @@ def _suggested_quotes(ranking_df: pd.DataFrame, budget: float, *, max_lines: int
         gruppi = pd.Series([str(i) for i in range(n)], index=df.index)
     initial_scores = pd.Series(
         [
-            _purchase_decision_score(df.iloc[i], _safe_float(df.iloc[i].get("unit_price"), 0.0))
+            _purchase_decision_score(df.iloc[i], _safe_float(df.iloc[i].get("unit_price"), 0.0), bucket_weights=bucket_weights, bucket_targets=bucket_targets)
             for i in range(n)
         ],
         index=df.index,
@@ -2171,7 +2183,7 @@ def _suggested_quotes(ranking_df: pd.DataFrame, budget: float, *, max_lines: int
             if (quote[i] + 1) * price > cap_linea:
                 continue
             next_amount = (quote[i] + 1) * price
-            step_score = _purchase_decision_score(df.iloc[i], next_amount)
+            step_score = _purchase_decision_score(df.iloc[i], next_amount, bucket_weights=bucket_weights, bucket_targets=bucket_targets)
             if step_score < 0.50:
                 continue
             step_scores.append((step_score, -price, i, price))
@@ -2207,6 +2219,8 @@ def _suggested_quotes_by_bucket(
     blocked_buckets: set[str],
     *,
     max_lines_per_bucket: int | None = None,
+    bucket_weights: dict[str, float] | None = None,
+    bucket_targets: dict[str, float] | None = None,
 ) -> list[int]:
     """Come _suggested_quotes, ma il budget e' prima diviso tra i bucket
     proporzionalmente al loro deficit (Allocation_k = budget * deficit_k /
@@ -2275,7 +2289,7 @@ def _suggested_quotes_by_bucket(
         if bucket_df.empty:
             speso_per_bucket[bucket] = 0.0
             continue
-        bucket_quote = _suggested_quotes(bucket_df, sub_budget, max_lines=max_lines_per_bucket)
+        bucket_quote = _suggested_quotes(bucket_df, sub_budget, max_lines=max_lines_per_bucket, bucket_weights=bucket_weights, bucket_targets=bucket_targets)
         for local_idx, q in zip(bucket_df.index, bucket_quote):
             quote[local_idx] = q
         speso_per_bucket[bucket] = sum(quote[i] * prices[i] for i in bucket_df.index)
@@ -2293,7 +2307,7 @@ def _suggested_quotes_by_bucket(
             bucket_df = df.loc[dominant_bucket == bucket]
             if bucket_df.empty:
                 continue
-            bucket_quote = _suggested_quotes(bucket_df, new_sub_budget, max_lines=max_lines_per_bucket)
+            bucket_quote = _suggested_quotes(bucket_df, new_sub_budget, max_lines=max_lines_per_bucket, bucket_weights=bucket_weights, bucket_targets=bucket_targets)
             for local_idx, q in zip(bucket_df.index, bucket_quote):
                 quote[local_idx] = q
         logger.info(
