@@ -14,6 +14,17 @@ BANNED_IDENTIFIERS = {
     "BENCHMARK_BY_MACRO", "BENCHMARK_BY_INDEX_PATTERN", "LEGACY_BENCH",
 }
 
+#: Le fixture di regressione (111 strumenti noti + baseline C/D/S congelata)
+#: sono materiale di test: se il codice di produzione le importasse, il motore
+#: risponderebbe da un catalogo statico invece che dalle fonti online — cioe'
+#: esattamente cio' che BANNED_IDENTIFIERS vieta, con un altro nome (spec
+#: sezione 10). Vietato anche il modulo che le carica.
+BANNED_FIXTURE_REFERENCES = {
+    "fixtures_loader",
+    "known_instruments.json",
+    "cds_regression_baseline_111.json",
+}
+
 SKIP_DIRS = {
     ".git", ".venv", "venv", "__pycache__", "node_modules",
     ".mypy_cache", ".pytest_cache", "tests", "test", "fixtures",
@@ -32,6 +43,18 @@ def production_python_files(root: Path) -> Iterator[Path]:
         yield path
 
 
+def fixture_reference_failures(rel: Path, text: str) -> list[str]:
+    """Riferimenti alle fixture di test trovati in un file di produzione."""
+    found: list[str] = []
+    for name in sorted(BANNED_FIXTURE_REFERENCES):
+        # `\b` non funziona a ridosso di un punto: i nomi di file sono
+        # cercati come letterali, l'identificatore di modulo con i confini.
+        pattern = re.escape(name) if "." in name else rf"\b{re.escape(name)}\b"
+        if re.search(pattern, text):
+            found.append(f"{rel}: test fixture reference {name} in production code")
+    return found
+
+
 def run_audit(root: Path) -> tuple[bool, list[str]]:
     failures: list[str] = []
     for path in production_python_files(root):
@@ -42,6 +65,7 @@ def run_audit(root: Path) -> tuple[bool, list[str]]:
                 failures.append(f"{rel}: banned identifier {name}")
         if re.search(r"""["']NON\s+RISOLTO["']""", text, flags=re.I):
             failures.append(f"{rel}: normal NON RISOLTO literal found")
+        failures.extend(fixture_reference_failures(rel, text))
     return (not failures, failures)
 
 
