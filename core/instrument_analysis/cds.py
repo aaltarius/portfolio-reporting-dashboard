@@ -302,10 +302,26 @@ def _derive_view(profile: InstrumentProfile, asset_mix: dict[str, float] | None)
         # `profile()` chiude sempre con: equity senza ampiezza esplicita = broad.
         view.breadth = "broad"
 
-    if view.breadth == "thematic":
-        view.market_breadth = view.market_breadth or 0.15
-    elif view.breadth == "sector":
-        view.market_breadth = view.market_breadth or 0.25
+    # Ampiezza di mercato: porting della scala di fallback di POC17.2
+    # `_infer_market_breadth` (riga 1008), limitata ai rami *strutturali*.
+    # I rami testuali del prototipo (" acwi ", " s&p 500 ", " ftse mib "...)
+    # non sono portati: richiedono il testo libero, fuori scope qui.
+    # Senza il fallback un equity con geo_scope="country" e market_breadth
+    # non valorizzato cadrebbe sempre sotto la soglia 0.45 di
+    # `_structural_type`, diventando SINGLE_COUNTRY_EQUITY anche quando e'
+    # un ampio indice di paese.
+    if not view.market_breadth:
+        if view.breadth == "thematic":
+            view.market_breadth = 0.15
+        elif view.breadth == "sector":
+            view.market_breadth = 0.25
+        elif family == "equity":
+            if view.geo_scope == "country":
+                view.market_breadth = 0.62
+            elif view.geo_scope == "regional":
+                view.market_breadth = 0.76
+            else:
+                view.market_breadth = 0.72
 
     # --- obbligazionario ----------------------------------------------------
     if family == "bond":
