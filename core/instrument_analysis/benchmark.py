@@ -57,8 +57,11 @@ def resolve_benchmark(profile: InstrumentProfile, signals: RawIdentitySignals) -
         resolution.operational_kind = OperationalKind.PROVIDER_INDEX
         resolution.resolution_level = "SISTER_FROM_FACTSHEET_TEXT"
         resolution.relation_grade = RelationGrade.SISTER
-        resolution.benchmark_confidence = signals.issuer.provenance.confidence
-        resolution.provenance.append(signals.issuer.provenance)
+        if signals.issuer.provenance:
+            resolution.benchmark_confidence = signals.issuer.provenance.confidence
+            resolution.provenance.append(signals.issuer.provenance)
+        else:
+            resolution.benchmark_confidence = 0.5
         return resolution
 
     # Nessuna fonte diretta: scende al mercato generale per la stessa
