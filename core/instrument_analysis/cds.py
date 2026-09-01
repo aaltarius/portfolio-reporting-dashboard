@@ -813,6 +813,9 @@ def compute_cds(
 
     flags.append("ROLE_AWARE_KEEP:" + (",".join(sorted(protected)) if protected else "none"))
 
+    # `reliability_score` resta deliberatamente al suo default (0.0): il
+    # porting di `reliability_scores()` di POC17.2 e' lavoro algoritmico
+    # rinviato a un task dedicato, non un'omissione silenziosa.
     assignment = CDSAssignment(
         raw_core_pct=raw["core"],
         raw_defensive_pct=raw["defensive"],

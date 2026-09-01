@@ -4,6 +4,7 @@ Fase D (background) e' responsabile di garantire che questo metodo giri
 solo fuori dal render di una pagina."""
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 
 from core.instrument_analysis import cache as ia_cache
@@ -16,10 +17,60 @@ from core.instrument_analysis.contracts import (
 from core.instrument_analysis.profile import RawIdentitySignals, build_profile
 from core.instrument_analysis.reference_data.borsa_italiana import fetch_etf_info
 from core.instrument_analysis.reference_data.issuer import fetch_factsheet
-from core.instrument_analysis.reference_data.openfigi import map_isin
-from core.instrument_analysis.reference_data.yahoo import resolve_yahoo_identity
+from core.instrument_analysis.reference_data.openfigi import OpenFigiIdentity, map_isin
+from core.instrument_analysis.reference_data.yahoo import YahooIdentity, resolve_yahoo_identity
 
 _RESOLUTION_TTL_DAYS = 14.0
+
+#: Grade di benchmark che NON contengono segnale utile: se la risoluzione si
+#: ferma qui e il profilo e' rimasto "ALTRO", non c'e' nulla da mettere in
+#: cache (vedi `_is_result_worth_caching`).
+_DEGRADED_GRADES = frozenset({
+    RelationGrade.TECHNICAL_EMERGENCY.value,
+    OperationalKind.INFRASTRUCTURE_EMERGENCY.value,
+})
+
+
+def _raw_type_text(
+    openfigi_identity: OpenFigiIdentity | None, yahoo_identity: YahooIdentity | None,
+) -> str:
+    """Testo grezzo di tipologia per `infer_category_code()` (profile.py).
+
+    Gli adapter non espongono una categoria di progetto (ETF/AZI/OBB/...):
+    espongono etichette del loro dominio (OpenFIGI `securityType2` = "ETP"/
+    "ETF"/"Common Stock", Yahoo `quoteType` = "ETF"/"EQUITY"/"MUTUALFUND").
+    Qui vengono concatenate in ordine di affidabilita' (OpenFIGI, che mappa
+    l'ISIN, prima di Yahoo, che parte da un ticker euristico) e passate al
+    classificatore centralizzato: nessuna tabella di categorie duplicata.
+
+    `market_sector` (Equity/Govt/Corp/Comdty) e' un ripiego di ultima
+    istanza: e' la macro-area dell'emittente, non la forma dello strumento,
+    quindi su un ETF azionario direbbe "Equity" (-> AZI) invece di ETF.
+    Viene usato solo quando nessuna delle due etichette di forma esiste.
+    """
+    parts = [
+        (openfigi_identity.security_type2 if openfigi_identity else "") or "",
+        (yahoo_identity.quote_type if yahoo_identity else "") or "",
+    ]
+    text = " ".join(p.strip() for p in parts if p.strip()).strip()
+    if text:
+        return text
+    return str((openfigi_identity.market_sector if openfigi_identity else "") or "").strip()
+
+
+def _is_result_worth_caching(profile: InstrumentProfile, benchmark: BenchmarkResolution) -> bool:
+    """True solo se almeno una delle due risoluzioni ha prodotto segnale.
+
+    Un risultato in cui il profilo e' rimasto "ALTRO" *e* il benchmark e'
+    finito in emergenza infrastrutturale e' indistinguibile da un blackout
+    di rete: metterlo in cache lo congelerebbe per l'intero TTL (14 giorni)
+    senza che nulla possa riprovare. In quel caso non si scrive nulla e la
+    chiamata successiva ritenta da capo.
+    """
+    if str(profile.asset_class or "").upper() not in ("", "ALTRO"):
+        return True
+    grade = getattr(benchmark.relation_grade, "value", benchmark.relation_grade)
+    return bool(grade) and grade not in _DEGRADED_GRADES
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +194,7 @@ def _benchmark_to_cache(benchmark: BenchmarkResolution) -> dict:
         "operational_label": benchmark.operational_label,
         "operational_provider": benchmark.operational_provider,
         "operational_kind": _enum_value(benchmark.operational_kind),
+        "series_is_fetchable": benchmark.series_is_fetchable,
         "resolution_level": benchmark.resolution_level,
         "relation_grade": _enum_value(benchmark.relation_grade),
         "benchmark_confidence": benchmark.benchmark_confidence,
@@ -169,6 +221,7 @@ def _benchmark_from_cache(data: dict) -> BenchmarkResolution:
         operational_label=data.get("operational_label", ""),
         operational_provider=data.get("operational_provider", ""),
         operational_kind=_operational_kind_from_cache(data.get("operational_kind", "")),
+        series_is_fetchable=bool(data.get("series_is_fetchable", False)),
         resolution_level=data.get("resolution_level", ""),
         relation_grade=_relation_grade_from_cache(data.get("relation_grade", "")),
         benchmark_confidence=data.get("benchmark_confidence", 0.0),
@@ -204,6 +257,12 @@ class InstrumentAnalysisService:
         tk = str(ticker or "").strip().upper()
         isincode = str(isin or "").strip().upper()
 
+        # Cronometro attivo anche sul ramo cache-hit: `elapsed_ms` misura
+        # sempre il costo reale di analyze() per il chiamante (sul cache-hit
+        # e' solo la lettura del file, tipicamente 0-1 ms; sul cache-miss e'
+        # rete + elaborazione, il numero che interessa alla spec).
+        started = time.perf_counter()
+
         cache = ia_cache.load_resolution_cache()
         cache_key = ia_cache.resolution_cache_key(tk, isincode)
 
@@ -217,6 +276,7 @@ class InstrumentAnalysisService:
                     cds=_cds_from_cache(cached.get("cds") or {}),
                     benchmark=_benchmark_from_cache(cached.get("benchmark") or {}),
                     algorithm_version=ia_cache.ALGORITHM_VERSION,
+                    elapsed_ms=int(round((time.perf_counter() - started) * 1000.0)),
                     cache_hit=True,
                 )
                 return analysis
@@ -227,6 +287,7 @@ class InstrumentAnalysisService:
         issuer_factsheet = fetch_factsheet(isincode)
 
         signals = RawIdentitySignals(
+            raw_type_text=_raw_type_text(openfigi_identity, yahoo_identity),
             yahoo=yahoo_identity, openfigi=openfigi_identity,
             borsa_italiana=borsa_italiana_info, issuer=issuer_factsheet,
         )
@@ -240,14 +301,18 @@ class InstrumentAnalysisService:
             profile=profile, cds=cds, benchmark=benchmark,
             algorithm_version=ia_cache.ALGORITHM_VERSION,
             resolved_at=datetime.now(timezone.utc).isoformat(),
+            elapsed_ms=int(round((time.perf_counter() - started) * 1000.0)),
             cache_hit=False,
         )
 
-        ia_cache.put_cached_resolution(
-            cache, cache_key,
-            _analysis_to_cache_payload(analysis.name, profile, cds, benchmark),
-        )
-        ia_cache.save_resolution_cache(cache)
+        # Un risultato completamente degradato non viene scritto: vedi
+        # `_is_result_worth_caching`.
+        if _is_result_worth_caching(profile, benchmark):
+            ia_cache.put_cached_resolution(
+                cache, cache_key,
+                _analysis_to_cache_payload(analysis.name, profile, cds, benchmark),
+            )
+            ia_cache.save_resolution_cache(cache)
 
         return analysis
 

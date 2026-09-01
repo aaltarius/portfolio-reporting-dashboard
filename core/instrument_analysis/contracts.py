@@ -106,6 +106,24 @@ class BenchmarkResolution:
     operational_provider: str = ""
     operational_kind: OperationalKind | str = ""
 
+    #: True solo se `operational_series` e' un identificativo realmente
+    #: interrogabile da una fonte dati (es. un simbolo Yahoo passabile a
+    #: `reference_data/yahoo.py::fetch_history`), False se e' soltanto
+    #: un'etichetta leggibile da un umano.
+    #:
+    #: Oggi e' SEMPRE False, deliberatamente: i rami EXACT/SISTER di
+    #: `benchmark.py` copiano il testo scrapato da Borsa Italiana o dal
+    #: factsheet dell'emittente ("NASDAQ YEWNO GLOBAL", "MSCI World
+    #: Index") — nomi commerciali, non simboli; il ramo
+    #: GENERAL_MARKET_FALLBACK usa placeholder di libreria
+    #: ("^990100-USD-STRD", "LEGATRUU-Index") non ancora verificati
+    #: contro una fonte; il ramo di emergenza non ha proprio una serie.
+    #: La risoluzione testo -> simbolo interrogabile e' lavoro futuro: il
+    #: campo esiste perche' un consumer non debba indovinare se puo'
+    #: passare `operational_series` a un fetch, non perche' oggi qualcosa
+    #: la renda interrogabile.
+    series_is_fetchable: bool = False
+
     resolution_level: str = ""
     relation_grade: RelationGrade | str = ""
     components: list[BenchmarkComponent] = field(default_factory=list)

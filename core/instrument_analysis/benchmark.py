@@ -35,6 +35,10 @@ def domain_locked(source_asset_class: str, candidate_asset_class: str) -> bool:
 
 
 def resolve_benchmark(profile: InstrumentProfile, signals: RawIdentitySignals) -> BenchmarkResolution:
+    # Nota: nessun ramo qui valorizza `series_is_fetchable`, che resta al
+    # default False. E' voluto — vedi il commento del campo in contracts.py:
+    # oggi `operational_series` e' sempre un'etichetta o un placeholder, mai
+    # un identificativo che una fonte dati sappia interrogare.
     resolution = BenchmarkResolution()
 
     if signals.borsa_italiana and signals.borsa_italiana.benchmark_name:
