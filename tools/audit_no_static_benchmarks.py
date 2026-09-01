@@ -20,9 +20,13 @@ SKIP_DIRS = {
     "reference", "docs", "HANDOFF_PROGRAMMATORE_BENCHMARK_CDS",
 }
 
+_SELF_PATH = Path(__file__).resolve()
+
 
 def production_python_files(root: Path) -> Iterator[Path]:
     for path in root.rglob("*.py"):
+        if path.resolve() == _SELF_PATH:
+            continue
         if any(part in SKIP_DIRS for part in path.parts):
             continue
         yield path
