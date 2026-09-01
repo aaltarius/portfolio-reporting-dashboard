@@ -26,7 +26,7 @@ BANNED_FIXTURE_REFERENCES = {
 }
 
 SKIP_DIRS = {
-    ".git", ".venv", "venv", "__pycache__", "node_modules",
+    ".git", ".claude", ".venv", "venv", "__pycache__", "node_modules",
     ".mypy_cache", ".pytest_cache", "tests", "test", "fixtures",
     "reference", "docs", "HANDOFF_PROGRAMMATORE_BENCHMARK_CDS",
 }
