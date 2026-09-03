@@ -33,7 +33,6 @@ from persistence.storage import (
     _normalize_event_record,
     _new_event_id,
     SCHEMA_VERSION,
-    BENCH,
     macro_cat,
     _normalize_macro_label,
     default_settings,

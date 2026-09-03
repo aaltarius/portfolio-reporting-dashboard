@@ -18,7 +18,6 @@ from core.asset_categories import (
     normalize_category_code,
     normalize_category_selection,
 )
-from core.benchmark_registry import LEGACY_BENCH
 
 logger = logging.getLogger("portafoglio.persistence.storage")
 
@@ -131,11 +130,6 @@ EVENTI_CON_STRUMENTO = {"ACQUISTO", "VENDITA", "RIMBORSO A SCADENZA", "CEDOLA", 
 EVENTI_CON_QUANTITA  = {"ACQUISTO", "VENDITA", "RIMBORSO A SCADENZA"}
 EVENTI_CON_PREZZO    = {"ACQUISTO", "VENDITA", "RIMBORSO A SCADENZA"}
 EVENTI_CON_IMPORTO   = {"CEDOLA", "DIVIDENDO", "VERSAMENTO", "PRELIEVO", "COMMISSIONE", "IMPOSTA"}
-
-# Mappa tipo strumento → ticker benchmark
-# Compatibilità storica: la risoluzione effettiva del benchmark è ora centralizzata
-# in core.benchmark_registry.resolve_instrument_benchmark().
-BENCH = dict(LEGACY_BENCH)
 
 
 # ---------------------------------------------------------------------------

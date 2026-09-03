@@ -4,22 +4,62 @@ Questo modulo e' l'unica fonte di verita' per assegnare un benchmark operativo
 al singolo strumento. Non dipende da Streamlit e non legge/scrive file: espone
 solo regole pure e riutilizzabili da Quotazioni, Cruscotti, Summary e refresh
 cache benchmark.
+
+Fase B (2026-09-03): facade sottile su `InstrumentAnalysisService` — nessun
+mapping statico ticker/ISIN/tipo/categoria in questo file. La risoluzione
+automatica e' online-first (identita' ufficiale, ladder di famiglie, curve
+sovrane, compositi multi-asset): vedi `core/instrument_analysis/`.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
-from core.asset_categories import infer_category_code
+from core.instrument_analysis.service import InstrumentAnalysisService
+
+_SERVICE: InstrumentAnalysisService | None = None
+
+
+def _service() -> InstrumentAnalysisService:
+    """Singleton lazy — un solo `InstrumentAnalysisService` per processo
+    (cache interna condivisa tra tutte le chiamate). Nei test si sostituisce
+    direttamente `core.benchmark_registry._SERVICE` con un fake che implementa
+    `analyze()`/`discovered_benchmark_catalog()`, mai una chiamata di rete
+    reale in un test unitario."""
+    global _SERVICE
+    if _SERVICE is None:
+        _SERVICE = InstrumentAnalysisService()
+    return _SERVICE
 
 
 @dataclass(frozen=True, slots=True)
 class BenchmarkAssignment:
+    """Vista compatibile per i consumer esistenti.
+
+    `ticker` resta il campo che i consumer usano per scaricare storico
+    prezzi/correlazione: e' `operational_series` quando davvero interrogabile
+    (`series_is_fetchable`), altrimenti il ticker di riserva del motore
+    (`fallback_fetchable_series`, Task S) quando esiste, altrimenti vuoto.
+    `label` resta SEMPRE l'identita' ufficiale (`operational_label`), mai
+    sostituita dal fallback.
+    """
     ticker: str
     label: str
     source: str
     confidence: str = "Media"
     note: str = ""
+
+    official_name: str = ""
+    official_code: str = ""
+    operational_provider: str = ""
+    operational_kind: str = ""
+    resolution_level: str = ""
+    relation_grade: str = ""
+    semantic_confidence: float = 0.0
+    geometry_score: float = 0.0
+    selection_score: float = 0.0
+    coverage_obs: int = 0
+    components: tuple[dict[str, Any], ...] = field(default_factory=tuple)
 
     @property
     def has_benchmark(self) -> bool:
@@ -35,111 +75,32 @@ class BenchmarkAssignment:
         }
 
 
-# Regole specifiche: hanno priorita' massima per evitare ambiguita' su strumenti
-# che condividono la stessa macro-categoria ma hanno sottostanti diversi.
-BENCHMARK_BY_TICKER: dict[str, BenchmarkAssignment] = {
-    "SWDA.MI": BenchmarkAssignment("IWDA.AS", "MSCI World", "ticker diretto", "Alta"),
-    "IWQU.MI": BenchmarkAssignment("IWDA.AS", "MSCI World Quality proxy", "ticker diretto", "Media"),
-    "XAIX.MI": BenchmarkAssignment("QQQ", "Nasdaq 100 / AI proxy", "ticker diretto", "Media"),
-    "XMME.MI": BenchmarkAssignment("EEM", "MSCI Emerging Markets", "ticker diretto", "Alta"),
-    "XDRE.MI": BenchmarkAssignment("VNQ", "REIT Index", "ticker diretto", "Media"),
-    "XDWH.MI": BenchmarkAssignment("IXJ", "Healthcare proxy", "ticker diretto", "Media"),
-    "XBAE.MI": BenchmarkAssignment("AGG", "Global Aggregate Bond", "ticker diretto", "Media"),
-    "XDBC.MI": BenchmarkAssignment("DJP", "Bloomberg Commodity", "ticker diretto", "Alta"),
-    "ENRG.MI": BenchmarkAssignment("XLE", "Energy Select", "ticker diretto", "Media"),
-    "ETFMIB.MI": BenchmarkAssignment("FTSEMIB.MI", "FTSE MIB", "ticker diretto", "Alta"),
-    "SGLD.MI": BenchmarkAssignment("GLD", "Gold proxy", "ticker diretto", "Alta", "ETC oro fisico: proxy oro spot/liquido."),
-    "GOLD.MI": BenchmarkAssignment("GLD", "Gold proxy", "ticker diretto", "Alta", "ETC oro fisico: proxy oro spot/liquido."),
-    "XGDU.MI": BenchmarkAssignment("GDX", "Gold Miners", "ticker diretto", "Media", "ETF/ETC minerari auriferi: proxy azionario minerario, non oro fisico."),
-    "XEON.MI": BenchmarkAssignment("SHV", "Short Duration Treasury", "ticker diretto", "Media"),
-    "FAMAMW.MI": BenchmarkAssignment("PICK", "Metals & Mining", "ticker diretto", "Media", "Segue MSCI World Metals and Mining (dato arricchito), non l'azionario globale generico."),
-}
-
-BENCHMARK_BY_ISIN: dict[str, BenchmarkAssignment] = {
-    "IE00B4L5Y983": BENCHMARK_BY_TICKER["SWDA.MI"],
-    "IE00B579F325": BENCHMARK_BY_TICKER["SGLD.MI"],
-    "FR0013416716": BENCHMARK_BY_TICKER["GOLD.MI"],
-    "DE000A2T0VU5": BENCHMARK_BY_TICKER["XGDU.MI"],
-}
-
-BENCHMARK_BY_TYPE: dict[str, BenchmarkAssignment] = {
-    "etf az. globale": BenchmarkAssignment("IWDA.AS", "MSCI World", "tipo strumento", "Alta"),
-    "etf az. emergenti": BenchmarkAssignment("EEM", "MSCI EM", "tipo strumento", "Alta"),
-    "etf az. italia": BenchmarkAssignment("FTSEMIB.MI", "FTSE MIB", "tipo strumento", "Alta"),
-    "etf monetario": BenchmarkAssignment("SHV", "Short Duration Treasury", "tipo strumento", "Media"),
-    "etf": BenchmarkAssignment("IWDA.AS", "MSCI World", "tipo strumento", "Media"),
-    "etf materie prime": BenchmarkAssignment("DJP", "Bloomberg Commodity", "tipo strumento", "Alta"),
-    "etf energia": BenchmarkAssignment("XLE", "Energy Select", "tipo strumento", "Media"),
-    "etf real estate": BenchmarkAssignment("VNQ", "REIT Index", "tipo strumento", "Media"),
-    "etf ia": BenchmarkAssignment("QQQ", "Nasdaq 100", "tipo strumento", "Media"),
-    "etc oro": BenchmarkAssignment("GLD", "Gold proxy", "tipo strumento", "Alta"),
-    "oro": BenchmarkAssignment("GLD", "Gold proxy", "tipo strumento", "Alta"),
-    "gold": BenchmarkAssignment("GLD", "Gold proxy", "tipo strumento", "Alta"),
-    "metalli preziosi": BenchmarkAssignment("GLD", "Gold proxy", "tipo strumento", "Media"),
-    "gold miners": BenchmarkAssignment("GDX", "Gold Miners", "tipo strumento", "Media"),
-    "minerari auriferi": BenchmarkAssignment("GDX", "Gold Miners", "tipo strumento", "Media"),
-    "titolo di stato": BenchmarkAssignment("BND", "Bond Index", "tipo strumento", "Media", "Proxy obbligazionario generico, non duration-specific."),
-    "titolo governativo": BenchmarkAssignment("BND", "Bond Index", "tipo strumento", "Media", "Proxy obbligazionario generico, non duration-specific."),
-    "btp": BenchmarkAssignment("BND", "Bond Index", "tipo strumento", "Media", "Proxy obbligazionario generico, non duration-specific."),
-    "gov": BenchmarkAssignment("BND", "Bond Index", "tipo strumento", "Media", "Proxy obbligazionario generico, non duration-specific."),
-    "fondo obbligazionario": BenchmarkAssignment("BND", "Bond Index", "tipo strumento", "Media"),
-    "fondo obbl. merc. em.": BenchmarkAssignment("EMB", "JPM EMBI", "tipo strumento", "Media"),
-    "fondo bilanciato": BenchmarkAssignment("IWDA.AS", "MSCI World", "tipo strumento", "Bassa", "Proxy semplificato: non replica la composizione del fondo."),
-    "fondo bilan. flessibile": BenchmarkAssignment("IWDA.AS", "MSCI World", "tipo strumento", "Bassa", "Proxy semplificato: non replica la composizione del fondo."),
-    "fondo azionario": BenchmarkAssignment("IWDA.AS", "MSCI World", "tipo strumento", "Media"),
-    "fondo bilan. passivo": BenchmarkAssignment("IWDA.AS", "MSCI World", "tipo strumento", "Bassa"),
-    "fondo az. passivo": BenchmarkAssignment("IWDA.AS", "MSCI World", "tipo strumento", "Media"),
-    "azione": BenchmarkAssignment("FTSEMIB.MI", "FTSE MIB", "tipo strumento", "Bassa"),
-    "azione italiana": BenchmarkAssignment("FTSEMIB.MI", "FTSE MIB", "tipo strumento", "Media"),
-    "azione globalc": BenchmarkAssignment("IWDA.AS", "MSCI World", "tipo strumento", "Bassa"),
-}
-
-BENCHMARK_BY_MACRO: dict[str, BenchmarkAssignment] = {
-    "GOV": BenchmarkAssignment("BND", "Bond Index", "macro-categoria", "Media", "Proxy obbligazionario generico."),
-    "BOND": BenchmarkAssignment("BND", "Bond Index", "macro-categoria", "Media"),
-    "OBB": BenchmarkAssignment("BND", "Bond Index", "macro-categoria", "Media"),
-    "ETF": BenchmarkAssignment("IWDA.AS", "MSCI World", "macro-categoria", "Bassa", "Fallback generico per ETF non classificati."),
-    "ETC": BenchmarkAssignment("DJP", "Bloomberg Commodity", "macro-categoria", "Bassa", "Fallback generico per ETC/commodity non classificati."),
-    "FND": BenchmarkAssignment("IWDA.AS", "MSCI World", "macro-categoria", "Bassa", "Fallback generico per fondi non classificati."),
-    "AZIONI": BenchmarkAssignment("IWDA.AS", "MSCI World", "macro-categoria", "Bassa"),
-}
-
-# Pattern per famiglie di indici reali (dal campo "benchmark" arricchito via
-# justETF): lista ordinata dal piu' specifico al piu' generico, perche' il
-# match e' per sottostringa e un indice come "MSCI World Information
-# Technology" deve scegliere il proxy tecnologia, non il generico MSCI World.
-BENCHMARK_BY_INDEX_PATTERN: list[tuple[str, BenchmarkAssignment]] = [
-    ("bitcoin", BenchmarkAssignment("BTC-USD", "Bitcoin", "benchmark arricchito", "Alta")),
-    ("information technology", BenchmarkAssignment("QQQ", "Nasdaq 100 (proxy tecnologia)", "benchmark arricchito", "Media")),
-    ("india", BenchmarkAssignment("INDA", "MSCI India", "benchmark arricchito", "Media")),
-    ("miner", BenchmarkAssignment("GDX", "Gold Miners", "benchmark arricchito", "Media")),
-    ("gold", BenchmarkAssignment("GLD", "Gold proxy", "benchmark arricchito", "Alta")),
-    ("msci emerging", BenchmarkAssignment("EEM", "MSCI EM", "benchmark arricchito", "Alta")),
-    ("msci world", BenchmarkAssignment("IWDA.AS", "MSCI World", "benchmark arricchito", "Alta")),
-    ("ftse all-world", BenchmarkAssignment("VWRL.AS", "FTSE All-World", "benchmark arricchito", "Alta")),
-    ("ftse mib", BenchmarkAssignment("FTSEMIB.MI", "FTSE MIB", "benchmark arricchito", "Alta")),
-    ("s&p 500", BenchmarkAssignment("SPY", "S&P 500", "benchmark arricchito", "Alta")),
-    ("nasdaq", BenchmarkAssignment("QQQ", "Nasdaq 100", "benchmark arricchito", "Alta")),
-    ("bloomberg commodity", BenchmarkAssignment("DJP", "Bloomberg Commodity", "benchmark arricchito", "Media")),
-]
-
-# Compatibilita' con il vecchio dizionario BENCH tipo -> (ticker, label).
-LEGACY_BENCH: dict[str, tuple[str, str]] = {
-    key: (assignment.ticker, assignment.label)
-    for key, assignment in BENCHMARK_BY_TYPE.items()
-}
-
-
 def _norm(value: Any) -> str:
     return str(value or "").strip()
 
 
-def _norm_key(value: Any) -> str:
-    return _norm(value).lower()
+def _confidence_label(value: float) -> str:
+    if value >= 0.85:
+        return "Alta"
+    if value >= 0.60:
+        return "Media"
+    return "Bassa"
 
 
-def _macro_from_type(raw_type: Any) -> str:
-    return infer_category_code(raw_type, default="ALTRO")
+def _duration_years(inst: dict[str, Any], master: dict[str, Any]) -> float | None:
+    """`duration_modificata` (arricchimento PDF gia' esistente sullo
+    strumento reale) se disponibile — necessario alla curva sovrana per i
+    titoli di stato singoli. `None` se assente o non numerico: il motore
+    degrada da solo (curva con floor minimo, vedi `sovereign_curve.py`)."""
+    raw = master.get("duration_modificata")
+    if raw is None:
+        raw = inst.get("duration_modificata")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 def resolve_instrument_benchmark(
@@ -155,21 +116,18 @@ def resolve_instrument_benchmark(
     """Restituisce il benchmark operativo per uno strumento.
 
     Ordine di priorita':
-    1. eventuale anagrafica master gia' valorizzata;
-    2. regola specifica per ticker;
-    3. regola specifica per ISIN;
-    4. benchmark reale arricchito (campo "benchmark", da justETF);
-    5. regola per tipo strumento;
-    6. fallback per macro-categoria;
-    7. assente.
+    1. override esplicito dell'utente (`manual_overrides.sator.benchmark_user_edited`);
+    2. risoluzione automatica via `InstrumentAnalysisService` (identita'
+       ufficiale online-first — mai euristiche per parola chiave).
+
+    `raw_type`/`category` sono mantenuti in firma solo per compatibilita'
+    con le chiamate esistenti: non guidano piu' la risoluzione automatica.
     """
     inst = instrument if isinstance(instrument, dict) else {}
     master = master_entry if isinstance(master_entry, dict) else {}
 
     tk = _norm(ticker or inst.get("ticker") or master.get("ticker")).upper()
     isincode = _norm(isin or inst.get("isin") or master.get("isin")).upper()
-    typ = _norm(raw_type or inst.get("tipo") or master.get("type_raw"))
-    cat = _norm(category or master.get("macro_category") or _macro_from_type(typ)).upper()
 
     if prefer_master:
         overrides = (master.get("manual_overrides") or {}).get("sator") or {}
@@ -179,48 +137,47 @@ def resolve_instrument_benchmark(
             if mt or ml:
                 return BenchmarkAssignment(mt, ml or mt or "Benchmark concettuale", "anagrafica", "Alta")
 
-    if tk in BENCHMARK_BY_TICKER:
-        return BENCHMARK_BY_TICKER[tk]
-    if isincode in BENCHMARK_BY_ISIN:
-        return BENCHMARK_BY_ISIN[isincode]
+    analysis = _service().analyze(
+        ticker=tk, isin=isincode, duration_years=_duration_years(inst, master),
+    )
+    b = analysis.benchmark
 
-    enriched_benchmark = _norm_key(inst.get("benchmark"))
-    if enriched_benchmark:
-        for pattern, assignment in BENCHMARK_BY_INDEX_PATTERN:
-            if pattern in enriched_benchmark:
-                return assignment
+    fetchable_ticker = (
+        b.operational_series if b.series_is_fetchable else b.fallback_fetchable_series
+    )
+    components = tuple(
+        {
+            "series_id": c.series_id,
+            "label": c.label,
+            "weight_pct": c.weight_pct,
+            "provider": c.provider,
+            "kind": str(c.kind or ""),
+        }
+        for c in b.components
+    )
 
-    key = _norm_key(typ)
-    if key in BENCHMARK_BY_TYPE:
-        return BENCHMARK_BY_TYPE[key]
-
-    # Euristiche testuali leggere per evitare dipendenza totale dalla nomenclatura.
-    if any(token in key for token in ("gold", "oro", "aurifer")):
-        if any(token in key for token in ("miner", "mining", "producer", "xgdu")):
-            return BenchmarkAssignment("GDX", "Gold Miners", "euristica tipo", "Media")
-        return BenchmarkAssignment("GLD", "Gold proxy", "euristica tipo", "Alta")
-    if any(token in key for token in ("btp", "govern", "titolo di stato")):
-        return BENCHMARK_BY_TYPE["btp"]
-    if any(token in key for token in ("commodity", "materie prime", "commod")):
-        return BENCHMARK_BY_TYPE["etf materie prime"]
-
-    if cat in BENCHMARK_BY_MACRO:
-        return BENCHMARK_BY_MACRO[cat]
-
-    return BenchmarkAssignment("", "—", "assente", "Bassa")
+    return BenchmarkAssignment(
+        ticker=_norm(fetchable_ticker),
+        label=_norm(b.operational_label) or _norm(b.official_name) or "—",
+        source=_norm(b.official_source) or _norm(b.operational_provider) or "runtime",
+        confidence=_confidence_label(b.benchmark_confidence),
+        note=_norm(b.note),
+        official_name=b.official_name,
+        official_code=b.official_code,
+        operational_provider=b.operational_provider,
+        operational_kind=str(b.operational_kind or ""),
+        resolution_level=b.resolution_level,
+        relation_grade=str(b.relation_grade or ""),
+        semantic_confidence=b.semantic_confidence,
+        geometry_score=b.geometry_score,
+        selection_score=b.selection_score,
+        coverage_obs=b.coverage_obs,
+        components=components,
+    )
 
 
 def known_benchmark_catalog() -> list[tuple[str, str]]:
-    """Coppie (ticker, label) uniche di tutti i benchmark noti nel
-    catalogo (BENCHMARK_BY_TICKER, BENCHMARK_BY_ISIN, BENCHMARK_BY_TYPE,
-    BENCHMARK_BY_MACRO), ordinate per ticker - per popolare un <datalist>
-    di scelta rapida nella UI. Il campo benchmark resta testo libero: la
-    lista aiuta a scegliere un valore noto senza impedire di inserirne
-    uno nuovo mai usato prima."""
-    seen: dict[str, str] = {}
-    for catalog in (BENCHMARK_BY_TICKER, BENCHMARK_BY_ISIN, BENCHMARK_BY_TYPE, BENCHMARK_BY_MACRO):
-        for assignment in catalog.values():
-            tk = str(assignment.ticker or "").strip()
-            if tk and tk not in seen:
-                seen[tk] = str(assignment.label or "").strip()
-    return sorted(seen.items())
+    """Coppie (ticker, label) scoperte a runtime dal motore (cache di
+    risoluzione gia' popolata), per un `<datalist>` di scelta rapida in UI —
+    non piu' un catalogo statico. Il campo benchmark resta testo libero."""
+    return list(_service().discovered_benchmark_catalog())

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import pandas as pd
 
+import core.benchmark_registry as benchmark_registry
 from core.services.benchmark import (
     benchmark_explanation,
     build_benchmark_transparency_payload,
     resolve_effective_benchmark_components,
 )
+from tests._fake_instrument_analysis_service import FakeAnalysisService, fetchable_resolution
 
 
 def test_resolve_blend_automatic_components_from_gov_weight():
@@ -87,8 +89,13 @@ def test_build_benchmark_transparency_payload_adds_metrics_and_cache_state():
     assert "Benchmark attivo" in benchmark_explanation(payload)
 
 
-def test_build_instrument_benchmark_matrix_computes_relative_metrics():
+def test_build_instrument_benchmark_matrix_computes_relative_metrics(monkeypatch):
     from core.services.benchmark import build_instrument_benchmark_matrix
+
+    monkeypatch.setattr(
+        benchmark_registry, "_SERVICE",
+        FakeAnalysisService(by_ticker={"SWDA.MI": fetchable_resolution("IWDA.AS", "MSCI World", confidence=0.9)}),
+    )
 
     data = {
         "strumenti": [
@@ -179,12 +186,14 @@ def test_build_instrument_benchmark_matrix_computes_relative_metrics():
     assert no_bench["compatibility_label"] == "Senza benchmark"
 
 
-def test_build_instrument_benchmark_matrix_excludes_closed_instruments():
+def test_build_instrument_benchmark_matrix_excludes_closed_instruments(monkeypatch):
     """Uno strumento venduto per intero non deve comparire in matrix, anche
     se il campo stato dice ancora 'aperto' (disallineato rispetto alla
     realta') — il criterio e' la quantita' effettiva calcolata dagli eventi,
     non il campo stato dichiarato sullo strumento."""
     from core.services.benchmark import build_instrument_benchmark_matrix
+
+    monkeypatch.setattr(benchmark_registry, "_SERVICE", FakeAnalysisService())
 
     data = {
         "strumenti": [
@@ -211,8 +220,18 @@ def test_build_instrument_benchmark_matrix_excludes_closed_instruments():
     assert "VENDUTO.MI" not in set(matrix["ticker"])
 
 
-def test_gov_instrument_gets_bond_index_fallback_when_master_has_no_benchmark():
+def test_gov_instrument_surfaces_registry_benchmark_in_matrix(monkeypatch):
+    # Il vecchio fallback statico per macro-categoria GOV e' stato rimosso
+    # (Fase B, 2026-09-03: il motore InstrumentAnalysisService risolve la
+    # curva sovrana ECB/l'ETF governativo reale, vedi Task R) — qui si
+    # verifica solo che la matrix propaghi correttamente qualunque
+    # benchmark risolto dal registro, non un valore statico specifico.
     from core.services.benchmark import build_instrument_benchmark_matrix
+
+    monkeypatch.setattr(
+        benchmark_registry, "_SERVICE",
+        FakeAnalysisService(by_ticker={"BTP-0826": fetchable_resolution("BND", "Bond Index", confidence=0.6)}),
+    )
 
     data = {
         "strumenti": [
@@ -243,38 +262,52 @@ def test_gov_instrument_gets_bond_index_fallback_when_master_has_no_benchmark():
     row = matrix[matrix["ticker"] == "BTP-0826"].iloc[0]
     assert row["benchmark_ticker"] == "BND"
     assert row["benchmark_label"] == "Bond Index"
-    assert row["benchmark_source"] in {"macro-categoria", "macro categoria", "tipo strumento", "tipo sintetico"}
+    assert row["benchmark_source"] == "reference_family"
     assert row["compatibility_label"] != "Senza benchmark"
 
 
-def test_central_registry_assigns_gold_and_miners_benchmarks():
+def test_central_registry_delegates_automatic_resolution_to_service(monkeypatch):
+    # Fase B (2026-09-03): nessun mapping statico ticker/tipo/benchmark
+    # arricchito in questo modulo — la risoluzione automatica delega
+    # interamente a InstrumentAnalysisService. Le regole di dominio (gold
+    # vs miners, India, Bitcoin, pattern piu' specifico, ecc.) sono ora
+    # responsabilita' del motore e testate li' (`tests/core/instrument_analysis/`,
+    # replay ufficiale sui 111 fixture) — qui si verifica solo il
+    # meccanismo di delega della facade.
     from core.benchmark_registry import resolve_instrument_benchmark
 
-    gold = resolve_instrument_benchmark({"ticker": "GOLD.MI", "isin": "FR0013416716", "tipo": "ETC oro"}, prefer_master=False)
-    miners = resolve_instrument_benchmark({"ticker": "XGDU.MI", "tipo": "ETF minerari auriferi"}, prefer_master=False)
+    fake = FakeAnalysisService(by_ticker={"GOLD.MI": fetchable_resolution("GLD", "Gold proxy", confidence=0.9)})
+    monkeypatch.setattr(benchmark_registry, "_SERVICE", fake)
 
-    assert gold.ticker == "GLD"
-    assert "Gold" in gold.label
-    assert miners.ticker == "GDX"
-    assert "Miner" in miners.label
+    result = resolve_instrument_benchmark({"ticker": "GOLD.MI", "isin": "FR0013416716"}, prefer_master=False)
+
+    assert result.ticker == "GLD"
+    assert result.label == "Gold proxy"
+    assert result.confidence == "Alta"
+    assert fake.calls == [("GOLD.MI", "FR0013416716")]  # ticker/isin propagati cosi' come sono
 
 
-def test_famamw_usa_proxy_metalli_e_non_msci_world():
-    """FAMAMW.MI segue davvero 'MSCI World Metals and Mining' (dato arricchito
-    reale), non l'azionario globale generico: la regola per ticker deve
-    riflettere il vero focus del fondo, non il nome commerciale."""
+def test_central_registry_no_benchmark_degrades_neutrally(monkeypatch):
     from core.benchmark_registry import resolve_instrument_benchmark
 
-    result = resolve_instrument_benchmark(
-        {"ticker": "FAMAMW.MI", "isin": "IE000EE3Q489", "tipo": "ETF Az. Globale"},
-        prefer_master=False,
-    )
+    monkeypatch.setattr(benchmark_registry, "_SERVICE", FakeAnalysisService())  # default: nessun benchmark
 
-    assert result.ticker == "PICK"
+    result = resolve_instrument_benchmark({"ticker": "SCONOSCIUTO.MI"}, prefer_master=False)
+
+    assert result.has_benchmark is False
+    assert result.ticker == ""
 
 
-def test_instrument_matrix_uses_central_registry_when_master_is_empty():
+def test_instrument_matrix_uses_central_registry_when_master_is_empty(monkeypatch):
     from core.services.benchmark import build_instrument_benchmark_matrix
+
+    monkeypatch.setattr(
+        benchmark_registry, "_SERVICE",
+        FakeAnalysisService(by_ticker={
+            "GOLD.MI": fetchable_resolution("GLD", "Gold proxy", source="reference_family"),
+            "XGDU.MI": fetchable_resolution("GDX", "Gold Miners", source="reference_family"),
+        }),
+    )
 
     data = {
         "strumenti": [
@@ -294,116 +327,33 @@ def test_instrument_matrix_uses_central_registry_when_master_is_empty():
     by_ticker = matrix.set_index("ticker")
 
     assert by_ticker.loc["GOLD.MI", "benchmark_ticker"] == "GLD"
-    assert by_ticker.loc["GOLD.MI", "benchmark_source"] == "ticker diretto"
+    assert by_ticker.loc["GOLD.MI", "benchmark_source"] == "reference_family"
     assert by_ticker.loc["XGDU.MI", "benchmark_ticker"] == "GDX"
 
 
-def test_enriched_benchmark_india_sceglie_proxy_specifico():
-    from core.benchmark_registry import resolve_instrument_benchmark
-
-    result = resolve_instrument_benchmark(
-        {"ticker": "FLXI.MI", "isin": "IE00BHZRQZ17", "tipo": "ETF", "benchmark": "FTSE India 30/18 Capped"},
-        prefer_master=False,
-    )
-
-    assert result.ticker == "INDA"
-    assert result.source == "benchmark arricchito"
-
-
-def test_enriched_benchmark_bitcoin_sceglie_proxy_specifico():
-    from core.benchmark_registry import resolve_instrument_benchmark
-
-    result = resolve_instrument_benchmark(
-        {"ticker": "IB1T.PA", "isin": "XS2940466316", "tipo": "ETC", "benchmark": "Bitcoin"},
-        prefer_master=False,
-    )
-
-    assert result.ticker == "BTC-USD"
-
-
-def test_enriched_benchmark_compound_sceglie_il_pattern_piu_specifico():
-    """'MSCI World Information Technology' deve scegliere il proxy tecnologia,
-    non il generico MSCI World, anche se la stringa contiene entrambi (dato
-    reale osservato per XDWT.MI)."""
-    from core.benchmark_registry import resolve_instrument_benchmark
-
-    result = resolve_instrument_benchmark(
-        {"ticker": "XDWT.MI", "isin": "IE00BM67HT60", "tipo": "ETF IA",
-         "benchmark": "MSCI World Information Technology 20/35 Custom"},
-        prefer_master=False,
-    )
-
-    assert result.ticker == "QQQ"
-
-
-def test_enriched_benchmark_senza_corrispondenza_ricade_su_tipo():
-    from core.benchmark_registry import resolve_instrument_benchmark
-
-    result = resolve_instrument_benchmark(
-        {"ticker": "XYZ.MI", "tipo": "ETF Az. Globale", "benchmark": "Un indice mai sentito 123"},
-        prefer_master=False,
-    )
-
-    assert result.ticker == "IWDA.AS"
-    assert result.source == "tipo strumento"
-
-
-def test_regola_ticker_esplicita_vince_su_benchmark_arricchito():
-    from core.benchmark_registry import resolve_instrument_benchmark
-
-    result = resolve_instrument_benchmark(
-        {"ticker": "SWDA.MI", "isin": "IE00B4L5Y983", "tipo": "ETF", "benchmark": "FTSE India 30/18 Capped"},
-        prefer_master=False,
-    )
-
-    assert result.ticker == "IWDA.AS"  # regola esplicita per SWDA.MI, non il pattern India
-    assert result.source == "ticker diretto"
-
-
-def test_campo_benchmark_assente_comportamento_identico_a_oggi():
-    from core.benchmark_registry import resolve_instrument_benchmark
-
-    result = resolve_instrument_benchmark(
-        {"ticker": "XYZ.MI", "tipo": "ETF Az. Globale"},
-        prefer_master=False,
-    )
-
-    assert result.ticker == "IWDA.AS"
-    assert result.source == "tipo strumento"
-
-
-def test_enriched_benchmark_bloomberg_bond_non_sceglie_commodity():
-    """Un bond ETF con benchmark 'Bloomberg Global Aggregate Bond' non deve
-    ricadere sul proxy commodity (DJP): il pattern 'bloomberg' era troppo
-    ampio, perche' Bloomberg brand-izza anche molti indici obbligazionari.
-    Senza un pattern obbligazionario in questo livello, deve ricadere sul
-    fallback per tipo strumento."""
-    from core.benchmark_registry import resolve_instrument_benchmark
-
-    result = resolve_instrument_benchmark(
-        {"ticker": "NEWBOND.MI", "tipo": "Fondo Obbligazionario",
-         "benchmark": "Bloomberg Global Aggregate Bond"},
-        prefer_master=False,
-    )
-
-    assert result.ticker == "BND"
-    assert result.ticker != "DJP"
-
-
-def test_master_benchmark_ignored_without_explicit_user_edited_flag():
+def test_master_benchmark_ignored_without_explicit_user_edited_flag(monkeypatch):
     """Il congelamento e' rimosso: un benchmark_code presente in
     instrument_master ma SENZA benchmark_user_edited=True non deve piu'
-    avere priorita' - il calcolo deve essere sempre fresco."""
+    avere priorita' - il calcolo deve essere sempre fresco (delegato al
+    motore, non al mapping statico)."""
     from core.benchmark_registry import resolve_instrument_benchmark
+
+    monkeypatch.setattr(
+        benchmark_registry, "_SERVICE",
+        FakeAnalysisService(by_ticker={"SWDA.MI": fetchable_resolution("IWDA.AS", "MSCI World")}),
+    )
 
     master = {"ticker": "SWDA.MI", "benchmark_code": "VECCHIO.STALE", "benchmark_label": "Stale", "manual_overrides": {}}
     result = resolve_instrument_benchmark(ticker="SWDA.MI", master_entry=master, prefer_master=True)
-    assert result.ticker != "VECCHIO.STALE"  # deve ricalcolare fresco (regola ticker esplicita)
-    assert result.ticker == "IWDA.AS"  # BENCHMARK_BY_TICKER["SWDA.MI"]
+    assert result.ticker != "VECCHIO.STALE"  # deve ricalcolare fresco, non leggere il campo master piatto
+    assert result.ticker == "IWDA.AS"  # risolto dal motore (fake)
 
 
-def test_master_benchmark_used_when_explicitly_user_edited():
+def test_master_benchmark_used_when_explicitly_user_edited(monkeypatch):
     from core.benchmark_registry import resolve_instrument_benchmark
+
+    fake = FakeAnalysisService(by_ticker={"SWDA.MI": fetchable_resolution("IWDA.AS", "MSCI World")})
+    monkeypatch.setattr(benchmark_registry, "_SERVICE", fake)
 
     master = {
         "ticker": "SWDA.MI",
@@ -412,18 +362,4 @@ def test_master_benchmark_used_when_explicitly_user_edited():
     result = resolve_instrument_benchmark(ticker="SWDA.MI", master_entry=master, prefer_master=True)
     assert result.ticker == "CUSTOM.BM"
     assert result.source == "anagrafica"
-
-
-def test_enriched_benchmark_gold_miners_sceglie_gdx_non_gld():
-    """Un ETF gold-miners con benchmark 'NYSE Arca Gold Miners' deve
-    ricevere il proxy minerario (GDX), non l'oro fisico (GLD): il pattern
-    bare 'gold' intercettava anche gli indici di gold-miners prima di
-    arrivare all'euristica tipo piu' specifica."""
-    from core.benchmark_registry import resolve_instrument_benchmark
-
-    result = resolve_instrument_benchmark(
-        {"ticker": "NEWMINERS.MI", "tipo": "ETF", "benchmark": "NYSE Arca Gold Miners"},
-        prefer_master=False,
-    )
-
-    assert result.ticker == "GDX"
+    assert fake.calls == []  # override esplicito: il motore non viene nemmeno interrogato
