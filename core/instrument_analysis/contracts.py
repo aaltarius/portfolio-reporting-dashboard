@@ -111,18 +111,29 @@ class BenchmarkResolution:
     #: `reference_data/yahoo.py::fetch_history`), False se e' soltanto
     #: un'etichetta leggibile da un umano.
     #:
-    #: Oggi e' SEMPRE False, deliberatamente: i rami EXACT/SISTER di
-    #: `benchmark.py` copiano il testo scrapato da Borsa Italiana o dal
-    #: factsheet dell'emittente ("NASDAQ YEWNO GLOBAL", "MSCI World
-    #: Index") — nomi commerciali, non simboli; il ramo
-    #: GENERAL_MARKET_FALLBACK usa placeholder di libreria
-    #: ("^990100-USD-STRD", "LEGATRUU-Index") non ancora verificati
-    #: contro una fonte; il ramo di emergenza non ha proprio una serie.
-    #: La risoluzione testo -> simbolo interrogabile e' lavoro futuro: il
-    #: campo esiste perche' un consumer non debba indovinare se puo'
-    #: passare `operational_series` a un fetch, non perche' oggi qualcosa
-    #: la renda interrogabile.
+    #: False per i rami EXACT/SISTER (`benchmark.py`, testo scrapato da
+    #: Borsa Italiana o dal factsheet dell'emittente — "NASDAQ YEWNO
+    #: GLOBAL", "MSCI World Index": nomi commerciali, non simboli), per
+    #: MULTI_ASSET_COMPOSITE/il ramo FAMILY_LADDER quando vince un composito
+    #: (l'identita' ufficiale e' una curva pesata, non un singolo ticker) e
+    #: per SOVEREIGN_SYNTHETIC_CURVE (curva ECB, non un ticker Yahoo). True
+    #: solo quando `operational_series` e' un simbolo Yahoo verificato
+    #: (rami FAMILY_LADDER a famiglia singola, COUNTRY_GOV_BOND). Quando
+    #: False, `fallback_fetchable_series` sotto puo' offrire un proxy
+    #: scaricabile per grafici/correlazione senza toccare questa identita'.
     series_is_fetchable: bool = False
+
+    #: Ticker Yahoo di riserva, scaricabile, usato SOLO per grafici/
+    #: correlazione quando `series_is_fetchable` e' False — mai per
+    #: sostituire `operational_series`/`relation_grade`/`official_name`,
+    #: che restano l'identita' ufficiale. Popolato in modo opportunistico
+    #: (Task S, 2026-09-03) da un candidato gia' calcolato internamente per
+    #: il confronto di geometria (`_augment_with_geometry_signal`, i rami
+    #: composito, il fallback ETF governativo quando vince la curva ECB) —
+    #: mai una chiamata di rete dedicata, mai un valore inventato: resta
+    #: "" quando nessun candidato reale esiste.
+    fallback_fetchable_series: str = ""
+    fallback_fetchable_label: str = ""
 
     resolution_level: str = ""
     relation_grade: RelationGrade | str = ""

@@ -394,6 +394,17 @@ def _best_geometry_candidate(
     return max(candidates, key=lambda candidate: candidate[7])
 
 
+def _dominant_component_fallback(components: list[BenchmarkComponent] | None) -> tuple[str, str]:
+    """Task S: quando l'identita' ufficiale e' un composito (nessun ticker
+    Yahoo singolo per costruzione), la gamba di peso maggiore e' un proxy
+    scaricabile onesto per grafici/correlazione — non l'identita' ufficiale,
+    solo un fallback opportunistico. ("", "") se non c'e' nulla."""
+    if not components:
+        return "", ""
+    dominant = max(components, key=lambda c: c.weight_pct)
+    return dominant.series_id, dominant.label
+
+
 def _augment_with_geometry_signal(
     resolution: BenchmarkResolution,
     profile: InstrumentProfile,
@@ -426,6 +437,17 @@ def _augment_with_geometry_signal(
     resolution.geometry_score = geom_score
     resolution.coverage_obs = n
     resolution.selection_score = combined
+    # Task S: se il candidato vincente e' un ticker di famiglia singolo (non
+    # un composito, che qui userebbe il placeholder "COMPOSITE" al posto di
+    # un simbolo reale), offrirlo come fallback scaricabile per grafici —
+    # senza mai toccare operational_series/relation_grade sopra.
+    if not _components and _ticker and _ticker != "COMPOSITE":
+        resolution.fallback_fetchable_series = _ticker
+        resolution.fallback_fetchable_label = _family
+    elif _components:
+        resolution.fallback_fetchable_series, resolution.fallback_fetchable_label = (
+            _dominant_component_fallback(_components)
+        )
 
 
 def resolve_benchmark(
@@ -494,6 +516,9 @@ def resolve_benchmark(
                 resolution.operational_kind = OperationalKind.COMPOSITE
                 resolution.series_is_fetchable = False
                 resolution.components = components
+                resolution.fallback_fetchable_series, resolution.fallback_fetchable_label = (
+                    _dominant_component_fallback(components)
+                )
                 resolution.resolution_level = "MULTI_ASSET_COMPOSITE"
                 resolution.relation_grade = grade
                 resolution.semantic_confidence = semantic_score
@@ -533,6 +558,16 @@ def resolve_benchmark(
             resolution.geometry_score = geom_score
             resolution.coverage_obs = n if n else len(series)
             resolution.note = f"Sovereign synthetic curve (duration {profile.duration_years:.2f}Y, no ETF proxy)."
+            # Task S: la curva ECB non ha un ticker Yahoo per costruzione —
+            # l'ETF governativo nazionale (stessa fonte usata sotto come
+            # fallback quando la curva fallisce) offre un proxy scaricabile
+            # per grafici, senza toccare l'identita' ufficiale (la curva
+            # resta operational_series/relation_grade).
+            country_bond_fallback = _country_gov_bond_candidate(profile, country, instrument_series, family_series_fn)
+            if country_bond_fallback is not None:
+                fb_ticker, fb_family, _fb_geom, _fb_n = country_bond_fallback
+                resolution.fallback_fetchable_series = fb_ticker
+                resolution.fallback_fetchable_label = fb_family.replace("_", " ").title()
             return resolution
 
         country_bond = _country_gov_bond_candidate(profile, country, instrument_series, family_series_fn)
@@ -576,6 +611,9 @@ def resolve_benchmark(
                     resolution.operational_kind = OperationalKind.COMPOSITE
                     resolution.series_is_fetchable = False
                     resolution.components = components
+                    resolution.fallback_fetchable_series, resolution.fallback_fetchable_label = (
+                        _dominant_component_fallback(components)
+                    )
                 else:
                     family_label = family_or_label.replace("_", " ").title()
                     resolution.official_name = f"Reference: {family_label}"
