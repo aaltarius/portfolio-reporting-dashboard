@@ -1726,17 +1726,54 @@ test), oltre ai 3 commit del lavoro pendente committato a inizio sessione
 (Task R/follow-up InstrumentAnalysis, Ripara buchi + fix data fittizia,
 docs).
 
-**Aperto per la ripresa (B9, non ancora fatto)**:
-1. Rimisurare la copertura del fallback sui 111 fixture a cache pulita
-   (il meccanismo funziona, verificato su un'istanza reale — manca solo
-   il numero aggregato onesto).
-2. **Verifica visiva in app** (dev server Streamlit): Cruscotti (grafico
-   benchmark), pagina Confronto, form "Ruolo & Benchmark" in Gestione
-   Dati — almeno un caso EXACT/SISTER con fallback, un composito
-   multi-asset (FAM-*), un BTP. Non ancora fatta in questa sessione.
-3. Effetto collaterale del catalogo runtime (sopra) da confermare/discutere
-   con l'utente: va bene che l'autocomplete parta vuoto su un processo
-   fresco, o serve un prewarm esplicito?
+**B9 completato (stessa sessione, dopo il checkpoint sopra)**:
+
+1. **Copertura fallback sui 111 a cache pulita — misurata**: 98/109
+   risoluzioni non-fetchable (89,9%) ora hanno un ticker di riserva reale
+   per grafico/correlazione. Le 11 senza fallback restano onestamente
+   senza grafico benchmark (nessun candidato di famiglia disponibile),
+   comportamento neutro per costruzione (regola non negoziabile 9), non
+   un ticker inventato.
+2. **Replay ufficiale completo rieseguito**: cds invariato bit-per-bit
+   (94,95/100), benchmark 75,38 -> 75,28/100 (-0,10, rumore). Nota
+   d'onesta': `relation_grade_counts` ha mostrato uno spostamento piu'
+   grande del solito (`PROPRIA_STRUTTURALE` 9->3, `SORELLA` 7->13) —
+   **investigato prima di liquidarlo come rumore**: confrontati i punteggi
+   dei singoli BTP/fondi FAM reali tra i due run, risultati **identici
+   bit-per-bit** (es. BTP-15MZ28 41,9 in entrambi). Lo spostamento viene
+   da fixture BTP *sintetiche* del set di test (non i 4 BTP reali)
+   colpite da intermittenza di rete/rate-limit Yahoo osservata dal vivo in
+   questa sessione (HTTP 429 diretto, retry su ticker "delisted" nei log
+   dell'app reale avviata in parallelo) — non un effetto del codice.
+3. **Verifica funzionale end-to-end con dati reali** (niente browser
+   disponibile in questo ambiente — l'estensione Claude-in-Chrome non
+   risultava connessa, verifica visiva pixel-per-pixel non fatta):
+   - App reale avviata (`streamlit run app.py`) con il portafoglio vero:
+     **tutte le 11 pagine renderizzano `status=OK`** (Cruscotti e
+     Confronto incluse), zero errori/eccezioni nei log, sia al primo
+     avvio sia al rerun caldo.
+   - `resolve_instrument_benchmark` chiamato dal vivo sui 30 strumenti
+     reali aperti: ENRG.MI (EXACT, label ufficiale "STOXX Europe 600
+     Energy Screened+ Index", ticker fallback `^GSPE`), ETFMIB.MI (EXACT,
+     ticker diretto `FTSEMIB.MI`), BTP-0826 (SISTER via ETF governativo
+     `EDMA.MU`), FAM-EMD (COUSIN via `EMB`) — tutti risultati coerenti
+     con quanto documentato nelle sessioni precedenti.
+   - `ui/form_server/strumenti.py::_render_strumenti_page` renderizzato
+     dal vivo per ETFMIB.MI: campo benchmark precompilato `FTSEMIB.MI`,
+     badge "Automatico (confidenza: Alta)" — form funzionante con la
+     facade.
+   - **Non fatto**: conferma visiva vera e propria (screenshot/occhio
+     umano) dei grafici Plotly in Cruscotti/Confronto. Consigliato che
+     l'utente apra l'app e guardi di persona alla prima occasione,
+     nessun segnale di problema trovato nella verifica funzionale.
+4. Effetto collaterale del catalogo runtime (autocomplete benchmark parte
+   vuoto su un processo fresco, si popola man mano che il motore risolve
+   strumenti): **non ancora discusso con l'utente**, resta aperto se
+   serve un prewarm esplicito.
+
+**Fase B (Task S + B1-B9) chiusa.** Fasi C (SATOR, ramo automatico) e D
+(refresh in background) del piano originale restano da iniziare — non
+decise, da confermare alla ripresa.
 
 ---
 

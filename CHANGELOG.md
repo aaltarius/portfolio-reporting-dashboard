@@ -18,6 +18,10 @@
   interne/Strumenti ora si popola con quello che il motore scopre a
   runtime, non piu' con un elenco fisso — su un processo appena avviato
   puo' apparire vuoto finche' non e' stato risolto almeno uno strumento.
+- Verifica end-to-end: app reale avviata con il portafoglio vero, tutte
+  le 11 pagine (Cruscotti/Confronto incluse) renderizzano senza errori;
+  89,9% delle identita' non direttamente scaricabili ora hanno comunque
+  un ticker di riserva per grafico/correlazione (era 0%).
   Dettaglio completo in `STATO_OPERATIVO_5.0_PRE.md` sezione 7.
 
 ## 5.0-pre - InstrumentAnalysis: classificazione, geometry, ladder e composite C/D/S; fix data fittizia quotazioni; "Ripara buchi"
