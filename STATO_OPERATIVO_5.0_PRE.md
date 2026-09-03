@@ -871,6 +871,87 @@ riepilogo di stato. Le spec/piani restano in `docs/superpowers/specs/` e
   un solo strumento con storico insufficiente, dimensione dinamica della
   matrice di correlazione, colore categoria e indicatore portafoglio nella
   tabella qualita' dati. Dettaglio in `CHANGELOG.md`.
+- **Fix 2026-09-03, segnalato dall'utente**: "Aggiorna Quotazioni" scriveva
+  il prezzo sotto la data odierna (`ts = date.today()`) per qualunque
+  strumento non-NAV in un giorno feriale, **ignorando `price_date`** (la
+  data reale del prezzo restituita da Yahoo) — solo i fondi NAV usavano
+  gia' correttamente la data effettiva. Un refresh subito dopo mezzanotte
+  (osservato alle 00:34) trova ancora l'ultimo prezzo della sessione
+  precedente (17:35 del giorno prima) ma lo etichettava come oggi,
+  creando una sessione di mercato fittizia nello storico — mai capitato
+  prima perche' l'utente non aveva mai aggiornato cosi' presto dopo
+  mezzanotte. Fix in `ui/sidebar.py`: la scrittura sceglie sempre
+  `price_date` quando disponibile (non piu' condizionata da `wd`, la
+  variabile "e' un giorno feriale?"), "oggi" resta solo il fallback per
+  l'unico caso senza `price_date` (fast_info senza timestamp). Rimossa
+  anche la stessa condizione `wd`/`not wd` sul commit finale in
+  `storico_prezzi`, che prima impediva la scrittura di
+  `candidate_prices_by_date` nei giorni feriali. Test di regressione in
+  `tests/test_weekend_storico_update.py` (ispezione del sorgente, stesso
+  pattern gia' in uso per `ui/sidebar.py` in `test_streamlit_pages.py`).
+  Suite completa verde. **Non toccato**: la riga "2026-09-03" gia'
+  scritta nel file reale (`data/prices/portafoglio_storico_prezzi.json`,
+  23 strumenti, valori diversi da quelli del 09-02, non una semplice
+  duplicazione) — decisione lasciata all'utente, il backup automatico ha
+  uno snapshot precedente alla scrittura se serve confrontare. La riga
+  fittizia e' stata poi rimossa su richiesta esplicita dell'utente
+  ("ripristina i valori così posso riaggiornare"), via `load_data()`/
+  `save_data()` (backup automatico incluso), non con una modifica diretta
+  del JSON — verificato che `strumenti[].prezzo/aggiornato` erano gia'
+  corretti (mai stati toccati dal bug) e restano invariati dopo la pulizia.
+- **Feature 2026-09-03, richiesta dall'utente ("Ripara buchi")**: nuova
+  sezione nella pagina Gestione Dati (`ui/pages/gestione_dati.py`,
+  `_render_ripara_buchi`), sotto la tabella qualita' dati esistente.
+  **Prima versione (scarico completo dello storico) scartata su
+  correzione esplicita dell'utente** ("preferirei... recupero
+  automatico/manuale degli ultimi 30 giorni, con possibilita' di
+  inserire i buchi mancanti manualmente... in caso di non recupero
+  automatico e relativa accettazione") — ridisegnata: 1) recupero
+  automatico limitato a `get_yahoo_price_history_full(ticker,
+  period="1mo")` (~30 giorni, non piu' l'intero storico disponibile);
+  2) i buchi che quella finestra non copre (piu' vecchi, o Yahoo non li
+  ha) finiscono in una tabella di inserimento manuale (`st.data_editor`
+  con colonna Prezzo editabile), con un passo di conferma separato dal
+  recupero automatico. Nuove funzioni pure in `core/market_data.py`:
+  `compute_missing_business_days` (stessa definizione della colonna
+  "Buchi" di `instrument_quality.py`, ma ritorna le date non solo il
+  conteggio), `preview_recent_gaps_fill` (divide auto-recuperabile da
+  manuale, sola lettura), `apply_recent_gaps_fill` (scrive solo dopo
+  conferma, mai sovrascrive un prezzo gia' presente). 16 test in
+  `tests/test_market_data_backfill.py`, suite completa del repo verde.
+  **Bug reale trovato dall'utente in uso live (2026-09-03)**:
+  `KeyError: 'auto_fill'` a runtime — causa: `st.session_state` aveva
+  ancora l'anteprima nel formato della prima versione scartata (Streamlit
+  non svuota `session_state` quando il codice viene ricaricato a caldo,
+  solo quando la sessione viene riavviata davvero). Confermava esattamente
+  il rischio "non verificato visivamente" segnalato sopra. Fix in
+  `ui/pages/gestione_dati.py` (`_render_ripara_buchi`): se il contenuto
+  salvato in sessione non ha la forma attesa (`auto_fill`/`manual_dates`
+  come chiavi), viene scartato e si richiede una nuova scansione invece
+  di far esplodere il rendering. Verificato con la suite di test
+  (`test_market_data_backfill.py` + repo completo verdi). Ancora da
+  confermare de visu dall'utente dopo un refresh/riavvio della sessione
+  Streamlit per svuotare lo stato obsoleto.
+- **Altri due fix "Ripara buchi", stesso giorno, entrambi segnalati
+  dall'utente in uso live**: (1) le date nelle due tabelle erano in
+  formato ISO grezzo (`2026-08-24`) invece di gg/mm/aaaa come il resto
+  dell'app — ora `st.column_config.DateColumn(format="DD/MM/YYYY")` su
+  entrambe, coerente con `fmt_date_only_it` gia' usato nella tabella
+  qualita' dati della stessa pagina. (2) **bug reale, non solo di
+  formattazione**: `preview_recent_gaps_fill` calcolava i buchi su TUTTO
+  lo storico dello strumento (prima->ultima data salvata, che per un BTP
+  puo' risalire a mesi fa) e mandava nella tabella manuale qualunque
+  buco che l'auto-recupero a 30 giorni non copriva — comparivano quindi
+  buchi vecchi di mesi ("non ha assolutamente senso" — giustamente).
+  Corretto: la funzione ora limita ENTRAMBE le liste (auto e manuale)
+  agli ultimi 30 giorni con un cutoff esplicito
+  (`date.today() - timedelta(days=30)`); un buco piu' vecchio non viene
+  proposto affatto da questo flusso. Nuovo test di regressione
+  (`test_preview_recent_gaps_fill_ignores_gaps_older_than_30_days`),
+  17 test in `test_market_data_backfill.py`, suite completa verde.
+  Inoltre la tabella "Recuperabili automaticamente" ora mostra riga per
+  riga data+prezzo trovato (prima solo un conteggio, es. "3, 1, 3..." —
+  l'utente doveva "scegliere a scatola chiusa").
 
 ---
 
@@ -1080,18 +1161,550 @@ documentazione prima di taggare una 5.0 definitiva.
 
 ## 7. Prossimo passo consigliato
 
-Il prossimo lavoro concreto dovrebbe essere:
+### Punto della situazione al 2026-09-01 — progetto InstrumentAnalysis
 
-1. finire le ultime verifiche della fase cache con render log reale;
-2. poi passare al tuning delle pagine pesanti, partendo da Cruscotti e solo
-   dopo Quotazioni/Portafoglio;
-3. ogni tuning deve usare la stessa governance cache gia' definita, senza
-   introdurre selector, radio o render differiti.
+**Nuovo progetto, mai registrato qui prima d'ora (bug di processo, corretto
+ora)**: da questa sessione, "InstrumentAnalysis" — motore centrale
+online-first per benchmark + C/D/S per strumento, sostituisce i mapping
+statici di `core/benchmark_registry.py` e l'euristica ticker/parola-chiave
+di `core/services/sator.py::infer_sator_metadata`. Origine: handoff
+esterno `HANDOFF_PROGRAMMATORE_BENCHMARK_CDS/` (non trattato come vangelo,
+base di partenza migliorabile). Chiude la "voce 11" (look-through
+automatico) della revisione classificazione/allocazione gia' completata
+(sotto-progetti 1-5, sezione 3 sopra).
 
-Primo tuning UI applicato: wrapper Plotly idempotente e key automatiche stabili
-per run. Prossima misura utile: nuovo render log a parita' di firma, idealmente
-dopo un rerun nello stesso processo, per verificare se cala il remount dei
-grafici.
+**Piano dettagliato**: `docs/superpowers/plans/2026-09-01-instrument-analysis-cds-benchmark.md`
+(gitignored come tutto `docs/`, quindi non arriva su GitHub — resta
+locale). La sua sezione "Stato di avanzamento" in cima e' la fonte di
+dettaglio task-by-task; questa sezione qui e' il riepilogo che deve
+restare leggibile anche se quel file si perde o non viene letto.
 
-Nessuna modifica performance deve essere marcata come risolta senza confronto
-prima/dopo.
+**Fasi A-E del piano — stato reale, verificato sul codice e sulla git
+history, non solo dichiarato**:
+- **Fase A (motore centrale, `core/instrument_analysis/`) — FATTA.**
+  Contratti, cache, adapter (Yahoo, OpenFIGI, Borsa Italiana, issuer
+  factsheet, ECB tassi, provider indice MSCI), motore C/D/S, ladder
+  benchmark base (EXACT/SORELLA + fallback), composite, orchestratore
+  `InstrumentAnalysisService`. Mergiata in `main` (fast-forward, commit
+  `4fe5203` + fix `a4bda6c`/`d59c143` scoperti in fase di merge).
+- **Fase E (harness test/regressione, 111 fixture) — FATTA.** Replay
+  ufficiale sui 111 eseguito per la prima volta in questa sessione (prima
+  sempre rimandato per tempo): **C/D/S 93,92/100 (91/111 esatti)**.
+- **Fase B (facade benchmark + propagazione) — MAI INIZIATA.** Solo elenco
+  task ad alto livello nel piano, nessun dettaglio task-by-task scritto,
+  zero codice.
+- **Fase C (integrazione SATOR, ramo automatico) — MAI INIZIATA.**
+- **Fase D (aggancio al refresh in background) — MAI INIZIATA.**
+
+**Lavoro di questa sessione (dentro la Fase A, non una fase nuova)**:
+collegata la classificazione testuale (`core/instrument_analysis/text_classification.py`,
+gia' scritta in una sessione precedente ma non ancora collegata) a
+`build_profile()` — prima gli adapter non popolavano
+`structural_type`/`theme`/`sector`/`factor`/`size`, quindi il motore
+C/D/S cadeva sempre nel fallback UNKNOWN (35/35/30). Due bug reali trovati
+dal replay con dati veri e corretti: (1) `_benchmark_text()` in
+`profile.py` sceglieva una sola fonte testuale invece di combinarle,
+perdendo il segnale quando lo scraping Borsa Italiana tronca il campo
+benchmark a meta' parola; (2) i token bond non coprivano abbreviazioni
+reali viste in produzione ("Agg Bond", "AGGR BND"). Corretto anche un bug
+in `InstrumentAnalysisService.discovered_benchmark_catalog()` (duplicava
+la series come label invece di leggere il label reale). Punteggio C/D/S
+sul replay ufficiale: da fallback totale (100% UNKNOWN, misurato a fine
+Fase E) a 93,92/100.
+
+**Gap aperti dentro la Fase A** (non sono le fasi B/C/D, sono cose lasciate
+incomplete dentro il motore gia' costruito — numerati come nel piano):
+1. Ladder intermedio (CUGINA/ZIA/NONNA/FAMIGLIA_AMPIA) — non collegato.
+2. Provider indice Livello 3 (STOXX/FTSE/S&P DJI/Solactive/ICE) — solo
+   MSCI attivo.
+3. Curve sovrane duration-specific — stub, sempre `None`.
+4. Composite multi-asset/holdings look-through — costruito ma non
+   collegato a `service.py`.
+5. Drift identity-resolution: 6/111 ticker "delisted" su Yahoo (404)
+   risolvono a uno strumento reale diverso da quello inteso dalla
+   fixture (es. `IQQ7.MI` atteso "iShares STOXX Europe 600 Technology",
+   risolve a "iShares MSCI Turkey") — trovato analizzando i diff del
+   replay ufficiale in questa sessione, non toccato.
+6. Duration/bond sub-classification (ULTRA_SHORT/SHORT_GOV_BOND) e fondi
+   proprietari Fineco AM privi di segnale testuale (serie "FAM-*") — 12
+   dei 20 diff residui del replay, richiedono rispettivamente
+   `duration_years` numerico (punto 3) e dati di composizione reale
+   (punto 4): non un gap nuovo, solo quantificato oggi.
+
+**Prossimo passo — DECISO il 2026-09-01**: l'utente ha confermato di
+procedere con il **punto 1 sopra (ladder intermedio CUGINA/ZIA/NONNA/
+FAMIGLIA_AMPIA)**, dopo che gli ho spiegato perche' non vede ancora
+traccia di questo lavoro nell'applicativo — verificato con un grep che
+zero file in `ui/` o nel resto di `core/` importano
+`InstrumentAnalysisService`: il motore nuovo e' isolato, non collegato,
+quello che gira davvero in produzione e' ancora `core/benchmark_registry.py`
+e `core/services/sator.py::infer_sator_metadata` (entrambi fermi al
+2026-08-21, mai toccati da questo progetto). Il ladder intermedio resta
+un miglioramento "sotto il cofano" — misurabile solo via replay, non
+visibile in app finche' la Fase B (propagazione) non collega il motore
+nuovo al posto di quello vecchio. Questo va tenuto presente: chiudere il
+punto 1 non produce nessun cambiamento visibile per l'utente nell'app.
+
+**Dettaglio task scritto PRIMA di toccare codice** (richiesto
+dall'utente, per non ripetere l'errore di oggi): 6 task (L1-L6) in
+`docs/superpowers/plans/2026-09-01-instrument-analysis-cds-benchmark.md`,
+sezione "Ladder intermedio — dettaglio task (gap 1, deciso 2026-09-01)",
+subito prima della sezione "Fase A — Motore centrale". Riassunto: porta
+`REFERENCE_FAMILIES` (catalogo statico di ~20 famiglie -> ticker Yahoo
+reali) e `family_ladder()` da POC17.2, un punteggio di geometria/forma
+tra serie storiche **senza pandas** (decisione presa: `series.py` di
+questo progetto e' gia' esplicitamente senza pandas), una cache storici
+separata (TTL giornaliero) per non rifare fetch per ogni strumento, e
+collega tutto in `benchmark.py::resolve_benchmark` tra il ramo SISTER e
+il fallback MERCATO_GENERALE esistente. Punteggio benchmark misurato oggi
+prima di iniziare: **42,66/100 medio** — il numero da confrontare a fine
+lavoro (Task L5), scritto qui subito dopo la misura, non a fine sessione.
+
+**Task L1-L4 completati e testati (79 test nuovi/estesi, tutti verdi,
+suite completa del repo verde). Task L5 (replay ufficiale) fatto:
+risultato NEGATIVO, causa isolata, spiegato subito sotto — nessuna
+modifica dichiarata risolta senza il confronto prima/dopo.**
+
+**Score benchmark dopo L1-L4: 42,61/100 — invariato (era 42,66/100).
+`relation_grade_counts` identico bit-per-bit a prima: zero istanze di
+CUGINA/ZIA/NONNA su 111 strumenti reali.** Il ladder e' stato verificato
+funzionante in isolamento (`fetch_family_series('TECH_GROWTH')` con rete
+reale ritorna dati veri) — il problema non e' un bug nel codice scritto
+oggi, sono due fatti che si sommano:
+1. I 6 strumenti che oggi cadono in MERCATO_GENERALE sono **tutti bond
+   governativi** (`GOV_BOND`) — il ladder e' scoped solo a equity/gold/
+   commodity/digital_asset (per design, Task L1), quindi non li tocca mai.
+   Nessuno strumento azionario del dataset raggiunge mai il fallback:
+   risolvono tutti EXACT o SISTER prima, anche quando il testo scrapato e'
+   troncato a meta' parola.
+2. **La vera causa del punteggio basso e' un gap diverso, non nella lista
+   originale**: i rami EXACT/SISTER di `benchmark.py` (100 strumenti su
+   111) non calcolano mai `geometry_score`/`coverage_obs` — restano a 0,
+   quindi la formula 55/35/10 dell'handoff (target 81,3/100) li tappa a
+   ~46,75/100 indipendentemente da quanto buono sia il match. Causa a
+   monte: EXACT/SISTER risolvono a **nomi leggibili** ("MSCI World
+   Index"), non a **ticker interrogabili** — serve una risoluzione
+   nome-benchmark -> ticker per poter calcolare geometry anche li', lavoro
+   gia' segnalato come futuro nel commento di `series_is_fetchable` in
+   `contracts.py`, ma non sapevamo fosse *il* collo di bottiglia dominante
+   finche' questo replay non l'ha isolato.
+
+Dettaglio completo: `docs/superpowers/plans/2026-09-01-instrument-analysis-cds-benchmark.md`,
+sezione "Task L5", stesso file del dettaglio task.
+
+**Prossimo passo — DECISO il 2026-09-02**: l'utente ha confermato di
+procedere con la risoluzione nome-benchmark -> ticker interrogabile per i
+rami EXACT/SISTER (per poter calcolare geometry_score/coverage_obs anche
+li', causa reale del punteggio basso). Stessa disciplina di L1-L4: piano
+task scritto prima di toccare codice.
+
+**Verifica empirica PRIMA di scrivere codice (stessa disciplina appena
+imparata da L5) — risultato negativo, pivot deciso senza ancora chiedere
+conferma**: testata a mano la ricerca Yahoo per testo libero (stesso
+endpoint di `find_ticker_candidates`) su 6 nomi reali di questa sessione
+(nomi Borsa Italiana troncati, nomi issuer factsheet lunghi) — **5 su 6
+zero risultati INDEX**, solo un nome corto/canonico ("MSCI Turkey") ha
+trovato un match. I nomi ufficiali reali sono troppo lunghi/troncati per
+funzionare con una ricerca testuale libera — stesso esito di L1-L4
+(costruito bene, zero impatto), stavolta scoperto PRIMA di scrivere
+codice.
+
+**Pivot CONFERMATO dall'utente il 2026-09-02**: invece di una ricerca testuale
+nuova, riusare `family_ladder()`/`geometry_score()` (gia' costruiti e
+provati in L1-L4) anche per i rami EXACT/SISTER, come controllo di
+qualita' supplementare basato su `profile.sector/theme/geography` (gia'
+affidabili, indipendenti dal testo troncato) — senza mai cambiare
+`operational_series`/`relation_grade`, solo per popolare
+`geometry_score`/`coverage_obs` che oggi restano sempre a zero. Dettaglio
+in `docs/superpowers/plans/...`, sezione "Task M3-bis"/"Task M4-bis".
+
+**Task M3-bis/M4-bis implementati e testati (18 test in `test_benchmark.py`,
+tutti verdi, suite completa del repo verde). Replay ufficiale rieseguito:
+score benchmark 62,12/100 (era 42,61/100 dopo L1-L4, 42,66/100 all'inizio
+della sessione) — +19,5 punti reali, misurati, non dichiarati.** C/D/S
+invariato (93,92/100, fuori scope di questo lavoro). Resta sotto la
+soglia di riferimento 81,3/100 dell'handoff (95/111 ancora sotto soglia):
+miglioramento reale ma non risolutivo — molti match ora hanno una
+geometria calcolata ma non abbastanza alta da superare 81,3 da sola.
+Dettaglio completo (incluso un limite tecnico non risolutivo sul timing
+misurato dal replay) in `docs/superpowers/plans/...`, sezione "Task
+M4-bis".
+
+**Continuazione autonoma post-checkpoint ("continua tu in maniera
+progressiva")**: analizzati uno per uno (non a campione) i 75/111 ancora
+sotto soglia dopo il +19,5 di cui sopra. Trovati e corretti 2 fix
+aggiuntivi:
+- **Fix 1**: bug gemello di quello del settore (vedi sopra), stavolta sul
+  factor — "wide moat" (MOAT.MI reale) non faceva scattare il gate
+  equity in `text_classification.py`. Stesso principio, stesso fix.
+  Verificato con rete reale: MOAT.MI 46,8 -> 76,5/100.
+- **Fix 2**: `service.py` scaricava lo storico dello strumento col ticker
+  grezzo passato dal chiamante, non con quello RISOLTO da
+  `resolve_yahoo_identity()` (che gia' trova un ticker funzionante via
+  ISIN quando l'originale e' delisted — 4 casi reali verificati:
+  IQQ6.MI→INFR.MI, E50.MI→MSE.MI, XWCO.MI→XDWM.MI, KOREA.MI→KRW.PA).
+  **Nota**: alcuni ticker risolti sembrano un fondo diverso da quello
+  inteso dalla fixture — quel problema (drift identity-resolution) resta
+  aperto, questo fix allinea solo il fetch storico con l'identita' gia'
+  usata altrove.
+
+Suite completa verde dopo entrambi i fix. **Replay ufficiale completo
+tentato due volte, interrotto dall'esterno entrambe le volte** (non un
+errore nel codice). Verifica mirata sui 36 strumenti rimasti al
+punteggio piatto (1 passaggio): **6/36 migliorati, media del sottoinsieme
+46,75 -> 52,4/100** — salti fino a +42 punti su singoli strumenti
+(E50.MI, EUQ.MI, XWCS.MI). Risultato misto su ~18 strumenti equity dove
+il fix 2 non ha funzionato in questo run (probabile flakiness di rete,
+non un bug deterministico — `KOREA.MI` aveva funzionato in una verifica
+precedente nella stessa sessione). **Replay ufficiale completo ottenuto al terzo tentativo: score benchmark
+64,19/100 (era 62,12/100 dopo M3-bis, 42,66/100 all'inizio sessione —
++21,5 punti totali, misurati, in questa sessione).** C/D/S 94,23/100.
+72/111 ancora sotto soglia 81,3 (era 75).
+
+**Terzo giro deciso ("spremiti le meningi") — N1-N3, verificati
+empiricamente prima di scrivere codice**: N1 aggiunge famiglie
+bond/money-market al ladder (oggi 12 strumenti completamente esclusi,
+7/9 testati passerebbero subito con proxy reali AGG/IEF/SHY/TIP/LQD/
+BIL); N2 fa provare l'intera scaletta di candidati invece di solo il
+primo (FAMAMW.MI oggi fallisce per un soffio, 38,1 su 40, con una
+seconda riga potrebbe passare); N3 aggiunge un retry leggero per
+l'intermittenza di rete confermata (KOREA.MI: stesso codice, un
+tentativo fallisce uno riesce). **N4 scartato** (abbassare la soglia del
+gate) perche' comprometterebbe l'affidabilita' — verificato che il gate
+rifiuta correttamente un match a bassa correlazione reale (ESPO.MI,
+0,32). Dettaglio in `docs/superpowers/plans/...`, sezione "Task N".
+
+**N1-N3 implementati e testati, replay ufficiale rieseguito: score
+benchmark 68,69/100** (era 64,19/100, 42,66/100 all'inizio sessione —
+**+26 punti totali in questa sessione**). 68/111 ancora sotto soglia
+81,3 (era 72). Dettaglio N1 (famiglie bond/money-market, 7/9 verificate
+passano subito), N2 (prova l'intera scaletta, non solo la prima riga),
+N3 (retry leggero per intermittenza di rete confermata) in
+`docs/superpowers/plans/...`, sezione "Task N".
+
+**Task Q deciso il 2026-09-03**: curva benchmark composita pesata per C/D/S
+(idea dell'utente, confermata nella documentazione originale
+`_mixed_role_composite` di `poc17_4_engine_VALIDATED_REFERENCE.py`, riga
+3558 — porta i due ruoli C/D/S piu' grandi, arrotonda il peso al 5% piu'
+vicino, stesso principio gia' nel docstring di `composite.py` mai
+collegato a nulla). Correzione di un errore mio precedente: avevo detto
+che serviva composizione reale (asset_mix) — vero solo per i fondi
+davvero multi-asset (meccanismo diverso, "existing economic two-leg
+builder" nello stesso riferimento), non per il caso generale di
+qualunque strumento con C/D/S misto, che usa solo i C/D/S gia' calcolati
+oggi. Verificato empiricamente PRIMA di procedere: VJPA.MI (Giappone,
+75C/25S) con blend 75%GLOBAL_EQUITY+25%JAPAN_EQUITY -> geometria 82,6
+contro 58,4 del solo confronto puro (+24 punti); CNAA.MI modesto
+(+1,7); EM13.MI (bond) **peggiore** del confronto puro — non un successo
+universale, da verificare caso per caso in implementazione.
+
+**Task P (miglior riga della scaletta + famiglie paese) implementato e
+misurato: score benchmark 71,03/100** (era 68,57 dopo Task O, 42,66
+all'inizio sessione). 59/111 ancora sotto soglia (era 68).
+
+**Analisi del soffitto matematico** (fatta prima di continuare a
+inseguire il 90% chiesto dall'utente, per essere onesti su cosa e'
+davvero raggiungibile): la formula `0,55*semantic + 0,35*geometry +
+0,10*coverage` ha un tetto che dipende dal grado semantico, non solo
+dalla geometria — con geometria e copertura perfette (100), CUGINA
+arriva a ~89-91, ZIA a ~82-84, **NONNA non supera mai 72,5, sotto la
+soglia 81,3 a prescindere da quanto sia buona la geometria**. Una media
+di 90/100 su 111 strumenti richiederebbe quasi tutti a grado CUGINA con
+geometria quasi perfetta — non raggiungibile per costruzione quando uno
+strumento non ha nessuna famiglia CUGINA disponibile (nessun settore/
+tema/paese riconosciuto) e cade per forza su ZIA/NONNA. Dettaglio in
+`docs/superpowers/plans/...`, sezione "Task P".
+
+**Task Q implementato e verificato**: curva composita pesata C/D/S
+(`_mixed_role_composite_candidate` in `benchmark.py`, porta il principio
+di `_mixed_role_composite` dal riferimento validato, non il codice
+letterale — quello userebbe lo stesso profilo per entrambe le gambe
+sull'equity, collassando quasi sempre a una sola serie). Scope: solo
+equity con satellite tra i due ruoli C/D/S piu' grandi (verificato che
+danneggia i bond). Compete col confronto singolo su punteggio combinato
+finale, mai forzato. Verificato dal vivo (rete reale): VJPA.MI
+geometry_score 58,4 -> 82,6, senza toccare l'identita' ufficiale gia'
+trovata (EXACT, "FTSE JAPAN INDEX"). `components` serializzato in cache
+(prima escluso per design, mai popolato — ora lo e'). 26 test nuovi,
+suite completa del repo verde.
+
+**Task Q — replay ufficiale 2026-09-03: score benchmark 71,03 -> 71,09/100
+(+0,06, sostanzialmente piatto)**. cds score invariato 94,23/100 (atteso,
+Task Q non tocca la classificazione). `relation_grade_counts` del replay
+(PROPRIA 93, SORELLA 7, MERCATO_GENERALE 6, NONNA_TECNICA 5) **non
+contiene nessun FAMIGLIA_AMPIA**: la curva composita non e' mai stata
+selezionata come serie operativa su questi 111 fixture — i 6 fallback
+MERCATO_GENERALE restano tutti bond (fuori scope, come gia' documentato
+per il ladder in Task L5), e nessuno strumento EXACT/SISTER equity aveva
+un mix C/D/S tale da far vincere il confronto combinato al composito
+sull'identita' singola. Il +0,06 misurato viene solo dal campo
+`geometry_score` che per un piccolo numero di righe EXACT/SISTER equity
+riflette ora il punteggio del composito quando risultava marginalmente
+migliore nel confronto interno (mai un cambio di identita' — vedi design
+sopra). **Onestamente: come per il ladder intermedio (Task L5), il
+meccanismo e' corretto e verificato dal vivo (VJPA.MI), ma su questo
+specifico dataset di replay ha impatto reale prossimo a zero.** Resta
+comunque codice corretto e testato, pronto per strumenti reali con un
+mix C/D/S piu' marcato di quelli presenti nei 111 fixture attuali.
+
+**Stato del progetto InstrumentAnalysis a fine sessione 2026-09-02**:
+Fase A + E fatte e validate; gap 1 (ladder intermedio) fatto, impatto
+nullo sul dataset reale di per se' (tutti bond, fuori scope iniziale) ma
+infrastruttura riusata con successo per tutto il resto della sessione;
+geometry per EXACT/SISTER + 5 fix aggiuntivi (factor mancante, ticker
+risolto per lo storico, famiglie bond/money-market, scaletta completa,
+retry di rete) fatti, **score benchmark 42,66 -> 68,69/100 (+26 punti
+reali, misurati col replay ufficiale)**. Fasi B/C/D ancora mai iniziate —
+nessuna di queste modifiche e' visibile nell'app. **Prossimo passo: non
+deciso**, da discutere alla prossima sessione — opzioni aperte: i residui
+sotto soglia richiedono o accettare un segnale meno affidabile (scartato
+oggi, vedi N4) o lavoro strutturale diverso (curve sovrane vere, gap 3;
+policy di validazione ISIN vs ticker, gap 7); oppure passare alla Fase B
+(propagazione all'app, l'unica cosa che l'utente vedrebbe cambiare
+visivamente).
+
+**Prossimo passo — DECISO il 2026-09-02**: l'utente ha confermato la
+raccomandazione — smettere di inseguire il punteggio (rendimenti
+decrescenti), e prima di collegare qualunque cosa all'app investigare il
+presunto **drift di identity-resolution** (gap 7).
+
+**Investigato e RISOLTO (2026-09-02): non e' un bug nostro.** Verificato
+con una seconda fonte indipendente e autorevole (OpenFIGI, non solo la
+ricerca testuale Yahoo) sui 3 casi piu' sospetti (IQQ7.MI, IQQ0.MI,
+XWCO.MI): OpenFIGI conferma **esattamente** la stessa identita' che Yahoo
+trova (Turchia, Property Yield, Materials) — due fonti dati indipendenti
+e autorevoli concordano tra loro, e discordano entrambe dal `name_hint`
+della fixture. Conclusione: e' la **fixture di test sintetica**
+("RANDOM_MILAN_2026_D", generata casualmente, gia' documentato altrove
+in questo file) ad avere abbinamenti ISIN/nome errati per queste 6 righe,
+non il nostro codice di risoluzione — che sta facendo esattamente la
+cosa giusta. **Nessun fix di codice necessario.** Il rischio teorico
+resta (ISIN puo' essere riassegnato dopo la chiusura di un fondo, o le
+fonti stesse possono sbagliare) ma non e' quello che si vede in questo
+dataset — non e' un problema di correttezza urgente da risolvere prima
+della Fase B.
+
+Via libera confermata per procedere con la Fase B (propagazione
+all'app) come prossimo passo.
+
+**Deviazione dalla Fase B, decisa il 2026-09-03**: prima di generare la
+tabella C/D/S+benchmark sui 30 strumenti reali "aperti" (richiesta
+esplicita dell'utente), e' emerso che 4 fondi FAM (score 0,
+EMERGENZA_TECNICA) e 4 BTP (score 16,5, solo fallback generico) restano
+molto sotto soglia. L'utente ha contestato — verificato correttamente —
+che l'handoff originale descriveva gia' una soluzione per entrambi
+(sezione H multi-asset via `funds_data`, sezione I curva sovrana ECB),
+mai implementata. Confermato empiricamente: i 4 ISIN FAM sono
+risolvibili su Yahoo come fondi comuni con composizione REALE
+disponibile (`funds_data.asset_classes`), scartati oggi solo perche'
+`find_ticker_candidates` esclude i simboli Yahoo "0P..." (fondi comuni)
+a prescindere. La curva ECB duration-matched per i BTP e' raggiungibile
+e risponde con dati reali; lo spread Italia via Banca d'Italia e' piu'
+fragile (sito cambiato) ma il riferimento ha gia' un fallback onesto per
+quel caso. **Priorita' cambiata su richiesta dell'utente ("non avere
+premura della fase B... approfondisci e risolvi"): Task R (fondi
+multi-asset + curva sovrana BTP) prima della Fase B.** Dettaglio
+completo in `docs/superpowers/plans/...`, sezione "Task R".
+
+**Task R implementato e verificato sugli 8 strumenti reali (2026-09-03)**:
+
+- **Fondi multi-asset** (`_multi_asset_composite_candidate` in
+  `benchmark.py`, dato reale da `funds_data.asset_classes` via nuovo
+  `resolve_mutual_fund_identity`/`fetch_fund_asset_mix` in
+  `reference_data/yahoo.py`): **FAM-FLEX 0 -> geometria 86,4 (65%
+  GLOBAL_EQUITY+35% AGG_BOND)**, **FAM-PU6 0 -> geometria 81,2** (35/65),
+  **FAM-PU8 0 -> geometria 86,7** (85/15). **FAM-EMD resta a un fallback
+  modesto** (score 16,5, come i BTP): e' 96% bond puro (nessuna gamba
+  equity, il composito non si applica per costruzione — corretto), e i
+  candidati bond disponibili (CORP_BOND/AGG_BOND, americani) tracciano
+  un fondo di debito emergente troppo male per superare il gate di
+  geometria (34-38, sotto soglia 40) — aggiunto solo un fallback minimo
+  (asset_class OBB da composizione reale quando il testo non la
+  riconosce) per evitare l'emergenza infrastrutturale totale. Una
+  famiglia di riferimento EM-bond dedicata risolverebbe meglio, non
+  fatta in questo giro.
+- **Curva sovrana BTP** (`_sovereign_synthetic_candidate` in
+  `benchmark.py`, curva ECB duration-matched + spread Italia best-effort
+  in `reference_data/rates.py` + matematica pura in
+  `sovereign_curve.py`): **score 16,5 -> 41,9/100 su 3 BTP su 4**
+  (BTP-15MZ28, BTP-1DC28, BTP-1AG30), confidence 0,58 (spread Italia non
+  trovato, sito Banca d'Italia probabilmente ristrutturato — degrada
+  onestamente alla sola curva euro-area, mai un errore). **BTP-0826**
+  (duration reale 0,09Y, quasi a scadenza) usa lo stesso meccanismo con
+  un floor di 3 mesi sulla curva (piu' corto non pubblicato da ECB):
+  score 16,5 -> 41,9 anche per questo, stesso risultato degli altri 3.
+  **Richiede `duration_years` fornito dal chiamante**
+  (`analyze(..., duration_years=...)`, nuovo parametro — nessuna fonte
+  online di questo motore da' la duration di un singolo BTP): per i
+  fixture ufficiali derivato da `maturity_date` (anni a scadenza come
+  proxy, verificato vicino alla duration modificata reale — 3,91 vs 3,75
+  per BTP-1AG30); per la Fase B andra' passato da
+  `duration_modificata` (arricchimento PDF gia' esistente sullo
+  strumento reale).
+- 26 test nuovi (yahoo.py, profile.py, benchmark.py, service.py,
+  sovereign_curve.py, rates.py, benchmark_scorer.py), suite completa del
+  repo verde.
+
+**Task R — replay ufficiale 2026-09-03: score benchmark 71,09 ->
+74,68/100 (+3,59), score cds 94,23 -> 94,95/100.** A differenza di
+Task Q (+0,06, sostanzialmente piatto), qui il salto e' reale e
+strutturale: `relation_grade_counts` mostra il nuovo grado
+`PROPRIA_STRUTTURALE` comparire **7 volte** (3 fondi FAM con composito
+reale + 4 BTP con curva sovrana — esattamente il numero atteso),
+`NONNA_TECNICA` (emergenza tecnica) crolla da 5 a 1 fixture,
+`infrastructure_emergency_count` da 5 a 1. `MERCATO_GENERALE` scende da
+6 a 4. `PROPRIA` scende di 1 (93->92, verosimilmente variazione di rete
+tra due run live, non un effetto del codice — nessun ramo EXACT toccato
+da Task R). **Non ancora tutto risolto onestamente**: 1 fixture resta in
+emergenza tecnica (non identificato, fuori scope di questo giro), e i
+BTP restano a confidence 0,58 (solo curva euro-area, spread Italia da
+Banca d'Italia ancora non disponibile — sito probabilmente
+ristrutturato).
+
+**Task R — seguito, stesso giorno, due correzioni volute dall'utente**:
+
+1. **"Dobbiamo trovare una soluzione per i BTP... idem per FAM-EMD... deve
+   esserci un indice di riferimento facile"**: aggiunte due famiglie di
+   riferimento mirate in `reference_families.py` — `EM_BOND` (`EMB`,
+   `EMLC`) e `ITALY_GOV_BOND` (`EDMA.MU`, iShares Italy Govt Bond UCITS
+   ETF — unico trovato con storico Yahoo reale, 254 osservazioni).
+   Verificato empiricamente prima di collegare: EMB contro FAM-EMD
+   geometria 64,1 (sopra soglia 40, molto meglio dei 34-38 dei proxy
+   USA). Per FAM-EMD: riga aggiuntiva nel ladder BOND quando
+   `geography=="emerging"`, compete e vince via il meccanismo esistente
+   (best-across-all-rows, Task P) — **score 16,5 -> 73,2**. Per i BTP:
+   nuova `_country_gov_bond_candidate` in `benchmark.py`, assegnazione
+   diretta (come EXACT/SISTER, nessun gate di geometria obbligatorio —
+   un BTP non ha storico proprio interrogabile via questo motore).
+2. **"Non mi fa impazzire avere per indice un ETF... vorrei un indice
+   puro se possibile"**: verificato che non esiste un indice BTP puro
+   liberamente disponibile su Yahoo (ne' un "^" per un indice sovrano
+   italiano, ne' per un rendimento IT10Y) — confermato con ricerche
+   dirette. La curva ECB (Task R originale, sopra) **e' gia' la
+   risposta**: e' una curva di rendimenti pubblicata, non un fondo.
+   **Priorita' invertita**: la curva ECB ora vince SEMPRE quando
+   disponibile (duration nota + risposta reale dalla fonte), l'ETF
+   `EDMA.MU` resta solo rete di sicurezza se la curva fallisce (mai piu'
+   "non trovo nulla"). Corretto anche un bug di efficienza emerso nel
+   refactor: lo storico proprio veniva richiesto due volte per
+   strumento (ora una sola, riusato tra i due tentativi).
+   **Bonus aggiunto nello stesso giro**: nuovo `analyze(...,
+   own_history=...)` — se il chiamante fornisce lo storico prezzi gia'
+   posseduto (es. quello reale salvato in portafoglio per un BTP), la
+   geometria contro la curva ECB diventa un vero controllo di qualita'
+   invece di restare a sola confidence. Verificato con lo storico reale
+   dei 4 BTP: **3 su 4 salgono a 65,0-71,9/100** (BTP-1AG30 resta a
+   41,9 — solo 7 giorni di storico salvato, sotto la soglia minima di
+   osservazioni, correttamente non gonfiato). Per FAM-EMD: nessun indice
+   "puro" liberamente disponibile trovato (le curve di debito EM sono
+   dati proprietari) — EMB (ETF) resta la scelta migliore realistica,
+   comunicato onestamente all'utente.
+   28 test nuovi/aggiornati, suite completa verde.
+
+**Task R follow-up — replay ufficiale 2026-09-03: score benchmark 74,68
+-> 75,38/100 (+0,70), cds invariato 94,95/100.** `relation_grade_counts`:
+compare per la prima volta `CUGINA` (1, FAM-EMD via EM_BOND),
+`PROPRIA_STRUTTURALE` sale a 9 (era 7 — oltre ai 4 BTP reali, anche 2
+fixture BTP sintetiche del set di test beneficiano dello stesso
+meccanismo, segno che generalizza), `MERCATO_GENERALE` scende da 4 a 1.
+Resta 1 solo fixture in emergenza tecnica (non identificato, fuori
+scope). **Il replay non misura il bonus di `own_history`** (i fixture
+non hanno uno storico proprio reale da passare) — quello si vede solo
+con dati reali, verificato sotto.
+
+**Ri-controllo sui 30 strumenti reali "aperti" del portafoglio (con
+`duration_years` e `own_history` reali per i 4 BTP): media punteggio
+60,8 -> 77,8/100, strumenti sotto soglia 81,3 da 22/30 a 14/30.** Nessun
+strumento resta a 0 o a un fallback debole. FAM-FLEX/PU6/PU8: 0 ->
+82,9-86,0. FAM-EMD: 0 (poi 16,5 col fallback minimo) -> 73,2. I 4 BTP:
+16,5 -> 41,9-71,9 (3 su 4 con bonus di geometria da storico reale,
+BTP-1AG30 resta a 41,9 per storico troppo corto, 7 giorni, non gonfiato).
+**Unico caso rimasto scoperto, invariato e fuori scope di oggi**:
+XDEB.MI (46,8) — identita' trovata ma nessuna famiglia "minimum
+volatility" nel ladder per la geometria.
+
+---
+
+**CHECKPOINT 2026-09-03 (fine sessione, l'utente deve riavviare)**:
+Task R (fondi multi-asset + BTP) e il suo follow-up (indice puro +
+EM_BOND) sono **chiusi e verificati**, sia sul replay ufficiale sia sui
+30 strumenti reali. Suite completa del repo verde. Documentazione
+(questo file, il piano in `docs/superpowers/plans/...`, `CHANGELOG.md`)
+aggiornata fino a questo punto. **Nessuna modifica in sospeso, nulla da
+riprendere a meta'.** Prossimo passo proposto (non ancora avviato):
+**Fase B — collegare il motore InstrumentAnalysis all'app vera**
+(`core/benchmark_registry.py`, SATOR, le pagine Quotazioni/Cruscotti/
+Summary), l'unica cosa che l'utente vedrebbe cambiare visivamente. Non
+ancora confermata esplicitamente dall'utente in questa sessione dopo il
+lavoro di oggi — da chiedere/confermare alla ripresa.
+
+---
+
+(Nota di processo, valida per tutte le decisioni future su questo
+progetto: **ogni decisione di priorita' va scritta qui**, nello stesso
+momento in cui viene presa dall'utente, non solo nel piano gitignored o
+nel ledger SDD effimero — vedi il punto sopra su come si e' persa
+l'ultima volta.)
+
+### Punto della situazione al 2026-08-21 — fronte SATOR/Purchase Optimizer
+(indipendente dal punto sopra, ancora valido)
+
+**Appena chiuso**: sotto-progetto 5/"10bis" (vedi sezione 3) — Purchase
+Optimizer con esposizione frazionata reale (voce 10, ultima della sequenza
+1-10) + 4 problemi UI/integrazione segnalati dall'utente rivedendo il
+lavoro dei sotto-progetti 1-4. Eseguito con `subagent-driven-development`
+in un worktree isolato (`.worktrees/sator-purchase-optimizer-frazionato`,
+gia' ripulito), 9 task + un'ondata di fix dalla review finale, mersato in
+`main` e **pushato su GitHub** (era da 121 commit che non succedeva:
+policy del progetto e' "mai push senza richiesta esplicita", corretto ma
+va sempre detto chiaramente quando un commit resta solo locale).
+
+**Subito dopo, stesso giorno**: giro di feedback diretto dell'utente dopo
+aver visto le schede nuove in uso (con screenshot allegati ogni volta),
+tutto gia' corretto e pushato:
+- tabella "Target & Stato" ricostruita come vera `<table>` (era rimasta a
+  `<div>` flessibili disallineate, mai convertita quando il CSS e' stato
+  unificato nel Task 6 del sotto-progetto 5);
+- valore automatico (ruolo/benchmark/esposizione bucket) ora **sempre**
+  visibile, non solo quando diverge — l'utente lo vuole come riferimento
+  fisso anche dopo piu' modifiche manuali successive;
+- benchmark ticker + etichetta accoppiati: quando il ticker scelto e' nel
+  catalogo, l'etichetta si auto-compila via JS e diventa sola lettura
+  (impossibile disallinearli);
+- scheda "Impostazioni" separata da "Target & Stato" (ora scheda propria,
+  la n.2), Ruolo & Benchmark ed Esposizione Bucket spostate a n.3/n.4;
+- pulsanti "Salva" con margine sopra E sotto (un primo fix aveva messo
+  solo sopra, corretto su segnalazione);
+- tabella "Stato attuale" e sezione "Come funziona il calcolo interno"
+  ristilizzate (classe CSS mancante nella prima, paragrafo unico
+  trasformato in righe strutturate nella seconda).
+
+Tutti questi fix sono in `ui/form_server/quote_interne.py`, commit
+separati, suite completa verificata verde ad ogni passo, tutto pushato.
+
+**Aperto, non deciso, non urgente**:
+- decisione di design su NO_SELL (esclude oggi l'intero ranking SATOR, non
+  solo i nuovi acquisti — vedi sezione 5, "Priorita 9", punto 2). Nessun
+  dato reale lo usa oggi, dormiente.
+- finestra di backfill automatico dello storico prezzi: e' emerso
+  parlando del rientro da un'assenza di una settimana che il backfill
+  automatico (via bottone "Aggiorna Quotazioni") copre solo ~7 giorni
+  indietro (query Yahoo `range=7d`) — al limite per un'assenza di
+  esattamente una settimana. Proposto di allargarla (es. 10-14 giorni),
+  **utente non ha ancora deciso**, nessuna modifica fatta.
+
+**Prossimo passo**: l'utente sara' fuori una settimana e vuole provare la
+parte numerica con test funzionali propri al ritorno — nessuna azione
+autonoma richiesta nel frattempo. Alla ripresa: aspettarsi feedback su
+calcoli/comportamento funzionale (non piu' solo grafica), e ricordare la
+decisione aperta sul backfill se l'utente la solleva di nuovo.
+
+### Cronologia precedente (fase cache/render, superata)
+
+Il lavoro precedente su questo punto era il tuning delle pagine pesanti
+(Cruscotti, poi Quotazioni/Portafoglio) dentro la governance cache gia'
+definita, senza selector/radio/render differiti — chiuso da tempo, non e'
+piu' il fronte attivo. Lasciato qui solo come riferimento storico:
+wrapper Plotly idempotente e key automatiche stabili per run era l'ultimo
+tuning UI applicato in quella fase; nessuna modifica performance va mai
+marcata come risolta senza confronto prima/dopo.

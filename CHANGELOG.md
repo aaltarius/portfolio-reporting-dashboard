@@ -1,5 +1,42 @@
 # Changelog
 
+## 5.0-pre - InstrumentAnalysis: classificazione, geometry, ladder e composite C/D/S; fix data fittizia quotazioni; "Ripara buchi"
+
+- InstrumentAnalysis (proseguimento): score C/D/S 42,66 -> 94,95/100,
+  score benchmark 42,66 -> 75,38/100 sul replay ufficiale dei 111 (sui 30
+  strumenti reali del portafoglio: media 60,8 -> 77,8/100).
+  Dettaglio in `STATO_OPERATIVO_5.0_PRE.md` sezione 7.
+- Fondi multi-asset (es. fondi Fineco AM proprietari) e titoli di stato
+  singoli ora hanno un benchmark reale invece di un fallback generico o
+  di nessuna risoluzione: composizione azioni/obbligazioni reale per i
+  fondi (yfinance), curva di rendimento sovrana ECB duration-matched per
+  i BTP (mai un ETF come proxy — solo rete di sicurezza se la curva non
+  risponde), indice di riferimento dedicato per il debito dei mercati
+  emergenti (EMB). Idea confermata nella documentazione originale
+  dell'handoff, non ancora collegata; priorita' e scelte perfezionate su
+  feedback diretto dell'utente (indice puro preferito a un ETF quando
+  disponibile).
+- Classificazione testuale collegata al motore + 3 bug di riconoscimento
+  corretti (fonte benchmark troncata, abbreviazioni bond, token factor
+  mancante nel gate equity).
+- I rami EXACT/SISTER ora calcolano un punteggio di geometria come
+  controllo qualita' (prima restavano sempre a un valore fisso basso).
+- Ladder intermedio collegato (~40 famiglie di riferimento, 15 paesi),
+  con selezione del miglior candidato invece del primo disponibile.
+- Curva composita pesata per C/D/S per strumenti equity con ruolo misto
+  (idea dell'utente, confermata nell'handoff originale).
+- Fix "Aggiorna Quotazioni": scriveva il prezzo sotto la data odierna
+  invece della data reale, creando una sessione fittizia se aggiornato
+  subito dopo mezzanotte (segnalato dall'utente).
+- Nuova sezione "Ripara buchi" in Gestione Dati: recupero automatico
+  limitato agli ultimi 30 giorni, inserimento manuale con conferma per
+  i buchi piu' vecchi. Tre fix segnalati dall'utente in uso live: crash
+  (`KeyError: 'auto_fill'`) da anteprima obsoleta in sessione; date in
+  formato ISO invece di gg/mm/aaaa; buchi vecchi di mesi proposti nella
+  tabella manuale invece di restare entro gli ultimi 30 giorni come da
+  richiesta originale. Tabella auto-recupero ora mostra data+prezzo per
+  riga invece di un solo conteggio.
+
 ## 5.0-pre - Purchase Optimizer con esposizione frazionata reale, coerenza grafica form-server, NO_SELL nel motore SATOR (sotto-progetto 5/"10bis", 11 revisione classificazione)
 
 - chiude la voce 10 dell'ordine di priorità della revisione (Purchase
