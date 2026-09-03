@@ -83,3 +83,28 @@ def get_cached_resolution(cache: dict[str, Any], key: str, ttl_days: float) -> d
     if (time.time() - cached_at) > (ttl_days * 86400):
         return None
     return entry
+
+
+def load_series_cache() -> dict[str, Any]:
+    return _read_json(series_cache_path())
+
+
+def save_series_cache(cache: dict[str, Any]) -> None:
+    _write_json_atomic(series_cache_path(), cache)
+
+
+def put_cached_series(cache: dict[str, Any], ticker: str, history: dict[str, float]) -> None:
+    cache[str(ticker or "").strip().upper()] = {"history": history, "cached_at": time.time()}
+
+
+def get_cached_series(cache: dict[str, Any], ticker: str, ttl_days: float) -> dict[str, float] | None:
+    entry = cache.get(str(ticker or "").strip().upper())
+    if not isinstance(entry, dict):
+        return None
+    cached_at = entry.get("cached_at")
+    if not isinstance(cached_at, (int, float)):
+        return None
+    if (time.time() - cached_at) > (ttl_days * 86400):
+        return None
+    history = entry.get("history")
+    return history if isinstance(history, dict) else None
