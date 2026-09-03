@@ -1640,6 +1640,106 @@ lavoro di oggi — da chiedere/confermare alla ripresa.
 
 ---
 
+**Sessione 2026-09-03 (continuazione) — Fase B avviata: Task S + B1 + B2 fatti**
+
+Confermato dall'utente: commit del lavoro pendente (Task R + follow-up +
+"Ripara buchi", mai committato nella sessione precedente pur essendo
+completo — 3 commit separati, vedi git log) poi via alla Fase B.
+
+**Analisi pre-implementazione (in plan mode) ha trovato un problema
+architetturale reale**: per ~90% degli strumenti (rami PROPRIA/SORELLA)
+`operational_series` e' un nome leggibile, non un ticker Yahoo interrogabile
+(`series_is_fetchable=False`) — uno swap diretto della facade avrebbe fatto
+sparire il grafico benchmark/correlazione per la maggioranza degli
+strumenti (il vecchio registro statico dava sempre un ticker approssimato
+ma reale). **Deciso con l'utente**: Task S prima di B1, per esporre un
+ticker di riserva scaricabile gia' calcolato internamente dal motore (mai
+scartato, mai un valore inventato) prima di collegare la facade.
+
+**Task S — fatto e verificato**: nuovo campo `fallback_fetchable_series`/
+`_label` su `BenchmarkResolution`, popolato nei rami EXACT/SISTER
+(riusa il candidato di famiglia gia' calcolato per il confronto di
+geometria, prima scartato), nei rami compositi (gamba di peso maggiore),
+nel ramo curva sovrana BTP (ETF governativo nazionale, interrogato
+opportunisticamente anche quando vince la curva ECB). Mai tocca
+`operational_series`/`relation_grade`/`official_name`. 39 test in
+`tests/core/instrument_analysis/test_benchmark.py`.
+
+**Bug reale trovato dal replay ufficiale** (non un errore di S, di
+processo — verificato PRIMA di dichiarare fatto): il nuovo campo
+sopravviveva in memoria ma spariva al primo cache-hit — `_benchmark_to_cache`/
+`_benchmark_from_cache` in `service.py` avevano una whitelist di campi
+non aggiornata (stesso principio del bug gia' noto per C/D/S, vedi test
+esistente `test_analyze_cache_hit_reconstructs_a_valid_analysis`).
+Corretto, verificato dal vivo su SWDA.MI (fresh analyze -> fallback
+popolato -> sopravvive al cache-hit), nuovo test di regressione diretto.
+
+**Replay ufficiale sui 111 (prima del fix cache)**: `relation_grade_counts`
+e score C/D/S **bit-per-bit identici** al replay di fine sessione
+precedente (92 PROPRIA, 7 SORELLA, 9 PROPRIA_STRUTTURALE, 1 CUGINA, 1
+MERCATO_GENERALE, 1 NONNA_TECNICA — cds 94,95/100 esatto). Score benchmark
+75,39 contro 75,38 (variazione di rete tra due run live, non un effetto
+del codice — nessun campo di identita' toccato da Task S). **Non ancora
+rimisurata la percentuale di copertura del fallback sui 111 dopo il fix
+cache**: un secondo replay a cache pulita e' stato avviato ma interrotto
+dall'ambiente (processo in background terminato dal sistema prima del
+completamento, non un errore del codice) — verificato pero' dal vivo su
+un'istanza reale (SWDA.MI -> fallback `^GSPC`/GLOBAL_EQUITY) che il
+meccanismo funziona end-to-end con dati reali.
+
+**Fase B — Task B1 (facade) + B2 (pulizia import morti) fatti**:
+`core/benchmark_registry.py` e' ora una facade sottile su
+`InstrumentAnalysisService` — rimossi tutti i mapping statici
+(`BENCHMARK_BY_TICKER/ISIN/TYPE/MACRO/INDEX_PATTERN`, ~90 righe).
+`BenchmarkAssignment` esteso additivamente con i campi ricchi del motore;
+`.ticker` = `operational_series` se interrogabile, altrimenti il fallback
+di Task S, altrimenti vuoto; `.label` resta sempre l'identita' ufficiale.
+Branch override manuale invariato bit-per-bit. `duration_years` (da
+`duration_modificata`, gia' presente sullo strumento arricchito) passato
+al motore per la curva sovrana sui BTP reali. `known_benchmark_catalog()`
+delega a `discovered_benchmark_catalog()` (scoperto a runtime, non piu'
+statico — **effetto collaterale onesto**: su un processo appena avviato,
+con cache di risoluzione vuota, l'autocomplete benchmark in Quotazioni
+interne/Strumenti sara' vuoto finche' il motore non ha risolto almeno uno
+strumento; mai verificato visivamente in app, da fare alla ripresa).
+
+`tools/audit_no_static_benchmarks.py` ora **passa** sul repo reale (prima
+documentato come atteso fallire fino a questa fase — test aggiornato).
+Suite completa del repo (430+ test) verde: riscritti i test che
+testavano il *contenuto* dei mapping statici rimossi (quel contenuto non
+esiste piu', il motore lo sostituisce e viene testato altrove — replay
+ufficiale), preservati con un fake service locale
+(`tests/_fake_instrument_analysis_service.py`) i test sul *meccanismo*
+(precedenza override, propagazione ticker/label ai consumer, nessuna
+chiamata di rete reale in un test unitario).
+
+**B3-B8 (dashboard_datasets, finance, services/benchmark,
+instrument_comparison, sator, form-server quote_interne/strumenti)**:
+nessuna modifica di codice necessaria — la facade mantiene esattamente le
+stesse firme. Verificato con la suite completa (ogni consumer ha test che
+esercitano il path reale), non ancora con verifica visiva in app.
+
+**Commit di questa sessione (4, separati per task)**: Task S
+(`core/instrument_analysis/{contracts,benchmark}.py`), fix cache
+(`service.py`), B1+B2 (`core/benchmark_registry.py` + pulizia import +
+test), oltre ai 3 commit del lavoro pendente committato a inizio sessione
+(Task R/follow-up InstrumentAnalysis, Ripara buchi + fix data fittizia,
+docs).
+
+**Aperto per la ripresa (B9, non ancora fatto)**:
+1. Rimisurare la copertura del fallback sui 111 fixture a cache pulita
+   (il meccanismo funziona, verificato su un'istanza reale — manca solo
+   il numero aggregato onesto).
+2. **Verifica visiva in app** (dev server Streamlit): Cruscotti (grafico
+   benchmark), pagina Confronto, form "Ruolo & Benchmark" in Gestione
+   Dati — almeno un caso EXACT/SISTER con fallback, un composito
+   multi-asset (FAM-*), un BTP. Non ancora fatta in questa sessione.
+3. Effetto collaterale del catalogo runtime (sopra) da confermare/discutere
+   con l'utente: va bene che l'autocomplete parta vuoto su un processo
+   fresco, o serve un prewarm esplicito?
+
+---
+
 (Nota di processo, valida per tutte le decisioni future su questo
 progetto: **ogni decisione di priorita' va scritta qui**, nello stesso
 momento in cui viene presa dall'utente, non solo nel piano gitignored o

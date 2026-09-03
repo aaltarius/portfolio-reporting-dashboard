@@ -1,5 +1,25 @@
 # Changelog
 
+## 5.0-pre - Fase B: core/benchmark_registry.py collegato a InstrumentAnalysisService
+
+- `core/benchmark_registry.py` non e' piu' un mapping statico ticker/ISIN/
+  tipo: e' una facade sottile su `InstrumentAnalysisService` — la
+  risoluzione automatica del benchmark per singolo strumento (Cruscotti,
+  Quotazioni, Confronto, form "Ruolo & Benchmark") ora viene dal motore
+  online-first invece che da ~90 righe di regole codificate a mano.
+  L'override manuale dell'utente resta identico e ha sempre la priorita'.
+  `tools/audit_no_static_benchmarks.py` conferma zero mapping statici
+  residui nel repo.
+- Nuovo ticker "di riserva" scaricabile per strumenti la cui identita'
+  ufficiale e' un nome leggibile invece di un simbolo Yahoo (~90% dei
+  casi): il grafico benchmark e la correlazione continuano a funzionare
+  senza mai sostituire l'identita' ufficiale mostrata.
+- Effetto collaterale onesto: l'autocomplete del benchmark in Quotazioni
+  interne/Strumenti ora si popola con quello che il motore scopre a
+  runtime, non piu' con un elenco fisso — su un processo appena avviato
+  puo' apparire vuoto finche' non e' stato risolto almeno uno strumento.
+  Dettaglio completo in `STATO_OPERATIVO_5.0_PRE.md` sezione 7.
+
 ## 5.0-pre - InstrumentAnalysis: classificazione, geometry, ladder e composite C/D/S; fix data fittizia quotazioni; "Ripara buchi"
 
 - InstrumentAnalysis (proseguimento): score C/D/S 42,66 -> 94,95/100,
