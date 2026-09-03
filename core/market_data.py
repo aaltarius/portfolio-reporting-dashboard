@@ -8,7 +8,7 @@ import math
 import re
 import time
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -357,6 +357,95 @@ def backfill_storico_prezzi(
         day = storico.setdefault(date_str, {})
         if ticker not in day:
             day[ticker] = parsed_price
+            added += 1
+    return added
+
+
+def compute_missing_business_days(storico: dict[str, dict[str, float]], ticker: str) -> list[str]:
+    """Giorni lavorativi (lun-ven) mancanti tra la prima e l'ultima data con
+    prezzo per questo ticker — stessa identica definizione della colonna
+    "Buchi" in Gestione Dati (`core/services/instrument_quality.py::_series_gap_stats`),
+    ma ritorna la LISTA delle date invece del solo conteggio, per poterle
+    proporre una per una nel flusso "Ripara buchi"."""
+    dates = sorted(d for d, day in storico.items() if isinstance(day, dict) and ticker in day)
+    if len(dates) < 2:
+        return []
+    start = date.fromisoformat(dates[0])
+    end = date.fromisoformat(dates[-1])
+    existing = set(dates)
+    missing: list[str] = []
+    current = start
+    one_day = timedelta(days=1)
+    while current <= end:
+        if current.weekday() < 5:
+            iso = current.isoformat()
+            if iso not in existing:
+                missing.append(iso)
+        current += one_day
+    return missing
+
+
+def preview_recent_gaps_fill(
+    storico: dict[str, dict[str, float]],
+    ticker: str,
+    recent_history: dict[str, float],
+    *,
+    days: int = 30,
+) -> dict[str, Any]:
+    """Calcola i buchi (`compute_missing_business_days`) per questo ticker,
+    li limita agli ultimi `days` giorni e li divide in due gruppi, SENZA
+    scrivere nulla:
+    - `auto_fill`: buchi recenti che `recent_history` (tipicamente
+      `get_yahoo_price_history_full(ticker, period="1mo")`) sa gia' colmare;
+    - `manual_dates`: buchi recenti che Yahoo non ha — l'utente li inserisce
+      a mano nel passo successivo.
+
+    Su richiesta esplicita dell'utente (2026-09-03, ribadita dopo aver visto
+    buchi vecchi di mesi comparire nella tabella manuale): SIA il recupero
+    automatico SIA quello manuale restano limitati agli ultimi `days`
+    giorni — un buco piu' vecchio non viene proposto affatto da questo
+    flusso, pensato per correggere dimenticanze recenti (es. un
+    aggiornamento saltato), non per ricostruire a mano lo storico intero di
+    uno strumento.
+    """
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    missing_dates = [d for d in compute_missing_business_days(storico, ticker) if d >= cutoff]
+    auto_fill: dict[str, float] = {}
+    manual_dates: list[str] = []
+    for date_str in missing_dates:
+        price = recent_history.get(date_str)
+        parsed = _coerce_positive_price(price) if price is not None else None
+        if parsed is not None:
+            auto_fill[date_str] = parsed
+        else:
+            manual_dates.append(date_str)
+    return {
+        "ticker": ticker,
+        "auto_fill": auto_fill,
+        "manual_dates": manual_dates,
+    }
+
+
+def apply_recent_gaps_fill(
+    storico: dict[str, dict[str, float]],
+    ticker: str,
+    entries: dict[str, float],
+) -> int:
+    """Scrive le date approvate dall'utente per questo ticker — sia quelle
+    auto-recuperate (`preview_recent_gaps_fill`'s `auto_fill`) sia quelle
+    inserite manualmente, stessa funzione per entrambe: dopo la conferma
+    esplicita non c'e' distinzione di fonte. Mai sovrascrive un prezzo
+    gia' presente (stessa regola di `backfill_storico_prezzi`, qui
+    duplicata perche' `entries` non e' uno storico grezzo Yahoo ma un
+    dict date->prezzo gia' filtrato dalla UI)."""
+    added = 0
+    for date_str, price in entries.items():
+        parsed = _coerce_positive_price(price)
+        if parsed is None:
+            continue
+        day = storico.setdefault(date_str, {})
+        if ticker not in day:
+            day[ticker] = parsed
             added += 1
     return added
 

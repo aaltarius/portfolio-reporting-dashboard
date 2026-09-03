@@ -718,6 +718,155 @@ def _render_arricchimento(data: dict, ctx) -> None:
         variant="bottom",
     )
 
+    if not quality.empty:
+        _render_ripara_buchi(data, quality)
+
+
+def _render_ripara_buchi(data: dict, quality: pd.DataFrame) -> None:
+    """Riparazione dei buchi nello storico prezzi, in due passi separati
+    (richiesta esplicita dell'utente, 2026-09-03 — la prima versione
+    scaricava tutto lo storico disponibile, non voluta):
+
+    1. Recupero automatico limitato agli ultimi ~30 giorni da Yahoo
+       Finance (`period="1mo"`) — mai un fetch profondo silenzioso.
+    2. Per i buchi che Yahoo non copre (piu' vecchi di 30 giorni, o un
+       giorno che Yahoo stesso non ha), inserimento manuale del prezzo
+       da parte dell'utente.
+
+    Entrambi i passi restano sola-lettura finche' l'utente non conferma
+    esplicitamente — mai una scrittura automatica. Riusa
+    `preview_recent_gaps_fill`/`apply_recent_gaps_fill`
+    (`core/market_data.py`), che a loro volta riusano la stessa regola di
+    `backfill_storico_prezzi`: non sovrascrive mai un prezzo gia' presente."""
+    from core.market_data import apply_recent_gaps_fill, get_yahoo_price_history_full, preview_recent_gaps_fill
+    from persistence.storage import save_data
+
+    candidates = sorted(quality.loc[quality["missing_business_days"] > 0, "ticker"].astype(str).unique())
+    if not candidates:
+        return
+
+    st.divider()
+    render_section_title(
+        "Ripara buchi nello storico",
+        comment=f"{len(candidates)} strumenti hanno giorni mancanti nello storico prezzi. Il recupero automatico copre solo gli ultimi ~30 giorni da Yahoo Finance; i buchi piu' vecchi vanno inseriti a mano.",
+        icon="data",
+    )
+
+    preview_key = "gestione_dati_ripara_buchi_preview"
+
+    if st.button("🔍 Cerca date mancanti (ultimi 30 giorni)", key="gestione_dati_ripara_buchi_scan"):
+        with st.spinner(f"Recupero storico recente da Yahoo Finance per {len(candidates)} strumenti..."):
+            storico = data.get("storico_prezzi", {}) or {}
+            previews = [
+                preview_recent_gaps_fill(storico, ticker, get_yahoo_price_history_full(ticker, period="1mo"))
+                for ticker in candidates
+            ]
+        st.session_state[preview_key] = previews
+
+    previews = st.session_state.get(preview_key)
+    if not previews:
+        return
+    if not all(isinstance(p, dict) and "auto_fill" in p and "manual_dates" in p for p in previews):
+        # Formato di anteprima obsoleto rimasto in sessione (es. da una versione
+        # precedente del codice ricaricata a caldo senza riavviare la sessione
+        # Streamlit): scartiamo e richiediamo una nuova scansione invece di
+        # far esplodere il rendering su una struttura non piu' valida.
+        st.session_state.pop(preview_key, None)
+        return
+
+    auto_rows = [p for p in previews if p["auto_fill"]]
+    manual_rows = [p for p in previews if p["manual_dates"]]
+    if not auto_rows and not manual_rows:
+        st.success("Nessun buco trovato tra gli strumenti segnalati: lo storico e' gia' completo per l'intervallo verificabile.")
+        st.session_state.pop(preview_key, None)
+        return
+
+    if auto_rows:
+        st.markdown(
+            "**Recuperabili automaticamente da Yahoo Finance (ultimi 30 giorni)** "
+            "— controlla data e prezzo trovato prima di confermare, deseleziona le righe che non ti convincono."
+        )
+        auto_entries = [
+            {"Applica": True, "Ticker": preview["ticker"], "Data": date.fromisoformat(missing_date), "Prezzo trovato": price}
+            for preview in auto_rows
+            for missing_date, price in sorted(preview["auto_fill"].items())
+        ]
+        auto_editor_df = pd.DataFrame(auto_entries)
+        auto_edited = st.data_editor(
+            auto_editor_df,
+            key="gestione_dati_ripara_buchi_auto_editor",
+            hide_index=True,
+            disabled=["Ticker", "Data", "Prezzo trovato"],
+            column_config={
+                "Applica": st.column_config.CheckboxColumn("Applica", width=60),
+                "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                "Prezzo trovato": st.column_config.NumberColumn("Prezzo trovato", format="%.4f"),
+            },
+        )
+        if st.button("✅ Conferma recupero automatico", key="gestione_dati_ripara_buchi_auto_confirm"):
+            storico = data.setdefault("storico_prezzi", {})
+            added_total = 0
+            applied_tickers: set[str] = set()
+            for _, row in auto_edited.iterrows():
+                if not bool(row["Applica"]):
+                    continue
+                data_iso = pd.Timestamp(row["Data"]).strftime("%Y-%m-%d")
+                added = apply_recent_gaps_fill(storico, str(row["Ticker"]), {data_iso: float(row["Prezzo trovato"])})
+                if added:
+                    added_total += added
+                    applied_tickers.add(str(row["Ticker"]))
+            if added_total:
+                save_data(data)
+                st.success(f"Aggiunte {added_total} date su {len(applied_tickers)} strumenti: {', '.join(sorted(applied_tickers))}.")
+            else:
+                st.info("Nessuna riga selezionata: nessuna scrittura effettuata.")
+            st.session_state.pop(preview_key, None)
+            st.rerun()
+        st.divider()
+
+    if manual_rows:
+        st.markdown("**Da inserire manualmente** (ultimi 30 giorni, Yahoo Finance non ha un prezzo per queste date)")
+        manual_entries = [
+            {"Ticker": preview["ticker"], "Data": date.fromisoformat(missing_date), "Prezzo": None}
+            for preview in manual_rows for missing_date in preview["manual_dates"]
+        ]
+        manual_editor_df = pd.DataFrame(manual_entries)
+        manual_edited = st.data_editor(
+            manual_editor_df,
+            key="gestione_dati_ripara_buchi_manual_editor",
+            hide_index=True,
+            disabled=["Ticker", "Data"],
+            column_config={
+                "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                "Prezzo": st.column_config.NumberColumn("Prezzo", min_value=0.0, step=0.0001, format="%.4f"),
+            },
+        )
+        if st.button("✅ Conferma inserimenti manuali", key="gestione_dati_ripara_buchi_manual_confirm"):
+            storico = data.setdefault("storico_prezzi", {})
+            added_total = 0
+            applied_tickers: set[str] = set()
+            for _, row in manual_edited.iterrows():
+                price = row["Prezzo"]
+                if price is None or (isinstance(price, float) and pd.isna(price)):
+                    continue
+                data_iso = pd.Timestamp(row["Data"]).strftime("%Y-%m-%d")
+                added = apply_recent_gaps_fill(storico, str(row["Ticker"]), {data_iso: float(price)})
+                if added:
+                    added_total += added
+                    applied_tickers.add(str(row["Ticker"]))
+            if added_total:
+                save_data(data)
+                st.success(f"Aggiunte {added_total} date manuali su {len(applied_tickers)} strumenti: {', '.join(sorted(applied_tickers))}.")
+            else:
+                st.info("Nessun prezzo inserito: nessuna scrittura effettuata.")
+            st.session_state.pop(preview_key, None)
+            st.rerun()
+        st.divider()
+
+    if st.button("Annulla", key="gestione_dati_ripara_buchi_cancel"):
+        st.session_state.pop(preview_key, None)
+        st.rerun()
+
 
 def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
     theme = get_theme_context()

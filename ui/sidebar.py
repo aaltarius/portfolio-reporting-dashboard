@@ -228,8 +228,10 @@ def _apply_price_date_entries_to_storico(
 ) -> None:
     """Scrive in storico_prezzi i prezzi raccolti per data effettiva di mercato.
 
-    Usata su weekend/festivi: i prezzi freschi hanno price_date = venerdì,
-    ma ts (oggi) è sabato e wd=False quindi non verrebbero mai scritti nello storico.
+    Percorso di scrittura primario per qualunque refresh (feriale o no):
+    scrivere sempre su price_date, mai su "oggi", evita di etichettare come
+    odierna una sessione che non si e' ancora aperta — es. un refresh
+    subito dopo mezzanotte trova ancora l'ultimo prezzo di ieri sera.
     Opera in-place; aggiorna solo prezzi finiti e positivi, cosi' un valore
     anomalo non puo' sovrascrivere una quotazione valida gia' salvata.
     """
@@ -464,7 +466,6 @@ def render_sidebar(data: dict) -> None:
                 elif pr:
                     reference_changed = _quote_value_materially_changed(reference_px_for_change, pr)
                     instrument_changed = _quote_value_materially_changed(current_price_before, pr)
-                    is_nav = _is_nav_fund(ticker, str(s.get("tipo", "")))
                     if reference_changed:
                         pending_instrument_updates.append((s, float(pr), src, str(price_date or ts)))
                     elif instrument_changed:
@@ -473,18 +474,29 @@ def render_sidebar(data: dict) -> None:
                         # Non va contato come variazione materiale, altrimenti un refresh
                         # innocuo cambia instruments_hash e ricostruisce Cruscotti/Report.
                         technical_price_sync_count += 1
-                    if wd and reference_changed and not is_nav:
-                        try:
-                            candidate_today_prices[ticker] = float(pr)
-                        except Exception:
-                            logger.warning("Prezzo aggiornato non convertibile in float, ticker ignorato: ticker=%s value=%r", ticker, pr, exc_info=True)
-                    elif reference_changed and price_date:
-                        # Fondi NAV su wd: scrivi sulla data effettiva del NAV, non su oggi
-                        # Strumenti non-wd: comportamento invariato
+                    if reference_changed and price_date:
+                        # Scrivi sempre sulla data EFFETTIVA del prezzo
+                        # (price_date), mai su "oggi" per costruzione. Prima
+                        # di questo fix, sugli strumenti non-NAV in un
+                        # giorno feriale il prezzo veniva scritto sempre
+                        # sotto la data odierna (ts) ignorando price_date:
+                        # un aggiornamento subito dopo mezzanotte (es.
+                        # 00:34) trovava ancora l'ultimo prezzo di ieri sera
+                        # (17:35) ma lo etichettava come oggi, creando una
+                        # sessione di mercato fittizia nello storico — bug
+                        # reale segnalato dall'utente il 2026-09-03.
                         try:
                             candidate_prices_by_date.setdefault(str(price_date)[:10], {})[ticker] = float(pr)
                         except Exception:
                             logger.warning("Prezzo aggiornato (per data) non convertibile in float, ticker ignorato: ticker=%s value=%r", ticker, pr, exc_info=True)
+                    elif reference_changed:
+                        # price_date assente (fallback estremo senza
+                        # timestamp, vedi get_yahoo_price_details): unico
+                        # caso in cui "oggi" resta l'unica opzione disponibile.
+                        try:
+                            candidate_today_prices[ticker] = float(pr)
+                        except Exception:
+                            logger.warning("Prezzo aggiornato non convertibile in float, ticker ignorato: ticker=%s value=%r", ticker, pr, exc_info=True)
                     if reference_changed:
                         quotes_data_changed = True
                         try:
@@ -589,7 +601,7 @@ def render_sidebar(data: dict) -> None:
                 "pending_instrument_updates_count": len(pending_instrument_updates),
                 "technical_price_sync_count": int(technical_price_sync_count),
                 "refresh_timestamp": ts_full,
-                "history_date": ts if wd else (", ".join(sorted(candidate_prices_by_date.keys())) or "non-working-day"),
+                "history_date": ", ".join(sorted(candidate_prices_by_date.keys())) or (ts if candidate_today_prices else "nessuna modifica"),
             }
             set_last_mutation_details(mutation_details)
 
@@ -598,9 +610,9 @@ def render_sidebar(data: dict) -> None:
                     inst["prezzo"] = new_price
                     inst["fonte"] = new_source
                     inst["aggiornato"] = new_date
-                if wd and candidate_today_prices:
+                if candidate_today_prices:
                     data.setdefault("storico_prezzi", {}).setdefault(ts, {}).update(candidate_today_prices)
-                if not wd and candidate_prices_by_date:
+                if candidate_prices_by_date:
                     _apply_price_date_entries_to_storico(data.setdefault("storico_prezzi", {}), candidate_prices_by_date)
                 logger.info(
                     "Refresh quotazioni con variazioni materiali: %s",
