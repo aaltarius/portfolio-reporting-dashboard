@@ -646,6 +646,30 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     disabled=not (market_auto_refresh_enabled and market_auto_refresh_history_enabled),
                     help="Lo storico cambia meno spesso del live: 240 minuti è un buon compromesso tra freschezza e traffico dati.",
                 )
+                st.markdown("**Profili strumenti (InstrumentAnalysis)**")
+                instrument_analysis_auto_refresh_settings = settings.get("instrument_analysis_auto_refresh", {})
+                if not isinstance(instrument_analysis_auto_refresh_settings, dict):
+                    instrument_analysis_auto_refresh_settings = {}
+                st.caption(
+                    "Scarica in background identità ufficiale, benchmark e Core/Difensivo/Satellite per gli strumenti "
+                    "non ancora coperti dalla cache, senza forzare rerun. Quotazioni/Cruscotti/SATOR mostrano subito "
+                    "i nuovi dati appena la cache si aggiorna."
+                )
+                iar1, iar2 = st.columns(2)
+                instrument_analysis_auto_refresh_enabled = iar1.checkbox(
+                    "Aggiorna profili strumenti in background",
+                    value=bool(instrument_analysis_auto_refresh_settings.get("enabled", False)),
+                    help="Avvia un thread leggero che colma la cache InstrumentAnalysis a intervalli regolari, per gli strumenti non ancora coperti.",
+                )
+                instrument_analysis_auto_refresh_minutes = iar2.number_input(
+                    "Ogni (min)",
+                    min_value=15,
+                    max_value=1440,
+                    value=max(15, min(1440, int(instrument_analysis_auto_refresh_settings.get("interval_minutes", 60) or 60))),
+                    step=15,
+                    disabled=not instrument_analysis_auto_refresh_enabled,
+                    help="Intervallo tra un ciclo e il successivo.",
+                )
 
             submitted_settings = st.form_submit_button("💾 Salva impostazioni", width="stretch", type="primary")
         if submitted_settings:
@@ -736,6 +760,11 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     "history_enabled": bool(market_auto_refresh_history_enabled),
                     "history_interval_minutes": int(market_auto_refresh_history_minutes),
                     "only_when_markets_open": bool(market_auto_refresh_open_only),
+                }
+                settings["instrument_analysis_auto_refresh"] = {
+                    **settings.get("instrument_analysis_auto_refresh", {}),
+                    "enabled": bool(instrument_analysis_auto_refresh_enabled),
+                    "interval_minutes": int(instrument_analysis_auto_refresh_minutes),
                 }
                 # Appearance
                 settings["operativo_mode"] = "sidebar"

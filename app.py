@@ -723,6 +723,22 @@ else:
         app_logger.warning("Auto-refresh Mercati non avviato: %s", exc)
 
 
+# === INSTRUMENT ANALYSIS AUTO-REFRESH SCHEDULER (background, cache only) ===
+# Disattivato di default (Fase D, Task D1/D2, deciso con l'utente 2026-09-04):
+# l'utente lo accende da Impostazioni. Il primo giro del thread fa gia' da
+# prewarm iniziale (stato assente -> refresh dovuto al primo check), stesso
+# comportamento di market_auto_refresh sopra.
+if os.getenv("PORTFOLIO_TESTING") == "1":
+    app_logger.info("Auto-refresh InstrumentAnalysis disabilitato in modalita test.")
+else:
+    try:
+        from core.infrastructure.instrument_analysis_auto_refresh import start_instrument_analysis_auto_refresh_scheduler
+        with _logged_app_phase("instrument_analysis_auto_refresh_scheduler_start"):
+            start_instrument_analysis_auto_refresh_scheduler(settings)
+    except Exception as exc:
+        app_logger.warning("Auto-refresh InstrumentAnalysis non avviato: %s", exc)
+
+
 # === DEBUG / PERFORMANCE UI FLAGS ===
 _ui_preferences = get_ui_preferences(settings)
 _RENDER_DEBUG_PROGRESS_ENABLED = bool(

@@ -2050,9 +2050,61 @@ sbagliato per colorare l'area del solo aperto). 3 test nuovi in
 modifica al primo grafico (Composizione % P/L per Macro-Categoria):
 l'utente ha confermato di lasciarlo com'e'.
 
-Prossimo passo possibile (non iniziato): Fase D (aggancio al refresh in
-background) — approvata dall'utente, da riprendere in questa stessa
-sessione.
+**Fase D — dettaglio bite-sized scritto e approvato 2026-09-04** (stessa
+sessione), due decisioni di scope prese dall'utente via domanda diretta:
+(1) scheduler background **disattivato di default**, come Mercati; (2) il
+vecchio D3 (stato UI "in fase di risoluzione") **non serve** — verificato
+che C1/C2 gia' ricadono sull'euristica vecchia quando la cache manca,
+regola non negoziabile 9 gia' soddisfatta, nessuna nuova UI. Dettaglio
+completo in `docs/superpowers/plans/2026-09-01-instrument-analysis-cds-benchmark.md`,
+sezione "Fase D".
+
+**Task D1 FATTO (2026-09-04, TDD)**: nuovo modulo
+`core/infrastructure/instrument_analysis_auto_refresh.py`, stesso
+scheletro di `core/infrastructure/market_auto_refresh.py` (thread daemon
+singleton, file di stato JSON separato
+`instrument_analysis_auto_refresh_state.json`). `_refresh_once()` itera
+`data["strumenti"]`, per ognuno controlla
+`InstrumentAnalysisService().peek_cached(...)` — se `None`, chiama
+`resolve_instrument_benchmark(item, master_entry=...)` (riusa la
+funzione gia' esistente invece di duplicare la chiamata ad `analyze()`:
+gia' applica l'override manuale, calcola `duration_years` per i BTP, e
+popola l'intera cache — profilo+CDS+benchmark insieme — come
+side-effect). Cap `max_instruments_per_cycle` (default 20) per non
+bloccare un ciclo su un universo grande (`analyze()` puo' costare fino a
+8s/strumento). Riusa `should_refresh_market_auto` (logica pura, generica,
+non vale la pena duplicarla per un solo altro chiamante). 8 test nuovi in
+`tests/test_instrument_analysis_auto_refresh.py` (impostazioni
+default/clamping, skip su cache-hit, resolve su cache-miss, cap
+rispettato, fallimento per-ticker non blocca gli altri, "fresh" quando
+non ancora dovuto, "disabled" non tocca mai dati/rete). Mai una vera
+chiamata di rete nei test (service e `resolve_instrument_benchmark`
+sempre mockati).
+
+**Task D2 FATTO (2026-09-04)**: wiring in `app.py` (nuovo blocco
+`INSTRUMENT ANALYSIS AUTO-REFRESH SCHEDULER`, copia 1:1 dello stile del
+blocco Mercati, stessa guardia `PORTFOLIO_TESTING`) e in
+`ui/pages/impostazioni.py` (nuova sezione "Profili strumenti
+(InstrumentAnalysis)" nel form Impostazioni: checkbox "Aggiorna profili
+strumenti in background" + intervallo minuti, salvati sotto
+`settings["instrument_analysis_auto_refresh"]`, stesso stile del blocco
+"Aggiornamento Mercati"). **Nessun pulsante manuale "Aggiorna"** in
+questo giro (semplificazione concordata con l'utente: il primo giro del
+thread fa gia' da prewarm iniziale). Verificato con
+`test_all_standard_tabs_render_and_end_on_last_page` (rendering completo
+di tutti i tab, incluso Impostazioni, verde) e con avvio reale
+dell'app (`streamlit run app.py`, log puliti, HTTP 200, scheduler
+correttamente inattivo di default — nessuna chiamata di rete spuria).
+
+**Fase D COMPLETA (2026-09-04)**. Suite completa del repo verde (0
+failures) dopo ogni commit. Con questo si chiude l'intero arco di lavoro
+InstrumentAnalysis pianificato (Fasi A, E, B, C, D) — il motore online-first
+e' ora completamente collegato: benchmark (Fase B), esposizione
+bucket/nature/ruolo SATOR (Fase C), refresh automatico in background
+opzionale (Fase D). Nessun prossimo passo pianificato al momento: eventuali
+estensioni (Fase D con pulsante manuale, gap residui della Fase A come il
+ladder CUGINA/ZIA/NONNA o `difesa_sicurezza` nel motore nuovo) restano
+note aperte, da riprendere solo su richiesta esplicita dell'utente.
 
 ---
 
