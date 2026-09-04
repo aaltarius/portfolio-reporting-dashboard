@@ -1888,10 +1888,26 @@ reale. Aggiunto fixture autouse globale
 `_isolate_instrument_analysis_cache` in `tests/conftest.py` (stesso
 principio di `portfolio_test_env` per `persistence.storage`) — chiude il
 gap per tutto il repo, non solo per i test nuovi. Suite completa verde (0
-failures) dopo l'aggiunta. Prossimo: Task C4 (disaccoppiare la mappa
-duplicata in `core/services/cruscotti.py`), poi Task C2 (piu' rischioso,
-richiede leggere per intero `tests/test_infer_sator_metadata_specificity.py`
-prima di toccare `infer_sator_metadata`).
+failures) dopo l'aggiunta.
+
+**Task C4 FATTO (2026-09-04, TDD)**: nuova costante pubblica
+`NATURE_DEFAULT_ROLE` + funzione `nature_bucket(nature) -> str`
+(`core/services/sator.py`, subito dopo `_role_bucket`) — stessa
+associazione nature->ruolo fissa gia' presente in ogni ramo di
+`infer_sator_metadata`, sorgente unica per il bucket di default di una
+nature. `core/services/cruscotti.py::_derive_quantitative_radar_target`
+non ha piu' la sua copia manuale indipendente `_NATURE_TO_BUCKET` (14
+entry, verificate bit-per-bit identiche a `nature_bucket()` prima di
+rimuoverla): ora chiama `nature_bucket()` via import locale dentro la
+funzione (mai al top del modulo, per lo stesso timore di import circolare
+gia' documentato in precedenza — non verificato risolvibile con certezza,
+quindi non rischiato). 2 test nuovi in
+`tests/test_sator_nature_bucket.py` (tutte le 19 nature vs bucket atteso,
+fallback nature sconosciuta -> Satellite). Suite completa verde (0
+failures). Prossimo: Task C2 (piu' rischioso — deriva nature/role da
+`InstrumentProfile` invece che da keyword nel nome; richiede leggere per
+intero `tests/test_infer_sator_metadata_specificity.py` prima di toccare
+`infer_sator_metadata`).
 
 ---
 

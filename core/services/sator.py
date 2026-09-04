@@ -1461,6 +1461,44 @@ def _role_bucket(role: str) -> str:
     return "Satellite"
 
 
+# Nature -> ruolo di default, stessa associazione fissa usata da ogni ramo
+# automatico di infer_sator_metadata (ogni nature vi compare con un solo
+# ruolo, mai due). Fonte unica per nature_bucket() sotto - Task C4 (Fase C,
+# 2026-09-04): prima di questo esisteva una copia manuale indipendente in
+# core/services/cruscotti.py (radar Cruscotti), a rischio di disallineamento
+# silenzioso ad ogni cambio di questa tabella (regola non negoziabile 4).
+NATURE_DEFAULT_ROLE: dict[str, str] = {
+    "bond_governativo": "bond",
+    "fondo_pac": "core_difensivo",
+    "criptovalute": "satellite_tematico",
+    "difesa_sicurezza": "satellite_tematico",
+    "monetario": "liquidita",
+    "oro": "oro",
+    "healthcare": "satellite_difensivo",
+    "quality_factor": "core_regionale",
+    "real_estate": "satellite_tematico",
+    "tecnologia_ai": "satellite_crescita",
+    "energia": "satellite_tematico",
+    "metalli_miniere": "satellite_tematico",
+    "commodities": "satellite_tematico",
+    "italia": "satellite_tematico",
+    "bond_globale": "bond",
+    "azionario_emergenti": "core_regionale",
+    "azionario_globale_core": "core_globale",
+    "azionario_paese_singolo": "satellite_tematico",
+}
+
+
+def nature_bucket(nature: str) -> str:
+    """Bucket Core/Difensivo/Satellite di default per una NATURE SATOR,
+    indipendente dallo strumento specifico (per il ticker/strumento reale
+    usare resolve_instrument_bucket_exposure, che considera anche override
+    manuali ed esposizione frazionata). Nature sconosciuta -> "altro" ->
+    Satellite, stesso fallback di _role_bucket."""
+    role = NATURE_DEFAULT_ROLE.get(str(nature or ""), "altro")
+    return _role_bucket(role)
+
+
 def compute_instrument_buckets(data: dict[str, Any], held_tickers: set[str] | None = None) -> dict[str, str]:
     """Ticker -> bucket (Core/Difensivo/Satellite). Unica fonte di verita' del
     ruolo strategico di ogni strumento, usata sia dal motore SATOR sia dalla UI

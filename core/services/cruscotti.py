@@ -220,16 +220,6 @@ _NATURE_TO_RADAR_AXIS = {
     "oro": "Materie prime", "metalli_miniere": "Materie prime", "commodities": "Materie prime",
     "real_estate": "Immobiliare",
 }
-# Stessa classificazione nature->bucket gia' usata da infer_sator_metadata/_role_bucket
-# in core/services/sator.py: riprodotta qui per evitare un import circolare (cruscotti -> sator
-# esiste gia' altrove nel modulo, ma solo a runtime dentro le funzioni).
-_NATURE_TO_BUCKET = {
-    "azionario_globale_core": "core", "azionario_emergenti": "core", "quality_factor": "core",
-    "monetario": "difensivo", "oro": "difensivo", "healthcare": "difensivo",
-    "bond_governativo": "difensivo", "bond_globale": "difensivo",
-    "tecnologia_ai": "satellite", "energia": "satellite", "metalli_miniere": "satellite",
-    "commodities": "satellite", "italia": "satellite", "real_estate": "satellite",
-}
 _RADAR_QUANTITATIVE_AXES = [
     "Azionario", "Obbligazionario governativo", "Obbligazionario corporate",
     "Liquidità", "Materie prime", "Immobiliare", "Alternativi", "Criptovalute",
@@ -240,12 +230,18 @@ def _derive_quantitative_radar_target(portfolio_objective: dict[str, float] | No
     """8 assi quantitativi del radar, derivati dall'obiettivo Core/Difensivo/Satellite
     e dai cap di concentrazione per natura (entrambi editabili dall'utente in
     Pianificazione) — nessun preset separato, nessun valore nascosto."""
+    # Import locale per evitare un import circolare (core.services.sator
+    # importa a sua volta core.finance/core.price_frames, catena non
+    # verificata esente da cicli a livello di modulo) - stesso principio gia'
+    # documentato per questa funzione prima del Task C4 (Fase C, 2026-09-04).
+    from core.services.sator import nature_bucket
+
     objective = portfolio_objective or {}
     caps = concentration_caps or {}
     out = {axis: 0.0 for axis in _RADAR_QUANTITATIVE_AXES}
     for bucket_key in ("core", "difensivo", "satellite"):
         bucket_target_pct = _safe_float(objective.get(bucket_key, 0.0)) * 100.0
-        natures_in_bucket = [n for n, b in _NATURE_TO_BUCKET.items() if b == bucket_key]
+        natures_in_bucket = [n for n in _NATURE_TO_RADAR_AXIS if nature_bucket(n).lower() == bucket_key]
         cap_total = sum(_safe_float(caps.get(n, 0.0)) for n in natures_in_bucket)
         if cap_total <= 0:
             continue
