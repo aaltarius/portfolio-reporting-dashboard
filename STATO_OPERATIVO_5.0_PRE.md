@@ -1777,6 +1777,118 @@ decise, da confermare alla ripresa.
 
 ---
 
+**CHECKPOINT 2026-09-04 (sessione interrotta per riavvio dell'utente, nulla
+implementato per la Fase C — solo pianificato)**
+
+L'utente ha notato (uso reale dell'app dopo la Fase B) che l'Esposizione
+Bucket in Quotazioni interne/Impostazioni mostra ancora valori vecchi anche
+se il benchmark e' gia' aggiornato — **confermato corretto, non un bug**:
+Fase C (SATOR) non era ancora stata toccata. L'utente ha chiesto di
+procedere e confermato due volte ("si', procedi" e poi "continua con la
+fase C").
+
+**Fase C — solo pianificata, ZERO codice toccato in questa sessione.**
+Piano completo scritto in `C:\Users\Giuseppe\.claude\plans\glittery-floating-marble.md`
+(fuori dal repo, va riletto a mano se serve il dettaglio — non e' nel
+worktree). Riassunto di quello che contiene, cosi' che questo file resti
+la fonte di verita' anche se quel plan file si perde:
+
+- **Vincolo critico trovato prima di scrivere qualunque dettaglio**:
+  `infer_sator_metadata`/`resolve_instrument_bucket_exposure` sono oggi
+  funzioni pure, istantanee, offline, chiamate in cicli stretti su TUTTO
+  l'universo strumenti (motore di ranking SATOR, editor universo,
+  reminder watchlist). `InstrumentAnalysisService.analyze()` fa vere
+  chiamate di rete — chiamarlo li' dentro violerebbe la regola non
+  negoziabile 1 (niente rerun/attese a sorpresa). **Serve un Task T
+  prerequisito**: nuovo metodo `InstrumentAnalysisService.peek_cached(...)`
+  che legge SOLO la cache gia' popolata (mai una fetch), fallback
+  all'euristica vecchia quando la cache non ha ancora l'istrumento.
+- **Task C1** (basso rischio): `resolve_instrument_bucket_exposure`, ramo
+  automatico, usa `cds.core_pct/defensive_pct/satellite_pct` reali invece
+  di `{_role_bucket(role): 1.0}`, quando `peek_cached()` ha successo.
+  `_score_universe` gestisce gia' esposizioni frazionate da tempo (feature
+  "Task 1/4 SATOR esposizione frazionata", 2026-08-21) — qui si tratta solo
+  di alimentarlo con numeri migliori.
+- **Task C2** (rischio maggiore): `infer_sator_metadata`, ramo automatico,
+  deriva `nature`/`role`/`confidence` da `InstrumentProfile`
+  (structural_type/sector/theme/factor/geography/geo_scope/asset_class)
+  invece che da parole chiave nel nome. **Verificato sul codice reale**: i
+  ruoli SATOR sono **10** (`SATOR_ROLE_VALUES`), non ~17 come stimato nel
+  piano originale — contratto pubblico usato da 2 dropdown UI
+  (`ui/form_server/quote_interne.py`, `ui/form_server/strumenti.py`) e
+  validato da `apply_classification_override`, deve restare identico. Il
+  vocabolario del motore (sector/theme/factor/geo_scope) copre gia' quasi
+  1:1 le categorie semantiche dell'euristica attuale (es. sector=healthcare
+  -> nature=healthcare/role=satellite_difensivo, gia' oggi). Per i fondi
+  (asset_class FND, oggi hardcoded a core_difensivo sempre) si puo' usare
+  `profile.asset_mix` reale (gia' presente da Task R) per un bucket vero
+  invece di un default fisso — miglioramento reale, non solo migrazione.
+- **Task C3** (solo segnalato, non in scope): trovata un'asimmetria
+  preesistente (non causata da oggi) — `_score_universe` (sator.py:998)
+  calcola la colonna `_bucket` mostrata in tabella SEMPRE da `role` singolo,
+  mai dall'esposizione frazionata reale gia' usata per il punteggio. Task
+  C1 la rendera' piu' visibile (piu' strumenti con vera esposizione
+  frazionata). Da discutere se sistemarla subito dopo o in un giro
+  successivo.
+- **Task C4**: `core/services/cruscotti.py:213-232` ha una copia
+  indipendente e manuale (`_NATURE_TO_BUCKET`/`_NATURE_TO_RADAR_AXIS`,
+  commento esplicito nel file: duplicata per evitare un import circolare)
+  della classificazione nature->bucket di sator.py, che alimenta il target
+  del radar Cruscotti. Cambiare come viene assegnato `nature` (Task C2)
+  senza toccare questo file la farebbe disallineare silenziosamente —
+  viola la regola non negoziabile 4. Da risolvere con un import locale
+  (pattern gia' usato altrove nello stesso file) invece di due dizionari.
+- **Rischio test**: `tests/test_infer_sator_metadata_specificity.py` (11
+  riferimenti) quasi certamente blocca gli esatti valori ticker/keyword che
+  C2 sostituisce — da leggere per intero PRIMA di toccare `infer_sator_metadata`,
+  stesso trattamento gia' dato ai test statici di `benchmark_registry.py`
+  in Fase B (riscrivere gli assert sul *contenuto* rimosso, preservare
+  quelli sul *meccanismo*).
+
+**Prossimo passo alla ripresa**: il piano sopra non e' stato ancora
+mostrato/confermato esplicitamente dall'utente (interrotto prima di
+poterlo riassumere) — da presentare e fare approvare prima di scrivere
+il dettaglio bite-sized e toccare codice, stessa disciplina di Task S/Fase B.
+
+---
+
+**Due domande aperte dello stesso utente, indipendenti dalla Fase C, NON
+Fase C, NON InstrumentAnalysis — solo spiegazione, nessuna modifica fatta**:
+
+1. **Grafico "Composizione % del Profit/Loss per Macro-Categoria"** (Home,
+   `ui/charts/home.py::build_portfolio_pl_category_chart`): l'utente ha
+   notato che GOV mostrava 10,6% con un P/L di -130,00€ e non gli tornava.
+   Spiegato e verificato con dati reali (03/09/2026): la percentuale e'
+   calcolata sul valore assoluto di ogni categoria diviso la somma dei
+   valori assoluti (1.223,39€, non il P/L netto reale di 963,39€) — quindi
+   il "100%" del grafico e' un totale lordo gonfiato (127% del netto), non
+   il risultato netto vero. L'utente ha fatto notare correttamente che
+   questo e' concettualmente sbagliato per un grafico "composizione del
+   P/L": la scomposizione corretta (percentuale con segno sul P/L netto
+   del giorno, es. GOV = -13,5% invece di +10,6%) e' stata proposta e
+   verificata con numeri reali, ma **l'utente ha detto "lasciamo perdere
+   per ora"** — nessuna modifica fatta, resta un miglioramento noto e
+   proposto per quando vorra' riprenderlo.
+2. **Grafico Overview (Home), serie "P/L pos. aperte" (blu tratteggiata)
+   vs "P/L storico" (verde) vs "Total return" (arancione)**
+   (`ui/charts/overview.py:130-179`): l'utente si aspetta che il verde
+   stia SOTTO la linea blu tratteggiata e che l'arancione rappresenti la
+   parte mancante (proventi gia' incassati, non impegnati). Verificato con
+   dati reali (04/09/2026): oggi invece blu(963,39) < verde(2.527,76) <
+   arancione(2.895,25) — verde = P/L posizioni aperte + P/L realizzato
+   netto (854 righe di storico, un solo evento di realizzo reale, rimborso
+   BTP-0826 il 01/08/2026, +1.564,37€ — non un bug di dati piatti,
+   verificato), arancione = verde + proventi (367,49€). La parte
+   sull'arancione ("soldi gia' incassati e non impegnati") gia' corrisponde
+   a cosa fa il codice oggi. La parte sul verde/blu **non torna con la
+   logica attuale** (verde somma un guadagno gia' incassato al P/L aperto,
+   quindi sale sopra, non scende sotto) — **chiesto all'utente di spiegare
+   che modello si aspetta per la linea verde, mai risposto** (sessione
+   interrotta qui). Nessuna modifica fatta, nessun bug confermato, solo
+   una domanda aperta.
+
+---
+
 (Nota di processo, valida per tutte le decisioni future su questo
 progetto: **ogni decisione di priorita' va scritta qui**, nello stesso
 momento in cui viene presa dall'utente, non solo nel piano gitignored o
