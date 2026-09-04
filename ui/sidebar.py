@@ -103,14 +103,26 @@ def _render_form_server_notice(kind: str, title: str, detail: str = "", slot=Non
     )
 
 
-def _probe_form_server_page(url: str) -> tuple[bool, str]:
+_FORM_SERVER_PROBE_TIMEOUT = 1.2
+# "Quote & impostazioni" calcola SATOR (target/stato quote, bucket
+# exposure, operational status) su tutti gli strumenti posseduti - piu'
+# pesante delle altre pagine del form-server, quasi istantanee. Con la
+# sola cache di risoluzione InstrumentAnalysis memoizzata (fix 2026-09-05,
+# vedi core/instrument_analysis/cache.py) resta comunque sopra il timeout
+# probe di default (~1,4-1,5s a caldo, di piu' a freddo appena avviato) -
+# bug reale segnalato dall'utente: il bottone sidebar non apriva mai la
+# scheda perche' il probe scadeva sempre prima che la pagina rispondesse.
+_FORM_SERVER_PROBE_TIMEOUT_OVERRIDES = {"quote-interne": 4.5}
+
+
+def _probe_form_server_page(url: str, *, timeout: float = _FORM_SERVER_PROBE_TIMEOUT) -> tuple[bool, str]:
     """Verifica la pagina locale solo dopo un click operativo dalla sidebar."""
     try:
         from urllib.error import HTTPError, URLError
         from urllib.request import Request, urlopen
 
         request = Request(url, method="GET", headers={"User-Agent": "Sestante-sidebar-check"})
-        with urlopen(request, timeout=1.2) as response:
+        with urlopen(request, timeout=timeout) as response:
             status_code = int(getattr(response, "status", 200) or 200)
         if 200 <= status_code < 500:
             return True, ""
@@ -150,7 +162,8 @@ def _open_form_server_page(path: str, label: str) -> bool:
         )
         return False
 
-    reachable, probe_detail = _probe_form_server_page(url)
+    probe_timeout = _FORM_SERVER_PROBE_TIMEOUT_OVERRIDES.get(clean_path, _FORM_SERVER_PROBE_TIMEOUT)
+    reachable, probe_detail = _probe_form_server_page(url, timeout=probe_timeout)
     if not reachable:
         detail = probe_detail or "pagina locale non raggiungibile"
         logger.error("Form server non raggiungibile per %s su %s: %s", label, url, detail)

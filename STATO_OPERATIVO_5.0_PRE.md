@@ -2113,6 +2113,26 @@ visibile nella sessione live (non ho riavviato l'istanza dell'utente
 senza chiederlo, essendo un processo che non ho avviato io in questa
 sessione).
 
+**Seguito FATTO (2026-09-05, stessa sessione)**: l'utente ha riavviato
+l'app e riprovato — errore identico ("Quote & impostazioni non
+disponibile ... timeout di connessione"). Verifica dal vivo sul processo
+riavviato (PID nuovo, confermato partito DOPO il commit del fix sopra):
+`/quote-interne` e' sceso da 3,3-4,7s a **1,4-1,5s** (il fix della cache
+funziona), ma resta comunque sopra il timeout di probe di 1,2s usato da
+`_open_form_server_page()` — la pagina fa comunque un calcolo SATOR su
+tutti gli strumenti (piu' pesante delle altre 7 route del form-server,
+quasi istantanee), quindi resta strutturalmente piu' lenta anche con la
+cache InstrumentAnalysis a posto. **Fix aggiuntivo**: timeout di probe
+alzato SOLO per la route `quote-interne` (1,2s -> 4,5s,
+`_FORM_SERVER_PROBE_TIMEOUT_OVERRIDES` in `ui/sidebar.py`), le altre 7
+route restano sul timeout veloce da 1,2s (fail-fast se il servizio e'
+davvero giu'). 2 test aggiornati (assert sulla nuova firma
+`_probe_form_server_page(url, timeout=probe_timeout)`) + 1 test nuovo in
+`tests/test_form_server_startup.py` che verifica il timeout differenziato
+per route con `_probe_form_server_page` mockato. Suite completa verde (0
+failures). **Stesso avviso di prima**: serve un altro riavvio dell'app
+perche' l'utente veda anche questo secondo fix.
+
 **Fase D — dettaglio bite-sized scritto e approvato 2026-09-04** (stessa
 sessione), due decisioni di scope prese dall'utente via domanda diretta:
 (1) scheduler background **disattivato di default**, come Mercati; (2) il
