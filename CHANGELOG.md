@@ -1,5 +1,46 @@
 # Changelog
 
+## 5.0-pre - Fase C+D: SATOR collegato a InstrumentAnalysisService, refresh automatico in background
+
+- SATOR (esposizione bucket, nature/ruolo per strumento) non usa piu' solo
+  la vecchia euristica per keyword sul ticker: quando la cache
+  InstrumentAnalysis e' popolata per uno strumento, esposizione bucket
+  frazionata, nature e ruolo derivano dal profilo online-first (Fase A);
+  fallback identico a prima quando la cache non c'e' ancora. Nuovo
+  `peek_cached()` sul service per leggere la cache senza mai fare rete
+  (Task T), cosi' SATOR non paga mai il costo di un'analisi live.
+- Fix reale trovato nel confronto vecchio/nuovo sui 26 strumenti aperti
+  del portafoglio: uno strumento a fattore/tematico con `geo_scope=global`
+  (es. XDEB.MI, `FACTOR_MINIMUM_VOLATILITY`) regrediva ad "altro/altro"
+  perche' il fallback finale controllava solo
+  `structural_type == "BROAD_EQUITY"`. Allargato a qualunque
+  `structural_type` non vuoto con scope globale. Dopo il fix: 4 strumenti
+  su 26 cambiati, zero regressioni.
+- Fix asimmetria: la colonna "bucket" mostrata in tabella (usata per
+  `bucket_weight`/`bucket_target`) veniva ancora calcolata dal ruolo
+  singolo anche per strumenti con esposizione frazionata reale (es. 60%
+  Core/40% Difensivo classificato comunque come "Difensivo" dal ruolo).
+  Ora usa il bucket dominante per peso dell'esposizione frazionata, con
+  fallback al vecchio comportamento se l'esposizione manca.
+- Fix collaterale (segnalato dall'utente sul grafico "P/L del
+  portafoglio", vista Overview): la serie "P/L storico" sommava
+  erroneamente il P/L realizzato netto a quello delle posizioni aperte.
+  Ora coincide esattamente con "P/L pos. aperte"; "Total return" resta
+  l'unica serie a includere il realizzato, con l'area di riempimento
+  colorata in base al segno corretto.
+- Refresh automatico in background per i profili InstrumentAnalysis
+  (Fase D): stesso schema del refresh Mercati (thread daemon, stato
+  proprio su file), **disattivato di default**. Popola la cache
+  strumento per strumento (fino a 20 per ciclo) solo per chi non e' gia'
+  in cache, senza mai bloccare un ciclo su un universo grande. Attivabile
+  da Impostazioni; nessun pulsante di refresh manuale in questo giro
+  (il primo ciclo del thread fa gia' da prewarm).
+- Con questo si chiude l'intero arco InstrumentAnalysis pianificato
+  (Fasi A, E, B, C, D): motore online-first collegato end-to-end a
+  benchmark, esposizione bucket/nature/ruolo SATOR e refresh in
+  background. Dettaglio completo in `STATO_OPERATIVO_5.0_PRE.md`
+  sezione 7.
+
 ## 5.0-pre - Fase B: core/benchmark_registry.py collegato a InstrumentAnalysisService
 
 - `core/benchmark_registry.py` non e' piu' un mapping statico ticker/ISIN/
