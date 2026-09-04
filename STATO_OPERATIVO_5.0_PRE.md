@@ -1864,8 +1864,34 @@ trip identico al cache-hit di `analyze()`, scadenza TTL, nessuna chiamata
 agli adapter di rete). Refactor contestuale: `analyze()` ora chiama
 `peek_cached()` internamente sul ramo cache-hit invece di duplicare la
 ricostruzione (stesso comportamento, elapsed_ms impostato dopo). Suite
-completa del repo verde (0 failures). Prossimo: Task C1 (esposizione
-bucket reale in `resolve_instrument_bucket_exposure`).
+completa del repo verde (0 failures).
+
+**Task C1 FATTO (2026-09-04, TDD)**: `resolve_instrument_bucket_exposure`
+(`core/services/sator.py`), ramo automatico (dopo il controllo
+dell'override manuale, invariato) — se
+`_instrument_analysis_service().peek_cached(ticker=..., isin=...)` trova
+una entry, usa `{"Core": cds.core_pct/100, "Difensivo": cds.defensive_pct/100,
+"Satellite": cds.satellite_pct/100}` invece di `{_role_bucket(role): 1.0}`.
+Nuovo singleton lazy `_instrument_analysis_service()` in sator.py, stesso
+pattern di `core.benchmark_registry._service()`. 3 test nuovi (esposizione
+reale da cache popolata, fallback a cache vuota, override manuale ha
+sempre precedenza — mai consulta la cache). **Gap trovato e chiuso in
+questa sessione, non pre-esistente**: nessun test del repo isolava la
+cache disco `InstrumentAnalysisService` da `tests/conftest.py` (solo i
+file dentro `tests/core/instrument_analysis/` lo facevano localmente) —
+prima di C1 questo non contava perche' nessun percorso SATOR la
+consultava mai; ora che `resolve_instrument_bucket_exposure` la legge,
+qualunque test che esercita SATOR (`_score_universe`,
+`compute_watchlist_reminders`, `build_sator_universe_editor_frame`, ecc.)
+avrebbe silenziosamente potuto leggere `data/cache/instrument_analysis/resolution.json`
+reale. Aggiunto fixture autouse globale
+`_isolate_instrument_analysis_cache` in `tests/conftest.py` (stesso
+principio di `portfolio_test_env` per `persistence.storage`) — chiude il
+gap per tutto il repo, non solo per i test nuovi. Suite completa verde (0
+failures) dopo l'aggiunta. Prossimo: Task C4 (disaccoppiare la mappa
+duplicata in `core/services/cruscotti.py`), poi Task C2 (piu' rischioso,
+richiede leggere per intero `tests/test_infer_sator_metadata_specificity.py`
+prima di toccare `infer_sator_metadata`).
 
 ---
 

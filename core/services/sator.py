@@ -32,10 +32,25 @@ from core.constants import QTY_ZERO_EPS
 from core.domain.risk import build_drawdown_series, rolling_sharpe, rolling_volatility_annualized
 from core.domain.returns import combine_weighted_returns, normalize_to_first, simple_period_return
 from core.finance import build_ptf_df, compute_portfolio_state
+from core.instrument_analysis.service import InstrumentAnalysisService
 from core.price_frames import build_expanded_price_frame
 from persistence.storage import load_sator_decisions, macro_cat
 
 logger = logging.getLogger("portafoglio.core.services.sator")
+
+_INSTRUMENT_ANALYSIS_SERVICE: InstrumentAnalysisService | None = None
+
+
+def _instrument_analysis_service() -> InstrumentAnalysisService:
+    """Singleton lazy, stesso pattern di `core.benchmark_registry._service()`.
+    Usato SOLO via `peek_cached()` (Fase C, Task T): mai una chiamata di
+    rete da dentro il motore SATOR, che gira in cicli stretti su tutto
+    l'universo strumenti (regola non negoziabile 1). Nei test si sostituisce
+    direttamente `core.services.sator._INSTRUMENT_ANALYSIS_SERVICE`."""
+    global _INSTRUMENT_ANALYSIS_SERVICE
+    if _INSTRUMENT_ANALYSIS_SERVICE is None:
+        _INSTRUMENT_ANALYSIS_SERVICE = InstrumentAnalysisService()
+    return _INSTRUMENT_ANALYSIS_SERVICE
 
 
 # --------------------------------------------------------------------------- #
@@ -447,6 +462,21 @@ def resolve_instrument_bucket_exposure(data: dict[str, Any], item: dict[str, Any
         total = sum(cleaned.values())
         if cleaned and abs(total - 1.0) < 1e-6:
             return cleaned
+    # Task C1 (Fase C, 2026-09-04): esposizione reale da InstrumentAnalysis
+    # se gia' in cache (mai una chiamata di rete qui, vedi
+    # _instrument_analysis_service). Popolata organicamente dalla Fase B
+    # durante la navigazione normale (Quotazioni, Cruscotti, form
+    # benchmark) — fallback identico a prima se la cache non ha ancora lo
+    # strumento.
+    isin = str(item.get("isin") or "").strip().upper()
+    analysis = _instrument_analysis_service().peek_cached(ticker=ticker, isin=isin)
+    if analysis is not None:
+        cds = analysis.cds
+        return {
+            "Core": cds.core_pct / 100.0,
+            "Difensivo": cds.defensive_pct / 100.0,
+            "Satellite": cds.satellite_pct / 100.0,
+        }
     role = resolve_instrument_role(data, item, in_portfolio)
     return {_role_bucket(role): 1.0}
 
