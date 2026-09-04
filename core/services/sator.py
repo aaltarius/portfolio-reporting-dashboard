@@ -556,15 +556,40 @@ def resolve_instrument_role(data: dict[str, Any], item: dict[str, Any], in_portf
     return _resolve_instrument_meta(data, item, in_portfolio, "role")
 
 
+def auto_instrument_bucket_exposure(data: dict[str, Any], item: dict[str, Any], in_portfolio: bool) -> dict[str, float]:
+    """Esposizione AUTOMATICA ai bucket (mai l'override manuale): da
+    InstrumentAnalysis in cache se gia' disponibile (Task C1, fractional
+    reale), altrimenti bucket singolo dal ruolo. Nucleo condiviso tra
+    resolve_instrument_bucket_exposure (fallback quando non c'e' override)
+    e la UI che deve mostrare la proposta automatica come riferimento
+    accanto a un override in corso di modifica - punto di accesso pubblico
+    apposta, per evitare che un secondo calcolo hand-rolled nella UI
+    regredisca silenziosamente al vecchio bucket singolo (bug reale
+    2026-09-05: l'hint "Automatico:" in /quote-interne mostrava sempre il
+    bucket singolo dal ruolo anche quando la cache aveva gia' un'esposizione
+    frazionata reale, disallineato dai valori frazionati mostrati nelle
+    caselle editabili accanto)."""
+    isin = str(item.get("isin") or "").strip().upper()
+    ticker = str(item.get("ticker") or "").strip().upper()
+    analysis = _instrument_analysis_service().peek_cached(ticker=ticker, isin=isin)
+    if analysis is not None:
+        cds = analysis.cds
+        return {
+            "Core": cds.core_pct / 100.0,
+            "Difensivo": cds.defensive_pct / 100.0,
+            "Satellite": cds.satellite_pct / 100.0,
+        }
+    role = resolve_instrument_role(data, item, in_portfolio)
+    return {_role_bucket(role): 1.0}
+
+
 def resolve_instrument_bucket_exposure(data: dict[str, Any], item: dict[str, Any], in_portfolio: bool) -> dict[str, float]:
     """Esposizione effettiva ai bucket Core/Difensivo/Satellite per uno
-    strumento (auto + override manuale). Default (nessun override): 100%
-    nel bucket primario derivato da resolve_instrument_role - identico al
-    comportamento di compute_instrument_buckets per chi non usa la
-    feature. bucket_exposure_user_edited e' un flag indipendente da
-    user_edited (ruolo) e benchmark_user_edited: mai condiviso, per non
-    ripetere il bug del sotto-progetto 1 dove un flag condiviso riattivava
-    campi dormienti non richiesti."""
+    strumento (auto + override manuale). Default (nessun override): vedi
+    auto_instrument_bucket_exposure. bucket_exposure_user_edited e' un
+    flag indipendente da user_edited (ruolo) e benchmark_user_edited: mai
+    condiviso, per non ripetere il bug del sotto-progetto 1 dove un flag
+    condiviso riattivava campi dormienti non richiesti."""
     ticker = str(item.get("ticker") or "").strip().upper()
     master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
     sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
@@ -578,23 +603,7 @@ def resolve_instrument_bucket_exposure(data: dict[str, Any], item: dict[str, Any
         total = sum(cleaned.values())
         if cleaned and abs(total - 1.0) < 1e-6:
             return cleaned
-    # Task C1 (Fase C, 2026-09-04): esposizione reale da InstrumentAnalysis
-    # se gia' in cache (mai una chiamata di rete qui, vedi
-    # _instrument_analysis_service). Popolata organicamente dalla Fase B
-    # durante la navigazione normale (Quotazioni, Cruscotti, form
-    # benchmark) — fallback identico a prima se la cache non ha ancora lo
-    # strumento.
-    isin = str(item.get("isin") or "").strip().upper()
-    analysis = _instrument_analysis_service().peek_cached(ticker=ticker, isin=isin)
-    if analysis is not None:
-        cds = analysis.cds
-        return {
-            "Core": cds.core_pct / 100.0,
-            "Difensivo": cds.defensive_pct / 100.0,
-            "Satellite": cds.satellite_pct / 100.0,
-        }
-    role = resolve_instrument_role(data, item, in_portfolio)
-    return {_role_bucket(role): 1.0}
+    return auto_instrument_bucket_exposure(data, item, in_portfolio)
 
 
 def resolve_instrument_no_sell(data: dict[str, Any], ticker: str) -> bool:

@@ -2133,6 +2133,70 @@ per route con `_probe_form_server_page` mockato. Suite completa verde (0
 failures). **Stesso avviso di prima**: serve un altro riavvio dell'app
 perche' l'utente veda anche questo secondo fix.
 
+**Bug FATTO (2026-09-05): hint "Automatico:" in Esposizione Bucket
+mostrava la vecchia assegnazione a bucket singolo** — segnalato
+dall'utente ("sotto il nome dello strumento in 'Automatico:' spuntano
+altri valori sicuramente legati alla vecchia assegnazione"). Confermato:
+`ui/form_server/quote_interne.py` calcolava le caselle editabili
+(`current_exp`) con `resolve_instrument_bucket_exposure()` (Task C1,
+frazionata reale da InstrumentAnalysis), ma l'hint "Automatico:" sotto il
+ticker con un calcolo hand-rolled separato — SOLO `_role_bucket(ruolo)`,
+sempre bucket singolo 100%, mai la cache — disallineato dai valori
+frazionati mostrati nelle caselle accanto. Fix: estratta
+`auto_instrument_bucket_exposure()` (nuova funzione pubblica in
+`core/services/sator.py`) come nucleo condiviso — usata sia da
+`resolve_instrument_bucket_exposure()` (fallback quando non c'e' override)
+sia dall'hint in quote_interne.py, cosi' le due fonti non possono piu'
+disallinearsi strutturalmente. **Bug satellite trovato in corsa**: la
+prima versione del fix ha rotto 14 test esistenti (`auto_exp[b]` con
+subscript diretto va in `KeyError` quando `_role_bucket` risolve un
+singolo bucket diverso da quello indicizzato, es. "Satellite" mentre si
+accede a "Core") — corretto con `.get(b, 0.0)`, stesso pattern difensivo
+gia' usato per `current_exp`. Suite completa verde (0 failures) dopo il
+fix. 3 test nuovi in `tests/test_resolve_instrument_bucket_exposure.py`
+(auto_instrument_bucket_exposure ignora l'override attivo, fallback su
+cache vuota). **Stesso avviso**: serve un riavvio dell'app.
+
+**Investigazione FATTA (2026-09-05): qualita' benchmark in Quotazioni e
+SATOR sui dati reali** — l'utente ha segnalato benchmark "che fanno
+cagare" (dati mancanti, curve che spuntano dal nulla con pochi punti,
+curve assenti per alcuni strumenti) e ha chiesto se C/D/S e benchmark in
+SATOR sono gia' stati valutati sui suoi dati reali. Investigazione su 18
+strumenti aperti reali (non fixture) - **due problemi distinti,
+entrambi confermati**:
+1. **Download storico benchmark incompleto** (non assegnazione): in
+   `data/cache/portafoglio_benchmark_cache.json`, 63 ticker benchmark
+   spaccati in due gruppi — 27 con ~500+ punti (storico da ago/set 2024,
+   ~2 anni) e **36 con solo ~135 punti** (storico da fine feb 2026, ~6
+   mesi). `_prefetch_benchmark_data()` (`core/dashboard_datasets.py:120`)
+   chiede sempre `yf.Ticker(...).history(period="2y")`, ma per il secondo
+   gruppo Yahoo/yfinance restituisce sistematicamente solo ~6 mesi (causa
+   non ancora isolata, serve debug live — non introdotto in questa
+   sessione). Effetto reale: per uno strumento posseduto da piu' di 6
+   mesi con benchmark in questo gruppo, la curva "spunta dal nulla" a
+   meta' grafico (es. FAM-FLEX 847gg storico proprio vs 136gg benchmark
+   ^GSPC; GOLD.MI 827 vs 136; XDWT.MI 827 vs 136).
+2. **Assegnazione benchmark sbagliata o assente** (bug reale, distinto):
+   **SWDA.MI** (probabile ETF piu' "banale" del portafoglio, iShares Core
+   MSCI World) non ha NESSUN benchmark — identita' risolta correttamente
+   ma grado `MERCATO_GENERALE` con `operational_series` non scaricabile
+   (`^990100-USD-STRD`), e il ticker-di-riserva (Task S) non trova nulla.
+   **XMME.MI** (ETF Emergenti, identita' EXACT corretta) riceve **^GSPC**
+   (S&P 500 USA) come ticker di riserva invece di un proxy Emergenti vero
+   — mentre **EEM** (iShares MSCI Emerging Markets) e' gia' in cache con
+   513gg di storico buono. Stesso pattern su FAM-FLEX. Il meccanismo di
+   scelta del ticker-di-riserva collassa troppo spesso su ^GSPC come
+   proxy generico invece di cercare un proxy piu' specifico gia'
+   disponibile. Nessun fix applicato — solo diagnosi, in attesa di
+   direzione dell'utente su priorita'.
+   SATOR: la validazione Fase C (confronto 26 strumenti, sopra) copre
+   SOLO la correttezza di nature/ruolo/bucket% (bucket assegnati sensati
+   su un campione reale: XBAE.MI 35/65 Core/Difensivo, GOLD.MI 70/30
+   Difensivo/Satellite, ETFMIB.MI 20/80 Core/Satellite) — MAI la UI SATOR
+   vera (schermate/tabelle), e i benchmark mostrati in SATOR condividono
+   lo stesso `resolve_instrument_benchmark()` quindi hanno gli stessi due
+   problemi sopra.
+
 **Fase D — dettaglio bite-sized scritto e approvato 2026-09-04** (stessa
 sessione), due decisioni di scope prese dall'utente via domanda diretta:
 (1) scheduler background **disattivato di default**, come Mercati; (2) il

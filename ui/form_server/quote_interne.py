@@ -196,7 +196,7 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
   }})();
   </script>"""
 
-    from core.services.sator import _role_bucket, resolve_instrument_bucket_exposure
+    from core.services.sator import auto_instrument_bucket_exposure, resolve_instrument_bucket_exposure
 
     bexp_rows = []
     for s in all_strumenti:
@@ -204,15 +204,14 @@ def _render_quote_interne_page(*, ok_msg: str = "", err_msg: str = "", active_ta
         if not tk or tk.upper() not in held_tickers_all:
             continue
         current_exp = resolve_instrument_bucket_exposure(data, s, True)
-        auto_role_bexp = infer_sator_metadata(s, True)["role"]
-        auto_exp = {b: (1.0 if _role_bucket(auto_role_bexp) == b else 0.0) for b in _BUCKETS}
+        auto_exp = auto_instrument_bucket_exposure(data, s, True)
         # Proposta automatica sempre visibile accanto al ticker, come testo
         # fisso non modificabile (richiesto esplicitamente dall'utente): un
         # unico riferimento immutabile, indipendente da quante volte le 3
         # caselle sotto vengono ritoccate manualmente - non piu' un hint
         # per-casella che scompariva appena il valore in vigore combaciava.
         auto_exp_summary = " / ".join(
-            f'{auto_exp[b] * 100:.0f}% {b}' for b in _BUCKETS if auto_exp[b] > 0
+            f'{auto_exp.get(b, 0.0) * 100:.0f}% {b}' for b in _BUCKETS if auto_exp.get(b, 0.0) > 0
         ) or "nessuna proposta"
         # 2 decimali e step 0.01, come l'editor singolo-strumento in
         # ui/form_server/strumenti.py (Finding 1): con :.0f/step="1" uno
