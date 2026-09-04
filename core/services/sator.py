@@ -311,6 +311,17 @@ def infer_sator_metadata(item: dict[str, Any], in_portfolio: bool) -> dict[str, 
     # solo alla confidence assegnata.
     if category == "GOV":
         nature, role, confidence = "bond_governativo", "bond", "alta"
+    elif (
+        analysis := _instrument_analysis_service().peek_cached(
+            ticker=ticker, isin=str(item.get("isin") or "").strip().upper(),
+        )
+    ) is not None:
+        # Task C2 (Fase C, 2026-09-04): la cache InstrumentAnalysis (mai una
+        # chiamata di rete qui, vedi peek_cached) ha gia' un profilo online-
+        # first per questo strumento - deriva nature/ruolo/confidence da
+        # quello, non dalla catena tk_in()/parole-chiave sotto (invariata,
+        # resta il fallback quando la cache non ce l'ha ancora).
+        nature, role, confidence = _nature_role_from_profile(analysis.profile, category)
     elif category == "FND":
         nature, role, confidence = "fondo_pac", "core_difensivo", "media"
     elif tk_in("btc", "ib1t"):
@@ -409,6 +420,100 @@ def infer_sator_metadata(item: dict[str, Any], in_portfolio: bool) -> dict[str, 
         "ter": _parse_it_pct(item.get("ter")),
         "spread_pct": _parse_it_pct(item.get("spread_pct")),
     }
+
+
+def _confidence_label(value: float) -> str:
+    """Stessa gradazione a 3 livelli della catena tk_in()/parole-chiave
+    (Task C2, Fase C): soglie scelte su `profile.confidence` (0.3 base +
+    0.15 per segnale di identita' trovato tra Yahoo/OpenFIGI/Borsa
+    Italiana/issuer, vedi core/instrument_analysis/profile.py) - "alta"
+    richiede almeno 3 dei 4 segnali (>=0.75), "media" almeno 1 (>=0.45),
+    "bassa" zero segnali di identita' (resta 0.3 di base)."""
+    v = _safe_float(value, 0.0)
+    if v >= 0.75:
+        return "alta"
+    if v >= 0.45:
+        return "media"
+    return "bassa"
+
+
+def _nature_role_from_profile(profile: Any, category: str) -> tuple[str, str, str]:
+    """Deriva (nature, role, confidence) da un InstrumentProfile gia'
+    risolto da InstrumentAnalysisService (identita' online-first +
+    classificazione testuale, core/instrument_analysis/) - ramo automatico
+    di Task C2 (Fase C, 2026-09-04), chiamato SOLO quando peek_cached() ha
+    gia' un'analisi in cache per lo strumento (mai rete). Corrispondenze
+    verificate 1:1 contro i rami equivalenti della catena tk_in()/parole-
+    chiave sopra (stesso nature/role finale per lo stesso concetto);
+    qualunque combinazione di segnali non riconosciuta ricade su
+    ("altro", "altro", "bassa"), lo stesso fallback totale di prima - mai
+    un valore inventato. SATOR_ROLE_VALUES/SATOR_NATURE_VALUES restano
+    identici, nessun nuovo codice introdotto qui."""
+    structural_type = str(getattr(profile, "structural_type", "") or "")
+    sector = str(getattr(profile, "sector", "") or "")
+    theme = str(getattr(profile, "theme", "") or "")
+    factor = str(getattr(profile, "factor", "") or "")
+    geography = str(getattr(profile, "geography", "") or "")
+    geo_scope = str(getattr(profile, "geo_scope", "") or "")
+    confidence = _confidence_label(getattr(profile, "confidence", 0.0))
+
+    if category == "FND":
+        # Migliora la migrazione 1:1 (era hardcoded a fondo_pac/core_difensivo
+        # sempre): con la composizione reale del fondo (asset_mix, Task R -
+        # oggi popolata solo per i fondi Fineco AM proprietari) si deriva un
+        # ruolo vero dalla miscela dominante, invece di un default fisso.
+        asset_mix = getattr(profile, "asset_mix", None) or {}
+        if asset_mix:
+            dominant_key, dominant_value = max(asset_mix.items(), key=lambda kv: kv[1], default=("", 0.0))
+            if dominant_value >= 0.5:
+                if dominant_key == "equity":
+                    return "azionario_globale_core", "core_globale", confidence
+                if dominant_key == "bond":
+                    return "bond_globale", "bond", confidence
+        return "fondo_pac", "core_difensivo", confidence
+
+    if structural_type == "GOLD":
+        return "oro", "oro", confidence
+    if structural_type == "DIGITAL_ASSET":
+        return "criptovalute", "satellite_tematico", confidence
+    if structural_type == "MONEY_MARKET":
+        return "monetario", "liquidita", confidence
+    if structural_type in {"GOV_BOND", "AGGREGATE_BOND", "INFLATION_LINKED_BOND", "BOND"}:
+        return "bond_globale", "bond", confidence
+    if structural_type == "COMMODITY":
+        return "commodities", "satellite_tematico", confidence
+
+    if sector == "healthcare":
+        return "healthcare", "satellite_difensivo", confidence
+    if sector in {"technology", "semiconductor"}:
+        return "tecnologia_ai", "satellite_crescita", confidence
+    if sector == "energy":
+        return "energia", "satellite_tematico", confidence
+    if sector == "real_estate":
+        return "real_estate", "satellite_tematico", confidence
+    if sector == "metals_mining":
+        return "metalli_miniere", "satellite_tematico", confidence
+
+    if theme in {"artificial_intelligence", "robotics", "cybersecurity", "digitalisation"}:
+        return "tecnologia_ai", "satellite_crescita", confidence
+    if theme == "clean_energy":
+        return "energia", "satellite_tematico", confidence
+
+    if factor == "quality":
+        return "quality_factor", "core_regionale", confidence
+
+    if structural_type in {"SMALL_CAP_EQUITY", "EX_MEGA_CAP_EQUITY"}:
+        return "azionario_paese_singolo", "satellite_tematico", confidence
+    if structural_type == "EMERGING_BROAD_EQUITY":
+        return "azionario_emergenti", "core_regionale", confidence
+    if structural_type in {"SINGLE_COUNTRY_EQUITY", "COUNTRY_BROAD_EQUITY"}:
+        if geography == "italy":
+            return "italia", "satellite_tematico", confidence
+        return "azionario_paese_singolo", "satellite_tematico", confidence
+    if structural_type == "BROAD_EQUITY" and geo_scope == "global":
+        return "azionario_globale_core", "core_globale", confidence
+
+    return "altro", "altro", "bassa"
 
 
 def _resolve_instrument_meta(data: dict[str, Any], item: dict[str, Any], in_portfolio: bool, key: str) -> str:

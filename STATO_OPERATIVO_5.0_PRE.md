@@ -1904,10 +1904,65 @@ gia' documentato in precedenza — non verificato risolvibile con certezza,
 quindi non rischiato). 2 test nuovi in
 `tests/test_sator_nature_bucket.py` (tutte le 19 nature vs bucket atteso,
 fallback nature sconosciuta -> Satellite). Suite completa verde (0
-failures). Prossimo: Task C2 (piu' rischioso — deriva nature/role da
-`InstrumentProfile` invece che da keyword nel nome; richiede leggere per
-intero `tests/test_infer_sator_metadata_specificity.py` prima di toccare
-`infer_sator_metadata`).
+failures).
+
+**Task C2 FATTO (2026-09-04, TDD)**: `infer_sator_metadata` (`core/services/sator.py`)
+ha un nuovo ramo, subito dopo il ramo GOV (invariato) e prima della catena
+tk_in()/parole-chiave (invariata, resta il fallback): se
+`_instrument_analysis_service().peek_cached(ticker=..., isin=...)` trova
+un'analisi, `nature`/`role`/`confidence` vengono derivati da
+`InstrumentProfile` via nuova funzione `_nature_role_from_profile()`
+invece che dalla catena di keyword. Letto per intero
+`tests/test_infer_sator_metadata_specificity.py` (9 test) PRIMA di
+toccare la funzione, come da piano: **zero modifiche necessarie** — la
+cache InstrumentAnalysis e' isolata/vuota in tutti quei test (fixture
+globale gia' aggiunta in Task C1), quindi `peek_cached()` ritorna sempre
+`None` li' e la catena keyword originale resta l'unico percorso eseguito,
+bit-per-bit invariata.
+
+Mappatura `_nature_role_from_profile()` (nuova, con `_confidence_label()`
+per gradare `profile.confidence` in alta/media/bassa sulle stesse soglie
+implicite dei 4 segnali di identita', 0.3+0.15/segnale): `structural_type`
+GOLD/DIGITAL_ASSET/MONEY_MARKET/{GOV_BOND,AGGREGATE_BOND,
+INFLATION_LINKED_BOND,BOND}/COMMODITY mappati 1:1 sui rami equivalenti
+della vecchia catena; `sector` healthcare/technology+semiconductor/energy/
+real_estate/metals_mining mappati sulle nature dedicate; `theme`
+artificial_intelligence/robotics/cybersecurity/digitalisation ->
+tecnologia_ai, clean_energy -> energia (estensione ragionata, nessun
+branch equivalente esatto nella vecchia catena); `factor` quality ->
+quality_factor; `SMALL_CAP_EQUITY`/`EX_MEGA_CAP_EQUITY` ->
+azionario_paese_singolo; `EMERGING_BROAD_EQUITY` -> azionario_emergenti;
+`SINGLE_COUNTRY_EQUITY`/`COUNTRY_BROAD_EQUITY` -> italia (se
+geography=="italy") altrimenti azionario_paese_singolo;
+`BROAD_EQUITY`+geo_scope=="global" -> azionario_globale_core. Categoria
+FND: **migliorata, non solo migrata** — con `profile.asset_mix` reale
+(dominante >=50%) deriva azionario_globale_core/core_globale o
+bond_globale/bond dalla composizione vera del fondo, invece del vecchio
+default fisso fondo_pac/core_difensivo (usato solo quando asset_mix e'
+vuoto, il caso comune per fondi non-Fineco-AM). Ramo GOV resta
+prioritario e non consulta mai la cache (un BTP e' sempre
+bond_governativo/bond, verificato con test dedicato). Ogni combinazione
+non riconosciuta ricade su altro/altro/bassa, stesso fallback totale di
+prima — nessun valore inventato.
+
+**Regressione nota e accettata** (non un bug, una scelta esplicita
+documentata qui): la nature `difesa_sicurezza` non ha corrispondenza nel
+nuovo motore (nessun `theme`/`sector` per "difesa/aerospace" in
+`core/instrument_analysis/text_classification.py`) — uno strumento difesa
+gia' risolto in cache ricade su "altro" invece che su
+"difesa_sicurezza"/satellite_tematico come nella vecchia catena keyword.
+Impatto reale: 0 strumenti nel portafoglio attuale (verificato con grep
+sui dati reali), quindi non blocca la fase; da eventualmente chiudere con
+una futura estensione di `text_classification.py` (fuori scope di questo
+task).
+
+18 test nuovi in `tests/test_infer_sator_metadata_from_instrument_analysis.py`
+(ogni corrispondenza `structural_type`/`sector`/`factor` sopra, i due casi
+FND con/senza asset_mix, GOV-vince-sempre, gradazione confidence, fallback
+a cache vuota). Suite completa del repo verde (0 failures, alcuni tentativi
+di run intermedi interrotti da un problema d'ambiente/sandbox esterno non
+riproducibile — mai una singola failure visibile prima dell'interruzione —
+riuscito al tentativo successivo).
 
 ---
 
