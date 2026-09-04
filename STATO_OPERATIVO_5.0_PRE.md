@@ -2076,6 +2076,43 @@ conseguenza (4 test: formula verde ripristinata, arancione invariato,
 ordine tracce/fill blu->arancione, fillcolor coerente con `pl_total`).
 Suite completa verde (0 failures) dopo il fix.
 
+**Bug FATTO (2026-09-05): bottoni sidebar (form-server, porta 8502) non
+aprivano piu' la scheda** — segnalato dall'utente ("i collegamenti del
+sidebar su porta 8502 non funzionano normalmente"). Diagnosi: il
+form-server backend rispondeva correttamente (HTTP 200 su tutte le
+route), ma `/quote-interne` impiegava **3,3-4,7s** a rispondere, ben oltre
+il timeout di 1,2s con cui `_open_form_server_page()` (`ui/sidebar.py`)
+sonda la pagina prima di aprire la scheda — quindi il bottone "Quote &
+impostazioni" restituiva sempre "non raggiungibile" e non chiamava mai
+`webbrowser.open_new_tab()` (confermato nel log applicativo:
+`Form server non raggiungibile ... timeout di connessione`, ripetuto ad
+ogni avvio). Root cause trovata con `cProfile`:
+`InstrumentAnalysisService.peek_cached()` (Fase C) chiama
+`load_resolution_cache()` (`core/instrument_analysis/cache.py`) SENZA
+alcuna memoizzazione — ogni chiamata rilegge e riparsa da zero l'intero
+file JSON della cache di risoluzione da disco. `/quote-interne` itera i
+30 strumenti attraverso piu' funzioni SATOR (`compute_instrument_buckets`,
+`compute_instrument_quota_status`, `compute_instrument_reference_ranges`,
+`compute_instrument_operational_status`, `infer_sator_metadata`,
+`resolve_instrument_benchmark`), totalizzando **212 riletture** dello
+stesso file in un solo render pagina (1,89s solo per questo). Probabile
+causa anche del rallentamento gia' notato sulla tab "Pianificazione"
+dell'app principale (~9s a ogni rerun, stessa catena di chiamate SATOR).
+**Fix**: `load_resolution_cache()` ora memoizzata in-process per mtime del
+file (+ path, per restare corretta con `DATA_DIR` monkeypatchato nei
+test) — `save_resolution_cache()` aggiorna direttamente lo stato in
+memoria invece di forzare una rilettura. Benchmark isolato: 200 letture
+dirette da disco 1,227s -> 200 chiamate memoizzate 0,023s (**53,6x**).
+4 test nuovi in `tests/core/instrument_analysis/test_cache.py`
+(memoizzazione fra chiamate ripetute, nessuna rilettura dopo save,
+rilevamento di una scrittura esterna via mtime). Suite completa verde (0
+failures). **Nota**: il fix e' nel codice sorgente ma il processo
+Streamlit dell'utente gia' in esecuzione ha ancora il modulo vecchio
+caricato in memoria — serve un riavvio dell'app perche' il fix sia
+visibile nella sessione live (non ho riavviato l'istanza dell'utente
+senza chiederlo, essendo un processo che non ho avviato io in questa
+sessione).
+
 **Fase D — dettaglio bite-sized scritto e approvato 2026-09-04** (stessa
 sessione), due decisioni di scope prese dall'utente via domanda diretta:
 (1) scheduler background **disattivato di default**, come Mercati; (2) il
