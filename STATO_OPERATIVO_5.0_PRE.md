@@ -1850,6 +1850,23 @@ mostrato/confermato esplicitamente dall'utente (interrotto prima di
 poterlo riassumere) — da presentare e fare approvare prima di scrivere
 il dettaglio bite-sized e toccare codice, stessa disciplina di Task S/Fase B.
 
+**Piano presentato e APPROVATO dall'utente 2026-09-04 (sessione
+successiva)**: "Approvo il piano fase C". Si procede con dettaglio
+bite-sized (Task T, C1, C2, C4 — C3 resta solo segnalata) e
+implementazione un task alla volta, test + commit separato per task,
+stesso ritmo di Task S/Fase B.
+
+**Task T FATTO (2026-09-04, TDD)**: nuovo
+`InstrumentAnalysisService.peek_cached(*, ticker, isin) -> InstrumentAnalysis | None`
+(`core/instrument_analysis/service.py`) — legge solo `ia_cache`, zero fetch
+di rete, `None` su cache assente/scaduta. 4 test nuovi (cache vuota, round
+trip identico al cache-hit di `analyze()`, scadenza TTL, nessuna chiamata
+agli adapter di rete). Refactor contestuale: `analyze()` ora chiama
+`peek_cached()` internamente sul ramo cache-hit invece di duplicare la
+ricostruzione (stesso comportamento, elapsed_ms impostato dopo). Suite
+completa del repo verde (0 failures). Prossimo: Task C1 (esposizione
+bucket reale in `resolve_instrument_bucket_exposure`).
+
 ---
 
 **Due domande aperte dello stesso utente, indipendenti dalla Fase C, NON
@@ -1882,10 +1899,18 @@ Fase C, NON InstrumentAnalysis — solo spiegazione, nessuna modifica fatta**:
    sull'arancione ("soldi gia' incassati e non impegnati") gia' corrisponde
    a cosa fa il codice oggi. La parte sul verde/blu **non torna con la
    logica attuale** (verde somma un guadagno gia' incassato al P/L aperto,
-   quindi sale sopra, non scende sotto) — **chiesto all'utente di spiegare
-   che modello si aspetta per la linea verde, mai risposto** (sessione
-   interrotta qui). Nessuna modifica fatta, nessun bug confermato, solo
-   una domanda aperta.
+   quindi sale sopra, non scende sotto) — chiesto all'utente di spiegare
+   che modello si aspetta per la linea verde.
+   **Risposta ricevuta 2026-09-04 (sessione successiva)**: il verde deve
+   restare aderente alla blu (rappresenta capitale ancora impegnato in
+   posizioni aperte, quindi verde = P/L posizioni aperte, coincide con blu
+   invece di sommarci sopra il realizzato). Tutto cio' che non e' piu'
+   impegnato — proventi incassati (367,49€) **+** P/L realizzato netto dal
+   rimborso BTP (1.564,37€), totale 1.931,86€ — va in arancione, sopra la
+   blu (arancione finale invariato: 2.895,25€, cambia solo quale segmento
+   lo compone). Nessuna modifica fatta ancora: registrato per iscritto,
+   resta un miglioramento noto da riprendere quando l'utente vorra'
+   (priorita' attuale confermata: Fase C, vedi sotto).
 
 ---
 

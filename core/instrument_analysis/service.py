@@ -342,19 +342,10 @@ class InstrumentAnalysisService:
         cache_key = ia_cache.resolution_cache_key(tk, isincode)
 
         if not force_refresh:
-            cached = ia_cache.get_cached_resolution(cache, cache_key, ttl_days=_RESOLUTION_TTL_DAYS)
-            if cached is not None:
-                analysis = InstrumentAnalysis(
-                    ticker=tk, isin=isincode,
-                    name=str(cached.get("name") or ""),
-                    profile=_profile_from_cache(cached.get("profile") or {}),
-                    cds=_cds_from_cache(cached.get("cds") or {}),
-                    benchmark=_benchmark_from_cache(cached.get("benchmark") or {}),
-                    algorithm_version=ia_cache.ALGORITHM_VERSION,
-                    elapsed_ms=int(round((time.perf_counter() - started) * 1000.0)),
-                    cache_hit=True,
-                )
-                return analysis
+            peeked = self.peek_cached(ticker=tk, isin=isincode)
+            if peeked is not None:
+                peeked.elapsed_ms = int(round((time.perf_counter() - started) * 1000.0))
+                return peeked
 
         yahoo_identity = resolve_yahoo_identity(tk, isincode)
         openfigi_identity = map_isin(isincode)
@@ -443,6 +434,30 @@ class InstrumentAnalysisService:
             ia_cache.save_resolution_cache(cache)
 
         return analysis
+
+    def peek_cached(self, *, ticker: str = "", isin: str = "") -> InstrumentAnalysis | None:
+        """Legge SOLO la cache disco gia' popolata, zero fetch di rete: per i
+        chiamanti che girano in cicli stretti su tutto l'universo strumenti
+        (SATOR, Fase C) e non possono permettersi ne' rete ne' un rerun a
+        sorpresa (regola non negoziabile 1). Ritorna None se la cache non ha
+        ancora l'istrumento o l'entry e' scaduta (stesso TTL di analyze())."""
+        tk = str(ticker or "").strip().upper()
+        isincode = str(isin or "").strip().upper()
+
+        cache = ia_cache.load_resolution_cache()
+        cache_key = ia_cache.resolution_cache_key(tk, isincode)
+        cached = ia_cache.get_cached_resolution(cache, cache_key, ttl_days=_RESOLUTION_TTL_DAYS)
+        if cached is None:
+            return None
+        return InstrumentAnalysis(
+            ticker=tk, isin=isincode,
+            name=str(cached.get("name") or ""),
+            profile=_profile_from_cache(cached.get("profile") or {}),
+            cds=_cds_from_cache(cached.get("cds") or {}),
+            benchmark=_benchmark_from_cache(cached.get("benchmark") or {}),
+            algorithm_version=ia_cache.ALGORITHM_VERSION,
+            cache_hit=True,
+        )
 
     def discovered_benchmark_catalog(self) -> list[tuple[str, str]]:
         cache = ia_cache.load_resolution_cache()
