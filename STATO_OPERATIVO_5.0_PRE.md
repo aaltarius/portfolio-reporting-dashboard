@@ -2050,6 +2050,32 @@ sbagliato per colorare l'area del solo aperto). 3 test nuovi in
 modifica al primo grafico (Composizione % P/L per Macro-Categoria):
 l'utente ha confermato di lasciarlo com'e'.
 
+**CORREZIONE del fix sopra (2026-09-05, sessione successiva)**: l'utente ha
+visto il grafico reale e corretto il modello del 04/09 — "hai fatto
+coincidere le curve posizioni aperte con p/l storico... non era questo
+l'obiettivo, ma ampliare solo la parte in arancione in quanto somme non
+investite". Il fix del 04/09 aveva reso "P/L storico" (verde) e "P/L pos.
+aperte" (blu) matematicamente identiche punto per punto (`pl_storico =
+pl_attuale`), quindi due linee sovrapposte esatte — non era quello che
+voleva nonostante la risposta registrata sopra. **Richiesta finale
+2026-09-05**: le tre curve tornano alla formula originale (pre-04/09) —
+"P/L storico" (verde) = P/L posizioni aperte + P/L Realizzato Netto (torna
+a salire sopra la blu ad ogni evento di realizzo), "Total return"
+(arancione) = tutto come sempre. **Unico cambiamento reale**: la traccia
+blu ("P/L pos. aperte") viene ora aggiunta PRIMA di quella arancione in
+`fig.add_trace(...)` (non dopo) — dato che il fill "tonexty" riempie
+sempre rispetto alla traccia immediatamente precedente, l'area arancione
+ora parte dalla blu invece che dalla verde, quindi ingloba anche il
+realizzato netto e non solo i proventi come nella versione originale
+pre-04/09 (la verde resta visibile sopra come linea di confine, senza fill
+proprio aggiuntivo tra blu e arancione). `fillcolor` del verde torna a
+seguire il segno di `pl_total` (non piu' `current_open_pl`), coerente con
+la formula ripristinata. Test in
+`tests/test_overview_pl_storico_matches_open_positions.py` riscritti di
+conseguenza (4 test: formula verde ripristinata, arancione invariato,
+ordine tracce/fill blu->arancione, fillcolor coerente con `pl_total`).
+Suite completa verde (0 failures) dopo il fix.
+
 **Fase D — dettaglio bite-sized scritto e approvato 2026-09-04** (stessa
 sessione), due decisioni di scope prese dall'utente via domanda diretta:
 (1) scheduler background **disattivato di default**, come Mercati; (2) il
