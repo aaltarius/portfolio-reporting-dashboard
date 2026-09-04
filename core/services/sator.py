@@ -510,7 +510,18 @@ def _nature_role_from_profile(profile: Any, category: str) -> tuple[str, str, st
         if geography == "italy":
             return "italia", "satellite_tematico", confidence
         return "azionario_paese_singolo", "satellite_tematico", confidence
-    if structural_type == "BROAD_EQUITY" and geo_scope == "global":
+    if geo_scope == "global" and structural_type:
+        # Copre non solo BROAD_EQUITY ma qualunque altro tipo strutturale
+        # equity-like arrivato fin qui senza un ramo piu' specifico sopra
+        # (es. FACTOR_MINIMUM_VOLATILITY, THEMATIC_EQUITY con theme non
+        # mappato, SECTOR_* non tra i 5 gestiti): un structural_type non
+        # vuoto significa che la classificazione testuale ha comunque
+        # trovato un segnale equity, quindi "globale" resta un fallback
+        # onesto - stesso comportamento della vecchia catena keyword, che
+        # riconosceva "world"/"global" nel nome indipendentemente dal
+        # resto. Trovato con il confronto onesto sui 30 strumenti reali
+        # aperti (XDEB.MI, 2026-09-04): senza `structural_type` in questa
+        # condizione regrediva da azionario_globale_core ad "altro".
         return "azionario_globale_core", "core_globale", confidence
 
     return "altro", "altro", "bassa"

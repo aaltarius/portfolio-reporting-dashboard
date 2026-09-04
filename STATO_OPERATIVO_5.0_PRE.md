@@ -1959,10 +1959,62 @@ task).
 18 test nuovi in `tests/test_infer_sator_metadata_from_instrument_analysis.py`
 (ogni corrispondenza `structural_type`/`sector`/`factor` sopra, i due casi
 FND con/senza asset_mix, GOV-vince-sempre, gradazione confidence, fallback
-a cache vuota). Suite completa del repo verde (0 failures, alcuni tentativi
-di run intermedi interrotti da un problema d'ambiente/sandbox esterno non
-riproducibile — mai una singola failure visibile prima dell'interruzione —
-riuscito al tentativo successivo).
+a cache vuota).
+
+**Confronto onesto sui 30 strumenti reali aperti (26 in stato "aperto"),
+come richiesto dal piano** — nature/ruolo vecchio (catena keyword, cache
+forzata a `None`) vs nuovo (cache reale, gia' popolata per tutti e 26 dal
+replay ufficiale) per ognuno, senza filtrare i casi che peggiorano:
+**trovato un bug reale**, non una semplice differenza attesa — XDEB.MI
+(`structural_type=FACTOR_MINIMUM_VOLATILITY`, `geo_scope=global`)
+regrediva da `azionario_globale_core/core_globale` (vecchio, via keyword
+"world"/"global" nel nome) ad `altro/altro` (nuovo): il fallback finale in
+`_nature_role_from_profile()` controllava
+`structural_type == "BROAD_EQUITY" and geo_scope == "global"` — troppo
+stretto, perdeva qualunque altro tipo strutturale equity-like (fattoriale,
+tematico non mappato, settoriale non tra i 5 gestiti) con scope globale.
+**Corretto**: condizione allargata a `geo_scope == "global" and
+structural_type` (qualunque tipo strutturale non vuoto, non solo
+BROAD_EQUITY letterale) — un `structural_type` non vuoto significa che la
+classificazione testuale ha comunque trovato un segnale equity, quindi
+"globale" resta un fallback onesto, stesso comportamento della vecchia
+catena keyword. Test di regressione aggiunto
+(`test_non_quality_factor_equity_global_still_maps_to_azionario_globale_core`).
+Dopo il fix: **4 strumenti cambiati su 26, zero regressioni** — FAM-FLEX
+(fondo_pac/core_difensivo -> azionario_globale_core/core_globale, mix
+59% equity), FAM-PU6 (-> bond_globale/bond, mix 59% bond), FAM-PU8 (->
+azionario_globale_core/core_globale, mix 75% equity) tutti e tre
+miglioramenti attesi del ramo FND (asset_mix reale), XGIN.MI (altro ->
+bond_globale/bond, INFLATION_LINKED_BOND non riconosciuto dalla vecchia
+catena keyword) un miglioramento imprevisto ma corretto. Verificata anche
+l'esposizione bucket (Task C1) sugli stessi 26: tutti e 26 ora ricevono
+esposizione frazionata reale da cache (prima del progetto: bucket singolo
+100% per tutti).
+
+**Verifica funzionale app reale** (stesso rigore di B9/Task S): avviata
+`streamlit run app.py` in locale (porta 8765) con il portafoglio vero,
+log di avvio puliti (zero errori/traceback), risposta HTTP 200. Verifica
+via browser non disponibile in questa sessione (estensione Chrome non
+connessa) — sostituita con una verifica diretta piu' rigorosa: chiamata
+in-process, sui dati reali, di `resolve_instrument_bucket_exposure`/
+`infer_sator_metadata` per tutti i 26 strumenti aperti (vedi confronto
+sopra), che e' esattamente la logica dietro il form "Esposizione Bucket".
+App chiusa correttamente a fine verifica.
+
+Suite completa del repo verde (0 failures) — 6 run del tentativo, alcuni
+interrotti a meta' da un problema d'ambiente/sandbox esterno non
+riproducibile (mai una singola failure visibile prima dell'interruzione,
+sempre risolto al tentativo successivo, ultima conferma pulita dopo il
+fix XDEB.MI).
+
+**Fase C COMPLETA (2026-09-04)**: Task T, C1, C4, C2 tutti fatti e
+verificati (C3 resta solo segnalata, come deciso, non in scope). Il
+motore InstrumentAnalysis (Fase A) e' ora collegato end-to-end a SATOR:
+esposizione bucket e nature/ruolo per strumento derivano dal profilo
+online-first quando la cache e' popolata, con fallback identico a prima
+quando non lo e' ancora. Prossimo passo possibile (non iniziato, non
+richiesto dall'utente): Fase D (aggancio al refresh in background) — da
+riprendere solo su richiesta esplicita.
 
 ---
 
