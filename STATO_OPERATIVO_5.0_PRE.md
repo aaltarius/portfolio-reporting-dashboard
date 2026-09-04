@@ -2008,13 +2008,51 @@ sempre risolto al tentativo successivo, ultima conferma pulita dopo il
 fix XDEB.MI).
 
 **Fase C COMPLETA (2026-09-04)**: Task T, C1, C4, C2 tutti fatti e
-verificati (C3 resta solo segnalata, come deciso, non in scope). Il
-motore InstrumentAnalysis (Fase A) e' ora collegato end-to-end a SATOR:
-esposizione bucket e nature/ruolo per strumento derivano dal profilo
-online-first quando la cache e' popolata, con fallback identico a prima
-quando non lo e' ancora. Prossimo passo possibile (non iniziato, non
-richiesto dall'utente): Fase D (aggancio al refresh in background) — da
-riprendere solo su richiesta esplicita.
+verificati. Il motore InstrumentAnalysis (Fase A) e' ora collegato
+end-to-end a SATOR: esposizione bucket e nature/ruolo per strumento
+derivano dal profilo online-first quando la cache e' popolata, con
+fallback identico a prima quando non lo e' ancora.
+
+**Task C3 FATTO (2026-09-04, TDD, stessa sessione — l'utente ha chiesto
+di riprenderlo dopo aver visto il riepilogo)**: chiusa l'asimmetria
+segnalata durante la Fase C originale — `_score_universe` (sator.py)
+calcolava la colonna `_bucket` (mostrata in tabella, usata per
+`bucket_weight`/`bucket_target`) SEMPRE da `_role_bucket(role)` (bucket
+singolo), mai dall'esposizione frazionata reale `_bucket_exposure` (gia'
+usata per il punteggio dal Task C1). Nuova funzione pura
+`_primary_bucket_from_exposure(exposure, role)` (bucket dominante per
+peso, fallback a `_role_bucket` se l'esposizione manca) — da non
+confondere con l'omonima quasi-omonima `_dominant_bucket()` gia'
+esistente nel file (scopo diverso, allocazione acquisti per deficit euro:
+collisione di nome scoperta e risolta rinominando la nuova funzione).
+Riprodotto il bug con un caso reale (BOND-SPLIT: role="bond" ->
+`_role_bucket` "Difensivo", ma override 60% Core/40% Difensivo -> il
+dominante e' Core) prima di correggere. 2 test nuovi in
+`tests/test_sator_fractional_exposure_engine.py`. Suite completa verde
+(0 failures).
+
+**Fix grafico Overview FATTO (2026-09-04, TDD, stessa sessione — secondo
+punto della domanda aperta sotto, primo punto lasciato perdere su
+richiesta dell'utente)**: `ui/charts/overview.py::build_overview_time_chart`,
+vista "P/L del portafoglio" — la serie "P/L storico" (verde) non somma
+piu' `P/L Realizzato Netto` a `pl_attuale`: ora coincide esattamente con
+"P/L pos. aperte" (blu tratteggiata), come da modello confermato
+dall'utente ("sotto la blu resta in verde perche' sono somme ancora
+impegnate"). "Total return" (arancione) resta invariato (colonna "P/L"
+del dataframe storico, realizzato+proventi+aperto) — ora e' l'UNICA serie
+a mostrare cio' che non e' piu' impegnato, riempiendo "tonexty" dal verde
+fino al totale. Effetto collaterale corretto anche il colore di
+riempimento del verde (`fillcolor` success/danger): ora segue il segno
+del NUOVO valore (`current_open_pl`), non piu' il vecchio `pl_total`
+passato dal chiamante (che rappresentava aperto+realizzato, semanticamente
+sbagliato per colorare l'area del solo aperto). 3 test nuovi in
+`tests/test_overview_pl_storico_matches_open_positions.py`. Nessuna
+modifica al primo grafico (Composizione % P/L per Macro-Categoria):
+l'utente ha confermato di lasciarlo com'e'.
+
+Prossimo passo possibile (non iniziato): Fase D (aggancio al refresh in
+background) — approvata dall'utente, da riprendere in questa stessa
+sessione.
 
 ---
 
@@ -2057,9 +2095,9 @@ Fase C, NON InstrumentAnalysis — solo spiegazione, nessuna modifica fatta**:
    impegnato — proventi incassati (367,49€) **+** P/L realizzato netto dal
    rimborso BTP (1.564,37€), totale 1.931,86€ — va in arancione, sopra la
    blu (arancione finale invariato: 2.895,25€, cambia solo quale segmento
-   lo compone). Nessuna modifica fatta ancora: registrato per iscritto,
-   resta un miglioramento noto da riprendere quando l'utente vorra'
-   (priorita' attuale confermata: Fase C, vedi sotto).
+   lo compone).
+   **IMPLEMENTATO 2026-09-04** (stessa sessione, dopo la chiusura della
+   Fase C): vedi sezione sopra "Fix grafico Overview FATTO".
 
 ---
 

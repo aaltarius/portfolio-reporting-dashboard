@@ -1141,7 +1141,7 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
     df["score_finale"] = sum(df[k] * _safe_float(weights.get(k), PESI_DIMENSIONI[k]) for k in PESI_DIMENSIONI).clip(0.0, 1.0)
     df["voto"] = (1.0 + df["score_finale"] * 9.0).round(1)
     df["storico_sufficiente"] = df["n_punti"] >= max(MIN_PUNTI_STORICO, rolling_window)
-    df["_bucket"] = df["role"].astype(str).map(_role_bucket)
+    df["_bucket"] = df.apply(lambda r: _primary_bucket_from_exposure(r.get("_bucket_exposure"), str(r.get("role"))), axis=1)
     df["bucket_weight"] = df["_bucket"].map(lambda b: _safe_float(ctx.bucket_weights.get(str(b)), 0.0))
     df["bucket_target"] = df["_bucket"].map(
         lambda b: _safe_float(portfolio_objective.get(_BUCKET_TO_OBJECTIVE_KEY.get(str(b), ""), 0.0), 0.0)
@@ -1575,6 +1575,24 @@ def _role_bucket(role: str) -> str:
     if role in {"liquidita", "bond", "oro", "satellite_difensivo"}:
         return "Difensivo"
     return "Satellite"
+
+
+def _primary_bucket_from_exposure(exposure: dict[str, float] | None, role: str) -> str:
+    """Bucket dominante (peso massimo) dell'esposizione frazionata reale di
+    uno strumento - Task C3 (Fase C, 2026-09-04). Prima di questo la
+    colonna `_bucket` mostrata in tabella (e usata per bucket_weight/
+    bucket_target) veniva SEMPRE da `_role_bucket(role)`, ignorando
+    l'esposizione frazionata gia' calcolata e usata per il punteggio
+    (`_bucket_exposure`, Task C1) - un'asimmetria preesistente, segnalata
+    ma non risolta durante la Fase C originale. Fallback a `_role_bucket`
+    quando l'esposizione manca o e' vuota (stesso pattern-guardia usato
+    altrove per `_bucket_exposure`). Da non confondere con
+    `_dominant_bucket()` sotto (deficit-based, per l'allocazione degli
+    acquisti suggeriti - scopo diverso, stesso nome quasi omonimo per
+    coincidenza)."""
+    if not exposure:
+        return _role_bucket(role)
+    return max(exposure.items(), key=lambda kv: kv[1])[0]
 
 
 # Nature -> ruolo di default, stessa associazione fissa usata da ogni ramo
