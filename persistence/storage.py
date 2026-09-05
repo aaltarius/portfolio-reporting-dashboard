@@ -1349,17 +1349,11 @@ def save_data(data, *, include_storico: bool = True):
     }
     core = _normalize_portfolio_data_payload(core)
     _write_json_file(DATA_FILE, core)
-    existing_benchmark_cache = _read_json_file(BENCHMARK_CACHE_FILE, default_benchmark_cache())
-    benchmark_data = data.get("benchmark_data", {})
-    market_live_data = data.get("market_live_data", {})
-    if not isinstance(benchmark_data, dict) or not benchmark_data:
-        benchmark_data = existing_benchmark_cache.get("benchmark_data", {})
-    if not isinstance(market_live_data, dict) or not market_live_data:
-        market_live_data = existing_benchmark_cache.get("market_live_data", {})
+    merged_benchmark_cache = _merged_benchmark_cache_payload(data)
     _write_json_file(BENCHMARK_CACHE_FILE, {
         "schema_version": SCHEMA_VERSION,
-        "benchmark_data": benchmark_data if isinstance(benchmark_data, dict) else {},
-        "market_live_data": market_live_data if isinstance(market_live_data, dict) else {},
+        "benchmark_data": merged_benchmark_cache["benchmark_data"],
+        "market_live_data": merged_benchmark_cache["market_live_data"],
     })
     meta = load_meta()
     meta.setdefault("runtime", {})["last_successful_save"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -1373,19 +1367,48 @@ def save_data(data, *, include_storico: bool = True):
     )
 
 
+def _merged_benchmark_cache_payload(data: dict) -> dict:
+    """Unisce benchmark_data/market_live_data del chiamante con quanto gia'
+    persistito su disco — MAI una sostituzione totale.
+
+    Bug reale di perdita dati (2026-09-05, segnalato dall'utente su
+    benchmark mancanti/incompleti): un chiamante con una vista solo
+    PARZIALE della cache (es. un thread di prewarming/render in
+    background che conosce solo i benchmark di una categoria o di pochi
+    strumenti, mentre il file su disco ne ha gia' molti di piu' scritti
+    da altri render/thread nel frattempo) sovrascriveva l'INTERA cache
+    con i pochi ticker che conosceva, azzerando silenziosamente tutti gli
+    altri — osservato 3 volte nei log applicativi, da 63 serie a 1-3 (il
+    codice precedente ripiegava sul contenuto gia' su disco SOLO quando
+    il dict del chiamante era completamente vuoto, mai quando era solo
+    piu' piccolo/parziale). I valori del chiamante vincono per i ticker
+    che conosce (sono i piu' freschi), quelli gia' su disco restano per
+    tutti gli altri: stesso principio ovunque nel repo per cache
+    accumulate-only senza pruning esplicito."""
+    existing_benchmark_cache = _read_json_file(BENCHMARK_CACHE_FILE, default_benchmark_cache())
+    caller_benchmark_data = data.get("benchmark_data", {})
+    caller_market_live_data = data.get("market_live_data", {})
+    return {
+        "benchmark_data": {
+            **existing_benchmark_cache.get("benchmark_data", {}),
+            **(caller_benchmark_data if isinstance(caller_benchmark_data, dict) else {}),
+        },
+        "market_live_data": {
+            **existing_benchmark_cache.get("market_live_data", {}),
+            **(caller_market_live_data if isinstance(caller_market_live_data, dict) else {}),
+        },
+    }
+
+
 def save_benchmark_data(data):
     """Salva solo la cache benchmark evitando di riscrivere anche lo storico prezzi."""
-    existing_benchmark_cache = _read_json_file(BENCHMARK_CACHE_FILE, default_benchmark_cache())
-    benchmark_data = data.get("benchmark_data", {})
-    market_live_data = data.get("market_live_data", {})
-    if not isinstance(benchmark_data, dict) or not benchmark_data:
-        benchmark_data = existing_benchmark_cache.get("benchmark_data", {})
-    if not isinstance(market_live_data, dict) or not market_live_data:
-        market_live_data = existing_benchmark_cache.get("market_live_data", {})
+    merged = _merged_benchmark_cache_payload(data)
+    benchmark_data = merged["benchmark_data"]
+    market_live_data = merged["market_live_data"]
     _write_json_file(BENCHMARK_CACHE_FILE, {
         "schema_version": SCHEMA_VERSION,
-        "benchmark_data": benchmark_data if isinstance(benchmark_data, dict) else {},
-        "market_live_data": market_live_data if isinstance(market_live_data, dict) else {},
+        "benchmark_data": benchmark_data,
+        "market_live_data": market_live_data,
     })
     meta = load_meta()
     meta.setdefault("runtime", {})["last_successful_save"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")

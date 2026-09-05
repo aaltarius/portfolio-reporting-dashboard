@@ -2228,10 +2228,86 @@ completa verde (0 failures). **Nota**: la cache reale
 questa sessione — avrebbe richiesto chiamate di rete reali sui dati veri
 dell'utente senza chiederglielo prima. Si autoripara al prossimo refresh
 quotazioni dopo il riavvio dell'app (i 36 ticker corti torneranno a
-copertura piena entro un giorno di utilizzo normale). Il secondo problema
-(assegnazione benchmark sbagliata/assente, SWDA.MI/XMME.MI) resta solo
-diagnosticato, non affrontato — priorita' dell'utente, da riprendere
-dopo.
+copertura piena entro un giorno di utilizzo normale).
+
+**Bug FATTO (2026-09-05, richiesto dall'utente: "risolviamo anche il
+secondo problema" — assegnazione sbagliata/assente SWDA.MI/XMME.MI)**:
+
+1. **SWDA.MI senza benchmark**: root cause isolata in
+   `core/instrument_analysis/service.py::analyze()` — il profilo risolve
+   bene (BROAD_EQUITY/global, ETF), ma `resolve_benchmark()` cade su
+   GENERAL_MARKET_FALLBACK con `geometry_score=0`/`coverage_obs=0`:
+   l'intera scaletta CUGINA/ZIA/NONNA (`benchmark.py:591-633`) e' gated
+   da `if instrument_series:` — se il fetch storico dello strumento
+   (`_fetch_own_history_with_retry`, unico input che la abilita) torna
+   vuoto per l'intermittenza di rete Yahoo gia' documentata nel codice
+   stesso (`_HISTORY_RETRY_DELAY_SECONDS`, "un tentativo fallisce, uno
+   riesce"), il ladder non viene nemmeno tentato. `_is_result_worth_caching`
+   pero' considerava il risultato "meritevole di cache" solo perche'
+   `asset_class` non era "ALTRO" — MAI controllando se il benchmark fosse
+   degradato per una causa transitoria — congelando un fallback
+   indistinguibile da un blackout di rete per l'intero TTL (14 giorni).
+   **Fix**: nuovo parametro `own_history_fetch_failed` tracciato in
+   `analyze()` (wrapper attorno al fetch di rete) e passato a
+   `_is_result_worth_caching()` — un GENERAL_MARKET_FALLBACK causato da
+   fetch fallito non viene piu' cachato (si ritenta al prossimo giro); un
+   GENERAL_MARKET_FALLBACK genuino (fetch riuscito, nessun candidato del
+   ladder supera la soglia) resta cacheato normalmente, comportamento
+   invariato. 2 test nuovi + 5 test esistenti aggiornati (assumevano
+   erroneamente che un GENERAL_MARKET_FALLBACK andasse sempre cachato,
+   dato che la fixture autouse mockava lo storico proprio sempre vuoto).
+2. **XMME.MI con proxy sbagliato (^GSPC invece di un indice Emergenti
+   vero)**: root cause in `core/instrument_analysis/reference_families.py`
+   — la famiglia `EMERGING_EQUITY` (riga ZIA/AUNT per `geography=
+   "emerging"`) aveva solo indici di singolo paese (`^HSI`, `000001.SS`,
+   `^BSESN` — Hong Kong/Cina/India), nessun ETF Emergenti diversificato
+   reale: nessuno supera la soglia di geometria (40) per un fondo tipo
+   XMME.MI, quindi vinceva la riga NONNA/GLOBAL_EQUITY (^GSPC) per
+   mancanza di alternative migliori nella riga piu' specifica. Verificato
+   con `geometry_score` reale sui dati del portafoglio (parquet storico +
+   fetch live yfinance): **EEM 92,89** contro ^GSPC 57,65, ^HSI 18,00,
+   000001.SS 41,55, ^BSESN 18,63 — EEM vince nettamente sia per semantica
+   che per tracking. **Fix**: aggiunto `EEM` come primo candidato di
+   `REFERENCE_FAMILIES["EMERGING_EQUITY"]`. 1 test nuovo (catalogo) +
+   verificato che nessun test esistente assume il vecchio contenuto della
+   tupla.
+
+**Bug FATTO (2026-09-05, trovato durante l'investigazione sopra, NON
+richiesto esplicitamente ma bloccante — perdita dati reale in corso)**:
+mentre verificavo il bug SWDA.MI/XMME.MI ho notato che
+`data/cache/portafoglio_benchmark_cache.json` era crollato da 63 serie
+benchmark a **3** nella sessione live dell'utente. Grep sui log
+applicativi (`Cache benchmark salvata: serie=N`) ha confermato il
+pattern gia' successo 2 volte prima (17:22 e 19:02 del 2026-09-04,
+entrambe autoriparate al giro successivo) e una terza volta questa
+mattina (08:38:30) senza autoripararsi. Root cause in
+`persistence/storage.py::save_data()`/`save_benchmark_data()`: entrambe
+ripiegavano sul contenuto gia' su disco SOLO quando il `benchmark_data`
+del chiamante era COMPLETAMENTE vuoto, mai quando era solo PARZIALE (non
+vuoto ma con meno ticker di quelli gia' persistiti) — un chiamante con
+una vista parziale della cache (probabile: un thread di prewarming/
+render in background con un proprio snapshot di `data` non ancora
+sincronizzato con gli altri 60 ticker scritti nel frattempo da altri
+render) sovrascriveva l'INTERA cache con i pochi ticker che conosceva,
+azzerando silenziosamente tutti gli altri. **Fix**: nuova
+`_merged_benchmark_cache_payload()` condivisa da entrambe le funzioni —
+unisce SEMPRE il `benchmark_data`/`market_live_data` del chiamante con
+quanto gia' persistito su disco (il chiamante vince per i ticker che
+conosce, tutti gli altri restano). 1 test esistente aggiornato (asseriva
+il vecchio comportamento di sostituzione totale come atteso) + 1 test
+nuovo con 60 ticker pre-esistenti + 2 nuovi da un chiamante parziale,
+verifica che tutti e 62 sopravvivano. Suite completa verde (0 failures).
+**Nota**: la causa esatta di QUALE thread/chiamante avesse la vista
+parziale non e' stata isolata (probabile scheduler `benchmark_
+scheduler_start`/prewarming con uno snapshot di `data` non aggiornato,
+ma non confermato con un log dedicato) — il fix e' comunque corretto e
+completo indipendentemente dalla causa esatta, perche' rende
+`save_benchmark_data`/`save_data` sicure per costruzione sotto QUALUNQUE
+scrittore con vista parziale, non solo quello osservato. La cache reale
+(gia' ridotta a 3 serie da questo bug PRIMA del fix) si ripopolera'
+gradualmente navigando l'app dopo il riavvio, non e' stata toccata
+direttamente in questa sessione. **Stesso avviso**: serve un altro
+riavvio dell'app per tutti e tre i fix di questo giro.
 
 **Fase D — dettaglio bite-sized scritto e approvato 2026-09-04** (stessa
 sessione), due decisioni di scope prese dall'utente via domanda diretta:

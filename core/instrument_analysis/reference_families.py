@@ -21,7 +21,17 @@ REFERENCE_FAMILIES: dict[str, tuple[str, ...]] = {
     "GLOBAL_EQUITY": ("^GSPC", "^IXIC"),
     "USA_EQUITY": ("^GSPC", "^DJI", "^IXIC"),
     "EUROPE_EQUITY": ("^STOXX50E", "^FTSE", "^GDAXI"),
-    "EMERGING_EQUITY": ("^HSI", "000001.SS", "^BSESN"),
+    #: EEM (iShares MSCI Emerging Markets) aggiunto 2026-09-05 - bug reale
+    #: segnalato dall'utente: XMME.MI (Xtrackers MSCI Emerging Markets,
+    #: identita' ufficiale "MSCI EMERGING MARKET") riceveva ^GSPC (riga
+    #: GLOBAL_EQUITY, geometry 57,65) come proxy scaricabile invece di un
+    #: indice Emergenti vero, perche' questa riga aveva solo indici di
+    #: singolo paese (Hong Kong/Cina/India) che non superano la soglia di
+    #: geometria per un fondo Emergenti diversificato. Verificato con
+    #: geometry_score reale sui dati del portafoglio: EEM 92,89 contro
+    #: ^GSPC 57,65, ^HSI 18,00, 000001.SS 41,55, ^BSESN 18,63 - EEM vince
+    #: nettamente sia per semantica (stessa famiglia) sia per tracking.
+    "EMERGING_EQUITY": ("EEM", "^HSI", "000001.SS", "^BSESN"),
     "SMALL_CAP": ("^RUT",),
     "TECH_GROWTH": ("^NDX", "^IXIC"),
     "ENERGY": ("^GSPE",),

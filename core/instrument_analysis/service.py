@@ -109,7 +109,9 @@ def _fetch_sovereign_synthetic_curve(duration_years: float) -> tuple[dict[str, f
     return synthetic_total_return(observations, duration_years), spread_found
 
 
-def _is_result_worth_caching(profile: InstrumentProfile, benchmark: BenchmarkResolution) -> bool:
+def _is_result_worth_caching(
+    profile: InstrumentProfile, benchmark: BenchmarkResolution, *, own_history_fetch_failed: bool = False,
+) -> bool:
     """True solo se almeno una delle due risoluzioni ha prodotto segnale.
 
     Un risultato in cui il profilo e' rimasto "ALTRO" *e* il benchmark e'
@@ -117,8 +119,23 @@ def _is_result_worth_caching(profile: InstrumentProfile, benchmark: BenchmarkRes
     di rete: metterlo in cache lo congelerebbe per l'intero TTL (14 giorni)
     senza che nulla possa riprovare. In quel caso non si scrive nulla e la
     chiamata successiva ritenta da capo.
-    """
+
+    Stesso principio esteso al fallback MERCATO_GENERALE (bug reale
+    segnalato dall'utente 2026-09-05, SWDA.MI: profilo risolto bene, ma
+    benchmark caduto su GENERAL_MARKET_FALLBACK perche' il fetch storico
+    dello strumento (`_fetch_own_history_with_retry`, unico input che
+    abilita l'intera scaletta CUGINA/ZIA/NONNA) e' tornato vuoto per
+    un'intermittenza di rete gia' documentata sopra - senza
+    `instrument_series` la scaletta non puo' nemmeno essere tentata.
+    Cacheare quel risultato lo avrebbe congelato per l'intero TTL pur
+    essendo indistinguibile da un blackout temporaneo. Non riguarda un
+    MERCATO_GENERALE genuino (fetch riuscito ma nessun candidato del
+    ladder supera la soglia di geometria, o asset_class senza ladder):
+    quello resta un risultato valido, da cachare normalmente."""
     if str(profile.asset_class or "").upper() not in ("", "ALTRO"):
+        grade = getattr(benchmark.relation_grade, "value", benchmark.relation_grade)
+        if own_history_fetch_failed and grade == RelationGrade.GENERAL_MARKET.value:
+            return False
         return True
     grade = getattr(benchmark.relation_grade, "value", benchmark.relation_grade)
     return bool(grade) and grade not in _DEGRADED_GRADES
@@ -402,8 +419,21 @@ class InstrumentAnalysisService:
         # abilita un vero controllo di geometria contro l'ETF governativo
         # nazionale (52,7-65,6, sopra soglia) invece di restare a un
         # punteggio di sola confidence.
+        # Traccia se il fetch di rete e' tornato vuoto (a differenza di
+        # `own_history` gia' fornito dal chiamante, mai una "rete fallita" -
+        # vedi _is_result_worth_caching): serve a non cachare un
+        # GENERAL_MARKET_FALLBACK indistinguibile da un blackout temporaneo
+        # del fetch storico, invece di un fallback genuino.
+        own_history_fetch_state = {"failed": False}
+
+        def _instrument_series_via_network() -> dict[str, float]:
+            history = _fetch_own_history_with_retry(history_ticker)
+            if not history:
+                own_history_fetch_state["failed"] = True
+            return history
+
         instrument_series_fn = (
-            (lambda: own_history) if own_history else (lambda: _fetch_own_history_with_retry(history_ticker))
+            (lambda: own_history) if own_history else _instrument_series_via_network
         )
         benchmark = resolve_benchmark(
             profile, signals,
@@ -426,7 +456,9 @@ class InstrumentAnalysisService:
 
         # Un risultato completamente degradato non viene scritto: vedi
         # `_is_result_worth_caching`.
-        if _is_result_worth_caching(profile, benchmark):
+        if _is_result_worth_caching(
+            profile, benchmark, own_history_fetch_failed=own_history_fetch_state["failed"],
+        ):
             ia_cache.put_cached_resolution(
                 cache, cache_key,
                 _analysis_to_cache_payload(analysis.name, profile, cds, benchmark),
