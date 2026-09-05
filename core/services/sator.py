@@ -187,6 +187,13 @@ class SatorContext:
     budget: float
     state_df: pd.DataFrame
     price_frame: pd.DataFrame
+    #: Come price_frame, ma con i prezzi "congelati" (forward-fill di
+    #: build_expanded_price_frame su uno storico grezzo sparso) smascherati
+    #: a NaN (vedi _mask_stale_filled_prices) - usato SOLO per le
+    #: statistiche (n_punti, vol/momentum in _compute_all_metrics_batch),
+    #: mai per _latest_prices: il prezzo corrente da pagare deve restare
+    #: l'ultimo noto anche se stantio, le statistiche no.
+    metrics_price_frame: pd.DataFrame
     returns_frame: pd.DataFrame
     current_weights: dict[str, float]
     nature_weights: dict[str, float]
@@ -980,7 +987,8 @@ def run_sator_analysis(
         liquidita = _safe_float(data.get("_liquidita"), 0.0)
     price_frame = build_expanded_price_frame(data)
     price_frame = price_frame if isinstance(price_frame, pd.DataFrame) else pd.DataFrame()
-    returns_frame = _build_returns_frame(price_frame)
+    metrics_price_frame = _mask_stale_filled_prices(price_frame)
+    returns_frame = _build_returns_frame(metrics_price_frame)
 
     runtime = tuple(str(c or "").strip().upper() for c in (selected_categories or ()))
     allowed = tuple(c for c in runtime if c in cfg["investible_categories"]) or tuple(cfg["investible_categories"])
@@ -1010,7 +1018,7 @@ def run_sator_analysis(
     ctx = SatorContext(
         data=data, settings=settings, budget=budget,
         state_df=state_df if isinstance(state_df, pd.DataFrame) else pd.DataFrame(),
-        price_frame=price_frame, returns_frame=returns_frame,
+        price_frame=price_frame, metrics_price_frame=metrics_price_frame, returns_frame=returns_frame,
         current_weights=current_weights, nature_weights=nature_weights,
         bucket_weights=bucket_weights, portfolio_value=portfolio_value,
         correlations=correlations, selected_categories=allowed,
@@ -1055,7 +1063,7 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
     ]
     calc_settings = ctx.settings.get("calculations_metrics", {}) if isinstance(ctx.settings, dict) else {}
     rolling_window = int(min(3650.0, max(2.0, _safe_float(calc_settings.get("rolling_window_days"), 90.0))))
-    metrics_batch = _compute_all_metrics_batch(all_tickers, ctx.price_frame, rolling_window)
+    metrics_batch = _compute_all_metrics_batch(all_tickers, ctx.metrics_price_frame, rolling_window)
 
     rows = []
     for item in ctx.data.get("strumenti", []) or []:
@@ -2810,6 +2818,65 @@ def _compute_all_metrics_batch(tickers: list[str], price_frame: pd.DataFrame, wi
         m["rend_vol"] = rv_dict.get(t, np.nan)
         result[t] = m
     return result
+
+
+#: Sotto questa lunghezza, una sequenza di prezzi identici consecutivi resta
+#: valida (puo' capitare per davvero: un festivo, un giorno a bassa
+#: liquidita' con lo stesso prezzo di chiusura). Da questa lunghezza in su
+#: e' quasi certamente un prezzo "congelato" ripetuto (vedi
+#: _mask_stale_filled_prices) invece di una quotazione genuina.
+_STALE_PRICE_RUN_THRESHOLD = 3
+
+
+def _mask_stale_filled_prices(price_frame: pd.DataFrame) -> pd.DataFrame:
+    """Smaschera i prezzi "congelati" (ripetuti identici per 3+ giorni di
+    fila) prima che alimentino momentum/rischio/diversificazione — bug
+    reale trovato 2026-09-05 (segnalato dall'utente: SATOR preferiva
+    comprare strumenti nuovi mai posseduti invece di rinforzare posizioni
+    Core gia' in portafoglio).
+
+    Root cause: `build_expanded_price_frame` (core/price_frames.py) fa
+    SEMPRE un forward-fill per avere una serie continua senza buchi -
+    corretto per i grafici, ma per uno strumento tracciato raramente (es.
+    "in osservazione", mai comprato: niente obbligo di aggiornamento
+    quotidiano finche' non diventa una posizione attiva) lo storico
+    grezzo salvato puo' avere solo poche decine di punti REALI sparsi su
+    anni (verificato: XDEQ.MI aveva 64 quotazioni vere su 866 giorni,
+    quasi tutte a fine mese, prima di iniziare il tracciamento
+    quotidiano il 2026-08-03) — il forward-fill riempie il resto con
+    l'ultimo prezzo noto ripetuto, che rendimenti/volatilita'/
+    correlazione trattano come se fosse un vero giorno di mercato fermo.
+    Risultato misurato: correlazione con il portafoglio quasi a zero
+    (0,01-0,06, contro lo 0,74-0,76 di posizioni azionarie vere) per puro
+    artefatto statistico — non perche' quello strumento diversifichi
+    davvero, ma perche' il 93% delle sue "osservazioni" erano finte.
+
+    Fix: qualunque prezzo che ripete lo stesso valore per
+    `_STALE_PRICE_RUN_THRESHOLD` o piu' giorni di fila (dal terzo in poi)
+    torna a NaN prima del calcolo di rendimenti/volatilita'/correlazione
+    — SOLO per queste statistiche, mai per i grafici (che continuano a
+    usare `ctx.price_frame`/`build_expanded_price_frame` originale,
+    forward-fillato, per la continuita' visiva). Con dati insufficienti
+    dopo il mascheramento, i safeguard gia' esistenti nel motore (NaN ->
+    default neutro 0.5 in _score_momentum/_score_risk, 0,55 in
+    _score_diversification, soglia minima di osservazioni valide in
+    _compute_correlations) fanno il resto: uno strumento con storico
+    genuino insufficiente riceve un punteggio NEUTRO, non un vantaggio
+    fasullo. Stesso frame usato anche per n_punti/data_quality_score
+    (via _compute_all_metrics_batch), cosi' l'indicatore di qualita' dati
+    mostrato in tabella riflette le osservazioni vere, non quelle
+    riempite.
+    """
+    if price_frame is None or price_frame.empty:
+        return price_frame
+    out = price_frame.copy()
+    for col in out.columns:
+        s = out[col]
+        same_as_prev = s.eq(s.shift(1)) & s.notna()
+        run_id = (~same_as_prev).cumsum()
+        run_len = same_as_prev.groupby(run_id).cumsum()
+        out.loc[run_len >= (_STALE_PRICE_RUN_THRESHOLD - 1), col] = np.nan
+    return out
 
 
 def _build_returns_frame(price_frame: pd.DataFrame) -> pd.DataFrame:
