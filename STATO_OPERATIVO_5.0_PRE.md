@@ -2309,6 +2309,42 @@ gradualmente navigando l'app dopo il riavvio, non e' stata toccata
 direttamente in questa sessione. **Stesso avviso**: serve un altro
 riavvio dell'app per tutti e tre i fix di questo giro.
 
+**Bug FATTO (2026-09-05, segnalato dall'utente come urgente: "SATOR non
+disponibile ... SystemExit: 1 ... questa cosa va assolutamente
+risolta!")**: root cause isolata nei log applicativi —
+`start_form_server()` (`ui/form_server/__init__.py`) falliva a ripetizione
+per 13+ minuti filati (08:53-09:06) con "porta 8502 non disponibile
+(SystemExit: 1)", MENTRE una richiesta diretta alla stessa porta nello
+stesso momento rispondeva regolarmente (200 su `/sator`, verificato dal
+vivo). Causa: `start_form_server()` controllava SOLO la variabile locale
+al modulo `_server_thread` per capire se il server fosse gia' attivo — un
+hot-reload di Streamlit (reimport di questo modulo dopo una modifica a un
+file .py nel repo, innescato dalle mie stesse modifiche al codice in
+questa sessione mentre l'app dell'utente era in esecuzione con
+file-watching attivo, il normale comportamento di `streamlit run` in
+sviluppo) azzera quella variabile pur lasciando vivo il thread uvicorn
+precedente, ancora in ascolto sulla porta. Il solo probe di rete di
+backup (`_probe_existing_form_server`, timeout 0,35s) puo' fallire per un
+semplice ritardo sotto carico, facendo scattare un secondo bind sulla
+porta gia' occupata dal thread orfano -> `SystemExit(1)`. Lo scheduler
+gemello `start_benchmark_scheduler`
+(`core/infrastructure/schedule.py`) ha gia' questa stessa protezione
+("funziona anche dopo hot-reload di Streamlit... i thread preesistenti
+restano vivi con lo stesso nome") — `start_form_server` non ce l'aveva.
+**Fix**: stesso pattern — cerca un thread vivo di nome
+"PortafoglioFormServer" in `threading.enumerate()` PRIMA del probe di
+rete, e si riaggancia direttamente se lo trova (nessun nuovo bind
+tentato). 1 test nuovo in `tests/test_form_server_startup.py` (thread
+orfano simulato, verifica che ne riaggancia lo stato senza tentare
+`_probe_existing_form_server`/`_build_fastapi_app`). Suite completa
+verde (0 failures). **Nota**: la causa scatenante specifica di QUESTA
+sessione (i miei stessi edit al codice mentre l'app era in esecuzione)
+non si ripetera' nell'uso normale dell'utente da solo, ma la
+vulnerabilita' di fondo (nessuna protezione da hot-reload) era reale e
+gia' presente prima di questa sessione — qualunque modifica futura al
+codice con l'app attiva l'avrebbe potuta far scattare di nuovo. Stesso
+avviso: serve un riavvio dell'app.
+
 **Fase D — dettaglio bite-sized scritto e approvato 2026-09-04** (stessa
 sessione), due decisioni di scope prese dall'utente via domanda diretta:
 (1) scheduler background **disattivato di default**, come Mercati; (2) il

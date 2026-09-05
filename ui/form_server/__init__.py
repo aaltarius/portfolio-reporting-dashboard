@@ -80,6 +80,30 @@ def start_form_server(port: int = FORM_PORT) -> None:
             _started.set()
             return
 
+        # Ri-aggancia un thread gia' vivo cercandolo per NOME fra tutti i
+        # thread del processo, non solo nella variabile locale al modulo:
+        # un hot-reload di Streamlit (reimport di questo modulo dopo una
+        # modifica a un file .py nel repo, es. durante una sessione di
+        # sviluppo) azzera `_server_thread` pur lasciando vivo il thread
+        # precedente, che resta comunque in ascolto sulla porta - stesso
+        # pattern gia' usato da `start_benchmark_scheduler` in
+        # `core/infrastructure/schedule.py` per lo stesso identico motivo.
+        # Senza questo controllo, il probe di rete sotto (timeout 0,35s)
+        # puo' fallire per un semplice ritardo sotto carico e far scattare
+        # un secondo bind sulla stessa porta gia' occupata dal thread
+        # orfano -> SystemExit(1), anche se il server e' in realta' gia'
+        # raggiungibile (bug reale segnalato dall'utente 2026-09-05:
+        # "SATOR non disponibile ... SystemExit: 1" mostrato in sidebar,
+        # mentre una richiesta diretta alla stessa porta nello stesso
+        # momento rispondeva regolarmente).
+        for _t in threading.enumerate():
+            if _t.name == "PortafoglioFormServer" and _t.is_alive():
+                _server_thread = _t
+                _started.set()
+                _ready.set()
+                _last_error = None
+                return
+
         if _probe_existing_form_server(port):
             _started.set()
             _ready.set()
