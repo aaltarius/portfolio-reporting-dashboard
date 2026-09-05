@@ -2197,6 +2197,42 @@ entrambi confermati**:
    lo stesso `resolve_instrument_benchmark()` quindi hanno gli stessi due
    problemi sopra.
 
+**Bug FATTO (2026-09-05, scelto come priorita' dall'utente tra i due
+sopra): download storico benchmark che restava corto per sempre**. Root
+cause isolata: `_benchmark_refresh_state()` decideva se rifare il fetch
+SOLO guardando quanto e' recente l'ultimo giorno in cache
+(`last_valid`), mai quanto indietro arriva la copertura. Un fetch passato
+troncato (causa esatta non isolata - probabile transiente lato Yahoo al
+primo fetch di questi ticker, non riproducibile ora) restava quindi
+"fresco" per sempre: il merge incrementale (`{**existing, **fresh}`)
+aggiunge solo i giorni nuovi in avanti, mai quelli mancanti nel passato.
+**Verificato dal vivo in sessione** che il download oggi funziona
+benissimo per questi stessi ticker: `yf.Ticker("^GSPC").history(period="2y")`
+(e altri 5 dal gruppo corto: TLT, URTH, EEM, QQQ, GC=F) hanno restituito
+subito 502-504 punti pieni — la cache era stantia, non un limite reale
+del download. **Fix**: nuovo controllo di copertura in
+`_benchmark_refresh_state()` (`core/dashboard_datasets.py`) — se lo
+storico piu' vecchio in cache copre meno di ~18 mesi
+(`_BENCHMARK_EXPECTED_COVERAGE_DAYS = 550`, tutti i benchmark usati qui
+sono indici/ETF/materie prime con decenni di storico reale, mai
+autenticamente cosi' corti), ritenta un fetch pieno — ma solo se
+`last_valid` non e' gia' oggi stesso, cosi' un ticker genuinamente
+neo-quotato non viene ri-interrogato piu' volte nello stesso giorno. Si
+autoripara e si ferma da solo (una volta colmata la copertura, il
+controllo non scatta piu'). 7 test nuovi in
+`tests/test_benchmark_refresh_coverage.py` (cache vuota, fresca con
+copertura piena/corta, stale di 1 giorno con copertura corta/piena,
+stale "vera", backfill end-to-end con `yf.Ticker` mockato). Suite
+completa verde (0 failures). **Nota**: la cache reale
+(`data/cache/portafoglio_benchmark_cache.json`) NON e' stata toccata in
+questa sessione — avrebbe richiesto chiamate di rete reali sui dati veri
+dell'utente senza chiederglielo prima. Si autoripara al prossimo refresh
+quotazioni dopo il riavvio dell'app (i 36 ticker corti torneranno a
+copertura piena entro un giorno di utilizzo normale). Il secondo problema
+(assegnazione benchmark sbagliata/assente, SWDA.MI/XMME.MI) resta solo
+diagnosticato, non affrontato — priorita' dell'utente, da riprendere
+dopo.
+
 **Fase D — dettaglio bite-sized scritto e approvato 2026-09-04** (stessa
 sessione), due decisioni di scope prese dall'utente via domanda diretta:
 (1) scheduler background **disattivato di default**, come Mercati; (2) il

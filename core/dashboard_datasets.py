@@ -80,6 +80,15 @@ def _resolve_dataset_category_codes(settings: dict[str, Any] | None = None) -> l
     return list(get_selected_category_codes(settings))
 
 
+_BENCHMARK_EXPECTED_COVERAGE_DAYS = 550
+"""Sotto questa profondita' (~18 mesi) una cache benchmark e' sospetta:
+_prefetch_benchmark_data chiede sempre period="2y" (~730gg), quindi uno
+storico piu' corto indica quasi certamente un fetch passato troncato
+(causa non isolata, es. transiente lato Yahoo), non un ticker davvero
+neo-quotato - tutti i benchmark usati qui (indici, ETF, materie prime,
+tassi) hanno decenni di storico reale."""
+
+
 def _latest_valid_benchmark_date(existing: dict[str, Any]) -> str:
     last_valid = ""
     for raw_date, raw_value in existing.items():
@@ -89,6 +98,17 @@ def _latest_valid_benchmark_date(existing: dict[str, Any]) -> str:
         if len(raw_date) == 10 and raw_date > last_valid:
             last_valid = raw_date
     return last_valid
+
+
+def _earliest_valid_benchmark_date(existing: dict[str, Any]) -> str:
+    earliest = ""
+    for raw_date, raw_value in existing.items():
+        if raw_value is None or pd.isna(raw_value):
+            continue
+        raw_date = str(raw_date or "")
+        if len(raw_date) == 10 and (not earliest or raw_date < earliest):
+            earliest = raw_date
+    return earliest
 
 
 def _benchmark_refresh_state(existing: dict[str, Any]) -> tuple[bool, str]:
@@ -101,6 +121,26 @@ def _benchmark_refresh_state(existing: dict[str, Any]) -> tuple[bool, str]:
             needs_refresh = (today - last_valid).days > 1
         except Exception:
             needs_refresh = True
+    if not needs_refresh:
+        # Bug reale segnalato dall'utente 2026-09-05: curve benchmark che
+        # "spuntano dal nulla" a meta' grafico. Un fetch passato troncato
+        # (period="2y" richiesto ma solo ~6 mesi ottenuti) resta "fresco"
+        # per sempre col solo controllo sopra, perche' il merge in
+        # _prefetch_benchmark_data aggiunge solo giorni nuovi in avanti,
+        # mai quelli mancanti nel passato. Ritenta un fetch pieno se la
+        # copertura e' sospettosamente corta - ma solo una volta al
+        # giorno (mai se last_valid e' gia' oggi: se il tentativo di oggi
+        # non ha allungato la copertura, il ticker probabilmente non ha
+        # davvero piu' storico disponibile, non ha senso ritentare piu'
+        # volte nello stesso giorno).
+        earliest_txt = _earliest_valid_benchmark_date(existing)
+        if earliest_txt and last_valid_txt != str(today):
+            try:
+                earliest = pd.Timestamp(earliest_txt).date()
+                if (today - earliest).days < _BENCHMARK_EXPECTED_COVERAGE_DAYS:
+                    needs_refresh = True
+            except Exception:
+                pass
     return needs_refresh, last_valid_txt
 
 
