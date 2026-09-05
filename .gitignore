@@ -65,6 +65,13 @@ tests/
 # Documenti interni di sviluppo
 HANDOFF_LUNEDI.md
 portfolio_dashboard_brief_per_altra_ai_v2.md
+STATO_OPERATIVO_5.0_PRE.md
+TODO_5.0.md
+HANDOFF_PROGRAMMATORE_BENCHMARK_CDS/
+
+# Istruzioni per l'agente AI (repo pubblico piu' pulito, richiesta esplicita
+# dell'utente 2026-09-05: resta in locale, non pubblicato)
+CLAUDE.md
 
 # OS
 .DS_Store
