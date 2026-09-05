@@ -1,5 +1,45 @@
 # Changelog
 
+## 5.0-pre - Benchmark sempre garantiti, stop perdita dati cache, fix accesso sidebar
+
+- **Ogni strumento posseduto ha ora un benchmark di riferimento** anche
+  quando non si trova una corrispondenza diretta verificata: quando la
+  qualita' del confronto non e' valutabile (storico dello strumento
+  indisponibile, o nessun candidato supera la soglia di somiglianza), il
+  motore offre comunque il ticker scaricabile piu' specifico del catalogo
+  di famiglie (es. EEM per un fondo Emergenti, non il generico S&P 500),
+  senza bisogno di rete. Le voci gia' in cache senza alcun riferimento si
+  autoriparano alla prima lettura, non serve aspettare la scadenza
+  naturale (14 giorni). Verificato sui dati reali: da 3 strumenti
+  posseduti su 30 senza alcun grafico di riferimento a 0/30.
+- Corretti due casi reali di assegnazione benchmark scadente: uno
+  strumento azionario globale che non trovava piu' nulla dopo
+  un'intermittenza di rete transitoria (ora torna a risolvere il nome
+  ufficiale con un confronto verificato), un fondo Mercati Emergenti che
+  riceveva l'indice USA come proxy invece di un indice Emergenti vero.
+- L'esposizione automatica per bucket (Core/Difensivo/Satellite) mostrata
+  come riferimento accanto ai valori modificabili ora usa la stessa fonte
+  frazionata reale delle caselle sopra, invece di un'euristica separata
+  che mostrava sempre un bucket unico al 100% anche quando lo strumento
+  aveva gia' un'esposizione mista nota.
+- Le curve storiche dei benchmark che restavano bloccate a ~6 mesi invece
+  dei ~2 anni attesi (causa: un fetch passato incompleto restava
+  "fresco" per sempre) ora si autoriparano al primo refresh utile.
+- **Corretta una perdita di dati reale**: la cache dei benchmark poteva
+  essere azzerata da 60+ serie a poche unita' quando un processo in
+  background aveva solo una vista parziale della cache al momento del
+  salvataggio. Ora ogni scrittura unisce sempre col contenuto gia' su
+  disco invece di sostituirlo.
+- Sistemato l'avvio del servizio locale che alimenta i bottoni della
+  sidebar (Strumenti, Operazioni, SATOR, Quote & impostazioni...): dopo
+  una modifica al codice con l'app in esecuzione poteva restare "smarrito"
+  pur essendo ancora raggiungibile, mostrando un errore fuorviante.
+  Timeout di controllo alzato per le pagine piu' pesanti da calcolare.
+- La cache di risoluzione InstrumentAnalysis (profili/benchmark per
+  strumento) e' ora tenuta in memoria tra chiamate ripetute invece di
+  essere riletta da disco ogni volta (fino a 50x piu' veloce sulle pagine
+  che la consultano per ogni strumento del portafoglio).
+
 ## 5.0-pre - Fase C+D: SATOR collegato a InstrumentAnalysisService, refresh automatico in background
 
 - SATOR (esposizione bucket, nature/ruolo per strumento) non usa piu' solo
