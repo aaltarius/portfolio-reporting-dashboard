@@ -16,7 +16,11 @@ from typing import Any
 
 from core.config import DATA_DIR
 
-ALGORITHM_VERSION = "1.0.0"
+ALGORITHM_VERSION = "1.1.0"  # Task V (2026-09-05): _hierarchical_role_prior
+# rivisto (factor/size tilt equity spostati a Satellite, P3) - invalida la
+# cache disco cosi' ogni strumento gia' analizzato viene ricalcolato con le
+# nuove percentuali C/D/S invece di continuare a servire quelle vecchie fino
+# alla scadenza naturale del TTL (14 giorni).
 
 _CACHE_SUBDIR = "instrument_analysis"
 

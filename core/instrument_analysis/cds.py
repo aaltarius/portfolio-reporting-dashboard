@@ -722,20 +722,38 @@ def _hierarchical_role_prior(view: _StructuralView, st: str):
             raw = {"core": 25, "defensive": 0, "satellite": 75}
             protected = {"core", "satellite"}
         elif view.factor in ("minimum_volatility", "low_beta"):
-            raw = {"core": 70, "defensive": 30, "satellite": 0}
-            protected = {"core", "defensive"}
+            # Task V (2026-09-05, stress-test qualitativo P3): un fattore
+            # single-factor resta una scommessa attiva rispetto a un Core
+            # market-cap-weighted gia' posseduto (es. SWDA) - va soprattutto
+            # in Satellite. Il 70% Core precedente (ereditato da POC17.2)
+            # trattava lo strumento come se fosse quasi un sostituto del
+            # Core stesso, mascherando l'esposizione tattica reale. Una quota
+            # difensiva ridotta resta legittima solo qui (a differenza di
+            # quality/size): lo smorzamento di volatilita' e' l'esplicito
+            # obiettivo del fattore, non un effetto collaterale.
+            raw = {"core": 35, "defensive": 15, "satellite": 50}
+            protected = {"core", "satellite"}
         elif view.factor == "quality":
+            # Task V (2026-09-05, stress-test qualitativo P3): stesso motivo
+            # di minimum_volatility/low_beta - "quality" e' un tilt attivo,
+            # non un sostituto del Core. Nessuna quota difensiva: il fattore
+            # qualita' non offre capital preservation, resta 100% equity.
             raw = {
-                "core": 75 if view.geography == "world" else 65,
+                "core": 40 if view.geography == "world" else 30,
                 "defensive": 0,
-                "satellite": 25 if view.geography == "world" else 35,
+                "satellite": 60 if view.geography == "world" else 70,
             }
             protected = {"core", "satellite"}
         elif view.size == "small":
-            raw = {"core": 55, "defensive": 0, "satellite": 45}
+            # Task V (2026-09-05, stress-test qualitativo P3): small cap e'
+            # per definizione un tilt satellite (rischio/concentrazione ben
+            # maggiore di un Core globale), non un pilastro core al 55%.
+            raw = {"core": 25, "defensive": 0, "satellite": 75}
             protected = {"core", "satellite"}
         elif view.size == "ex_mega":
-            raw = {"core": 60, "defensive": 0, "satellite": 40}
+            # Task V (2026-09-05, stress-test qualitativo P3): idem per
+            # ex-mega cap (esclude le mega cap, tilt attivo verso small/mid).
+            raw = {"core": 30, "defensive": 0, "satellite": 70}
             protected = {"core", "satellite"}
         elif st == "EMERGING_BROAD_EQUITY":
             raw = {"core": 70, "defensive": 0, "satellite": 30}

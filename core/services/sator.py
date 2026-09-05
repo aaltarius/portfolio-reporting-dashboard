@@ -976,7 +976,15 @@ def run_sator_analysis(
     ensure_sator_metadata(data)
     cfg = ensure_sator_settings(settings)
     budget = max(0.0, _safe_float(budget, cfg["default_budget"]))
-    concentration_severity = float(min(2.0, max(0.0, _safe_float(concentration_severity, 1.0))))
+    # Task V (2026-09-05, bug reale trovato in stress-test): il tetto era
+    # 2.0, ma la UI SATOR offre 4 livelli (1 Bassa, 2 Media, 3 Alta, 4
+    # Massima) passati cosi' come sono - Media/Alta/Massima collassavano
+    # tutte sullo stesso valore interno 2.0, producendo un risultato
+    # byte-identico per 3 opzioni su 4 (verificato: stesso identico HHI di
+    # concentrazione a piu' cifre decimali). Alzato a 4.0 cosi' i 4 livelli
+    # restano distinti; il default (1.0, "standard", invariato per chi non
+    # specifica il parametro, es. Pianificazione) non cambia.
+    concentration_severity = float(min(4.0, max(0.0, _safe_float(concentration_severity, 1.0))))
 
     state = compute_portfolio_state(data, include_closed=True)
     state_df = state.get("df", pd.DataFrame())
@@ -1196,7 +1204,9 @@ def _score_fit(
     concentrazione_linea = min(1.5, _safe_float(row.get("current_weight"), 0.0) / cap) if cap > 0 else 0.0
     score = 0.55 + float(np.clip((1.0 - riempimento) * 0.45, -0.35, 0.30))
     # penalita' per la linea gia' sovrappesata, scalata dalla severita' scelta
-    # dall'utente (0 = ignora la concentrazione, 1 = standard, 2 = doppia).
+    # dall'utente: 0 = ignora la concentrazione, 1 = standard (default di
+    # Pianificazione quando non specificato, "Bassa" nel form SATOR), fino
+    # a 4 = "Massima" nel form - vedi run_sator_analysis per il tetto.
     severita = _safe_float(row.get("_sev"), 1.0)
     score -= float(np.clip(concentrazione_linea * 0.22, 0.0, 0.25)) * severita
     if str(row.get("role")) in {"core_globale", "core_regionale", "core_difensivo"}:
@@ -1216,13 +1226,26 @@ def _score_fit(
     return float(np.clip(score, 0.0, 1.0))
 
 
+#: Task V (2026-09-05, stress-test qualitativo P5): soglia oltre la quale il
+#: rendimento medio pesato viene considerato "surriscaldato" (rischio di
+#: comprare dopo la festa, non prima) e il fattore quadratico che smorza
+#: l'eccesso oltre quella soglia prima del sigmoide. Trovato in sessione:
+#: FAMAMW.MI (+54,3% a 12 mesi, volatilita' 40%) otteneva lo stesso
+#: punteggio massimo di un rendimento sano e sostenibile, senza alcuno
+#: smorzamento da ipercomprato.
+_SOGLIA_SURRISCALDAMENTO_MOMENTUM = 0.15
+_FATTORE_SMORZAMENTO_MOMENTUM = 8.0
+
+
 def _score_momentum(row: pd.Series) -> float:
     disponibili = {k: row.get(k) for k in PESI_MOMENTUM if pd.notna(row.get(k))}
     if not disponibili:
         return 0.5
     peso_tot = sum(PESI_MOMENTUM[k] for k in disponibili)
     grezzo = sum(disponibili[k] * (PESI_MOMENTUM[k] / peso_tot) for k in disponibili)
-    return float(1.0 / (1.0 + math.exp(-6.0 * grezzo)))
+    eccesso = max(0.0, grezzo - _SOGLIA_SURRISCALDAMENTO_MOMENTUM)
+    grezzo_smorzato = grezzo - _FATTORE_SMORZAMENTO_MOMENTUM * eccesso ** 2
+    return float(1.0 / (1.0 + math.exp(-6.0 * grezzo_smorzato)))
 
 
 def _score_risk(row: pd.Series) -> float:
@@ -1230,7 +1253,17 @@ def _score_risk(row: pd.Series) -> float:
     s_vol = float(np.clip(1.0 - (vol / 0.35), 0.0, 1.0)) if pd.notna(vol) else 0.5
     s_dd = float(np.clip(1.0 - (abs(dd) / 0.50), 0.0, 1.0)) if pd.notna(dd) else 0.5
     s_rv = float(np.clip(0.5 + rv * 0.30, 0.0, 1.0)) if pd.notna(rv) else 0.5
-    return float(np.clip(s_vol * 0.40 + s_dd * 0.30 + s_rv * 0.30, 0.0, 1.0))
+    grezzo = float(np.clip(s_vol * 0.40 + s_dd * 0.30 + s_rv * 0.30, 0.0, 1.0))
+    # Task V (2026-09-05, stress-test qualitativo P4): vol/drawdown/rend_vol
+    # calcolati su uno storico corto sono statisticamente rumorosi - fino ad
+    # oggi un titolo con 30 punti veniva trattato con la stessa fiducia di uno
+    # con 252, dentro la STESSA dimensione visibile (risk_efficiency), niente
+    # termine nascosto in score_finale. Qui lo storico scarso stringe il
+    # punteggio verso il neutro 0,5 in proporzione a data_quality_score (0
+    # punti -> pienamente neutro, identico al fallback gia' usato sopra
+    # quando vol/dd/rv mancano del tutto; >=252 punti -> nessuno smorzamento).
+    quality = _data_quality_score(row.get("n_punti"))
+    return float(np.clip(0.5 + (grezzo - 0.5) * quality, 0.0, 1.0))
 
 
 def _score_diversification(row: pd.Series, caps: dict[str, float] | None = None) -> float:
@@ -1381,6 +1414,7 @@ def build_sator_matrix_frame(
         suggerite = _suggested_quotes_by_bucket(
             work, budget, deficits, blocked, max_lines_per_bucket=len(work),
             bucket_weights=bucket_weights, bucket_targets=objective,
+            max_share=cfg["max_share_per_line"],
         )
         purchase_bucket_weights = bucket_weights
         purchase_bucket_targets = objective
@@ -1392,7 +1426,8 @@ def build_sator_matrix_frame(
                 "richieste %s (probabile snapshot obsoleto): fallback sull'allocazione greedy legacy",
                 missing,
             )
-        suggerite = _suggested_quotes(work, budget, max_lines=max_lines)
+        max_share = cfg["max_share_per_line"] if cfg is not None else 0.35
+        suggerite = _suggested_quotes(work, budget, max_lines=max_lines, max_share=max_share)
 
     ranghi = pd.to_numeric(work["rango_gruppo"], errors="coerce").fillna(0).astype(int).tolist()
     marginal = [
@@ -2367,6 +2402,7 @@ def _suggested_quotes(
     max_lines: int = MAX_LINEE_SUGGERITE,
     bucket_weights: dict[str, float] | None = None,
     bucket_targets: dict[str, float] | None = None,
+    max_share: float = 0.35,
 ) -> list[int]:
     """Allocazione suggerita a quote intere, guidata dall'utilita' marginale.
 
@@ -2380,7 +2416,13 @@ def _suggested_quotes(
     if budget <= 0 or n == 0:
         return quote
     df = ranking_df.reset_index(drop=True)
-    cap_linea = budget * 0.35
+    # Task V (2026-09-05, bug reale trovato in stress-test): prima era
+    # sempre 0.35 scritto a mano, ignorando cfg["max_share_per_line"] -
+    # cambiare l'impostazione in Impostazioni SATOR non aveva alcun
+    # effetto sul tetto di concentrazione per riga. Ora il chiamante lo
+    # passa esplicitamente (default 0.35 solo per compatibilita' dei
+    # chiamanti che non lo passano ancora).
+    cap_linea = budget * float(max_share)
     # Un solo candidato per funzione: il piu' utile operativamente per una quota.
     # Cosi' il suggerito non coincide per forza col voto piu' alto se peggiora
     # target/cap o ha dati deboli.
@@ -2408,6 +2450,19 @@ def _suggested_quotes(
     speso = 0.0
     for i, dec_score, price in candidati:
         if dec_score < 0.50:
+            continue
+        # Task V (2026-09-05, bug reale trovato in stress-test): il tetto
+        # di concentrazione (cap_linea) veniva controllato SOLO nel giro
+        # incrementale sotto (quote aggiuntive oltre la prima) - la prima
+        # quota di ogni candidato veniva assegnata qui senza alcun
+        # controllo, quindi uno strumento il cui prezzo unitario da solo
+        # supera il tetto lo sforava comunque al primo acquisto (verificato
+        # dal vivo: cambiare il tetto dal 5% al 60% non cambiava di un
+        # centesimo la riga piu' concentrata). Un candidato troppo caro per
+        # rispettare il tetto anche con una sola quota resta a 0 - il
+        # budget puo' restare parzialmente liquido, stesso comportamento
+        # onesto gia' accettato altrove quando mancano candidati validi.
+        if price > cap_linea:
             continue
         if speso + price <= budget:
             quote[i] = 1
@@ -2460,6 +2515,7 @@ def _suggested_quotes_by_bucket(
     max_lines_per_bucket: int | None = None,
     bucket_weights: dict[str, float] | None = None,
     bucket_targets: dict[str, float] | None = None,
+    max_share: float = 0.35,
 ) -> list[int]:
     """Come _suggested_quotes, ma il budget e' prima diviso tra i bucket
     proporzionalmente al loro deficit (Allocation_k = budget * deficit_k /
@@ -2528,7 +2584,7 @@ def _suggested_quotes_by_bucket(
         if bucket_df.empty:
             speso_per_bucket[bucket] = 0.0
             continue
-        bucket_quote = _suggested_quotes(bucket_df, sub_budget, max_lines=max_lines_per_bucket, bucket_weights=bucket_weights, bucket_targets=bucket_targets)
+        bucket_quote = _suggested_quotes(bucket_df, sub_budget, max_lines=max_lines_per_bucket, bucket_weights=bucket_weights, bucket_targets=bucket_targets, max_share=max_share)
         for local_idx, q in zip(bucket_df.index, bucket_quote):
             quote[local_idx] = q
         speso_per_bucket[bucket] = sum(quote[i] * prices[i] for i in bucket_df.index)
@@ -2546,7 +2602,7 @@ def _suggested_quotes_by_bucket(
             bucket_df = df.loc[dominant_bucket == bucket]
             if bucket_df.empty:
                 continue
-            bucket_quote = _suggested_quotes(bucket_df, new_sub_budget, max_lines=max_lines_per_bucket, bucket_weights=bucket_weights, bucket_targets=bucket_targets)
+            bucket_quote = _suggested_quotes(bucket_df, new_sub_budget, max_lines=max_lines_per_bucket, bucket_weights=bucket_weights, bucket_targets=bucket_targets, max_share=max_share)
             for local_idx, q in zip(bucket_df.index, bucket_quote):
                 quote[local_idx] = q
         logger.info(
@@ -2554,6 +2610,43 @@ def _suggested_quotes_by_bucket(
             "sottospesi ai bucket saturi %s",
             leftover, saturated,
         )
+
+    # Task V (2026-09-05, bug reale trovato in stress-test): il giro sopra
+    # ridistribuisce SOLO verso bucket "saturi" (che hanno speso quasi tutta
+    # la propria fetta) - ma quando la fetta di un bucket e' cosi' piccola
+    # che il suo STESSO tetto di riga (sub_budget * max_share) blocca anche
+    # il candidato piu' economico, quel bucket resta a spesa zero e non
+    # risulta mai "saturo": se succede a TUTTI i bucket eleggibili (ognuno
+    # bloccato dal proprio tetto troppo stretto), "saturated" resta vuoto,
+    # il giro sopra non parte e l'intero budget resta liquido anche se
+    # esistono candidati comprabili con una fetta meno frammentata (verificato
+    # dal vivo: A un solo candidato da 500 su fetta 900/tetto 315, B tre
+    # candidati da 50 su fetta 100/tetto 35 - entrambi bloccati, 0 speso su
+    # 1000 di budget). Ultimo giro, deterministico: i bucket rimasti
+    # esattamente a zero ("starved", non solo sottospesi) vengono messi in
+    # un unico paniere e ritentati insieme sul residuo REALE rimasto, con un
+    # tetto di riga ricalcolato su quel paniere piu' ampio (non piu' sulla
+    # fetta troppo piccola del singolo bucket). Un bucket che ha speso
+    # qualcosa (anche poco) non e' "starved": ha gia' avuto la sua chance e
+    # non la riceve una seconda volta qui.
+    speso_reale = sum(quote[i] * prices[i] for i in range(n))
+    residuo_reale = budget - speso_reale
+    starved = [b for b in eligible_buckets if speso_per_bucket.get(b, 0.0) <= 0.0]
+    if residuo_reale > 0.01 and starved:
+        starved_df = df.loc[dominant_bucket.isin(starved)]
+        if not starved_df.empty:
+            pooled_quote = _suggested_quotes(
+                starved_df, residuo_reale, max_lines=max_lines_per_bucket,
+                bucket_weights=bucket_weights, bucket_targets=bucket_targets, max_share=max_share,
+            )
+            for local_idx, q in zip(starved_df.index, pooled_quote):
+                quote[local_idx] = q
+            logger.info(
+                "SATOR bucket_first_allocation: fetta troppo frammentata per i bucket "
+                "starved %s (nessun candidato entro il proprio tetto di riga) - "
+                "ritentato un unico giro in comune con %.2f EUR di residuo reale",
+                starved, residuo_reale,
+            )
     return quote
 
 
