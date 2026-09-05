@@ -12,7 +12,7 @@ from core.instrument_analysis.contracts import (
 from core.instrument_analysis.geometry import geometry_score
 from core.instrument_analysis.metrics import benchmark_score, coverage_score
 from core.instrument_analysis.profile import RawIdentitySignals
-from core.instrument_analysis.reference_families import _is_equity, family_ladder
+from core.instrument_analysis.reference_families import REFERENCE_FAMILIES, _is_equity, family_ladder
 from core.instrument_analysis.series import blend_series
 
 #: Semantic score fisso per il composito C/D/S (Task Q), stesso valore
@@ -405,6 +405,43 @@ def _dominant_component_fallback(components: list[BenchmarkComponent] | None) ->
     return dominant.series_id, dominant.label
 
 
+def _best_effort_ladder_fallback(
+    ladder: list[tuple[RelationGrade, float, str, str]],
+) -> tuple[str, str] | None:
+    """Ultimo paracadute quando la geometria non e' disponibile - storico
+    dello strumento non scaricato (fetch fallito o mai tentato) o nessun
+    candidato ha superato la soglia di tracking: offre comunque il primo
+    ticker del catalogo STATICO `REFERENCE_FAMILIES` per la riga PIU'
+    SPECIFICA del ladder che ha una famiglia nota (`family_ladder()`
+    ordina le righe dalla piu' specifica, es. settore/tema/paese, alla
+    piu' generica, GLOBAL_EQUITY sempre per ultima), senza alcuna
+    dipendenza di rete: e' un puro lookup su un dizionario locale, mai
+    influenzato dall'intermittenza che ha causato il gap.
+
+    Richiesta esplicita dell'utente (2026-09-05, dopo aver trovato SWDA.MI
+    senza alcun benchmark, e riformulata esplicitamente: "qualora non si
+    trovasse un grafico specifico si potesse ricorrere alla parente
+    prossima"): un riferimento visivo non verificato per tracking (non
+    passato dal gate di geometria) e' sempre meglio di nessun grafico — la
+    differenza rispetto al ramo FAMILY_LADDER sopra e' che qui NON c'e'
+    garanzia che la curva tracci bene lo strumento, solo che sia la
+    "parente" piu' vicina possibile a un livello di generalita' onesto
+    (es. EEM per un fondo Emergenti, non il generico ^GSPC quando una
+    riga piu' specifica esiste). Iterato in ordine (piu' specifica prima)
+    invece di prendere solo `ladder[0]` per difesa in profondita' — ogni
+    famiglia in `family_ladder()` ha gia' una entry in
+    `REFERENCE_FAMILIES` per costruzione (verificato da
+    `test_family_ladder_families_all_have_a_reference_families_entry`),
+    ma un fallback che smette di funzionare silenziosamente se quella
+    garanzia si rompesse in futuro sarebbe peggio di uno che prova la
+    riga successiva."""
+    for _grade, _semantic, family, _reason in ladder:
+        candidates = REFERENCE_FAMILIES.get(family)
+        if candidates:
+            return candidates[0], family
+    return None
+
+
 def _augment_with_geometry_signal(
     resolution: BenchmarkResolution,
     profile: InstrumentProfile,
@@ -420,17 +457,28 @@ def _augment_with_geometry_signal(
     famiglia (o composito, Task Q) qui e' solo un termine di paragone per
     la geometria, non sostituisce l'identita' ufficiale gia' trovata.
     No-op silenzioso se manca un dato qualunque — mai un errore, mai un
-    valore inventato."""
-    if instrument_series_fn is None or family_series_fn is None:
-        return
+    valore inventato. Task U (2026-09-05, richiesta esplicita dell'utente
+    dopo aver trovato piu' strumenti EXACT/SISTER del portafoglio reale
+    senza alcun fallback scaricabile, es. XDEB.MI/FAMAMW.MI): quando la
+    geometria non puo' essere valutata per QUALUNQUE motivo (nessuna
+    callable iniettata, storico dello strumento non disponibile, o nessun
+    candidato ha superato la soglia), prova comunque
+    `_best_effort_ladder_fallback` — stesso paracadute gia' usato dal ramo
+    GENERAL_MARKET_FALLBACK sotto, puro lookup sul catalogo statico, zero
+    dipendenza di rete."""
     ladder = family_ladder(profile)
     if not ladder:
         return
-    instrument_series = instrument_series_fn()
-    if not instrument_series:
-        return
-    best = _best_geometry_candidate(profile, cds, instrument_series, ladder, family_series_fn)
+    instrument_series = instrument_series_fn() if instrument_series_fn is not None else {}
+    best = (
+        _best_geometry_candidate(profile, cds, instrument_series, ladder, family_series_fn)
+        if instrument_series and family_series_fn is not None
+        else None
+    )
     if best is None:
+        fallback = _best_effort_ladder_fallback(ladder)
+        if fallback:
+            resolution.fallback_fetchable_series, resolution.fallback_fetchable_label = fallback
         return
     _grade, semantic_score, geom_score, n, _family, _ticker, _reason, combined, _components = best
     resolution.semantic_confidence = semantic_score
@@ -645,6 +693,18 @@ def resolve_benchmark(
         resolution.relation_grade = RelationGrade.GENERAL_MARKET
         resolution.benchmark_confidence = 0.3
         resolution.note = "Nessuna fonte diretta disponibile: fallback a mercato generale per asset class."
+        # Task U (2026-09-05, richiesta esplicita dell'utente dopo aver
+        # trovato SWDA.MI senza alcun grafico): operational_series sopra
+        # (`_GENERAL_MARKET_SERIES`) e' un placeholder di libreria mai
+        # scaricabile per costruzione — senza un fallback qui, arrivare a
+        # questo ramo significa zero curva in assoluto, non solo un
+        # confronto di bassa qualita'. Offre comunque un riferimento
+        # scaricabile onesto (non verificato per tracking) dal ladder,
+        # senza alcuna dipendenza dal fetch storico dello strumento sopra
+        # (a differenza del ramo FAMILY_LADDER, che invece lo richiede).
+        fallback = _best_effort_ladder_fallback(ladder)
+        if fallback:
+            resolution.fallback_fetchable_series, resolution.fallback_fetchable_label = fallback
         return resolution
 
     # Emergenza infrastrutturale esplicita — mai un normale BASE100.

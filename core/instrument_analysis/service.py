@@ -8,7 +8,8 @@ import time
 from datetime import datetime, timezone
 
 from core.instrument_analysis import cache as ia_cache
-from core.instrument_analysis.benchmark import resolve_benchmark
+from core.instrument_analysis.benchmark import _best_effort_ladder_fallback, resolve_benchmark
+from core.instrument_analysis.reference_families import family_ladder
 from core.instrument_analysis.cds import compute_cds
 from core.instrument_analysis.contracts import (
     BenchmarkComponent, BenchmarkResolution, CDSAssignment, InstrumentAnalysis, InstrumentProfile,
@@ -481,12 +482,29 @@ class InstrumentAnalysisService:
         cached = ia_cache.get_cached_resolution(cache, cache_key, ttl_days=_RESOLUTION_TTL_DAYS)
         if cached is None:
             return None
+        profile = _profile_from_cache(cached.get("profile") or {})
+        benchmark = _benchmark_from_cache(cached.get("benchmark") or {})
+        # Autoripara al volo entry cachate PRIMA del fallback statico
+        # (Task U, 2026-09-05): qualunque risoluzione (GENERAL_MARKET_
+        # FALLBACK, ma anche EXACT/SISTER quando l'augmentation di
+        # benchmark.py non aveva trovato un candidato via geometria - bug
+        # reale trovato su SWDA.MI/XDEB.MI/FAMAMW.MI del portafoglio
+        # vero) senza ne' un `operational_series` scaricabile ne' un
+        # `fallback_fetchable_series" e' un grafico completamente vuoto
+        # per l'utente - senza questa riparazione l'entry gia' scritta in
+        # cache resterebbe cosi' fino alla scadenza del TTL (14 giorni).
+        # Calcolo puro su dati gia' in cache, zero rete: family_ladder()
+        # dipende solo dal profilo, non dallo storico dello strumento.
+        if not benchmark.series_is_fetchable and not benchmark.fallback_fetchable_series:
+            fallback = _best_effort_ladder_fallback(family_ladder(profile))
+            if fallback:
+                benchmark.fallback_fetchable_series, benchmark.fallback_fetchable_label = fallback
         return InstrumentAnalysis(
             ticker=tk, isin=isincode,
             name=str(cached.get("name") or ""),
-            profile=_profile_from_cache(cached.get("profile") or {}),
+            profile=profile,
             cds=_cds_from_cache(cached.get("cds") or {}),
-            benchmark=_benchmark_from_cache(cached.get("benchmark") or {}),
+            benchmark=benchmark,
             algorithm_version=ia_cache.ALGORITHM_VERSION,
             cache_hit=True,
         )

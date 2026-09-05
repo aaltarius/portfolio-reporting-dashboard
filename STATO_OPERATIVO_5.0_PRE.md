@@ -2345,6 +2345,73 @@ gia' presente prima di questa sessione — qualunque modifica futura al
 codice con l'app attiva l'avrebbe potuta far scattare di nuovo. Stesso
 avviso: serve un riavvio dell'app.
 
+**Task U FATTO (2026-09-05) — GARANZIA "sempre un benchmark", richiesta
+esplicita e accorata dell'utente dopo aver trovato SWDA.MI senza
+benchmark nonostante i fix precedenti**: "vorrei solo poter avere per
+ogni strumento un benchmark di riferimento... avevo chiesto espressamente
+che qualora non si trovasse un grafico specifico si potesse ricorrere
+alla parente prossima... ma niente". Diagnosi: i fix precedenti (Fase
+C/Task U parziale) impedivano di CACHARE un fallback degradato per
+sempre, ma non garantivano che ce ne fosse comunque uno da MOSTRARE nel
+frattempo, e non riparavano le entry gia' scritte in cache PRIMA del fix
+(che restano li' fino al TTL, 14 giorni). Root cause strutturale piu'
+profonda trovata: sia il ramo GENERAL_MARKET_FALLBACK sia il ramo EXACT/
+SISTER (quando l'augmentation di geometria non trova un candidato)
+lasciavano `fallback_fetchable_series` vuoto ogni volta che la geometria
+non era valutabile — per QUALSIASI motivo (storico strumento non
+disponibile, nessun candidato sopra soglia, o nessuna callable iniettata)
+— anche quando il catalogo statico `REFERENCE_FAMILIES` ha gia' un
+ticker scaricabile pronto, senza bisogno di alcuna verifica di rete.
+
+**Fix (3 parti, tutte in `core/instrument_analysis/`)**:
+1. Nuova `_best_effort_ladder_fallback()` in `benchmark.py`: puro lookup
+   su `REFERENCE_FAMILIES` per la riga PIU' SPECIFICA del ladder
+   disponibile (non solo la piu' ampia — verificato che per un fondo
+   Emergenti restituisce EEM, non il generico ^GSPC), zero dipendenza di
+   rete. Collegata sia al ramo `GENERAL_MARKET_FALLBACK` sia al ramo
+   `_augment_with_geometry_signal` (EXACT/SISTER) — prima quest'ultimo
+   lasciava il fallback vuoto ogni volta che l'augmentation falliva,
+   trovato su strumenti REALI del portafoglio (XDEB.MI, FAMAMW.MI, non
+   solo SWDA.MI).
+2. `peek_cached()` autoripara al volo qualunque entry gia' in cache senza
+   ne' `operational_series` scaricabile ne' `fallback_fetchable_series`
+   (calcolo puro dal profilo gia' cachato, zero rete) — cosi' le entry
+   scritte PRIMA di questo fix si sistemano subito alla prossima lettura,
+   senza aspettare il TTL ne' richiedere un intervento manuale.
+3. Verificato dal vivo sulla cache reale (`data/cache/instrument_analysis/
+   resolution.json`, 111 entry): **prima del fix 12 entry senza alcun
+   riferimento scaricabile** (3 sui 30 strumenti posseduti: BTP-1AG30,
+   FAMAMW.MI, XDEB.MI — gli altri 9 erano strumenti storici/mai posseduti);
+   **dopo il fix, 0 su 30 strumenti posseduti**. Forzato anche un
+   re-analyze reale (rete vera) per SWDA.MI e XMME.MI: SWDA.MI e' salito
+   da GENERAL_MARKET/nessun riferimento a **EXACT** (nome ufficiale
+   "MSCI TRN WORLD INDEX" trovato, geometry_score 85.0 su ^GSPC, 244
+   osservazioni — il fetch storico di ieri era stato un'intermittenza
+   transitoria, confermato); XMME.MI e' salito a **EXACT** con
+   fallback **EEM** (geometry_score 89.0, prima ^GSPC).
+
+8 test nuovi/aggiornati in `tests/core/instrument_analysis/test_benchmark.py`
+(fallback su EXACT/SISTER e su GENERAL_MARKET, ordine "piu' specifica
+prima" per gli emergenti, nessun fallback quando il ladder e'
+autenticamente vuoto) + 2 test nuovi in `test_service.py` (autoriparazione
+in `peek_cached()` per entry GENERAL_MARKET e per entry EXACT) + 1 test
+nuovo in `test_reference_families.py` (garanzia strutturale: ogni
+famiglia che `family_ladder()` puo' produrre ha una entry in
+`REFERENCE_FAMILIES`, verificata su tutti i branch, non solo elencata a
+mano). Suite completa verde (0 failures). **Nota**: la cache reale e'
+stata scritta in questa sessione (force-refresh di SWDA.MI/XMME.MI,
+chiamate di rete vere) — decisione presa perche' l'utente aveva
+esplicitamente autorizzato un intervento risolutivo anche a costo di
+ricominciare da capo; il resto della cache (108 altre entry) e' stato
+solo letto, mai scritto, dal codice di autoriparazione in `peek_cached()`
+(che non persiste nulla su disco, ricalcola solo l'oggetto in memoria ad
+ogni lettura). **Residuo accettato**: strumenti con `structural_type` non
+riconosciuto da NESSUN branch di `family_ladder()` (ladder vuoto per
+costruzione, es. tipi futuri non ancora gestiti) restano senza
+riferimento — nessuno dei 30 strumenti reali del portafoglio rientra in
+questo caso oggi. Stesso avviso: serve un riavvio dell'app perche' tutti
+i fix di questa sessione siano visibili.
+
 **Fase D — dettaglio bite-sized scritto e approvato 2026-09-04** (stessa
 sessione), due decisioni di scope prese dall'utente via domanda diretta:
 (1) scheduler background **disattivato di default**, come Mercati; (2) il
