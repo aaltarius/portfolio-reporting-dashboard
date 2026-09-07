@@ -9,6 +9,7 @@ import time
 from typing import Any
 import pandas as pd
 from persistence.storage import (
+    BENCHMARK_CACHE_FILE,
     DATA_DIR,
     META_FILE,
     QUOTES_LOG_FILE,
@@ -240,6 +241,21 @@ class StateManager:
             "quotes_log": self._safe_file_mtime(QUOTES_LOG_FILE),
             "snapshots": self._safe_file_mtime(SNAPSHOTS_FILE),
             "meta": self._safe_file_mtime(META_FILE),
+            # Bug reale segnalato dall'utente (2026-09-05, "il benchmark non
+            # cambia mai niente" anche dopo aver riparato/corretto lo storico
+            # su disco): il file cache benchmark (portafoglio_benchmark_cache.json,
+            # scritto da save_data/save_benchmark_data - vedi
+            # _prefetch_benchmark_data in core/dashboard_datasets.py) non era
+            # MAI incluso in questo snapshot. StateManager e' un singleton
+            # @st.cache_resource (app.py) che sopravvive a ogni rerun/pagina
+            # per l'intera vita del processo: qualunque scrittura al file
+            # benchmark fatta da un ALTRO processo (o persino da questo stesso
+            # processo in un momento in cui `data` non era lo stesso oggetto
+            # in memoria) restava invisibile per sempre a reload_if_changed(),
+            # che richiede un riavvio completo del processo Streamlit (mai
+            # solo un refresh del browser) per essere notata - motivo per cui
+            # il fix sul benchmark non produceva alcun cambiamento visibile.
+            "benchmark": self._safe_file_mtime(BENCHMARK_CACHE_FILE),
         }
 
     def invalidate(self, keys: list[str]) -> None:

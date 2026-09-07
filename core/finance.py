@@ -655,7 +655,17 @@ def get_cached_benchmark_series(
     if not bd:
         return pd.Series(dtype=float)
     runtime_cache = data.setdefault("_runtime_benchmark_series_cache", {})
-    cache_id = f"{bench_ticker}|{len(bd)}|{max(bd.keys(), default='')}"
+    # Task V-diciassettesima (2026-09-06): stessa classe di bug del pickle in
+    # _get_runtime_normalized_benchmark_series - (len, ultima data) restava
+    # invariato mentre i VALORI di bd cambiavano sotto (una riparazione che
+    # sostituisce lo stesso range di date con prezzi diversi), servendo per
+    # sempre una Series stantia sia dalla cache runtime in-memory che dal
+    # pickle su disco. Un hash del contenuto forza un ricalcolo ogni volta
+    # che cambia davvero qualcosa, non solo quando cambiano copertura/data.
+    content_hash = hashlib.md5(
+        ",".join(f"{k}={round(v, 4)}" for k, v in sorted(bd.items())).encode()
+    ).hexdigest()[:12]
+    cache_id = f"{bench_ticker}|{len(bd)}|{max(bd.keys(), default='')}|{content_hash}"
     ser = runtime_cache.get(cache_id)
     if ser is None:
         os.makedirs(_BENCHMARK_SERIES_CACHE_DIR, exist_ok=True)
@@ -743,7 +753,15 @@ def refresh_benchmark_cache(data: dict[str, Any], period: str = "2y", force: boo
                     bench_ticker,
                 )
                 continue
-            fresh = {str(d.date()): float(v) for d, v in bd["Close"].items()}
+            # Task V-diciassettesima (2026-09-06): stesso bug reale corretto
+            # in core/dashboard_datasets.py::_prefetch_benchmark_data - un
+            # NaN isolato in una risposta yfinance altrimenti sana non deve
+            # sovrascrivere un valore buono gia' in cache per quella data.
+            fresh = {
+                str(d.date()): float(v)
+                for d, v in bd["Close"].items()
+                if v == v and float(v) > 0
+            }
             merged = {**existing, **fresh}
             if merged != existing:
                 benchmark_data[bkey] = merged

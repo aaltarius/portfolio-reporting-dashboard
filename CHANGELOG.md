@@ -1,5 +1,105 @@
 # Changelog
 
+## 5.0-pre - Ristrutturazione motore SATOR, grafico Allocazione a barre, lista della spesa CSV, benchmark auto-correttivo su Quotazioni
+
+- **La cache dei grafici di Quotazioni non si aggiornava mai quando cambiava
+  solo il benchmark**: una riparazione dei dati benchmark restava invisibile
+  a schermo perche' la firma della cache dipendeva solo dai prezzi dello
+  strumento, mai dal benchmark disegnato nello stesso grafico. Corretto -
+  ora la figura si ricostruisce ogni volta che il benchmark del ticker
+  cambia davvero.
+- Aggiunta una guardia contro le curve "fantasma": una serie benchmark
+  momentaneamente piatta non viene piu' normalizzata e salvata per sempre
+  nella figura (prima produceva una linea invisibile, sovrapposta al
+  riferimento a 100, ma con voce in legenda).
+- **Passaggio automatico e visibile a un benchmark alternativo quando la
+  fonte originale smette di pubblicare dati** (verificato dal vivo su due
+  casi reali: ENRG.MI passa a `^GSPC` quando `^GSPE` risulta fermo da
+  settimane, XDBC.MI passa a `^SPGSCI` quando `^BCOM` risulta "possibly
+  delisted" su Yahoo Finance) - mai un ETF proxy, solo alternative gia'
+  presenti nel catalogo ufficiale del motore di risoluzione, e solo se
+  quell'alternativa e' a sua volta viva.
+- Il benchmark di uno strumento con una posizione riaperta di recente ora
+  copre sempre l'intero storico visibile (prima si vedeva solo dalla data
+  di riapertura, invisibile su un grafico di anni) e resta ancorato a 100
+  proprio sulla data di acquisto, come la curva dello strumento.
+- **Rimosso il selettore "Severita' concentrazione" da SATOR**: verificato
+  con uno sweep su 8 budget molto diversi (300-80.000 EUR) che le 4 opzioni
+  producevano decisioni di acquisto identiche o quasi sempre nella pratica.
+- **I budget grandi non restavano piu' inutilizzati**: un budget di
+  500.000 EUR spendeva solo il 57% anche col tetto per riga al massimo
+  (il vero limite era il numero di righe, non il tetto) - ora arriva al
+  100% quando esistono abbastanza candidati validi, senza mai comprare
+  qualcosa che peggiori l'obiettivo di portafoglio dichiarato.
+- Aggiunta una batteria di stress-test SATOR qualitativi (non solo "il
+  motore non si rompe mai", ma "le proposte hanno senso finanziario"):
+  la distanza dall'obiettivo Core/Difensivo/Satellite deve sempre
+  diminuire dopo un acquisto suggerito, nessuna riga finanziata con un
+  punteggio scandalosamente basso, un rendimento recente estremo non deve
+  far vincere uno strumento sul suo punteggio di momentum.
+- **Riparato un dato benchmark corrotto** (`IWDA.AS`, usato dal benchmark
+  "Blend automatico" di Cruscotti): 5 soli punti in cache con un valore di
+  999 al posto di un prezzo reale (~127) - causava rendimenti aggregati
+  fuori scala (centinaia di punti percentuali). Aggiunta anche una
+  scansione di integrita' su tutte le altre serie benchmark in cache,
+  nessun'altra anomalia trovata.
+- **SATOR: uno strumento posseduto solo in parte da un bucket non vinceva
+  piu' l'intera fetta di quel bucket a torto**: uno strumento con anche
+  solo il 20-30% di esposizione sul bucket piu' carente veniva instradato
+  per intero nella sua fetta di budget, anche se per il resto apparteneva
+  a un altro bucket - vince ora sempre il bucket della propria esposizione
+  maggioritaria, non piu' il bucket col deficit assoluto piu' grande.
+- **SATOR: "obbligazionario globale" si divide ora in tre gruppi di
+  confronto distinti** (governativo a breve duration, aggregato globale,
+  inflation-linked): un governativo breve come EM13.MI non spariva dalla
+  classifica per voto basso, ma perche' competeva sempre - e perdeva -
+  contro un Global Aggregate Bond, una funzione di portafoglio diversa.
+- Corretto un congelamento permanente di gruppo/etichetta trovato su 13
+  strumenti reali del portafoglio: un valore salvato in passato
+  dall'editor universo SATOR restava bloccato per sempre anche dopo un
+  miglioramento della logica di classificazione sottostante - ora
+  ricalcolato sempre da ruolo e natura correnti.
+- Un ETF a fattore minimum-volatility/low-beta (es. XDEB.MI) non viene piu'
+  etichettato genericamente "core azionario globale", evitando che
+  competa impropriamente con un vero core market-cap-weighted.
+- **SATOR: il tetto "Max linee ordine" e' ora rispettato davvero anche con
+  l'allocazione bucket-first attiva** (prima veniva ignorato in quel
+  percorso: 1.500 EUR/severita' alta/3 linee restituiva 13 righe) - la
+  ripartizione delle righe tra bucket viene scelta congiuntamente per
+  massimizzare la spesa complessiva entro il tetto, invece che bucket per
+  bucket in sequenza.
+- Con budget grandi, un secondo giro di acquisto versa ora il residuo
+  anche sulle righe gia' aperte quando restano comunque utili rispetto
+  all'obiettivo, invece di fermarsi non appena la quota marginale singola
+  scende sotto la soglia minima.
+- **Il pallino di ruolo in tabella SATOR mostra ora la ripartizione reale**:
+  uno strumento con esposizione divisa tra bucket (es. 40% Core/60%
+  Satellite) e' rappresentato da una mini-barra segmentata proporzionale,
+  non piu' da un pallino pieno sul solo bucket dominante.
+- **Grafico "Allocazione" di Pianificazione ricostruito da zero**:
+  sostituito il doppio anello (giudicato "confuso", poi "totalmente
+  inesatto") con barre orizzontali impilate, una per bucket, segmentate
+  per strumento - rappresenta correttamente uno strumento con esposizione
+  frazionata su piu' bucket, prima sparso su fette scollegate dello stesso
+  anello esterno. Nella tabella di dettaglio sotto il grafico, uno
+  strumento diviso mostra ora tra parentesi la propria ripartizione
+  percentuale Core/Difensivo/Satellite.
+- **Aggiunta la colonna ISIN e un pulsante "Scarica lista della spesa
+  (CSV)"** alla fotografia SATOR salvata in Pianificazione: ticker, ISIN,
+  nome, bucket, quote, prezzo presunto e importo, pronti per la ricerca e
+  l'inserimento ordine sul sito della banca.
+- **La simulazione Monte Carlo di Analitica non si blocca piu' per colpa
+  di pochi strumenti con quotazioni frammentate**: vengono esclusi in modo
+  automatico e minimale (uno alla volta, solo quanto basta), con una nota
+  esplicita sotto il grafico su quali e perche'.
+- **Gestione Dati**: il pulsante "Svuota cache" ripulisce ora anche gli
+  artefatti di pagina (i bundle di Quotazioni con benchmark), non solo i
+  file grafici. Aggiunto un nuovo pulsante "Riavvia sessione app" che
+  ricarica dati, benchmark e cache interna con un solo click, senza
+  chiudere il terminale - causa individuata: un componente interno dell'app
+  sopravvive all'aggiornamento a caldo del codice in sviluppo e restava
+  agganciato alla versione del codice con cui era partito.
+
 ## 5.0-pre - Benchmark sempre garantiti, stop perdita dati cache, fix accesso sidebar
 
 - **Ogni strumento posseduto ha ora un benchmark di riferimento** anche
@@ -1286,660 +1386,3 @@
 - corrette le regole evento per ETF/FND/ETC obbligazionari: la presenza di parole come `obbligazionario` o `bond` nel nome non li rende piu' strumenti da cedola/rimborso a scadenza; se sono a distribuzione restano compatibili con `DIVIDENDO`
 - la validazione eventi respinge ora esplicitamente tipi evento mancanti o non supportati, invece di lasciarli passare fino al salvataggio o ai calcoli successivi
 
-## 4.9.40 - Consolidamento sidebar, Pianificazione fluida e cache Analitica coerente
-
-**Accesso operativo definitivo dalla sidebar:**
-- le azioni operative sono state consolidate sulla sidebar come unica superficie ufficiale: Inserisci operazione, Strumenti, Operazioni, Liquidità, Esporta PP e SATOR sono sempre disponibili dai pulsanti laterali
-- rimossi da Setup i radio "Centro Operativo vs Sidebar", "SATOR" ed "Esporta PP": erano diventati un livello di scelta ridondante e rischiavano di mantenere due flussi paralleli per la stessa operazione
-- i default di configurazione sono ora `operativo_mode="sidebar"`, `sator_mode="sidebar"` ed `export_pp_mode="sidebar"`; al salvataggio Setup normalizza comunque eventuali vecchi file impostazioni su questo assetto
-- reso più robusto il bootstrap del form-server FastAPI su porta `8502`: se un rerun trova il vecchio thread morto, l'avvio viene ritentato; il log ora distingue l'avvio richiesto dal server realmente attivo
-- aggiunte a `requirements.txt` le dipendenze effettive dei servizi sidebar (`fastapi`, `uvicorn[standard]`, `python-multipart`), prima usate dal codice ma non dichiarate dal progetto
-- la pagina Operazioni diventa un registro consultivo degli eventi di portafoglio e dei movimenti di cassa: il vecchio Centro Operativo interno non viene più renderizzato
-- in Pianificazione non viene più renderizzato il vecchio modulo SATOR Streamlit interno: restano Obiettivo di portafoglio, dashboard decisionale e fotografia di riferimento; SATOR operativo vive nella pagina standalone aperta dalla sidebar
-- rimossa da Gestione Dati la sezione duplicata "Esporta per Portfolio Performance": l'export resta nel form-server dedicato `/export_pp`
-
-**Tabella Portafoglio: prezzo e layout compatto:**
-- aggiunta nella tabella "Controvalore del Portafoglio" la colonna dell'ultima quotazione disponibile, accanto a quote e controvalore
-- spostato `PMC` prima del peso, così prezzo medio di carico, peso, quantità, ultima quotazione e controvalore seguono una lettura più naturale
-- introdotte larghezze esplicite di colonna con font tabella a 13px: `Strumento` è più compatto, le colonne finali `P/L` e `Var gg` sono più larghe e la freccia finale non occupa spazio eccessivo
-
-**Codice legacy tracciato per revisione:**
-- aggiunta `ui/legacy/README.md` con la mappa dei percorsi vivi e dei blocchi legacy rimasti temporaneamente nel codice sorgente
-- marcati con `LEGACY_REVIEW 2026-07-26` i vecchi dialog Streamlit del Centro Operativo in `ui/pages/operazioni.py` e il vecchio modulo SATOR interno in `ui/pages/pianificazione.py`
-- scelta volutamente conservativa: i blocchi legacy sono commentati e isolati, non spostati fisicamente, perché contengono decorator Streamlit e helper intrecciati; la prossima revisione potrà eliminarli o migrare eventuali funzioni residue verso `ui/form_server/*` o `core/services/*`
-
-**Pianificazione: preset obiettivo in un solo salvataggio:**
-- eliminato il doppio click "Applica preset" + "Salva obiettivo di portafoglio": il preset rapido ora sta dentro lo stesso form dell'obiettivo e viene applicato direttamente dal pulsante "Salva obiettivo e aggiorna analisi"
-- il salvataggio usa una callback Streamlit: l'impostazione viene scritta prima del rerun top-to-bottom, quindi Cruscotti/Analitica vede subito il nuovo target nello stesso ciclo di aggiornamento
-- dopo il salvataggio i campi Core/Difensivo/Satellite vengono riallineati ai valori realmente salvati e il preset torna neutro (`-`), evitando che un preset rimanga selezionato e sovrascriva modifiche manuali successive
-
-**Cruscotti / Analitica: fix cache "Scostamento da allocazione target":**
-- il grafico "Scostamento da Allocazione Target" usava una firma cache che non includeva `portfolio_objective`: dopo aver cambiato target in Pianificazione poteva restare visibile una figura costruita con il vecchio obiettivo
-- aggiunto `_objective_cache_token()` in `ui/dashboard_bundles.py` e incluso il token in `extra_params` della figure cache del grafico `analisi_target_gap`
-- aggiunti test di regressione per verificare che due target diversi producano firme cache diverse e che il blocco Analitica includa esplicitamente l'obiettivo nella cache
-
-**Navigazione e rerun:**
-- aggiunto un bridge leggero per ricordare il tab principale selezionato nel browser (`sessionStorage`, chiave `sestante.activeTabIndex.v1`): dopo un rerun causato da un widget, l'app non deve tornare senza motivo alla prima scheda
-- migliorata la navigazione programmata verso Quotazioni/Operazioni: il bridge aggiorna anche lo stato browser prima di cliccare il tab target, riducendo i ritorni inattesi dopo azioni da sidebar
-
-**Setup / Avanzate: audit operativo:**
-- verificato che `Profiling render` è ancora funzionante: misura i tempi reali della UI e, in modalità "Sweep completo", aggiunge il riepilogo pagina-per-pagina; resta in Avanzate come strumento diagnostico, spento di default
-- verificato che il pre-render iniziale è ancora cablato e funzionante (`app.py`, `core/cache_prewarmer.py`, `ui/prewarm_bundle.py`, eventi persistiti in `core/render_profiler.py`): non rimosso perché continua a governare la costruzione preventiva delle figure principali
-- la diagnostica del pre-render resta disponibile anche in Gestione Dati tramite stato prewarm, esecuzione manuale background e log render copiabile
-- riscritte le etichette di Setup Avanzate per utenti non tecnici: `Profiling render` diventa "Misurazione tempi di caricamento", `Pre-render iniziale` diventa "Cache anticipata dei grafici", con note pratiche su quando lasciare tutto attivo, quando mostrare il report tempi e quando usare la diagnosi completa
-- il box istruzioni di Avanzate è ora un pannello a righe colorate (Uso normale / Se sembra lento / Diagnosi tecnica), più leggibile del precedente blocco testuale
-
-**Copertura test:**
-- aggiunti/aggiornati test statici e unitari per bloccare regressioni su sidebar-only, preset Pianificazione, cache Analitica target, restore del tab selezionato e marcatura legacy
-- verificati i blocchi collegati con `py_compile` e test mirati (`test_streamlit_pages`, `test_analitica_target_gap_objective_cache`, `test_portfolio_objective_settings`, `test_sator_*`, `test_page_intro_i18n`)
-
-## 4.9.39 - Portafoglio più leggibile, Quotazioni coerenti e shell iniziale rifinita
-
-**Tabella "Controvalore del Portafoglio":**
-- riordinata la tabella per renderla più leggibile: peso e quote sono più vicini, il PMC precede il controvalore, le commissioni/costo iniziale non occupano più spazio nella vista principale
-- aggiunta la colonna con mini-grafico 60 giorni per ogni strumento posseduto, basata sugli stessi dati dello sparkline nel popup di dettaglio
-- il mini-grafico segue il colore del P/L della posizione, non l'ultimo movimento di prezzo: evita incoerenze come strumento in utile mostrato rosso nella tabella ma verde nel popup
-- aggiunta linea orizzontale tratteggiata del PMC dentro il mini-grafico e nel popup, così si vede subito se il prezzo recente si muove sopra o sotto il carico
-- riarticolate le colonne finali in ordine operativo: grafico, P/L €, P/L %, Var gg €, Var gg % e freccia direzionale
-- riscritto il commento sotto la tabella: rimossa la legenda categorie ridondante, sostituita da una lettura più utile di peso, esposizione, andamento recente, P/L e variazione giornaliera
-
-**Popup e grafici strumento:**
-- il popup ticker e la tabella condividono dati, logica sparkline e riferimento PMC, riducendo discrepanze tra mini-grafico e dettaglio
-- nella pagina Quotazioni, il grafico "Rendimento dello strumento" è stato riallineato matematicamente al valore massimo/minimo reale mostrato a video
-- aggiunto confronto non invasivo con il rendimento del portafoglio nel grafico dello strumento, come riferimento visivo puntinato/trasparente
-
-**Quotazioni: storico e freschezza dati:**
-- aggiunto sotto i grafici in Quotazioni un indicatore sintetico dello stato dello storico prezzi, con ultima data disponibile e avviso quando la serie sembra più corta del previsto
-- la firma cache ora include anche l'ultimo punto storico per ticker/categoria: un backfill o un aggiornamento dell'ultima data non resta nascosto dietro cache costruite con storico precedente
-- aggiunti test su `latest_history_point_by_ticker` e sulla resa dell'indicatore `quote-history-status`
-
-**Banner iniziale, progresso render e chiusura app:**
-- rifinito il banner iniziale Sestante: titolo, sottotitolo "Portfolio Control Center", data/aggiornamento e KPI sono stati riorganizzati in modo più professionale
-- la barra di avanzamento render ora misura il tempo UI dall'inizio del run alla fine e mostra messaggi più espliciti durante il rendering delle pagine
-- ripristinata e ridisegnata la pagina finale dopo "Arresta Streamlit": schermata compatta e coerente col tema, senza layout rotto dopo la richiesta di shutdown
-
-**Rerun e usabilità:**
-- selezionare un preset rapido in Pianificazione non deve più generare un rerun immediato solo per la scelta del valore: il comportamento è stato spostato verso conferme esplicite nei form
-- corretto il caso in cui un rerun da Pianificazione riportava l'utente in fondo alla pagina Quotazioni senza una causa comprensibile
-
-## 4.9.38 - Pannello laterale del box iniziale più stretto
-
-**Rifinitura del box iniziale (v4.9.37):**
-- rimossa la riga "Piano" ("Dashboard premium"), poco informativa — restano solo Versione e Stato
-- Versione e Stato ora su una riga sola ciascuna (etichetta a sinistra, valore allineato a destra) invece di etichetta sopra/valore sotto
-- pannello laterale scuro ristretto da 230px a 168px, coerente con il contenuto ridotto
-- rimossa la chiave di traduzione `app.badge`, rimasta orfana dopo la rimozione della riga "Piano"
-
-## 4.9.37 - Nuovo box iniziale a pannello diviso
-
-**Restyling del box in cima all'app:**
-- stesso contenuto di prima (titolo, badge piano/versione/stato, data ultimo aggiornamento) ma riorganizzato in un pannello diviso: icona con gradiente + titolo + data a sinistra, pannello blu notte a destra con Piano/Versione/Stato separati da linee sottili
-- il pannello laterale è intonato al colore primario della palette scelta in Setup (`color-mix` su `--ptf-primary`), quindi cambia tono automaticamente se l'utente cambia palette colori
-- direzione scelta tra 3 alternative tramite mockup comparativi nella scheda di brainstorming visivo (icona in badge con gradiente, pannello diviso, minimale con chip separate), poi rifinita in 2 varianti di tono per il pannello laterale (nero neutro vs blu notte)
-
-## 4.9.36 - L'app si chiama "Sestante"
-
-**Rinominata l'app da "Portafoglio Titoli" a "Sestante":**
-- il vecchio nome era descrittivo ma anonimo (indistinguibile da qualunque altra app dello stesso genere); "Sestante" richiama lo strumento di navigazione, coerente con l'icona 📊 già in uso, tono professionale/elegante
-- aggiornato in tutti i punti live: titolo scheda browser (`st.set_page_config`), intestazione in cima all'app, footer della pagina Setup, metadati del pacchetto di reporting esportabile (`core/services/reporting.py`) e chiave di traduzione inglese (nome proprio, non tradotto)
-- non toccato `legacy/ui/charts/reporting.py`: nessun chiamante nel repo, fuori scope
-
-## 4.9.35 - Audit completo di Setup, refresh SATOR e doppia legenda donut
-
-**Tasto "Aggiorna" per la fotografia SATOR (Pianificazione):**
-- la fotografia SATOR può essere registrata dalla pagina standalone `/sator` (processo separato dall'app principale); tornando su Pianificazione senza interagire con nulla, la card "Fotografia di riferimento" restava con la versione precedente finché non partiva un rerun qualsiasi — nuovo tasto `🔄 Aggiorna` sopra la card che forza il rerun esplicito
-
-**Doppia legenda con percentuale nel donut "Allocazione: bucket e strumenti":**
-- solo l'anello esterno (natura/esposizione) aveva una legenda; l'anello interno (Core/Difensivo/Satellite) mostrava le etichette solo dentro le fette — aggiunta una seconda legenda (natura a sinistra, bucket a destra, via `legend`/`legend2` di Plotly) e le percentuali sul totale portafoglio accanto a ogni voce di entrambe
-
-**Audit a 360° della pagina Setup: ogni impostazione ora ha un effetto reale, completo, o è dichiarata esplicitamente come non ancora implementata — nessuna via di mezzo silenziosa:**
-- **Valuta base/reporting e Locale/Formato data/numerico** disabilitati con nota "funzionalità futura": non esiste alcuna conversione valuta né formattazione locale-aware nell'app (ogni importo resta sempre in EUR, ogni data/numero sempre in formato italiano) — i selettori restavano cliccabili senza fare nulla, ora è dichiarato onestamente
-- **Rimossi `table_density`** (mai avuto un controllo UI, mai letto da nessuna parte) **e i 4 selettori di dimensione tipografica** Titoli/Sottotitoli/Body/Commenti (nessuna variabile CSS li applicava, a differenza di "Famiglia font" che invece funziona ed è stata mantenuta)
-- **Descrizione portafoglio**: veniva salvata ma non era mai mostrata da nessuna parte — ora compare nell'intestazione dei report HTML esportati
-- **Due nuovi controlli** per impostazioni già realmente attive ma prive di qualunque interfaccia: **colore accento** (`ui/theme.py`, 4 varianti) e **mostra spiegazioni** (box esplicativi in Cruscotti e Confronto)
-- **CAGR reale al netto inflazione**: il campo "Inflazione annua %" veniva raccolto ma mai usato in alcun calcolo — ora un "CAGR reale" compare accanto al CAGR nominale nei report Executive/Extended, visibile solo quando l'inflazione configurata è maggiore di zero
-- **Alert di rischio/peso, drawdown e volatilità collegati ai dati reali**: erano configurabili e validati in Setup, ma la funzione che li calcola (`core/services/alerts.py`) non riceveva mai i dati necessari dall'unico punto di chiamata — non potevano mai scattare qualunque soglia si impostasse; ora collegati al bundle di analisi già calcolato per i Cruscotti (cache condivisa), con calcolo limitato ai soli casi in cui almeno una delle tre soglie è davvero configurata, per non appesantire il primo caricamento della Home quando servono solo gli alert di perdita/concentrazione
-- **Traduzione inglese** di titolo e commento introduttivo delle 10 pagine principali dell'app (prima tradotto solo un sottoinsieme parziale di stringhe) — perimetro limitato all'intestazione di pagina, le sezioni interne restano in italiano
-
-## 4.9.34 - Aggiornamento a Streamlit 1.59.2
-
-**Bump `streamlit` da 1.58.0 a 1.59.2:**
-- nessuna delle funzionalità rimosse nel percorso 1.58→1.59 (`st.bokeh_chart`, connector Snowpark deprecato, `add_rows`, integrazione LangChain) è usata nel codice — verificato con ricerca su tutto il repo
-- nessun uso di API `st.experimental_*`/`st.beta_*` da migrare
-- avvio dell'app e rendering delle pagine (inclusi i grafici Plotly con legenda dinamica appena corretti e il fragment in Operazioni) verificati senza errori/traceback dopo l'aggiornamento
-
-**Fix: le linguette del menu principale e il riquadro dei selectbox erano visivamente spariti (nessun bordo/sfondo/pillola) dopo il bump a 1.59.2:**
-- la 1.59 ha sostituito il componente interno di `st.tabs` e `st.selectbox` (da BaseWeb a React Aria Components), che non emette più l'attributo `data-baseweb` su cui erano ancorate le regole CSS custom in `ui/styles.py` — le regole restavano nel foglio di stile ma non trovavano più nulla da selezionare, quindi tab e selectbox tornavano al rendering piatto di default
-- selettori aggiornati per puntare agli attributi ancora presenti nel nuovo markup: `.stTabs [data-baseweb="tab-list"]`/`"tab"` → `[data-testid="stTabs"] [role="tablist"]`/`[data-testid="stTab"]`, `[data-baseweb="select"]` → `[data-testid="stSelectbox"] [role="group"]`
-
-## 4.9.33 - Revisione delle metriche di Analisi Accumuli, fix messaggio di stato Accumuli/Benchmark
-
-**Riscrittura delle metriche di "Analisi accumuli" (Cruscotti > Accumuli):**
-- "Margine su PMC" e "Elasticità PMC" avevano nomi che inducevano a conclusioni sbagliate: il primo divideva per il prezzo corrente invece che per il PMC (non era un rendimento, ma la distanza dal pareggio), il secondo simulava sempre una rata fissa di €300 uguale per tutti gli strumenti invece della rata realmente tipica di ciascun PAC — corretti e rinominati: **Cuscinetto pareggio / Recupero necessario** (`distanza_pareggio_pct`, denominatore corretto) e **Impatto rata tipica sul PMC** (`impatto_pmc_rata_pct`, calcolato sulla mediana delle rate storiche realmente pagate)
-- separati PMC all-in (comprensivo di commissioni) e prezzo medio di esecuzione (escluse commissioni), con percentile calcolato per entrambi rispetto ai prezzi storici — il calcolo escludeva erroneamente il punto sintetico "oggi" dalla serie prezzi solo in un secondo momento: ora il periodo statistico si ferma sempre all'ultima quotazione reale, non a un prezzo odierno duplicato
-- nuova **Aderenza alle scadenze PAC**, dedotta dal calendario (cadenza mensile/trimestrale, primo acquisto trattato come versamento iniziale se anomalo) invece che dalla sola distanza grezza fra acquisti consecutivi, che resta disponibile come metrica secondaria
-- Stato e Priorità riclassificati su due assi chiari (sopra/sotto il PMC × quanto una rata tipica lo sposterebbe ancora), eliminando il bucket residuale "Da monitorare" in cui finivano posizioni mature e in utile senza un motivo comprensibile; nuova legenda a tabella sotto la sintesi che spiega cosa significano i singoli Stati e la Priorità
-- grafico a quadranti, box di lettura sotto le KPI (ora una tabella, non un paragrafo) e KPI di dettaglio (16 invece di 17, raggruppate per tema) aggiornati di conseguenza; aggiunta la linea del PMC attuale nel grafico "Prezzo vs PMC" per capire a colpo d'occhio la posizione del percentile
-- riferimento: `specifica_revisione_analisi_accumuli_FAM-FLEX.md` (non versionato, analisi di supporto)
-
-**Fix: il box di stato di Accumuli/Benchmark restava con la data vecchia dopo il primo click su "Rigenera/Aggiorna analisi":**
-- `_render_accumuli_freeze_header`/`_render_benchmark_freeze_header` disegnavano il messaggio con data e provenienza dell'ultima analisi *prima* di sapere se in quello stesso click l'utente avesse chiesto un refresh — quindi anche quando il refresh veniva eseguito correttamente (la cache si aggiornava), il messaggio a schermo restava quello di prima, dando l'impressione che il primo click non avesse fatto nulla; serviva un secondo click per vedere il messaggio corretto (quello del refresh precedente)
-- il messaggio ora vive in uno slot dedicato (`st.empty`) ridisegnato subito dopo un eventuale refresh nello stesso rerun, così riflette sempre lo stato reale
-
-**Badge "non a zero commissioni" esteso da SATOR a Quotazioni e Portafoglio:**
-- lo stesso badge "€" già usato in SATOR per gli ETF/ETC non a zero commissioni ora compare anche accanto al ticker nella tabella principale di Quotazioni e nelle tabelle Controvalore e "Andamento dell'ultima settimana" del Portafoglio — limitato a ETF/ETC, le uniche categorie per cui il campo "Zero commissioni" è impostabile in Strumenti
-- la logica (lettura del campo `zero_commissioni` e badge HTML) era duplicata inline in SATOR: estratta in `ui/charts/instrument_badges.py`, ora riusata da tutti e 4 i punti invece di avere due implementazioni dello stesso indicatore
-
-**Fix: la legenda dei grafici "Contributo al P/L (Area Stacked)" e "Rendimento dello strumento" si sovrapponeva ai numeri dell'asse X:**
-- entrambi i grafici hanno una voce di legenda per strumento (dinamica, cresce con il numero di posizioni), ma il margine inferiore riservato era fisso e pensato per una legenda a riga singola — con molti strumenti la legenda andava a capo su più righe e quelle in eccesso finivano sotto il margine, sovrapponendosi ai tick dell'asse X (si "sistemava" solo ridimensionando la finestra, perché forzava Plotly a ricalcolare il layout alla larghezza reale)
-- `computed_margin` (`ui/charts/layout.py`) ora stima il numero di righe dal conteggio reale delle voci di legenda e allarga il margine inferiore solo per le righe oltre la prima; la posizione della legenda scende in proporzione, così lo spazio riservato in più viene usato dalla legenda stessa invece di restare vuoto sotto di essa
-
-## 4.9.32 - Unifica il grafico P/L per Categoria in Portafoglio, sfondo riga in "Andamento dell'ultima settimana"
-
-**Rimozione del selettore doppio grafico in Overview:**
-- il radio "Vista grafico" (P/L del portafoglio / P/L per Categoria) sopra le tab veniva quasi sempre lasciato su "P/L del portafoglio": la vista "P/L per Categoria" era generata solo su richiesta ma restava di fatto inutilizzata — rimosso il selettore, Overview mostra sempre e solo "P/L del portafoglio"
-- il grafico "P/L per Categoria" (storico impilato per categoria) si è spostato in modo definitivo nella tab Portafoglio, subito dopo "Andamento dell'ultima settimana", come nuova sezione sempre visibile (gestibile on/off dalle impostazioni di visibilità come le altre sezioni della tab)
-
-**Sfondo riga nella tabella "Andamento dell'ultima settimana":**
-- le righe con tutti e 7 i giorni disponibili e concordi (tutti in guadagno o tutti in perdita) ricevono uno sfondo verde o rosso leggero e trasparente, come segnale visivo immediato dell'andamento della settimana per lo strumento — righe con giorni mancanti (strumenti acquistati di recente) o con un giorno a zero non vengono evidenziate
-
-## 4.9.31 - Card "Fotografia di riferimento" in Pianificazione
-
-**Traduzione "Quality factor" → "Fattore qualità":**
-- ultima etichetta di natura/esposizione rimasta in inglese nella tabella Strumenti e nel sistema di classificazione automatica (`core/instrument_classification.py`, icona in `ui/charts/natura_icons.py`, placeholder in `ui/form_server/strumenti.py`) — tradotta
-
-**Il box "Fotografia di riferimento" (sotto la mappa a bolle "Prossimo acquisto") diventa una card, come già fatto per "Allocazione: bucket e strumenti":**
-- barra Importo ordine/Budget: si scala su `max(importo, budget)` invece di appiattirsi al 100% quando l'ordine supera il budget, con una tacca che segna dove sta il budget lungo la barra, colore rosso e scritta "+X% oltre budget" quando l'importo supera il budget
-- tre mini-barre colorate per il mix Core/Difensivo/Satellite (stessi colori bucket usati altrove)
-- tabella "Righe ordine": pallino colorato per bucket + icona natura + ticker e nome strumento sulla stessa riga (una sola riga per strumento, niente scroll verticale — tutte le righe restano visibili), righe ordinate Core → Difensivo → Satellite; due colonne aggiuntive, Prezzo (con nota a piè tabella che chiarisce che è il prezzo alla data della fotografia, non quello attuale) e Totale bucket (una sola cella per gruppo, unita con `rowspan` invece di ripetuta su ogni riga)
-- nuove classi CSS `ref-snapshot-*` in `ui/styles.py`, stesso pattern delle `bucket-alloc-*` (agganciate alle variabili tema, chiaro/scuro)
-- fix di un bug di rendering scoperto durante l'implementazione: negli f-string HTML multilinea, un placeholder che inizia con un proprio `\n` inserito subito dopo testo indentato produce una riga fatta di soli spazi, che Streamlit/markdown-it interpreta come fine del blocco HTML — il contenuto successivo veniva mostrato come blocco di codice indentato invece che renderizzato; le funzioni coinvolte ora costruiscono l'HTML per concatenazione di stringhe senza indentazione incidentale
-
-**Rimozione sezione "Liquidità da investire" (Pianificazione):**
-- ridondante con la nuova card "Fotografia di riferimento" (bucket, importo, scostamento da budget sono già lì) e con la card "Allocazione: bucket e strumenti" più sopra nella stessa pagina — rimossa insieme alla funzione ormai orfana `build_bucket_rebalancing_suggestions` (`core/finance.py`), rimasta senza altri chiamanti in tutto il repo
-
-## 4.9.30 - Tabella "Andamento dell'ultima settimana" in Portafoglio
-
-**Nuova tabella P/L settimanale per strumento:**
-- tra la tabella Controvalore e "Proventi per strumento", nuova sezione che mostra il P/L giornaliero di ogni strumento posseduto negli ultimi giorni di quotazione reali (fino a 7), con colonna "P/L totale" (somma della settimana) e riga TOTALE in fondo — stessa veste grafica interattiva della tabella Controvalore (intestazioni ordinabili, colonne ridimensionabili), senza scroll orizzontale né verticale
-- `core/services/analysis.py::build_weekly_pl_table` calcola i delta con lo stesso metodo già in uso per "Andamento dell'ultima giornata" (colonne `PL_<ticker>` cumulate per strumento, delta contato solo tra giorni in cui lo strumento era posseduto in entrambi)
-- le intestazioni giorno mostrano l'iniziale del giorno della settimana prima della data (es. "V 10/07", convenzione L M M G V S D) e un separatore verticale (stesso spessore/colore del bordo tabella/riga TOTALE) segna il salto tra la colonna di venerdì e quella del lunedì successivo
-
-**Esclusione del giorno "fantasma" nei weekend:**
-- quando l'ultima riga dello storico portafoglio è un punto sintetico (prezzi ri-letti in un giorno di mercato chiuso, senza movimento reale — tipicamente un refresh di sabato che riconferma la chiusura di venerdì), la tabella lo mostrava come se fosse un giorno di trading vero, con delta a zero per tutti gli strumenti che "consumava" una delle colonne disponibili senza portare informazione; ora la funzione scarta quella riga confrontandola con le date reali di `storico_prezzi`, mostrando sempre gli ultimi giorni di borsa effettivamente aperta
-
-**Popup di dettaglio ticker condiviso con la tabella Controvalore:**
-- cliccare un ticker nella nuova tabella apre lo stesso identico popup (KPI grid, sparkline prezzo, fonte/aggiornamento) già presente in Controvalore, invece di non aprire nulla: il codice del modale (CSS/HTML/JS e il calcolo dei dati per strumento) è stato estratto in helper condivisi in `ui/charts/portfolio_popup.py`, usati da entrambe le tabelle — non due copie mantenute a mano
-
-**Altre rifiniture:**
-- colonna "Tipo" mostra la sigla di macro-categoria (GOV/FND/ETF/ETC/...) invece del testo esteso, e nuova colonna icona natura tra Tipo e Quote (stessa fonte e posizione della tabella Controvalore)
-- valori giornalieri a due decimali; la colonna "P/L totale" resta a due decimali con il simbolo "€"
-- per ogni colonna giorno, la cella con il valore più alto e quella con il valore più basso (pareggi inclusi) sono evidenziate in grassetto
-- nuova colonna con freccia diagonale subito prima di "P/L totale": verde (↗) se il risultato della settimana per quello strumento è positivo, rossa (↘) se negativo
-
-**Refactor tecnico — modularizzazione di `form_server.py`:**
-- `form_server.py` (3540 righe, unico file `.py` sciolto in root insieme ad `app.py`) è stato smontato in `ui/form_server/`, un modulo per pagina/route (`inserisci.py`, `strumenti.py`, `gestione.py`, `sator.py`, `scheda_strumento.py`, `export_pp.py`, `privacy.py`) più `shell.py` per gli asset condivisi (CSS, snippet JS dei tab, helper numerico) — stesso pattern "un file per pagina" già in uso in `ui/pages/` per le pagine Streamlit
-- l'entrypoint stesso è stato spostato da `form_server.py` (root) a `ui/form_server/__init__.py`; `app.py` ora importa `from ui.form_server import start_form_server` invece di `from form_server import start_form_server` — non resta più nessun secondo entrypoint sciolto in root
-- nessun comportamento applicativo cambiato: stesse route, stessi form, stessa logica di dominio — verificato ricostruendo l'app FastAPI e interrogando ogni route (incluse le sotto-pagine di Strumenti e i rami di errore) con dati reali
-- la duplicazione di alcune funzioni di gestione eventi tra `ui/form_server/gestione.py` e `ui/pages/operazioni.py` (Centro Operativo) resta intenzionale: riflette la scelta ancora aperta se tenere quelle funzionalità solo su sidebar, solo nell'app principale, o entrambe (Impostazioni → `operativo_mode`/`sator_mode`/`export_pp_mode`)
-
-**Allineamento zero tra i 3 grafici a barre "Analisi per Macro-Categoria" (Portafoglio):**
-- Controvalore, P/L per Categoria e Performance % per Categoria auto-scalavano l'asse Y in modo indipendente: quando una categoria (es. ETC) va in perdita, la linea dello zero finiva ad altezze diverse nei 3 grafici affiancati
-- nuovo `ui/charts/axes.py::zero_aligned_ranges()`: calcola, tra i grafici passati, la frazione verticale in cui deve stare lo zero (quella richiesta dal grafico più sbilanciato in negativo) e applica lo stesso range proporzionale a tutti — anche al grafico Controvalore, che non ha mai valori negativi, riservandogli lo stesso spazio sotto lo zero solo per allineamento
-- nessun cambiamento quando nessuna categoria è in perdita: i grafici restano ad autorange come prima
-
-**Colore della categoria ETC:**
-- l'arancio `#FFA726` era troppo simile al mostarda/oro di GOV (`#E8B960`) in molti grafici e badge; nuovo colore terracotta `#C2410C`, verificato per separazione cromatica (CVD/deuteranopia) rispetto alle altre categorie
-- fix di un'incoerenza architetturale: a differenza di GOV/ETF/FND, il colore ETC era scritto due volte come hex letterale (`core/asset_categories.py` e `core/constants.py`) invece di passare dalla palette centrale `COLORS` in `core/config.py` — ora è indiretto come le altre, e reagirebbe correttamente a un eventuale tema scuro futuro
-- fix di un bug distinto: la card KPI "Valore Attuale per Categoria" (overview) coloritava l'etichetta di categoria tramite una classe CSS dedicata in `ui/styles.py`, non tramite la palette centrale — mancava la regola per ETC (ricadeva sul grigio muted di default) e, per lo stesso motivo, anche per LIQ/DER/ALTRO; aggiunte tutte e quattro
-
-**Modalità Privacy — corretti 6 modi in cui rivelava (o falsava) ciò che doveva nascondere:**
-- la sidebar mostrava un banner "🔒 Privacy attiva" (o "🔒 Privacy: N titoli nascosti") — vanificava lo scopo di mostrare l'app a qualcuno senza far capire che qualcosa è nascosto; rimosso
-- **liquidità e patrimonio totale erano sbagliati, non solo non filtrati**: nascondere uno strumento rimuoveva i suoi eventi ACQUISTO/VENDITA dal registro, e `compute_portfolio_state` (`core/finance.py`) somma i flussi di cassa di tutti gli eventi per calcolare la liquidità — il risultato mostrava lo strumento nascosto come se fosse stato disinvestito (nei casi di test, +30.000€ di liquidità fantasma). Ora gli eventi restano nel registro con il ticker mascherato (nuovo `PRIVACY_HIDDEN_TICKER_SENTINEL` in `core/config.py`) invece di essere rimossi: la liquidità torna esatta, l'identità dello strumento resta comunque nascosta ovunque venga elencata per ticker/nome
-- tutte le pagine di `ui/form_server/` (Strumenti, SATOR, Operazioni/Liquidità gestione, Export PP, Scheda strumento — quelle aperte dai pulsanti della sidebar) non applicavano mai il filtro privacy, mostrando sempre la lista completa degli strumenti; corretto nei rami di sola lettura, mai in quelli che salvano su disco (un salvataggio con privacy attiva non deve mai cancellare per sempre lo strumento nascosto — verificato con un test dedicato)
-- due punti in `ui/pages/gestione_dati.py` leggevano dati grezzi da disco bypassando il filtro; corretto quello di sola lettura (tabella Arricchimento), lasciato volutamente invariato quello che salva (Bonifica avanzata)
-- il campo note di un versamento automatico ("Versamento automatico per acquisto XXX") citava il ticker nascosto in chiaro anche se l'evento in sé (un movimento di cassa senza ticker proprio) non veniva toccato dal mascheramento; ora il ticker nascosto viene sostituito anche all'interno delle note
-- i report AI salvati (tab "🤖 AI") sono testo libero generato in precedenza da Gemini e possono citare per nome uno strumento oggi nascosto — non redigibile in modo affidabile a posteriori (l'AI può riferirsi a uno strumento senza scriverne il ticker); i report salvati restano nascosti finché la privacy è attiva, tornano visibili disattivandola
-- `apply_privacy_filter` è stato centralizzato in `persistence/storage.py` (prima viveva solo dentro `app.py`, duplicato per ogni pagina che ne aveva bisogno) — fonte unica usata sia dall'app principale che da tutte le pagine form-server
-
-**Fix: data del weekend mostrata come giorno di trading nei grafici temporali:**
-- `build_portfolio_history_df` (`core/finance.py`) aggiungeva una riga sintetica "oggi" anche di sabato/domenica quando `last_quotes_update` risultava più recente dell'ultima data reale in `storico_prezzi` — condizione che si verifica anche per un semplice refresh benchmark, non solo per nuovi prezzi. Risultato: tutti i grafici temporali di Cruscotti/Overview mostravano sabato o domenica come se il mercato avesse aperto, con lo stesso identico valore di venerdì solo rietichettato
-- la riga era ridondante fin dalla 4.9.17: un refresh nel weekend scrive già i prezzi nell'ultimo giorno di borsa reale (`_apply_price_date_entries_to_storico` in `ui/sidebar.py`), quindi l'ultima riga vera del grafico è già allineata ai KPI — verificato che il valore della riga fantasma coincideva esattamente con quello di venerdì
-- ora la riga sintetica "oggi" si aggiunge solo nei giorni feriali (snapshot infragiornaliero legittimo prima che arrivi la chiusura reale); verificato che questo caso continua a funzionare
-- stesso identico problema, implementazione indipendente, trovato anche in `core/services/accumuli.py::_build_ticker_series` (i grafici "Prezzo vs PMC" e "Capitale vs Valore" di Cruscotti → Accumuli): aggiungeva un punto "oggi" col prezzo corrente senza nessun controllo sul giorno della settimana, sabato e domenica compresi — stesso fix, punto sintetico solo nei giorni feriali
-
-**Font dei numeri troppo grande nella heatmap "Correlazione per strumento" (Cruscotti → Analitica):**
-- `build_correlation_heatmap` (`ui/charts/analisi.py`) usava un font fisso a 12px per i valori dentro le celle, mentre la matrice ha dimensione fissa 540×540px (`ui/charts/settings.py`); con molti strumenti la cella si restringe (nel portafoglio reale, 16 strumenti → celle da ~34px) e numeri come "-0.85" traboccavano dal riquadro
-- il font ora si adatta al numero di etichette (lato cella stimato × 0.3, minimo 8px, massimo 12px) — 16 strumenti → 10px, matrici più dense scendono fino a 8px, poche etichette restano a 12px come prima
-
-**Fix: MAX/MIN in € invece che in % sui grafici "Rendimento" a indice Base 100:**
-- i marker MAX/MIN di "Rendimento dello strumento" (Quotazioni) e "Rendimento Omogeneizzato per Tipologia" (Cruscotti) formattavano il valore con `extrema_value_format` di default ("eur0", es. "€ 118") anche se l'asse è un indice Base 100 dal 1° investimento, non un controvalore in euro
-- aggiunto un formato dedicato `pct1_base100` (`ui/charts/extrema.py`) che converte l'indice in percentuale di rendimento rispetto a 100 (es. 118,3 → "+18,3%", 82,7 → "-17,3%") e impostato sui 4 chart_id con quella semantica (`ui/charts/settings.py`)
-
-**Nuova tabella "Allocazione: bucket e strumenti" in Pianificazione, al posto del box "Lettura dell'allocazione":**
-- il vecchio box testuale (dettaglio per strumento) restava poco leggibile anche dopo l'allineamento a colonne della 4.9.30; sostituito con una tabella unica sotto il grafico ad anelli (`ui/pages/pianificazione.py::_render_bucket_allocation_table`), che assorbe sia il confronto obiettivo/attuale sia l'elenco strumenti — niente più due box separati
-- riga per bucket (Core/Difensivo/Satellite): nome colorato come l'anello, controvalore, e una barra obiettivo-vs-attuale (riempimento = quota attuale, tacca = obiettivo) con lo scostamento in % colorato su tolleranza di ribilanciamento (entro ±3% verde, entro ±8% ambra, oltre rosso)
-- righe sotto ciascun bucket aggregate per natura/esposizione (non più una riga per strumento): colonna Natura (icona + etichetta) prima, colonna Strumenti dopo con l'elenco ticker che condividono quella natura, importo sommato e mini-barra col peso % riferito al gruppo natura dentro il bucket; riga TOTALE in fondo
-- nuove classi CSS `bucket-alloc-*` in `ui/styles.py`, agganciate alle variabili tema dell'app (si adattano automaticamente a chiaro/scuro)
-
-**Traduzione "Commodities" → "Materie prime":**
-- l'etichetta di natura/esposizione era l'unico valore ancora in inglese nel sistema di classificazione automatica (`core/instrument_classification.py`, icona in `ui/charts/natura_icons.py`) — tradotta, insieme al dato già salvato per lo strumento XDBC.MI
-- tradotto anche il campo `categoria_etf` (dato di arricchimento justETF, mostrato come "Categoria" nella scheda strumento) per XDBC.MI e GOLD.MI, che riportava "Commodities - ..."; resta un campo esterno, quindi un futuro ri-arricchimento potrebbe rieportare il termine inglese
-
-**Rimozione sezione "Copertura e sovrapposizione" + promemoria nature in watchlist (Pianificazione):**
-- la sezione (heatmap di copertura per natura/area di mercato, sotto la tabella "Allocazione: bucket e strumenti") era diventata ridondante con quella tabella, introdotta nella stessa sessione: rimossa, insieme alle funzioni backend/chart ormai inutilizzate (`build_coverage_matrix_frame`, `sator_matrix_doppioni_scoperte` in `core/services/sator.py`; `build_coverage_matrix_chart`, `_format_matrix_cell` in `ui/charts/pianificazione.py`) e alla config chart orfana rimasta in `ui/charts/settings.py`
-- l'unica informazione utile che portava — le nature in watchlist non ancora presidiate da un possesso — resta come riga promemoria attenuata ("In osservazione", nessun ticker/importo) dentro la tabella "Allocazione: bucket e strumenti" esistente, nel bucket corretto: nuova `compute_watchlist_reminders` in `core/services/sator.py` (`ui/pages/pianificazione.py::_build_bucket_allocation_table_html`, nuova classe CSS `bucket-alloc-watchlist-row`)
-- fix di un bug scoperto per l'occasione nel rendering esistente della tabella: un bucket senza strumenti posseduti veniva saltato per intero (`if sub.empty: continue`), il che avrebbe fatto sparire silenziosamente anche il promemoria — corretto per mostrare comunque l'intestazione del bucket quando c'è almeno un promemoria da mostrare
-
-**Unificazione stati SATOR a 3 (in portafoglio / in osservazione / escluso):**
-- gli stati SATOR erano 5 (`in_portafoglio`, `watchlist`, `candidato`, `escluso`, `fuori_piano`): la distinzione `watchlist`/`candidato` era artificiosa (uno strumento osservato per mesi può diventare candidato d'acquisto in qualsiasi momento senza bisogno di un'etichetta manuale diversa) e `escluso`/`fuori_piano` erano già identici in ogni comportamento nel codice — ridotti a 3, `watchlist` rietichettato "In osservazione" nell'editor universo SATOR
-- nessuna riscrittura dei dati salvati: nuovo `_resolve_sator_state` (`core/services/sator.py`) interpreta in lettura i vecchi valori `candidato`/`fuori_piano` come `watchlist`/`escluso`, senza toccare `portafoglio_data.json` — usato nei 4 punti dove lo stato viene letto (editor universo, salvataggio editor, motore di ranking, promemoria watchlist)
-- motore di ranking SATOR semplificato di conseguenza: un solo toggle `include_watchlist` nelle impostazioni (rimosso `include_candidates`, mai esposto in UI, da `core/services/sator.py` e `persistence/storage.py`), rimossi il conteggio e il ramo ormai morti (`candidate_count`, ramo "Challenger" di `challenger_flag`)
-
-## 4.9.29 - Rifiniture Dashboard decisionale
-
-**Allocazione: bucket e strumenti:**
-- il grafico passa da sunburst a due donut concentrici con un gap visibile tra anello interno (Core/Difensivo/Satellite) ed esterno (natura/esposizione, raggruppata per bucket cosí i confini dei due anelli coincidono esattamente — un portafoglio con un bucket molto dominante, es. quasi tutto BTP, non fa più sembrare che uno strumento "sconfini" in un altro bucket); legenda a destra sulle nature possedute; l'hover dell'anello esterno elenca i singoli strumenti che compongono ciascuna fetta
-- contromisura a una stranezza di rendering di Plotly che, anche disattivando l'ordinamento automatico, disegna comunque la prima fetta al suo posto ma inverte l'ordine di tutte le altre (`_pie_clockwise_order` in `ui/charts/pianificazione.py`) — riguarda entrambi gli anelli; la legenda dell'anello esterno usa tracce fittizie dedicate per restare nell'ordine corretto, indipendente da questa stranezza
-
-**Riquadri "Lettura di...":**
-- le righe con più campi (ticker/natura/importo, colonna/elenco strumenti, ecc.) si allineano ora in colonne a larghezza fissa invece di un'unica riga di testo unita da punto e virgola — interessa "Lettura dell'allocazione", "Lettura della matrice", "Lettura ante-post" e "Dettaglio composizione ordine"
-
-**Copertura e sovrapposizione:**
-- il punteggio 4 di un'area si divide equamente tra gli strumenti posseduti che la condividono (es. 2 strumenti sulla stessa area → 2 e 2 invece di 4 e 4): ogni colonna posseduta somma sempre a 4, il valore per riga indica quanto di quell'area è "tua" rispetto agli altri strumenti che la coprono già; doppioni/aree scoperte si riconoscono ora dal numero di celle diverse da zero, non più da un confronto `== 4`
-- etichette colonna verticali per una matrice più compatta
-
-**Prossimo acquisto: mappa decisionale:**
-- sotto la mappa a bolle, nuovo riquadro "Fotografia di riferimento" con data/nota, importo vs budget, mix bucket e righe ordine dell'ultima fotografia SATOR salvata (stessi dati già presenti nello Storico decisionale, resi visibili senza dover scorrere fino a lì) — visibile anche quando la fotografia più recente è precedente a questo aggiornamento e non ha ancora i punteggi per la mappa a bolle (prima restava nascosto proprio nel caso per cui era stato pensato)
-
-**Pulizia:**
-- rimossa l'intestazione "Dashboard decisionale" (ridondante con i titoli dei tre grafici sottostanti) e la riga orizzontale doppia che compariva prima di "Liquidità da investire" quando il modulo SATOR Streamlit è nascosto (Impostazioni → SATOR "Solo pagina sidebar")
-
-## 4.9.28 - Dashboard decisionale in Pianificazione, costi SATOR live, badge € in tabella
-
-**Nuova sezione "Dashboard decisionale" nella scheda Pianificazione:**
-- aggiunta subito dopo "Obiettivo di portafoglio" e prima del modulo SATOR Streamlit (ormai congelato: il percorso attivo per SATOR è la pagina `/sator` raggiunta dalla sidebar) — indipendente dal suo stato di sessione, usa solo il portafoglio corrente e l'ultima fotografia SATOR salvata su disco
-- **donut ad anelli concentrici**: anello interno Core/Difensivo/Satellite, anello esterno i singoli strumenti posseduti colorati per natura/esposizione (stessa palette dell'icona già in Portafoglio/Quotazioni), con lettura testuale di coerenza rispetto al target impostato
-- **matrice di copertura e sovrapposizione**: righe = strumenti posseduti, colonne = aree di mercato (unione tra natura dei posseduti e dei candidati SATOR), punteggio 0/4 — evidenzia doppioni (due strumenti sulla stessa area) e aree scoperte
-- **mappa a bolle dei prossimi acquisti**: dati dall'ultima fotografia SATOR salvata (non da un'analisi dal vivo), quattro quadranti decisionali su diversificazione (asse X, soglia 0,58) e rischio stimato (asse Y = 1 − risk_efficiency, soglia 0,42 — stesse soglie già usate altrove nella pagina), dimensione bolla = importo proposto
-- avvisi gialli per strumenti posseduti con natura non chiaramente classificata ("Esposizione diversificata") o con contraddizione benchmark/tipo, e per ticker della fotografia salvata con dati insufficienti (fotografia precedente a questo aggiornamento)
-- `build_sator_decision_record` ora salva anche `risk_efficiency`/`diversification_benefit` per ogni riga dell'ordine, in modo retrocompatibile (le fotografie salvate prima di questo aggiornamento restano leggibili, semplicemente non hanno questi due campi)
-
-**Costi SATOR (zero commissioni/TER/spread) letti live dall'arricchimento:**
-- il fattore Costo del punteggio SATOR leggeva sempre valori vuoti (`commission_mode` "non_definito", `zero_commission` False, `ter`/`spread` 0.0): i campi non erano mai stati collegati a una sorgente dati reale, quindi il fattore Costo non riusciva a distinguere i titoli tra loro
-- zero commissioni/TER/spread si inseriscono ora nel tab Strumenti → Arricchimento (nuovo campo con checkbox per zero commissioni) e vengono letti live da `infer_sator_metadata`: un aggiornamento in Arricchimento si riflette subito nel punteggio Costo, senza passare dal vecchio editor universo dormiente
-
-**Badge € nella tabella SATOR:**
-- accanto al ticker, un badge € (stesso stile dei punteggi in tabella) segnala gli strumenti non a zero commissioni, con tooltip esplicativo
-
-**Rifinitura interna — classificazione fondi NAV irregolare:**
-- `is_nav_fund` (fondi gestiti/OICVM con pubblicazione NAV non giornaliera, es. i FAM-) era duplicata in `ui/sidebar.py`, mentre `ui/charts/quotes_popup.py` usava un'euristica diversa e meno precisa basata sulla natura/esposizione dello strumento; ora è un'unica funzione condivisa in `core/instrument_classification.py`
-
-## 4.9.27 - Classificazione automatica della natura/esposizione degli strumenti
-
-**Icona "natura" in Quotazioni e Portafoglio, ora calcolata da dati affidabili invece che dal nome abbreviato:**
-- l'icona descrittiva accanto a ogni strumento (Quality factor, Commodities, Mercati emergenti, Bene rifugio, ecc.) veniva ricalcolata a ogni apertura della pagina Quotazioni cercando parole chiave nel solo nome commerciale, spesso abbreviato da Fineco — verifica manuale contro i 26 strumenti reali del portafoglio ha trovato 6 classificazioni sbagliate: `IWQU.MI` e `XDWT.MI` finivano in categorie generiche perché il nome abbreviava "Quality"/"Technology" in modo che le parole chiave non riconoscevano più; `FAMAMW.MI` (Metals and Mining) finiva su "Commodities" generico invece che su "Metalli e miniere"; i 4 fondi `FAM-*` venivano tutti etichettati "Fondo gestito / multi-asset" solo per il prefisso del ticker, ignorando il loro vero tipo (uno di questi, `FAM-PU8`, è un fondo azionario, non multi-asset); `FLXI.MI` (azionario India) e `IB1T.PA` (Bitcoin) cadevano nel fallback "Esposizione diversificata" — l'opposto della realtà per un'esposizione concentrata
-- la classificazione (`core/instrument_classification.py`, nuovo modulo) ora usa anche `benchmark` e `focus_etf` catturati dall'arricchimento justETF, che riportano per esteso ciò che il nome Fineco abbrevia (es. benchmark "MSCI World Sector Neutral Quality" per `IWQU.MI`, che il nome visualizzato tronca in "Wl Qu Fac"); aggiunta una regola dedicata per singolo paese azionario (Italia, India, Cina, Brasile, Giappone) basata sul testo di benchmark/focus, non su calcoli percentuali — questi ultimi si sono rivelati inaffidabili durante lo sviluppo (il campo `paesi_top` di `FLXI.MI` conteneva dati di un'altra tabella, scambiati durante lo scraping justETF); rimossa la regola sul prefisso ticker "FAM-", troppo ampia
-- l'etichetta è ora calcolata una volta e salvata sullo strumento (nuovo campo `natura`), non ricalcolata a ogni render: viene impostata alla creazione dello strumento, ricalcolata a ogni arricchimento successivo, e per i 26 strumenti già presenti è stata retroattivamente calcolata al primo caricamento dati dopo l'aggiornamento, usando solo dati già salvati su disco (nessuna nuova chiamata di rete); resta modificabile a mano dal tab Arricchimento in Strumenti, come ogni altro campo arricchito, e una modifica manuale non viene mai sovrascritta da un arricchimento automatico successivo
-- l'icona compare ora anche nella tabella Portafoglio (Home), tra le colonne "Tipo" e "Quote" — prima esisteva solo in Quotazioni
-
-**Correzione automatica del campo tipo quando l'arricchimento lo smentisce:**
-- `XBAE.MI` aveva tipo salvato "ETF Az. Globale" (azionario) ma è in realtà un "Xtrackers II ESG Global Aggregate Bond UCITS ETF" (obbligazionario) — il tipo sbagliato non alterava l'icona (che legge anche benchmark/focus) ma falsava le viste che dipendono dal tipo altrove nell'app (categoria, allocazione, corrispondenza con il benchmark); ora, quando benchmark/focus_etf sono in aperta contraddizione con il tipo salvato, la correzione scatta in automatico a fine arricchimento (e anche nella migrazione una tantum sopra), con lo stesso meccanismo già esistente per cui "il focus di investimento rifinisce il tipo"
-
-**Rifinitura post-verifica in app:**
-- l'etichetta "Fondo gestito / multi-asset" si contraddiceva da sola per i fondi il cui stesso campo tipo dice "Passivo" (es. `FAM-PU6`, "Fondo Bilan. Passivo": "gestito" implica gestione attiva) — ora diventa "Fondo bilanciato" quando il testo contiene "passivo", senza toccare i fondi davvero a gestione attiva (es. `FAM-FLEX`)
-- la colonna icona in Portafoglio era stata inserita come prima colonna della tabella; spostata tra "Tipo" e "Quote"
-
-## 4.9.26 - Coerenza in/fuori portafoglio in Benchmark, arricchimento unificato, mappe di calore ripristinate
-
-**Cruscotti > Benchmark — distinzione in/fuori portafoglio:**
-- `get_all_historical_tickers` e `build_instrument_benchmark_matrix` consideravano "in portafoglio" qualunque ticker con un record in `strumenti`, indipendentemente dallo stato: uno strumento chiuso restava etichettato "(In portafoglio)", un ticker mai posseduto (es. un benchmark di riferimento) risultava "(Venduto)"
-- primo tentativo di fix — criterio `stato == "aperto"` — rivelatosi insufficiente sui dati reali: il campo `stato` risultava "aperto" su tutti i 26 strumenti del portafoglio, inclusi i 10 venduti per intero (l'auto-tag a "osservato" introdotto in `operazioni.py` dopo una vendita totale non era mai stato applicato retroattivamente agli strumenti già venduti prima)
-- fix definitivo: nuova funzione condivisa `core/domain/positions.py::held_tickers(data)`, che calcola le quote correnti dagli eventi reali (stesso motore di `compute_portfolio_state`) invece di fidarsi del campo stato — verificato sui dati reali del portafoglio: 16 strumenti posseduti / 10 fuori portafoglio
-- la matrice "Abbinamento strumenti/benchmark" e il grafico "Mappa coerenza/extra-rendimento" ora escludono del tutto le posizioni non possedute (prima le mescolavano senza alcuna etichetta)
-- nel grafico "Performance normalizzata" gli strumenti fuori portafoglio hanno ora linea tratteggiata e "(fuori portafoglio)" nel nome traccia, non solo un colore diverso — utile anche per chi non percepisce bene i colori
-
-**Rendimenti mensili e trimestrali — mappe di calore ripristinate in Cruscotti:**
-- il grafico esisteva già (`quarterly_table_html`/`monthly_heatmap_html` in `ui/charts/summary.py`, la prima ancora usata nel report PDF esportabile) ma la chiamata in `cruscotti.py` era ridotta a un commento placeholder da prima dell'inizio dello storico git di questo repository — ricollegata
-- le celle a intensità alta (rendimento vicino al massimo/minimo osservato) avevano testo dello stesso colore verde/rosso dello sfondo, poco leggibile: ora il testo passa a bianco sopra una soglia di intensità
-- le tabelle vivono in `<iframe>` (isolamento CSS totale dal resto della pagina) e non ereditavano il font dell'app: ora il font-family è dichiarato esplicitamente
-- aggiunta una legenda min/max a gradiente sotto ogni tabella, come i rendimenti mensili di justETF
-- titolo unico "Rendimenti mensili e trimestrali - mappe di calore", mappa mensile prima della tabella trimestrale; intestazioni trimestrali T1/T2/T3/T4/TOT al posto di Q1-Q4/Anno, valori centrati come nei mensili, riga verticale prima della colonna TOT in entrambe le tabelle
-
-**Arricchimento strumenti unificato in Strumenti (sidebar), stesso pattern già usato per lo storico prezzi:**
-- prima sparso su tre punti scollegati: pulsante "Arricchisci tutti" in Gestione Dati (Streamlit, rerun completo percepito come bloccante per l'intera app), link "Arricchisci ora" nel popup Quotazioni (un punto pensato per la sola lettura che in realtà scriveva dati), form di modifica manuale/import PDF nella Scheda completa (`form_server.py`)
-- ora tutto in un unico tab "🔎 Arricchimento" nella pagina `/strumenti`: selezione strumento, arricchimento automatico, import da PDF Fineco, modifica manuale dei campi — stesso pattern già collaudato dal tab "Storico" (form POST classico, nessun rerun Streamlit)
-- Gestione Dati torna un puro visualizzatore (tabella stato/completezza per strumento, nessun pulsante che scrive); il popup Quotazioni non ha più alcun link di scrittura
-
-**Import da PDF esteso oltre la Scheda Fineco:**
-- il parser (`core/instrument_enrichment.py`) era tarato solo sull'export "Scheda titolo" della piattaforma Fineco; testato con successo anche contro 3 factsheet ufficiali di altri emittenti (Franklin Templeton/iShares, Xtrackers/DWS, Amundi): nuove etichette riconosciute (TER, domicilio, valuta, metodo di replica, politica di distribuzione, AUM con valuta e scala inclusi), date sia in formato `GG/MM/AAAA` che `GG.MM.AAAA`, normalizzazione degli apostrofi tipografici, guardie contro falsi positivi da intestazioni di tabella o testo "sbordato" tra colonne nei PDF a più colonne
-- limite noto, non risolto: i factsheet a 3 colonne molto dense (es. Amundi) restano parzialmente inaffidabili per i campi `benchmark`/`nav` — limite strutturale dell'estrazione testuale semplice su layout multi-colonna, non un'etichetta mancante
-
-**Fix minore:** il ticker Yahoo per l'ISIN `XS2940466316` (iShares Bitcoin ETP) restava bloccato su `BTCN.AS` nella cache di risoluzione automatica (`cache_lookup_strumenti`), nonostante il ticker corretto `IB1T.PA` fosse impostato sullo strumento — modificare il ticker da `/strumenti` non sincronizzava questa cache, che ha sempre priorità sul ticker esplicito ad ogni refresh quotazioni. L'azione "modifica" ora aggiorna anche la cache.
-
-## 4.9.25 - Conferma candidati e classificazione automatica alla creazione di uno strumento
-
-**Flusso cerca/conferma per l'aggiunta di uno strumento (`/strumenti`):**
-- l'aggiunta di uno strumento nuovo era un'operazione automatica a un solo passaggio: `find_ticker` sceglieva un solo candidato tra quelli restituiti dalla ricerca ISIN di Yahoo Finance (fino a 5) e lo salvava subito, senza mostrare le alternative. Se l'euristica sbagliava borsa/quotazione, il portafoglio finiva con uno storico prezzi sbagliato senza alcun segnale a monte
-- ora l'azione `aggiungi` è divisa in due: `cerca` (nessun salvataggio, mostra tutti i candidati trovati con prezzo già risolto, quello proposto pre-selezionato) e `conferma_aggiungi` (salva il candidato scelto, o i valori inseriti manualmente); un fallimento in un singolo candidato durante il recupero prezzo non blocca gli altri
-- **euristica `.MI` automatica**: la ricerca ISIN di Yahoo spesso non restituisce la quotazione di Borsa Italiana anche quando esiste ed è quotabile direttamente (verificato su 8 dei 9 strumenti reali del portafoglio): se nessun candidato trovato finisce per `.MI`, si tenta `{simbolo_base}.MI` per ogni simbolo base distinto tra i candidati, proponendolo se risponde con un prezzo reale
-- **ticker suggerito dall'utente**: campo opzionale nel form di ricerca — se compilato, viene verificato (prezzo reale) e proposto al posto dell'euristica automatica, o promosso se coincide con un candidato già trovato; utile per i casi (es. `IWQU.MI`) dove il simbolo su altre borse non assomiglia a quello di Milano e nessuna euristica può indovinarlo
-
-**Classificazione tipo e benchmark da arricchimento justETF (ETF/ETC):**
-- il tipo di uno strumento nuovo veniva dedotto da `deduce_type` cercando parole chiave nel solo nome commerciale: se il nome non conteneva nulla di riconoscibile, il tipo restava vuoto — mappando sulla categoria "ALTRO", esclusa dalle categorie visibili di default (`GOV, ETF, FND, AZI, OBB`) — lo strumento risultava invisibile in Quotazioni e nei KPI pur essendo salvato correttamente
-- lo stesso problema esisteva per il benchmark di confronto (`resolve_instrument_benchmark`): senza una regola esplicita per ticker/ISIN, il fallback finiva quasi sempre su "MSCI World", indipendentemente da cosa lo strumento seguisse davvero
-- l'app ha già una funzione di arricchimento (`enrich_etf_etc`) che recupera da justETF il focus di investimento dichiarato e il benchmark reale del fondo, ma nessuna parte dell'applicativo la consumava per queste due decisioni — restavano solo etichette statiche nella scheda strumento
-- ora, aggiungendo un ETF/ETC nuovo (non BTP, non scelta manuale), l'arricchimento justETF viene chiamato automaticamente prima del salvataggio: il focus di investimento rifinisce il tipo (`deduce_type` accetta un parametro opzionale `focus_etf`), e il benchmark reale sceglie un ticker proxy specifico tramite una nuova tabella di pattern per famiglie di indici note (MSCI, FTSE, S&P, Nasdaq, Bloomberg Commodity, oro/minerari, India, Bitcoin), con priorità subito dopo le regole esplicite per ticker/ISIN e prima del fallback generico per tipo
-- se l'arricchimento fallisce, lo strumento non è ammissibile (BTP, scelta manuale) o il benchmark non corrisponde a nessun pattern noto, il comportamento resta identico a prima — nessuna regressione
-- l'azione manuale "Arricchisci" da Gestione Dati non cambia: continua ad aggiornare solo i dettagli che aggiornava già (TER, benchmark, focus, ecc.), mai nome/tipo
-
-**Fix:**
-- i candidati aggiunti dall'euristica `.MI` o dal ticker suggerito avevano nome vuoto: senza nome, `deduce_type` non classificava il tipo, che restava vuoto — stessa causa del bug "ALTRO" sopra, ma introdotta dalla stessa euristica pensata per risolverlo. Ora entrambi i percorsi recuperano il nome via `find_name(isin)` prima di costruire il candidato
-- il guard che doveva evitare l'arricchimento automatico per le scelte manuali non scattava mai nel flusso reale: la variabile passata al controllo veniva silenziosamente sovrascritta dal recupero prezzo di fallback prima di arrivare al controllo stesso (ogni inserimento manuale ha sempre prezzo assente, quindi il fallback scattava sempre). Isolata in `_fs_resolve_price_and_enrichment`, che cattura la scelta originale prima che venga sovrascritta
-- due pattern della nuova tabella benchmark erano troppo ampi rispetto a quanto previsto: `"bloomberg"` avrebbe assegnato il proxy materie prime anche a indici obbligazionari targati Bloomberg (ristretto a `"bloomberg commodity"`); `"gold"` avrebbe assegnato oro fisico anche a ETF su società minerarie aurifere, bypassando la distinzione già esistente altrove nello stesso file (aggiunta una regola più specifica per i minerari, controllata prima di quella generica sull'oro)
-
-## 4.9.24 - Recupero storico prezzi spostato in Strumenti (sidebar)
-
-**Nuovo tab "Storico" nella pagina standalone `/strumenti`:**
-- il recupero manuale dello storico prezzi (Yahoo Finance, merge non distruttivo) si faceva prima in Gestione Dati (Streamlit), dove il rerun completo dopo ogni azione lo rendeva percepito come bloccante per l'intera app; ora vive in `/strumenti`, un form POST classico che aggiorna solo se stesso
-- tendina di selezione strumento con conteggio date già salvate e prima data disponibile in coda al nome (es. `TICKER — Nome (12 date, dal 03/01/2024)`) — nessuna tabella riepilogativa separata, la data compare semplicemente scegliendo lo strumento
-- "Data di partenza" precompilata con la prima data che il sistema ha già per altri strumenti (`earliest_storico_date`), modificabile o azzerabile per importare tutto ciò che Yahoo ha disponibile
-- nuova sezione "Elimina storico salvato": rimozione per strumento, per intero o solo in un intervallo di date, senza toccare gli altri strumenti sulle stesse date
-- date in formato italiano GG/MM/AAAA ovunque nel tab (proposta, campi di eliminazione, messaggi di conferma), con parsing flessibile in ingresso (accetta anche YYYY-MM-DD)
-
-**Fix:**
-- `_fs_delete_instrument`, `_fs_delete_event`, `_fs_update_event` andavano in `NameError` su `save_data` da `/strumenti` e `/operazioni_gestione` standalone (import mancante nello scope della funzione): i dati venivano modificati in memoria ma mai salvati su disco
-- i grafici di Quotazioni restavano quelli vecchi dopo un recupero storico, anche dopo aver riavviato l'applicativo. Due bug distinti, stessa causa di fondo:
-  1. `core/cache_signatures.py` decideva se una firma dati era cambiata guardando solo `len(storico_prezzi)` e `max(storico_prezzi.keys())` (conteggio/data più recente su tutte le date, non per strumento). Un backfill che riempie date più vecchie **già presenti come chiave** (perché altri strumenti hanno già un prezzo su quel giorno) non tocca né l'uno né l'altro, quindi la firma restava identica e `core/figure_cache.py` continuava a servire la figura vecchia da disco.
-  2. anche correggendo la firma, il grafico veniva "ricostruito" ma a partire dagli STESSI dati vecchi: `core/state.py` (`StateManager._derived_data_token` e `_build_hist_df_token_for`, usati da `get_hist_df_for`/`get_expanded_price_frame_for`/`get_portfolio_state_for`) ha una cache separata dei DataFrame storici, **persistita su disco** in `data/cache/derived_runtime/*.pkl` — sopravvive al riavvio dell'app — con lo stesso identico bug (solo `len(storico)`/`max(storico.keys())`). Era questa la cache che spiegava perché il problema persisteva anche dopo un riavvio completo.
-
-  Entrambe ora includono `history_span_by_ticker`/`history_span` (quante date storiche include ciascun ticker e la più vecchia — funzione condivisa `core.cache_signatures.history_span_by_ticker`, riusata da `core/state.py`): catturano il backfill restando comunque stabili durante un refresh quotazioni intraday, che aggiorna solo il valore del prezzo odierno, non le chiavi. Il cambio di formato del token invalida automaticamente, una tantum, tutte le cache (figure e pickle) scritte dal codice precedente: non serve alcuna pulizia manuale, basta un riavvio con il fix applicato. Copertura di regressione in `tests/test_backfill_signature_invalidation.py` (firme + token StateManager) e `tests/test_state_hist_df_token.py`
-
-## 4.9.23 - Parser PDF universale: label-proximity scanner
-
-**Parser PDF completamente riscritto (`core/instrument_enrichment.py`):**
-- eliminati i tre parser tipo-specifici (`_parse_pdf_btp`, `_parse_pdf_etf`, `_parse_pdf_fam`) che si rompevano ad ogni variazione di layout
-- sostituiti da un unico scanner basato su dizionario di etichette italiane → campo + tipo valore (`_PDF_LABELS`, `_scan_labels`)
-- `_scan_labels` cerca ogni etichetta su qualsiasi riga del testo estratto (non solo a inizio riga), con guard word-boundary; le etichette più lunghe hanno precedenza sulle più corte
-- `_norm_line` normalizza per il match: rimuove accenti (NFD), collassa spazi, lowercase — le chiavi del dizionario non hanno mai accenti
-- `_scan_rendimenti` estrae YTD / 1A / 2A / 3A / 5A / 10A con doppio layout (label-poi-valori e label/valore alternati); il `last_val_end` tracking evita che più etichette sulla stessa riga rivendichino lo stesso valore
-- `_scan_morningstar` gestisce stelle Unicode ★ e font-icon privati
-- `_scan_holdings` estrae la sezione "Primi N titoli" con terminatori flessibili (Avvertenze / Educational / Dati in tempo reale / fine testo)
-- `_scan_distribuzione` imposta "Distribuzione" solo in presenza di un dividendo numerico (niente falsi positivi)
-
-**Bug corretti:**
-- `parse_fineco_pdf(pdf_bytes, tipo="etc")` restituiva `{}` perché il tipo "etc" non era gestito → ora il parametro `tipo` è ignorato nel parser PDF (rimane per compatibilità API); il parser estrae tutti i campi presenti indipendentemente dal tipo
-- `categoria_etf` non veniva più popolata dopo l'import PDF → mappatura corretta da etichetta "Categoria" → campo `categoria_etf`
-
-**Aggiungere un nuovo campo = una riga nel dizionario `_PDF_LABELS`.**
-
-**Fix minori parser/enrichment:**
-- `_scan_distribuzione` riconosce `(-)` come Accumulazione
-- `morningstar` rileva qualsiasi codepoint PUA per le stelle rating; rimosso il rating dal core ETC
-- `_rend_cls` non va più in crash su numeri italiani con separatore delle migliaia (es. `9.284,27`)
-
-**Tabella arricchimento:**
-- nuova colonna completezza % per strumento, altezza dinamica della tabella
-
-**SATOR — gestione decisioni salvate:**
-- helper `remove_sator_decision` e pulsante elimina per le fotografie decisionali salvate in `/sator`
-- legenda colonne (riquadro + tooltip) nella tabella SATOR standalone
-
-**Obiettivo di portafoglio unificato (Core/Difensivo/Satellite):**
-- nuova sezione "Obiettivo di portafoglio" in Pianificazione: tre percentuali Core/Difensivo/Satellite (con preset rapidi che mostrano i numeri reali, non solo un nome), cap di concentrazione per asset class e pesi delle 5 dimensioni SATOR tutti editabili e trasparenti, con box informativo sulla matematica interna che resta fissa
-- sostituisce ovunque il vecchio profilo GOV/ETF/FND (`target_profile_default`, con bug di naming come il fallback "Bilanciato" inesistente): "Liquidità da investire", il tetto satellite in Pianificazione, il grafico "Allineamento rispetto ad obiettivo" in Cruscotti e il radar Home/Cruscotti ora leggono tutti lo stesso obiettivo
-- radar Home/Cruscotti derivato dall'obiettivo invece che da 4 preset nascosti (`RADAR_PROFILE_PRESETS`): assi quantitativi dai cap di concentrazione per natura, assi qualitativi per interpolazione sulla quota Satellite
-- tabella SATOR standalone: colonna "Perché" sostituita da un badge Ruolo (Core/Difensivo/Satellite) per riga, e badge di avviso quando lo storico prezzi è troppo corto (<30gg) per un giudizio affidabile
-- finestra rischio/rendimento SATOR estesa da 6 a 12 mesi per ridurre il rumore statistico
-- migrazione automatica e non distruttiva: chi aveva un vecchio profilo salvato lo ritrova tradotto in Core/Difensivo/Satellite alla prima apertura
-- rimossi (verificata l'assenza di chiamanti residui): `get_default_target_profile`, `build_target_gap_by_instrument`, `build_rebalancing_suggestions`, i campi settings `target_profile_default`/`rebalancing_target`, `RADAR_PROFILE_PRESETS`
-
-**Rifiniture post-merge dell'obiettivo di portafoglio:**
-- corretto un bug per cui la sezione "Obiettivo di portafoglio" spariva del tutto in Pianificazione se l'utente aveva impostato "Solo sidebar" per SATOR: ora si vede sempre, indipendentemente da quella modalità
-- tabella SATOR standalone: colonne compattate (niente più scroll orizzontale), badge Ruolo ridotto a un quadratino colorato (blu/verde/arancio, senza etichetta testuale) per recuperare spazio su Ticker/Strumento/Funzione
-- grafico "Obiettivo vs Attuale" corretto due volte: prima sommava le due serie invece di affiancarle (arrivava a leggere oltre il 100% su un bucket), poi è stato riportato allo stesso stile Plotly/tema già usato dagli altri grafici della pagina (st.bar_chart aveva uno zoom su hover non richiesto e non seguiva il tema)
-- i tre grafici Core/Difensivo/Satellite di Pianificazione migrati dal layout scritto a mano al sistema centralizzato `ui/charts/settings.py` + `finalize_chart`, stesso meccanismo usato dagli altri grafici dell'app
-- rimosso un intero modulo di codice morto (`ui/charts/pianificazione.py`, 8 funzioni residue di una versione precedente della pagina mai più chiamate) e la voce di configurazione orfana `overview_patrimonio`
-- corretto un bug indipendente trovato nel frattempo: il grafico "Allineamento rispetto ad obiettivo" di Cruscotti applicava per errore le impostazioni di un altro grafico
-- numeri sulle barre dei grafici di Pianificazione ingranditi (14px) e in formato italiano con un decimale (es. "55,2%")
-- rimossa la sezione "Simulatore pre-operazione" (mai utilizzata)
-
----
-
-## 4.9.22 - Sidebar avanzata: PP Export, SATOR, modalità accesso operativo
-
-**Esporta PP dalla sidebar (`/export_pp`):**
-- nuova pagina form_server con statistiche (strumenti / transazioni / date prezzi) e due link di download diretti
-- GET `/export_pp/transazioni` → scarica `portfolio_performance.csv` (UTF-8 BOM, stesso formato del tasto in Dati)
-- GET `/export_pp/prezzi` → scarica `prezzi_storici_pp.zip`
-- pulsante **📊 Esporta PP** in sidebar
-
-**SATOR dalla sidebar (`/sator`):**
-- pagina form_server a due step: input (budget, severità concentrazione 1–4, linee massime, categorie) → analisi
-- tabella ranking con semaforo 🟢/🟡/⚪, ticker, strumento, funzione, voto, Fit/Mom/Risk/Div/Cost, prezzo, quote possedute e quota suggerita
-- pannello valutazione live aggiornato via JS: totale ordine, delta budget, headline (Entro budget / Fuori budget / Budget sottoutilizzato / Appena fuori budget)
-- pulsanti "↺ Usa suggeriti" (pre-popola Qta con i valori SATOR), "✕ Deseleziona", campo note
-- **📸 Salva fotografia** → `build_sator_decision_record` + `save_sator_decisions`; redirect con conferma
-- pulsante **🧠 SATOR** in sidebar
-
-**Impostazioni — Modalità accesso operativo:**
-- nuovo campo `operativo_mode` in `default_settings()` (default `"entrambi"`)
-- radio in Impostazioni → Aspetto: *Entrambi / Solo sidebar / Solo Centro Operativo*
-- `"Solo sidebar"` → nasconde il Centro Operativo nella pagina Operazioni
-- `"Solo Centro Operativo"` → nasconde i 6 pulsanti operativi in sidebar
-- impostazione persistente in `settings.json`
-
-**Fix eliminazione versamento (persistenza cache):**
-- dopo la cancellazione di un VERSAMENTO il dato riappariva al riavvio perché `n_liquidita` non era incluso nella firma cache
-- aggiunto `n_eventi` e `n_liquidita` alla firma in `core/cache_signatures.py`
-- helper functions in `_delete_event_by_id` wrappate in try/except per garantire `save_data` anche in caso di errore secondario
-
-**Schema invariato (3.3)**
-
----
-
-## 4.9.21 - Quotazioni: frecce doppie, Δ Prezzo, popup link fonte, fix scroll e timeout
-
-**Quotazioni — frecce doppie (▲▲ / ▼▼):**
-- variazioni di prezzo superiori al 3% mostrano doppia freccia `▲▲` / `▼▼` in luogo della singola
-- applicato sia nella tabella Quotazioni che nelle colonne analoghe in Portafoglio
-- `build_price_direction_map` in `ui/components.py` ora restituisce `"up_big"` / `"down_big"` oltre a `"up"` / `"down"` / `"flat"`; `_trend_sym` in `portfolio_popup.py` e `_trend_symbol` in `tables.py` aggiornati di conseguenza
-
-**Quotazioni — colonna Δ Prezzo:**
-- nuova colonna dopo le colonne importo che mostra `prezzo − prezzo_prec` (variazione assoluta della quotazione, non del controvalore in portafoglio)
-- 3 decimali, verde per positivo, rosso per negativo, "—" sotto soglia 0.0005
-- ordinabile come le altre colonne numeriche
-
-**Quotazioni — popup: link fonte:**
-- nel popup di dettaglio strumento, sotto "Fonte / AGG.", compare la riga "Link fonte" con l'URL cliccabile che apre direttamente la pagina sorgente
-- Borsa Italiana → pagina dati-completi BTP con ISIN specifico; Yahoo Finance → `finance.yahoo.com/quote/{ticker}`
-
-**Fix scroll-to-bottom:**
-- il `sendH()` dell'iframe salvava `window.parent.scrollY` prima del `postMessage` e lo ripristinava a 10/60/200 ms, impedendo lo scatto a fondo pagina dopo ogni elaborazione
-- fix applicato a `quotes_popup.py`, `portfolio_popup.py`, `tables.py`
-
-**Fix Gemini timeout:**
-- `requests.exceptions.ReadTimeout` (e `RequestException`) non era catturato dall'handler UI `except RuntimeError`
-- `call_gemini_flash` e `call_gemini_chat` in `core/ai_analysis.py` ora wrappano `requests.post` in `try/except Timeout/RequestException` e rilanciano come `RuntimeError` con messaggio leggibile
-
-**Fix BTP zero-padding:**
-- Borsa Italiana restituisce "9.38.17" per orari mattutini → `hh = "9"` → timestamp "2026-06-23 9:38" (15 char) → tutti i controlli `len >= 16` fallivano → cache non salvata, UI mostrava solo la data
-- fix: `hh.zfill(2)` → "2026-06-23 09:38" (16 char)
-
-**Fix prezzo stale a mercato aperto:**
-- XDBC.MI / XDRE.MI mostravano verde anche se il prezzo era del giorno precedente con mercato già aperto
-- nuova funzione `_is_stale_open_market()` in `ui/sidebar.py`: se `price_date < oggi` e siamo in un giorno lavorativo dopo le 09:30 e lo strumento non è un fondo NAV, imposta `status="warning"` ma usa comunque il prezzo
-- il tooltip del warning mostra il messaggio esplicativo (fix al lookup `latest_log_item` in `quotes_popup.py`)
-
-**Schema invariato (3.3)**
-
----
-
-## 4.9.20 - Esporta portafoglio per Portfolio Performance
-
-**Esportazione CSV per Portfolio Performance:**
-- nuovo pulsante "Esporta per Portfolio Performance" nella tab Dati
-- genera CSV delle transazioni con colonne in italiano (`Data`, `Tipo`, `Valore`, `Quote`, `Commissioni`, ecc.) compatibili con PP installato in lingua italiana
-- tipi transazione italianizzati: `Acquisto`, `Vendita`, `Dividendo`, `Prelievo`, `Deposito`
-- decimali europei (virgola come separatore) per compatibilità diretta con PP
-- secondo pulsante per export prezzi storici ZIP: archivio multi-file per ticker, pronti per l'importazione storico prezzi in PP
-
-**Schema invariato (3.3)**
-
----
-
-## 4.9.19 - Strumenti chiusi, linea acquisto in Quotazioni, SATOR in cima, fix foto
-
-**Operazioni — strumenti aperto/chiuso:**
-- aggiunto campo `stato` (`"aperto"` / `"chiuso"`) al modello `Strumento` in `core/data_models.py`, con i campi opzionali `data_chiusura` e `motivo_chiusura`
-- chiusura automatica su **VENDITA totale** (quantità residua ≤ 0) e su **RIMBORSO A SCADENZA**
-- riapertura automatica su **ACQUISTO** successivo su uno strumento già chiuso
-- il selettore strumenti nel form operazioni filtra i chiusi (mostrati solo nella tab dedicata)
-- nuova tab "Chiusi" nel dialog strumenti: tabella con Ticker, Nome, Tipo, Chiuso il, Motivo
-
-**Quotazioni — linea data di primo acquisto:**
-- `build_quote_history_time_chart` accetta il parametro `purchase_date`: aggiunge una linea verticale tratteggiata con etichetta "Acquisto" nel grafico storico di ciascun strumento, allineata alla prima data operativa reale
-- strumenti non più in portafoglio mostrano sfondo ambra distinto nel grafico
-
-**Pianificazione — riordino sezioni:**
-- modulo SATOR spostato in cima alla scheda Pianificazione; "Simulatore pre-operazione" rimane sotto, separato da divisore
-
-**SATOR — fix storico decisionale (foto):**
-- lo "Storico decisionale SATOR" è ora sempre visibile all'apertura della scheda, senza dover rilanciare l'analisi
-- in precedenza era bloccato da due `return` anticipati (sessione senza `sator_result` o senza selezione manuale), rendendolo inaccessibile a ogni riavvio dell'app
-- il pulsante "Salva fotografia" usa `session_state` (`sator_result` + `sator_manual_alloc`) invece di `combo_df`
-
-**Schema invariato (3.3)**
-
-## 4.9.17 - Performance normalizzata Benchmark, ottimizzazioni cache, fix weekend
-
-**Benchmark — Performance normalizzata:**
-- nuova sezione "Performance normalizzata" nella tab Benchmark di Cruscotti: sovrappone più strumenti (inclusi venduti) normalizzati a 0% da una data o un'origine comune
-- modalità **Data comune** (calendario) o **Origini allineate** (ogni strumento parte da Giorno 0)
-- filtri: multiselect ticker (con badge "In portafoglio" / "Venduto"), radio periodo (1M / 3M / 6M / 1A / 3A / Tutto), pulsante "Costruisci grafico" on-demand per evitare rebuild automatici
-- implementato in `ui/charts/benchmark.py`: `build_normalized_performance_chart`, `get_all_historical_tickers`, `resolve_period_start_date`
-- test dedicati in `tests/test_normalized_performance_chart.py`
-
-**Ottimizzazioni performance — firme cache granulari (12 step):**
-- `build_category_data_signature`: aggiornamento prezzi di una categoria non invalida figure delle altre (GOV, ETF, FND, ETC separati)
-- `build_ticker_data_signature`: ogni grafico in Quotazioni ha firma per-ticker; un refresh parziale non ricostruisce i grafici invariati
-- `build_historical_data_signature`: 5 chart storicamente stabili (correlazione, drawdown, performance per categoria, ...) ignorano i prezzi live e restano in cache su ogni refresh intraday
-- `resolve_analysis_render_sig`: figure Benchmark e Accumuli usano firma stabile (senza prezzi live)
-- `charts_settings_signature` usa solo content hash (no `mtime`/`size`): touch del file settings non scatena più rebuild completo
-- storico precedente: `@st.cache_data(persist="disk")` su `orchestrate_data_cached` aveva ridotto gli avvii caldi, ma in 5.0-pre e' stato sostituito da `runtime.orchestration_payload`
-- `build_hist_df_token_for` esclude le operazioni dalla firma: insert operazione non invalida più `hist_df` (~2-5s risparmiati per ogni inserimento)
-- pre-worm `home_concentration` con parametri corretti: eliminati ~0.6s al primo accesso Home
-- rimossi 5 chart morti dal pre-worm bundle; aggiunte 5 figure Analitica corrette: primo accesso Cruscotti/Analitica da ~22s a istantaneo
-- `context_refresh.py` (`refresh_volatile_ctx_fields`): ripristina i campi non serializzabili (`fmtd`, `fmtds`, `header_date`) dopo la deserializzazione da disco
-
-**Fix correttezza dati weekend:**
-- `_apply_price_date_entries_to_storico` in `ui/sidebar.py`: su refresh di sabato/domenica scrive i prezzi nel giorno precedente lavorativo di `storico_prezzi` (prima veniva saltato)
-- `build_portfolio_history_df` aggiunge il punto "oggi" anche nel weekend se `last_quotes_update > ultimo storico`
-- cache interna `cache_storico_portafoglio` include `last_quotes_update` nella chiave (v3→v4): evita che il fix weekend venga ignorato per cache stale
-- risultato: P/L nei KPI e P/L nel grafico storico ora sempre allineati, anche nei weekend
-
-**Risultati misurati (13 giugno 2026, benchmark prima/dopo):**
-- avvio caldo: ~35s → ~0.19s (disk cache hit)
-- orchestrazione post-insert: ~35s → ~2.41s
-- `get_hist_df_for` su insert: invariato (0.00s, cache hit grazie a firma separata)
-
-**Schema invariato (3.3)**
-
-## 4.9.18 - Pagina AI top-level, payload selector, chat, report library
-
-**Navigazione:**
-- nuova pagina top-level "🤖 AI" inserita dopo Pianificazione
-- tab "Gestione Dati" rinominato "Dati"
-- tab "Impostazioni" rinominato "Setup"
-- tab AI rimosso da Cruscotti (ora pagina standalone)
-
-**Pagina AI — 3 sub-tab:**
-- **Analisi**: filtri payload per ticker, categoria e sezioni dati; modalità Testo o Avanzata (output JSON strutturato + grafici Plotly: radar score strumenti, proiezioni rendimento per categoria, scenari di stress); bottone "Salva report" → `data/ai_reports/`
-- **Chat**: conversazione multi-turn con Gemini; portafoglio iniettato come contesto nel primo messaggio; "Nuova chat" per reset sessione
-- **Report**: libreria report salvati (testo + dati strutturati + payload); eliminazione singolo report; diff tra due report via Gemini
-
-**Configurazione AI in Setup:**
-- API key salvata su disco in `data/config/ai_config.json` (priorità: secrets.toml > config.json > session)
-- modello Gemini default configurabile; test connessione integrato
-
-**Core (`core/ai_analysis.py`):**
-- `build_portfolio_ai_payload` esteso con `filter_tickers`, `filter_categories`, `include_sections`; peso sempre relativo al portafoglio completo
-- `call_gemini_structured`, `call_gemini_chat`, `call_gemini_diff`, `_parse_structured_response`
-- `build_gemini_prompt` esteso con `structured=True/False`
-- `load/save_ai_config`, `save/load/delete_ai_report`
-
-**Test:** +65 nuovi test (311 totali); schema invariato (3.3)
-
-## 4.9.15 - Streamlit 1.58 compatibility archive
-
-- updated Streamlit requirement to `1.58.*`
-- migrated deprecated Streamlit HTML iframe rendering from `components.html` to centralized `st.iframe` helper
-- replaced residual deprecated `use_container_width=True` usages with `width="stretch"`
-- preserved financial logic, schema version, chart settings, layout structure, and user-facing flows
-- app version aligned to `4.9.15`; schema unchanged (`3.3`)
-
-## 4.9.14x - Fase 3 avvio: pre-render iniziale centralizzato
-
-- aggiunta configurazione centrale `ui_pre_render` per governare pre-render iniziale, fallback background, cooldown e scope
-- collegato il bootstrap al pre-render completo iniziale quando la firma dati/tema cambia, mantenendo il prewarm background come fallback configurabile
-- aggiunti controlli in Impostazioni > Avanzate e test dedicato sulla normalizzazione delle impostazioni
-
-## 4.9.14 - Category perimeter alignment, data maintenance, debug split
-
-- introduced configurable active categories up to 5, with propagation across key pages, shared datasets, snapshots, planning, and main category-driven charts
-- aligned the active-category semantics so disabled categories are excluded from the operational portfolio perimeter instead of being only visually hidden
-- improved data maintenance in Gestione Dati with category/ticker inventory and brutal cleanup support across portfolio data, history, ledger rebuild, and quotes log
-- split rendering diagnostics into two independent controls: progress bar under the header and textual render log at page bottom
-- improved quotes diagnostics table with portfolio-presence status and clearer handling of inactive instruments
-- app version aligned to `4.9.14`; schema unchanged (`3.3`)
-
-## 4.9.11 - UI Reorganization: Andamento/Analisi removal, Cruscotti hub, Summary as report generator [COMPLETED]
-
-**Major structural changes:**
-- ✅ removed Andamento and Analisi tabs from app.py
-- ✅ consolidated all analytics content into Cruscotti with Analitica sub-tab (5 sub-tabs total: GOV/ETF/FND/Tutto/Analitica)
-- ✅ removed "Patrimonio" view from Overview (now P/L del portafoglio + P/L per Categoria only)
-- ✅ transformed Summary from visualization-based page to report generator (5 sections: Identity, Inclusions, Preview, Generate, Recent outputs) — zero on-screen visualizations
-- ✅ operations page confirmed: "Spesa mensile per acquisto strumenti" section already present
-- ✅ added Pianificazione tab (new tab 7 of 9) with placeholder for what-if simulator and liquidity planner
-
-**Quotazioni page enhancements:**
-- ✅ Drawdown per singolo strumento with radio toggle (Peggiori 6 / Tutti / Selezione manuale)
-- ✅ Correlation matrices: strumenti (correlation heatmap) + macro-categorie (GOV/ETF/FND)
-- ✅ Risk/Return table per ticker (dfstats) with metrics: Total Return, CAGR, Volatility, Sharpe, Max Drawdown, VaR, CVaR, Sortino, Calmar
-
-**Schema unchanged (3.3)**. App structure: 9 tabs (Quotazioni, Portafoglio, Operazioni, Cruscotti, Summary, Confronto, Pianificazione, Gestione Dati, Impostazioni). All imports validated. Ready for 4.9.12+ incremental work.
-
-## 4.9.10 - Cache optimization, benchmark scheduler, pre-warming
-
-- synchronous pre-warming of essential dataframes (portfolio_state, history_df) with 2-second timeout in StateManager
-- benchmark refresh moved outside critical path: manual refresh via Gestione Dati + automatic scheduler at 18:00 IT daily
-- new Benchmark section in Gestione Dati with per-ticker refresh timestamps and freshness badges
-- benchmark scheduler with exponential backoff retry and persistent state
-- schema version unchanged (3.3)
-
-## 4.9.9 - Cleanup e infrastructure improvements
-
-- removed dead code: dark theme completely eliminated from codebase
-- migrated figure cache from pickle.gz to JSON+gzip with automatic legacy conversion
-- added render profiler always-on reporting in Data Management page (Performance section)
-- added cache scenario badge in header (cold_start, post_data_change, warm_rerun)
-- cleaned up unused placeholder variables
-- schema version unchanged (3.3)
-
-## 4.5 - Final roadmap release
-
-- completed structural refactor and roadmap closure
-- redesigned Summary as the main reporting hub
-- integrated operational brief into Summary
-- added Data Management page for backup, audit, observability, and quote maintenance
-- improved reporting traceability and compliance exports
-- added custom benchmark support and richer settings model
-- introduced visible i18n groundwork for key UI sections
-- completed final UI polish, spacing, naming, and reporting output cleanup
-
-## Notes
-
-- runtime folders such as `data/` and `backups/` are generated locally
-- some secondary translations can still be extended over time
-- current Pydantic deprecation warnings are known and non-blocking

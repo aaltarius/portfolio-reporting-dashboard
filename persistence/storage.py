@@ -1388,11 +1388,45 @@ def _merged_benchmark_cache_payload(data: dict) -> dict:
     existing_benchmark_cache = _read_json_file(BENCHMARK_CACHE_FILE, default_benchmark_cache())
     caller_benchmark_data = data.get("benchmark_data", {})
     caller_market_live_data = data.get("market_live_data", {})
+    disk_benchmark_data = existing_benchmark_cache.get("benchmark_data", {})
+    disk_benchmark_data = disk_benchmark_data if isinstance(disk_benchmark_data, dict) else {}
+    caller_benchmark_data = caller_benchmark_data if isinstance(caller_benchmark_data, dict) else {}
+
+    # Task V-quindecies (2026-09-05): guardia scoperta durante la caccia al
+    # bug "il benchmark riparato torna corrotto da solo" - non e' mai stato
+    # possibile individuare con certezza QUALE chiamante scrive una serie
+    # piatta/segnaposto (bench_^GSPC tornato piu' volte a 1800 punti tutti
+    # 100.0 senza alcuna corrispondente riga di log "Cache benchmark
+    # salvata"/"Dati salvati" nel processo Streamlit ne' in market_auto_refresh -
+    # sospetto una vista in-memory stantia in un thread/richiesta non tracciata).
+    # In attesa di trovare la causa esatta, qui i chiamanti vincono per i
+    # ticker che conoscono (comportamento invariato) TRANNE quando il
+    # chiamante offre una serie degenere (_benchmark_series_looks_degenerate)
+    # mentre il disco ha gia' una serie sana per lo stesso ticker: in quel
+    # caso specifico si tiene la versione sul disco e si logga un warning,
+    # cosi' una scrittura corrotta non puo' piu' cancellare un dato buono.
+    from core.dashboard_datasets import _benchmark_series_looks_degenerate
+
+    merged_benchmark_data = dict(disk_benchmark_data)
+    for key, caller_series in caller_benchmark_data.items():
+        disk_series = disk_benchmark_data.get(key)
+        if (
+            isinstance(caller_series, dict)
+            and isinstance(disk_series, dict)
+            and _benchmark_series_looks_degenerate(caller_series)
+            and not _benchmark_series_looks_degenerate(disk_series)
+        ):
+            logger.warning(
+                "Scrittura benchmark rifiutata per %s: serie del chiamante degenere "
+                "(%d punti, valori appiattiti) mentre il disco ha gia' una serie sana "
+                "(%d punti) - mantengo la versione su disco.",
+                key, len(caller_series), len(disk_series),
+            )
+            continue
+        merged_benchmark_data[key] = caller_series
+
     return {
-        "benchmark_data": {
-            **existing_benchmark_cache.get("benchmark_data", {}),
-            **(caller_benchmark_data if isinstance(caller_benchmark_data, dict) else {}),
-        },
+        "benchmark_data": merged_benchmark_data,
         "market_live_data": {
             **existing_benchmark_cache.get("market_live_data", {}),
             **(caller_market_live_data if isinstance(caller_market_live_data, dict) else {}),

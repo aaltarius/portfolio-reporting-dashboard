@@ -522,6 +522,7 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
 }
 .bucket-alloc-instrument-row:hover td{background:color-mix(in srgb, var(--tone) 6%, transparent)}
 .bucket-alloc-ticker{font-weight:700;color:var(--ptf-text)}
+.bucket-alloc-split-hint{font-weight:400;font-size:0.72rem;color:var(--ptf-muted)}
 .bucket-alloc-natura{display:inline-flex;align-items:center;gap:6px;color:var(--ptf-muted);font-size:0.78rem;padding-left:17px}
 .bucket-alloc-natura svg{width:14px;height:14px;color:var(--natura-color);flex:none}
 .bucket-alloc-mini-track{position:relative;height:6px;border-radius:4px;background:color-mix(in srgb, var(--ptf-text) 10%, var(--ptf-surface));min-width:70px}
@@ -689,6 +690,10 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
 .ref-snapshot-instrument-text .ticker{font-weight:700;color:var(--ptf-text);flex:none}
 .ref-snapshot-instrument-text .name{
   font-size:0.74rem;color:var(--ptf-muted);overflow:hidden;text-overflow:ellipsis;
+}
+.ref-snapshot-isin{
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:0.76rem;color:var(--ptf-muted);white-space:nowrap;letter-spacing:.01em;
 }
 .ref-snapshot-footnote{font-size:0.72rem;color:var(--ptf-muted);margin-top:8px;font-style:italic}
 [data-testid="stMetric"]{

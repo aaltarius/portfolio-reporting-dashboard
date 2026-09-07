@@ -17,7 +17,7 @@ from core.cache import invalidate_portfolio_cache
 from core.cache_policy import build_cache_artifact_signature, get_cache_artifact_spec
 from core.cache_orchestrator import get_or_build_registered_artifact
 from core.cache_signatures import build_portfolio_data_signature
-from core.page_cache import get_page_artifact_cache_stats
+from core.page_cache import clear_page_artifact_disk_cache, get_page_artifact_cache_stats
 from streamlit.delta_generator import DeltaGenerator
 
 from core.finance import _build_snapshot_from_data, _rebuild_cash_ledger_from_events
@@ -1253,9 +1253,24 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 if st.button("🗑️ Svuota cache", width="stretch", type="secondary", key="datahub_clear_cache", disabled=not clear_confirm):
                     status_box = st.status("Svuotamento cache in corso...", expanded=True)
                     count = fcache.clear_all()
+                    # Bug reale trovato dall'utente (2026-09-05, "grafici Quotazioni
+                    # ancora senza benchmark, e' cache?"): questo pulsante svuotava
+                    # SOLO la cache figure (fcache), mai gli "artefatti pagina"
+                    # (quotazioni.category_ticker_bundles/dataset_bundle e simili,
+                    # core/page_cache.py) dove vive benchmark_series - una funzione
+                    # di pulizia dedicata (clear_page_artifact_disk_cache) esisteva
+                    # gia', testata, ma MAI collegata a nessun pulsante UI (il suo
+                    # stesso docstring diceva "serve a Dati/manutenzione esplicita").
+                    # L'help text sotto prometteva gia' "forza la rigenerazione dei
+                    # grafici alla prossima apertura" - ora lo fa davvero anche per
+                    # i bundle di pagina, non solo per i file grafici.
+                    page_artifacts_removed = clear_page_artifact_disk_cache()
                     invalidate_portfolio_cache("cache figure svuotata")
                     _record_cache_action("cleared")
-                    queue_success(f"Cache grafici ripulita: {count} file rimossi")
+                    queue_success(
+                        f"Cache grafici ripulita: {count} file rimossi · "
+                        f"artefatti pagina ripuliti: {page_artifacts_removed} file rimossi"
+                    )
                     update_status(status_box, label="Cache grafici ripulita", state="complete")
                     st.rerun()
 
@@ -1270,6 +1285,51 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                         queue_success("Pre-warming avviato. I grafici verranno preparati in background se il pre-warmer trova chart supportati.")
                     else:
                         st.info("Pre-warming già in esecuzione.")
+
+            # Bug reale segnalato dall'utente (2026-09-05, "modifichi il codice
+            # ma io vedo sempre la stessa identica rappresentazione"): StateManager
+            # (core/state.py) e' un singleton @st.cache_resource che sopravvive
+            # all'hot-reload di sviluppo di Streamlit (reimport dei moduli .py
+            # dopo una modifica) - Streamlit reimporta il CODICE ma non ricrea
+            # l'ISTANZA gia' in cache_resource, che resta legata alle classi/
+            # metodi del momento in cui e' stata creata (prima colta nel 2026-08
+            # per lo stesso motivo su start_form_server, vedi STATO_OPERATIVO).
+            # Risultato pratico: una correzione a core/state.py, o a qualunque
+            # funzione richiamata SOLO tramite l'istanza StateManager gia' in
+            # cache (es. data caricato una volta e mai piu' ricontrollato),
+            # restava invisibile finche' l'utente non riavviava per intero il
+            # processo (mai bastato un refresh del browser) - l'unico modo
+            # "morbido" per ottenere lo stesso effetto (st.cache_resource.clear())
+            # esisteva gia' in app.py ma non era MAI collegato a nessun pulsante.
+            st.caption(
+                "Ricarica tutto da zero (dati, benchmark, artefatti pagina, cache interna) senza chiudere il "
+                "terminale - un solo click, nessuna conferma richiesta: non cancella dati di portafoglio, "
+                "usalo quando una correzione recente non sembra avere alcun effetto nell'app."
+            )
+            if st.button("🔄 Riavvia sessione app", width="stretch", type="secondary", key="datahub_restart_session"):
+                # Task V-terdecies (2026-09-05, l'utente ha premuto il
+                # pulsante precedente e non e' cambiato nulla): un solo
+                # cache_resource.clear() non basta se il bundle Quotazioni
+                # e' anche in core.page_cache._PROCESS_CACHE (un dict
+                # modulo-level, non uno st.cache_* - clear_page_artifact_disk_cache()
+                # lo svuota gia', vedi pulsante "Svuota cache" sopra) - qui
+                # ripetuto esplicitamente cosi' un solo pulsante fa TUTTO
+                # invece di richiedere all'utente di premerne due in
+                # sequenza per essere sicuro dell'effetto.
+                clear_page_artifact_disk_cache()
+                # La cache "sessione" di get_or_build_page_artifact (ordine
+                # sessione->processo->disco->build) vive in st.session_state
+                # sotto chiavi "_page_artifact::...", mai toccate da
+                # clear_page_artifact_disk_cache() (solo disco+processo) ne'
+                # da st.cache_resource.clear() (un dict Python normale, non
+                # uno st.cache_*) - rimosse esplicitamente qui per non
+                # lasciare una quarta via per cui un bundle vecchio
+                # sopravviva al riavvio.
+                for _key in [k for k in list(st.session_state.keys()) if str(k).startswith("_page_artifact::")]:
+                    del st.session_state[_key]
+                st.session_state["_clear_streamlit_cache"] = True
+                queue_success("Sessione riavviata: dati, benchmark e cache interna ricaricati da zero.")
+                st.rerun()
 
             with st.expander("Dettagli, diagnostica e regole cache", expanded=False):
                 st.caption("Sintesi read-only di cache figure, pre-warming, spazio fisico e ultime azioni di manutenzione.")

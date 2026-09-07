@@ -91,136 +91,122 @@ def build_objective_mix_chart(objective: dict, current_mix: dict, theme) -> go.F
     return finalize_chart(fig, "pianificazione_obiettivo_mix", layout_updates={"barmode": "stack"})
 
 
-def _pie_clockwise_order(items: list) -> list:
-    """Contromisura per un comportamento di rendering di Plotly (verificato
-    empiricamente su plotly 6.7.0, presente sia con sort=False sia col
-    sort di default): anche passando le fette nell'ordine voluto, Plotly
-    disegna in senso orario la prima fetta al suo posto ma TUTTE le altre
-    in ordine invertito (es. [Core, Difensivo, Satellite] -> visivamente
-    Core, Satellite, Difensivo). Passandogli invece [items[0]] +
-    reversed(items[1:]), la sua stessa inversione a runtime restituisce
-    l'ordine voluto - la doppia inversione si annulla. Senza questa
-    contromisura l'anello esterno del donut Allocazione (o qualunque Pie
-    con piu' di 2 fette e un ordine che deve avere un senso, es. allineato
-    a un altro anello) risulta visivamente sfalsato rispetto all'ordine
-    dei dati, anche se i dati stessi sono corretti."""
-    if len(items) <= 2:
-        return list(items)
-    return [items[0]] + list(reversed(items[1:]))
-
-
 def build_allocation_rings_chart(rings_df: pd.DataFrame, objective: dict, theme) -> go.Figure:
-    """Donut a due anelli distanziati: interno Core/Difensivo/Satellite,
-    esterno natura/esposizione (strumenti posseduti aggregati per natura
-    *all'interno dello stesso bucket*, con legenda sull'anello esterno).
-    Le fette esterne sono costruite nello stesso ordine di bucket
-    dell'anello interno (Core, Difensivo, Satellite): l'arco di ciascun
-    bucket nell'anello interno corrisponde cosi' esattamente all'arco
-    delle sue natura nell'anello esterno - vedi _pie_clockwise_order per
-    la contromisura al bug di rendering di Plotly che altrimenti sfalsa
-    l'ordine visivo. L'hover dell'anello esterno elenca i singoli
-    strumenti che compongono ciascuna fetta di natura."""
+    """Barre orizzontali impilate: una riga per bucket (Core/Difensivo/
+    Satellite), segmenti colorati per natura. Sostituisce il doppio anello
+    (Task V-nonies, 2026-09-05, l'utente lo ha giudicato due volte
+    "confuso"/"totalmente inesatto"): un donut a due anelli rappresenta
+    male uno strumento con esposizione frazionata su piu' bucket (es. 40%
+    Core/60% Satellite) - le due fette finiscono in punti scollegati
+    dell'anello esterno, con la stessa etichetta/colore ma nessun
+    collegamento visivo diretto fra loro (il tentativo precedente aveva
+    solo aggiunto la ripartizione in legenda, senza risolvere il problema
+    di fondo). In una barra impilata per bucket lo stesso caso e' naturale:
+    la natura compare come segmento nella barra Core E nella barra
+    Satellite, stesso colore in entrambe - nessuna fetta scollegata da
+    spiegare, la lunghezza di ciascuna barra e' gia' la sua quota assoluta
+    (niente bisogno di un anello interno separato per il totale bucket)."""
     fig = go.Figure()
     if rings_df is None or rings_df.empty:
         return finalize_chart(fig, "pianificazione_allocation_rings")
-    inner_labels: list[str] = []
-    inner_values: list[float] = []
-    inner_colors: list[str] = []
-    inner_hover: list[str] = []
-    outer_labels: list[str] = []
-    outer_values: list[float] = []
-    outer_colors: list[str] = []
-    outer_hover: list[str] = []
-    natura_totals: dict[str, float] = {}
-    for bucket in ("Core", "Difensivo", "Satellite"):
+
+    bucket_order = ("Satellite", "Difensivo", "Core")  # dal basso verso l'alto: Core in cima
+    bucket_totals: dict[str, float] = {}
+    for bucket in bucket_order:
         sub = rings_df[rings_df["bucket"] == bucket]
-        if sub.empty:
-            continue
-        total = float(sub["value"].sum())
-        inner_labels.append(bucket)
-        inner_values.append(total)
-        inner_colors.append(bucket_color(bucket, theme))
-        inner_hover.append(f"{bucket}<br>{fmt_eur_it(total, 2)}")
+        bucket_totals[bucket] = float(sub["value"].sum()) if not sub.empty else 0.0
+    grand_total = sum(bucket_totals.values()) or 1.0
 
-        nature_groups: dict[str, dict[str, object]] = {}
+    # Task V-decies (2026-09-05, l'utente non vuole dover passare dal
+    # tooltip per sapere quale strumento compone un segmento): un segmento
+    # per TICKER, non per natura aggregata - ogni strumento resta un
+    # rettangolo separato nella barra (etichettato col proprio ticker
+    # quando c'e' spazio), pur restando raggruppato in un'unica voce di
+    # legenda per natura (stesso colore, legendgroup) invece di esplodere
+    # in una voce per strumento. ticker_order preserva l'ordine di prima
+    # comparsa cosi' la stessa natura resta contigua nello stack.
+    ticker_rows: dict[str, list[dict[str, object]]] = {}  # ticker -> righe (una per bucket)
+    ticker_order: list[str] = []
+    ticker_nature: dict[str, str] = {}
+    for bucket in bucket_order:
+        sub = rings_df[rings_df["bucket"] == bucket]
         for _, row in sub.iterrows():
-            nature = str(row["nature"])
-            group = nature_groups.setdefault(nature, {"value": 0.0, "items": []})
-            group["value"] = float(group["value"]) + float(row["value"])
-            group["items"].append((str(row["ticker"]), float(row["value"])))
-        for nature, group in nature_groups.items():
-            nature_color, _icon_svg, nature_label = get_nature_visual(nature)
-            outer_labels.append(nature_label)
-            outer_values.append(float(group["value"]))
-            outer_colors.append(nature_color)
-            outer_hover.append(
-                "<br>".join(
-                    [f"<b>{nature_label}</b>"] + [f"{tk}: {fmt_eur_it(v, 2)}" for tk, v in group["items"]]
-                )
-            )
-            natura_totals[nature_label] = natura_totals.get(nature_label, 0.0) + float(group["value"])
+            ticker = str(row["ticker"])
+            if ticker not in ticker_rows:
+                ticker_rows[ticker] = []
+                ticker_order.append(ticker)
+                ticker_nature[ticker] = str(row["nature"])
+            ticker_rows[ticker].append({"bucket": bucket, "value": float(row["value"]), "name": str(row.get("name") or ticker)})
+    # ordina i ticker per natura (nature_order = prima comparsa), cosi' gli
+    # strumenti della stessa natura restano adiacenti nello stack.
+    nature_order: list[str] = []
+    for tk in ticker_order:
+        if ticker_nature[tk] not in nature_order:
+            nature_order.append(ticker_nature[tk])
+    ticker_order.sort(key=lambda tk: nature_order.index(ticker_nature[tk]))
 
-    grand_total = sum(inner_values) or 1.0
-    fig.add_trace(go.Pie(
-        labels=_pie_clockwise_order(inner_labels),
-        values=_pie_clockwise_order(inner_values),
-        hole=0.5,
-        domain=dict(x=[0.22, 0.78], y=[0.22, 0.78]),
-        marker=dict(colors=_pie_clockwise_order(inner_colors), line=dict(color="rgba(255,255,255,0.6)", width=1)),
-        textinfo="label",
-        textposition="inside",
-        insidetextorientation="horizontal",
-        customdata=_pie_clockwise_order(inner_hover),
-        hovertemplate="%{customdata}<extra></extra>",
-        showlegend=False,
-        sort=False,
-    ))
-    fig.add_trace(go.Pie(
-        labels=_pie_clockwise_order(outer_labels),
-        values=_pie_clockwise_order(outer_values),
-        hole=0.60,
-        domain=dict(x=[0.0, 1.0], y=[0.0, 1.0]),
-        marker=dict(colors=_pie_clockwise_order(outer_colors), line=dict(color="rgba(255,255,255,0.6)", width=1)),
-        textinfo="percent",
-        textposition="inside",
-        customdata=_pie_clockwise_order(outer_hover),
-        hovertemplate="%{customdata}<extra></extra>",
-        showlegend=False,
-        sort=False,
-    ))
-    # La legenda della fetta esterna non puo' usare showlegend sulla traccia
-    # Pie stessa: la sua lista di legenda segue l'ordine dati grezzo (senza
-    # la contromisura di _pie_clockwise_order), quindi risulterebbe nello
-    # stesso ordine sfalsato che _pie_clockwise_order corregge solo per il
-    # disegno delle fette. Tracce fittizie (nessun punto reale disegnato)
-    # una per natura unica, nell'ordine vero, danno una legenda leggibile e
-    # indipendente dal bug di rendering.
-    legend_seen: set[str] = set()
-    for natura, color in zip(outer_labels, outer_colors):
-        if natura in legend_seen:
+    legend_shown: set[str] = set()
+    for ticker in ticker_order:
+        nature = ticker_nature[ticker]
+        color, _icon_svg, label = get_nature_visual(nature)
+        x_values, y_values, hover, text = [], [], [], []
+        for entry in ticker_rows[ticker]:
+            bucket = str(entry["bucket"])
+            value = float(entry["value"])
+            if value <= 0:
+                continue
+            x_values.append(value)
+            y_values.append(bucket)
+            share_of_bucket = value / bucket_totals[bucket] if bucket_totals[bucket] > 0 else 0.0
+            hover.append(
+                f"<b>{ticker}</b> — {entry['name']}<br>{label} · {bucket}<br>"
+                f"{fmt_eur_it(value, 2)} ({fmt_pct_it(share_of_bucket, 0)} del bucket)"
+            )
+            # etichetta diretta col ticker solo sui segmenti abbastanza
+            # larghi da leggerla senza sovrapposizioni (>= 10% del bucket).
+            text.append(ticker if share_of_bucket >= 0.10 else "")
+        if not x_values:
             continue
-        legend_seen.add(natura)
-        pct = fmt_pct_it(natura_totals.get(natura, 0.0) / grand_total, 1)
-        fig.add_trace(go.Scatter(
-            x=[None], y=[None], mode="markers",
-            marker=dict(size=10, color=color, symbol="square"),
-            name=f"{natura} ({pct})", showlegend=True, hoverinfo="skip",
+        show_legend = nature not in legend_shown
+        legend_shown.add(nature)
+        fig.add_trace(go.Bar(
+            orientation="h",
+            x=x_values,
+            y=y_values,
+            name=label,
+            legendgroup=nature,
+            showlegend=show_legend,
+            text=text,
+            textposition="inside",
+            insidetextanchor="middle",
+            textfont=dict(color="rgba(255,255,255,0.95)", size=10),
+            marker=dict(color=color, line=dict(color="rgba(255,255,255,0.6)", width=1)),
+            customdata=hover,
+            hovertemplate="%{customdata}<extra></extra>",
         ))
-    for bucket, total, color in zip(inner_labels, inner_values, inner_colors):
+
+    for bucket in bucket_order:
+        total = bucket_totals[bucket]
         pct = fmt_pct_it(total / grand_total, 1)
-        fig.add_trace(go.Scatter(
-            x=[None], y=[None], mode="markers",
-            marker=dict(size=10, color=color, symbol="square"),
-            name=f"{bucket} ({pct})", showlegend=True, hoverinfo="skip",
-            legend="legend2",
-        ))
+        fig.add_annotation(
+            x=total, y=bucket, xanchor="left", yanchor="middle", xshift=10,
+            text=f"<b>{fmt_eur_it(total, 0)}</b> ({pct})",
+            showarrow=False, font=dict(size=12, color=bucket_color(bucket, theme)),
+        )
+
     fig = finalize_chart(fig, "pianificazione_allocation_rings")
     fig.update_layout(
-        legend=dict(x=-0.35, y=0.5, xanchor="left", yanchor="middle"),
-        legend2=dict(x=1.05, y=0.5, xanchor="left", yanchor="middle"),
+        barmode="stack",
+        bargap=0.35,
+        legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.12, yanchor="top"),
+        margin=dict(r=90),
     )
     fig.update_xaxes(visible=False, showgrid=False, showline=False, zeroline=False)
-    fig.update_yaxes(visible=False, showgrid=False, showline=False, zeroline=False)
+    fig.update_yaxes(
+        visible=True, showgrid=False, showline=False, zeroline=False,
+        categoryorder="array", categoryarray=list(bucket_order),
+        tickfont=dict(size=13, weight="bold"),
+    )
     return fig
 
 

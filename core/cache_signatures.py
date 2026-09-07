@@ -365,6 +365,7 @@ def build_category_data_signature(
     *,
     app_version: str,
     schema_version: str,
+    include_benchmark_data: bool = False,
 ) -> str:
     """
     Firma per figure che dipendono solo dagli strumenti di una macro-categoria.
@@ -377,6 +378,23 @@ def build_category_data_signature(
     backfill (una data piu' vecchia gia' esistente riceve ora un valore per
     un ticker di questa categoria), senza dipendere da contatori globali che
     invaliderebbero la firma anche per categorie non toccate dal refresh.
+
+    include_benchmark_data (bug reale trovato dall'utente in produzione,
+    2026-09-05, "grafici in Quotazioni senza benchmark"): l'artefatto L2
+    `quotazioni.category_ticker_bundles` (core/dashboard_datasets.py) e'
+    DICHIARATO dipendere da `benchmark_series_cache` nel registry
+    (core/cache_policy.py), ma quella dichiarazione e' solo una stringa
+    nel tuple `dependencies` - non veniva mai tradotta in un hash reale del
+    contenuto di `data["benchmark_data"]`. Risultato: se lo storico prezzi
+    di un benchmark viene scaricato/aggiornato DOPO che il bundle per quella
+    categoria e' gia' in cache su disco (nessun altro cambiamento nella
+    categoria nel frattempo - stesso identico strumento/prezzi/eventi), il
+    grafico resta agganciato alla versione vecchia (spesso senza benchmark)
+    indefinitamente, perche' la firma non cambia mai. Stesso payload gia'
+    usato da build_market_data_signature/build_cashflow_data_signature con
+    lo stesso flag (_base_market_signature_payload), qui applicato anche a
+    questa firma cosi' le tre restano coerenti tra loro invece di divergere
+    silenziosamente come accadeva finora.
     """
     payload = data if isinstance(data, dict) else {}
     strumenti = payload.get("strumenti", [])
@@ -425,6 +443,18 @@ def build_category_data_signature(
         "latest_history_point_by_ticker": latest_history_point_by_ticker(storico, cat_tickers),
         "category_events": _normalized_operation_signature_payload(cat_eventi),
     }
+    if include_benchmark_data:
+        benchmark_data = payload.get("benchmark_data", {})
+        if not isinstance(benchmark_data, dict):
+            benchmark_data = {}
+        signature_payload["benchmark_points"] = {
+            str(key): len(value) if isinstance(value, dict) else 0
+            for key, value in sorted(benchmark_data.items())
+        }
+        signature_payload["benchmark_latest"] = {
+            str(key): max(value.keys(), default="") if isinstance(value, dict) else ""
+            for key, value in sorted(benchmark_data.items())
+        }
     cat_hash = _safe_hash(signature_payload)
     return data_signature(
         n_instruments=len(cat_strumenti),
@@ -434,6 +464,66 @@ def build_category_data_signature(
         app_version=str(app_version),
         schema_version=str(schema_version),
     )
+
+
+def _ticker_benchmark_data_hash(
+    payload: dict[str, Any],
+    ticker_str: str,
+    ticker_strumenti: list[dict[str, Any]],
+) -> str:
+    """Hash della serie benchmark assegnata a questo ticker.
+
+    Task V-quindecies (2026-09-05): bug reale confermato dal vivo -
+    SWDA.MI/XDEB.MI/XDEQ.MI (condividono tutti ^GSPC) restavano senza curva
+    benchmark visibile anche dopo aver riparato ^GSPC in
+    portafoglio_benchmark_cache.json, perche' la figura
+    "quotazioni_quote_history" e' cacheata su disco per (chart_id, data_sig,
+    theme_sig, charts_settings_sig) e build_ticker_data_signature (= data_sig)
+    non conteneva alcun riferimento a benchmark_data: qualunque riparazione
+    del benchmark restava invisibile perche' get_or_build continuava a fare
+    hit sulla figura salvata PRIMA della riparazione. Verificato leggendo
+    direttamente il JSON compresso in data/cache/figures/: la figura
+    cacheata per SWDA.MI non aveva alcuna traccia benchmark nei suoi 'data'.
+    Nota: _portfolio_semantic_signature in app.py esclude deliberatamente
+    benchmark_data (falsi signature_changed su cache diversa/più ampia) - qui
+    e' l'opposto, serve la firma scoped SOLO al benchmark di QUESTO ticker.
+    """
+    from core.benchmark_registry import resolve_instrument_benchmark
+
+    instrument = ticker_strumenti[0] if ticker_strumenti else {}
+    master_map = payload.get("instrument_master", {})
+    master_entry = master_map.get(ticker_str) if isinstance(master_map, dict) else None
+    try:
+        bench_assignment = resolve_instrument_benchmark(
+            instrument, master_entry=master_entry, prefer_master=True,
+        )
+    except Exception:
+        return "n/d"
+    bench_ticker = getattr(bench_assignment, "ticker", None)
+    if not bench_ticker:
+        return "n/d"
+    benchmark_data = payload.get("benchmark_data", {})
+    if not isinstance(benchmark_data, dict):
+        return "n/d"
+    bd = benchmark_data.get(f"bench_{bench_ticker}")
+    if not isinstance(bd, dict) or not bd:
+        return "n/d"
+    return _safe_hash(bd)
+
+
+# Task V-ventiduesima (2026-09-06): bug reale trovato dall'utente subito
+# dopo il fix V-ventesima (ancoraggio benchmark a 100 sulla data di
+# acquisto) - la firma di questa figura dipende dal CONTENUTO dei dati
+# (prezzi, benchmark_data), mai dal codice che li trasforma in curve. Un
+# cambio della LOGICA di normalizzazione (es. quale data usare come base
+# 100) a parita' di dati sorgente produce la STESSA firma, quindi
+# get_or_build continua a servire la figura vecchia cacheata su disco con
+# la logica precedente - stesso identico meccanismo del bug V-quindecies,
+# ma sul codice invece che sui dati. Bump manuale ogni volta che cambia
+# davvero il modo in cui normalized_series/benchmark_series vengono
+# costruiti in core/dashboard_datasets.py (non per cambi che toccano solo
+# dati/cache) - stesso pattern di _STATE_MANAGER_SCHEMA in app.py.
+_TICKER_CHART_LOGIC_VERSION = "v2-2026-09-06-benchmark-base-date-anchor"
 
 
 def build_ticker_data_signature(
@@ -453,7 +543,11 @@ def build_ticker_data_signature(
     ticker" sia il caso backfill (una data piu' vecchia gia' esistente
     riceve ora un valore per questo ticker), senza dipendere da contatori
     globali che invaliderebbero la firma anche per ticker non toccati dal
-    refresh.
+    refresh. benchmark_data_hash (Task V-quindecies) copre invece i cambi
+    alla curva di CONFRONTO disegnata nella stessa figura - vedi
+    _ticker_benchmark_data_hash. _TICKER_CHART_LOGIC_VERSION (Task
+    V-ventiduesima) copre i cambi al CODICE di normalizzazione, mai
+    catturati dall'hash dei dati da solo.
     """
     payload = data if isinstance(data, dict) else {}
     strumenti = payload.get("strumenti", [])
@@ -480,6 +574,8 @@ def build_ticker_data_signature(
         "instrument": _normalized_instrument_signature_payload(ticker_strumenti),
         "history_span": history_span_by_ticker(storico, [ticker_str]).get(ticker_str, {"n_dates": 0, "earliest": ""}),
         "latest_history_point": latest_history_point_by_ticker(storico, [ticker_str]).get(ticker_str, {"latest": "", "value": None}),
+        "benchmark_data_hash": _ticker_benchmark_data_hash(payload, ticker_str, ticker_strumenti),
+        "chart_logic_version": _TICKER_CHART_LOGIC_VERSION,
     }
     ticker_hash = _safe_hash(signature_payload)
     return data_signature(

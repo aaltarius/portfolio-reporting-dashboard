@@ -133,6 +133,8 @@ select:focus,input:focus{border-color:var(--indigo-500);box-shadow:0 0 0 3px var
 .sc-g{background:var(--green-100);color:var(--green-800)}.sc-m{background:var(--yellow-100);color:var(--yellow-800)}.sc-b{background:var(--red-100);color:var(--red-800)}
 .rb-dot{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:middle}
 .rb-core{background:var(--blue-500)}.rb-dif{background:var(--green-500)}.rb-sat{background:var(--orange-500)}
+.rb-split{display:inline-flex;width:22px;height:11px;border-radius:3px;overflow:hidden;vertical-align:middle}
+.rb-split span{height:100%}
 .tbl-actions{display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap}
 .btn-sm{padding:5px 12px;border:1px solid var(--slate-200);background:var(--slate-50);color:var(--slate-600);border-radius:7px;font-size:.78rem;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
 .btn-sm:hover{border-color:var(--indigo-500);color:var(--indigo-500);background:var(--indigo-50)}
@@ -217,14 +219,55 @@ def _data_badge(score: float, label: str) -> str:
 _RUOLO_BADGE_CLASS = {"Core": "rb-core", "Difensivo": "rb-dif", "Satellite": "rb-sat"}
 
 
-def _ruolo_badge(bucket: str) -> str:
-    bucket = bucket if bucket in _RUOLO_BADGE_CLASS else "Satellite"
-    return f'<span class="rb-dot {_RUOLO_BADGE_CLASS[bucket]}" title="Ruolo: {bucket}"></span>'
+def _ruolo_badge(bucket: str, exposure: dict | None = None) -> str:
+    """Indicatore di ruolo: una mini-barra della STESSA larghezza per ogni
+    strumento (un solo segmento a piena larghezza per un'esposizione
+    (quasi) interamente su un bucket, piu' segmenti proporzionali alla
+    frazione reale per uno strumento diviso) - un pallino piccolo solo
+    come fallback quando l'esposizione non e' disponibile.
+
+    Task V-undecies (2026-09-05, bug reale segnalato dall'utente: "i
+    colori degli strumenti continuano a non essere totalmente
+    rappresentativi della suddivisione C/D/S"): prima di questo fix
+    `_ruolo_badge` riceveva solo `_bucket`, il bucket DOMINANTE
+    (`_primary_bucket_from_exposure`, la frazione piu' alta) - uno
+    strumento 40% Core/60% Satellite mostrava un pallino Satellite pieno,
+    nascondendo del tutto la componente Core. Con `exposure` (il dict
+    frazionato reale, gia' calcolato da tempo per il punteggio ma mai
+    arrivato fin qui alla UI) uno strumento diviso mostra ora un segmento
+    per ciascun bucket a cui appartiene, largo quanto la sua frazione."""
+    exposure = {b: max(0.0, float(f)) for b, f in (exposure or {}).items() if b in _RUOLO_BADGE_CLASS and float(f) > 0}
+    total = sum(exposure.values())
+    if not exposure or total <= 0:
+        # Fallback vero: nessun dato di esposizione disponibile (non un
+        # 100% legittimo su un solo bucket, quello scende nel ramo sotto).
+        bucket = bucket if bucket in _RUOLO_BADGE_CLASS else "Satellite"
+        return f'<span class="rb-dot {_RUOLO_BADGE_CLASS[bucket]}" title="Ruolo: {bucket}"></span>'
+    if len(exposure) == 1 or max(exposure.values()) / total >= 0.999:
+        # Task V-duodecies (2026-09-05, richiesta dell'utente: "quando hai
+        # il 100% fai la lunghezza della barra uguale alle altre miste") -
+        # stessa larghezza/contenitore rb-split delle esposizioni divise,
+        # un solo segmento a piena larghezza invece del pallino piccolo:
+        # tutti i badge hanno ora la stessa dimensione visiva, un pallino
+        # piu' piccolo per un 100% dava l'impressione (sbagliata) che uno
+        # strumento puro pesasse "di meno" di uno diviso.
+        only_bucket = max(exposure.items(), key=lambda kv: kv[1])[0]
+        return (
+            f'<span class="rb-split" title="Ruolo: {only_bucket} (100%)">'
+            f'<span class="{_RUOLO_BADGE_CLASS[only_bucket]}" style="width:100%"></span></span>'
+        )
+    segments = "".join(
+        f'<span class="{_RUOLO_BADGE_CLASS[b]}" style="width:{frac / total * 100:.1f}%"></span>'
+        for b, frac in sorted(exposure.items(), key=lambda kv: -kv[1])
+    )
+    title = " · ".join(f"{b} {frac / total:.0%}" for b, frac in sorted(exposure.items(), key=lambda kv: -kv[1]))
+    return f'<span class="rb-split" title="Ruolo: {title}">{segments}</span>'
 
 
 _SATOR_LEGEND_HTML = (
     "<div class='legend-box'>"
-    "<span><b>Ruolo</b>: Core = pilastro diversificato, Difensivo = stabilita/liquidita/oro/bond, Satellite = tattico/tematico</span>"
+    "<span><b>Ruolo</b>: Core = pilastro diversificato, Difensivo = stabilita/liquidita/oro/bond, Satellite = tattico/tematico "
+    "(pallino pieno = 100% su un bucket, barra a segmenti = esposizione divisa, larghezza proporzionale)</span>"
     "<span><b>Voto</b> 1–10: punteggio unico, ordina la classifica</span>"
     "<span><b>Prio</b> 1–10: priorita' d'acquisto concreta sul portafoglio attuale</span>"
     "<span><b>Fit</b> 30%: quanto la funzione serve ora al portafoglio</span>"
@@ -251,6 +294,7 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
             "name":     str(row.get("_name", "")),
             "funzione": str(row.get("Gruppo", "")),
             "bucket":   str(row.get("_bucket", "Satellite")),
+            "bucket_exposure": dict(row.get("_bucket_exposure") or {}),
             "voto":     float(row.get("Voto", 0)),
             "score":    float(row.get("_score", 0)),
             "prio":     float(row.get("Prio", 0)),
@@ -326,7 +370,7 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
             f"<td style='font-weight:800;white-space:nowrap;width:66px;overflow:hidden;text-overflow:ellipsis'>{tk}{comm_badge}{dati_warning}</td>"
             f"<td style='width:106px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--slate-600)' title='{name_esc}'>{name_short}</td>"
             f"<td style='width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.7rem;color:var(--slate-500)' title='{escape(funz_full)}'>{funz}</td>"
-            f"<td style='text-align:center;width:24px'>{_ruolo_badge(r['bucket'])}</td>"
+            f"<td style='text-align:center;width:24px'>{_ruolo_badge(r['bucket'], r.get('bucket_exposure'))}</td>"
             f"<td style='text-align:center;width:36px' title='{why_esc}'>{_voto_badge(r['voto'])}</td>"
             f"<td style='text-align:center;width:36px' title='{escape(r['decision_reason'])}'>{_voto_badge(r['prio'])}</td>"
             f"<td style='text-align:center;width:28px'>{_sc_badge(r['fit'])}</td>"
@@ -405,7 +449,6 @@ def _build_sator_ranking_html(matrix_df, alerts: list) -> "tuple[str, str]":
 
 def _render_sator_page(
     budget_str: str = "5000",
-    severity_str: str = "2",
     max_lines_str: str = "5",
     categories_val: str = "ETF,ETC",
     include_fee_instruments: bool = True,
@@ -433,12 +476,6 @@ def _render_sator_page(
     cat_checks = "".join(_cat_chk(c) for c in _SATOR_ALL_CATS)
     fee_checked = "checked" if include_fee_instruments else ""
 
-    sev_opts = "".join(
-        f'<option value="{i}" {"selected" if str(i) == severity_str else ""}>'
-        f'{i} – {"Bassa" if i==1 else "Media" if i==2 else "Alta" if i==3 else "Massima"}'
-        f'</option>'
-        for i in range(1, 5)
-    )
     ml_opts = "".join(
         f'<option value="{i}" {"selected" if str(i) == max_lines_str else ""}>{i}</option>'
         for i in range(1, 11)
@@ -450,7 +487,6 @@ def _render_sator_page(
             f'<form id="salva_form" method="post" action="/sator">'
             f'<input type="hidden" name="azione" value="salva">'
             f'<input type="hidden" name="budget" value="{budget_for_eval}">'
-            f'<input type="hidden" name="severity" value="{escape(severity_str)}">'
             f'<input type="hidden" name="max_lines" value="{escape(max_lines_str)}">'
             f'<input type="hidden" name="categories_val" value="{escape(categories_val)}">'
             f'<input type="hidden" name="include_fee_instruments" value="{"1" if include_fee_instruments else "0"}">'
@@ -1604,10 +1640,6 @@ if(hasAnalysis){{sortDecisionRows('decision');prefillSug();}}
           <label class="lbl">Budget (€)</label>
           <input type="number" name="budget" value="{escape(budget_str)}" min="100" max="1000000" step="100" required>
         </div>
-        <div class="fg fg-md">
-          <label class="lbl">Severità concentrazione</label>
-          <select name="severity">{sev_opts}</select>
-        </div>
         <div class="fg fg-sm">
           <label class="lbl">Max linee ordine</label>
           <select name="max_lines">{ml_opts}</select>
@@ -1710,7 +1742,6 @@ async def get_sator(ok: str = "", err: str = ""):
 async def post_sator(
     azione: str = Form(""),
     budget: str = Form("5000"),
-    severity: str = Form("2"),
     max_lines: str = Form("5"),
     ranking_json: str = Form(""),
     alerts_json: str = Form(""),
@@ -1730,7 +1761,7 @@ async def post_sator(
 
     def err_page(msg: str) -> HTMLResponse:
         return HTMLResponse(_render_sator_page(
-            budget_str=budget, severity_str=severity,
+            budget_str=budget,
             max_lines_str=max_lines, categories_val=cats_str,
             include_fee_instruments=include_fee,
             err_msg=msg, decisions_json=dec_json,
@@ -1745,7 +1776,6 @@ async def post_sator(
             settings = _ls()
             data = apply_privacy_filter(_ld(), settings)
             budget_f = float(budget or 5000)
-            sev_i = max(1, min(4, int(severity or 2)))
             ml_i = max(1, min(10, int(max_lines or 5)))
 
             analysis = run_sator_analysis(
@@ -1753,7 +1783,6 @@ async def post_sator(
                 budget=budget_f,
                 selected_categories=categories_list,
                 include_fee_instruments=include_fee,
-                concentration_severity=sev_i,
             )
             ranking_df = analysis.get("ranking")
             if ranking_df is None or (hasattr(ranking_df, "empty") and ranking_df.empty):
@@ -1767,7 +1796,7 @@ async def post_sator(
             table_html, rows_js = _build_sator_ranking_html(matrix_df, alerts)
 
             return HTMLResponse(_render_sator_page(
-                budget_str=str(budget_f), severity_str=str(sev_i),
+                budget_str=str(budget_f),
                 max_lines_str=str(ml_i), categories_val=cats_str,
                 include_fee_instruments=include_fee,
                 ranking_html=table_html, rows_js=rows_js,

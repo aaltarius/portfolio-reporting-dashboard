@@ -157,6 +157,22 @@ def _build_bucket_allocation_table_html(
     "Lettura dell'allocazione" sia il box "Strumenti per bucket": un solo
     oggetto visivo invece di grafico + due box di testo."""
     total_value = float(bucket_totals.sum())
+    # Bug reale segnalato dall'utente (2026-09-05): uno strumento con
+    # bucket_exposure divisa (es. XDEB.MI 40% Core/60% Satellite) compare
+    # gia' come riga separata in ogni bucket a cui appartiene (rings_df ha
+    # una riga per (ticker, bucket) - vedi build_portfolio_rings_frame), ma
+    # senza alcuna indicazione che le due righe sono lo STESSO strumento
+    # diviso: l'utente vede lo stesso ticker ripetuto con "Attuale %"
+    # diversi (percentuali sul TOTALE DI BUCKET, non sulla ripartizione
+    # dello strumento) e non ha modo di capire la ripartizione C/D/S di
+    # riferimento. Calcolato qui (non serve toccare build_portfolio_rings_frame:
+    # la ripartizione e' gia' ricavabile dal rapporto tra il valore di questa
+    # riga e il valore totale dello stesso ticker su tutte le righe) e
+    # mostrato tra parentesi SOLO per i ticker che compaiono in piu' di un
+    # bucket - uno strumento non diviso resta invariato.
+    ticker_totals = rings_df.groupby("ticker")["value"].sum() if not rings_df.empty else pd.Series(dtype=float)
+    ticker_row_counts = rings_df.groupby("ticker")["bucket"].count() if not rings_df.empty else pd.Series(dtype=int)
+    split_tickers = set(ticker_row_counts[ticker_row_counts > 1].index)
     body_rows: list[str] = []
     for b in ("Core", "Difensivo", "Satellite"):
         sub = rings_df[rings_df["bucket"] == b]
@@ -198,6 +214,11 @@ def _build_bucket_allocation_table_html(
                 natura_color, natura_svg, natura_label = get_nature_visual(nature)
                 instrument_value = float(row["value"])
                 current_pct = (instrument_value / bucket_value * 100.0) if bucket_value > 0 else 0.0
+                ticker_label = escape(ticker)
+                if ticker in split_tickers:
+                    ticker_total = float(ticker_totals.get(ticker, 0.0))
+                    split_pct = (instrument_value / ticker_total * 100.0) if ticker_total > 0 else 0.0
+                    ticker_label += f' <span class="bucket-alloc-split-hint">({split_pct:.0f}% {b.lower()})</span>'
                 has_target = ticker in targets
                 target_pct = targets.get(ticker, 0.0) * 100.0
                 deviation_pp = deviations.get(ticker, 0.0)
@@ -213,7 +234,7 @@ def _build_bucket_allocation_table_html(
                 body_rows.append(f'''
                 <tr class="bucket-alloc-instrument-row {severity}" style="--tone:{tone}">
                   <td><span class="bucket-alloc-natura" style="--natura-color:{natura_color}">{natura_svg}{natura_label}</span></td>
-                  <td class="bucket-alloc-ticker">{escape(ticker)}</td>
+                  <td class="bucket-alloc-ticker">{ticker_label}</td>
                   <td class="num">{fmt_eur_it(instrument_value, 2)}</td>
                   <td>
                     <div class="bucket-alloc-mini-track">
@@ -674,6 +695,7 @@ def _build_sator_reference_summary_html(latest: dict, theme, data: dict, decisio
         for line in order_lines:
             ticker = str(line.get("ticker", ""))
             name = str(line.get("name") or "").strip() or ticker
+            isin = str(line.get("isin") or "").strip()
             nature = nature_by_ticker.get(ticker.strip().upper(), "altro")
             natura_color, natura_svg, natura_label = get_nature_visual(nature)
             bucket = str(line.get("bucket") or "Satellite")
@@ -693,6 +715,7 @@ def _build_sator_reference_summary_html(latest: dict, theme, data: dict, decisio
                 f'<span class="ref-snapshot-natura" style="--natura-color:{natura_color}" title="{natura_label}">{natura_svg}</span>'
                 f'<span class="ref-snapshot-instrument-text"><span class="ticker">{ticker}</span><span class="name">{name}</span></span>'
                 '</span></td>'
+                f'<td class="ref-snapshot-isin">{escape(isin) or "&mdash;"}</td>'
                 f'<td class="num">{int(line.get("shares", 0))}q</td>'
                 f'<td class="num">{fmt_eur_it(float(line.get("price", 0.0)), 2)}</td>'
                 f'<td class="num">{fmt_eur_it(float(line.get("amount", 0.0)), 2)}</td>'
@@ -702,7 +725,7 @@ def _build_sator_reference_summary_html(latest: dict, theme, data: dict, decisio
         lines_html = (
             f'<div class="ref-snapshot-lines-label">Righe ordine ({len(order_lines)})</div>'
             '<div class="ref-snapshot-lines"><table>'
-            '<thead><tr><th>Strumento</th><th class="num">Quote</th><th class="num">Prezzo*</th>'
+            '<thead><tr><th>Strumento</th><th>ISIN</th><th class="num">Quote</th><th class="num">Prezzo*</th>'
             '<th class="num">Importo</th><th class="num">Totale bucket</th></tr></thead>'
             f'<tbody>{line_rows}</tbody></table></div>'
             '<div class="ref-snapshot-footnote">* Prezzo rilevato al momento del salvataggio della fotografia, non il prezzo attuale.</div>'
@@ -736,8 +759,36 @@ def _build_sator_reference_summary_html(latest: dict, theme, data: dict, decisio
     )
 
 
+def _build_sator_shopping_list_csv(latest: dict) -> bytes:
+    """CSV 'lista della spesa' della fotografia SATOR salvata: ticker, ISIN,
+    nome, bucket, quote da prenotare, prezzo presunto e importo - pensato per
+    la ricerca/inserimento ordine sul sito della banca, non ricalcola nulla
+    (stessi campi gia' salvati in order_lines)."""
+    order_lines = latest.get("order_lines") or []
+    rows = [{
+        "Ticker": str(line.get("ticker", "")),
+        "ISIN": str(line.get("isin") or ""),
+        "Nome": str(line.get("name") or ""),
+        "Bucket": str(line.get("bucket") or ""),
+        "Quote": int(line.get("shares", 0)),
+        "Prezzo presunto": float(line.get("price", 0.0)),
+        "Importo": float(line.get("amount", 0.0)),
+    } for line in order_lines]
+    df = pd.DataFrame(rows, columns=["Ticker", "ISIN", "Nome", "Bucket", "Quote", "Prezzo presunto", "Importo"])
+    return df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig")
+
+
 def _render_sator_reference_summary(latest: dict, theme, data: dict, decisions: list[dict] | None = None) -> None:
     st.markdown(_build_sator_reference_summary_html(latest, theme, data, decisions), unsafe_allow_html=True)
+    if latest.get("order_lines"):
+        month_id = str(latest.get("month_id") or "foto").replace("/", "-")
+        st.download_button(
+            "⬇ Scarica lista della spesa (CSV)",
+            data=_build_sator_shopping_list_csv(latest),
+            file_name=f"sator_lista_spesa_{month_id}.csv",
+            mime="text/csv",
+            width="stretch",
+        )
 
 
 def _render_instrument_comparison_section(ctx: SimpleNamespace, exclude_tickers: frozenset[str] = frozenset()) -> None:

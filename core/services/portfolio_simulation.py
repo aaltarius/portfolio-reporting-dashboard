@@ -52,6 +52,8 @@ class PortfolioSimulationResult:
     horizons: list[HorizonMetrics]
     excluded_tickers: tuple[str, ...] = ()
     excluded_weight: float = 0.0
+    excluded_fragmented_tickers: tuple[str, ...] = ()
+    excluded_fragmented_weight: float = 0.0
 
 
 def _unavailable(reason: str, n_observations: int) -> PortfolioSimulationResult:
@@ -66,6 +68,8 @@ def _unavailable(reason: str, n_observations: int) -> PortfolioSimulationResult:
         horizons=[],
         excluded_tickers=(),
         excluded_weight=0.0,
+        excluded_fragmented_tickers=(),
+        excluded_fragmented_weight=0.0,
     )
 
 
@@ -101,6 +105,42 @@ def build_portfolio_simulation(
         return _unavailable(
             f"Storico insufficiente per una simulazione affidabile: nessuno strumento "
             f"posseduto ha almeno {MIN_OBSERVATIONS} quotazioni proprie.",
+            0,
+        )
+
+    # Anche con storico individuale sufficiente, uno o pochi strumenti con
+    # quotazioni frammentate (buchi sparsi per illiquidita', sospensioni,
+    # posizioni riaperte) possono far collassare sotto soglia la finestra
+    # comune calcolata sotto (dropna(how="any") su tutti gli ammessi insieme)
+    # pur avendo ciascuno >= MIN_OBSERVATIONS osservazioni proprie. Anziche'
+    # bloccare l'intera simulazione per colpa di pochi strumenti frammentati,
+    # si eliminano uno alla volta - sempre quello la cui rimozione allarga di
+    # piu' la finestra comune dei rimanenti - finche' la soglia e' raggiunta
+    # o non resta che un solo strumento.
+    common_count = len(simple_returns_all[eligible_tickers].dropna(how="any"))
+    excluded_fragmented: list[str] = []
+    while common_count < MIN_OBSERVATIONS and len(eligible_tickers) > 1:
+        best_ticker = None
+        best_count = common_count
+        for tk in eligible_tickers:
+            candidate = [t for t in eligible_tickers if t != tk]
+            candidate_count = len(simple_returns_all[candidate].dropna(how="any"))
+            if candidate_count > best_count:
+                best_count = candidate_count
+                best_ticker = tk
+        if best_ticker is None:
+            break
+        eligible_tickers.remove(best_ticker)
+        excluded_fragmented.append(best_ticker)
+        common_count = best_count
+    excluded_fragmented_weight = (
+        float(weights.reindex(excluded_fragmented).fillna(0.0).sum()) if excluded_fragmented else 0.0
+    )
+
+    if not eligible_tickers:
+        return _unavailable(
+            "Storico insufficiente per una simulazione affidabile: gli strumenti posseduti "
+            "non hanno abbastanza giorni di quotazione in comune.",
             0,
         )
 
@@ -175,4 +215,6 @@ def build_portfolio_simulation(
         horizons=horizons,
         excluded_tickers=tuple(excluded_tickers),
         excluded_weight=excluded_weight,
+        excluded_fragmented_tickers=tuple(excluded_fragmented),
+        excluded_fragmented_weight=excluded_fragmented_weight,
     )

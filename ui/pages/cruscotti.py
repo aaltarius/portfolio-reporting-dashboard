@@ -118,7 +118,7 @@ def _render_monte_carlo_analitica(bundle: Any) -> None:
     st.plotly_chart(mc_fig, width="stretch")
 
     if not mc_result.available:
-        st.caption(mc_result.reason)
+        st.info(mc_result.reason)
         return
 
     horizons_rows = []
@@ -145,10 +145,17 @@ def _render_monte_carlo_analitica(bundle: Any) -> None:
         f"perché non hanno ancora abbastanza quotazioni proprie."
         if mc_result.excluded_tickers else ""
     )
+    excluded_fragmented_note = (
+        f" Esclusi anche {len(mc_result.excluded_fragmented_tickers)} strumenti con quotazioni frammentate "
+        f"({fmt_pct_it(mc_result.excluded_fragmented_weight, 0)} del portafoglio pesato: "
+        f"{', '.join(mc_result.excluded_fragmented_tickers)}) perché i loro buchi di storico impedivano "
+        f"di trovare abbastanza giorni in comune con gli altri strumenti."
+        if mc_result.excluded_fragmented_tickers else ""
+    )
     st.caption(
         f"Simulazione basata su {mc_result.n_observations} osservazioni storiche reali del "
         f"portafoglio attuale, {mc_result.n_scenarios} scenari ricampionati (bootstrap storico, "
-        f"non un modello previsivo).{extrapolation_note}{excluded_note}"
+        f"non un modello previsivo).{extrapolation_note}{excluded_note}{excluded_fragmented_note}"
     )
     legend_block("Ogni scenario è un percorso possibile ricostruito ricampionando la storia reale del portafoglio, non una previsione: la mediana è il centro della distribuzione simulata, le bande mostrano quanto può variare l'esito.", variant="bottom")
 

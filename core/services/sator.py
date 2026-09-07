@@ -19,6 +19,7 @@ Pesi delle dimensioni (dal documento di impianto):
 """
 from __future__ import annotations
 
+import itertools
 import logging
 import math
 from dataclasses import dataclass, field
@@ -203,7 +204,6 @@ class SatorContext:
     selected_categories: tuple[str, ...]
     include_fee_instruments: bool
     liquidita: float
-    concentration_severity: float = 1.0
     blocked_buckets_quota: frozenset[str] = frozenset()
     instrument_bucket_exposures: dict[str, dict[str, float]] = field(default_factory=dict)
 
@@ -355,6 +355,20 @@ def infer_sator_metadata(item: dict[str, Any], in_portfolio: bool) -> dict[str, 
         nature, role, confidence = "quality_factor", "core_regionale", "alta"
     elif "quality" in name or "qualit" in name:
         nature, role, confidence = "quality_factor", "core_regionale", "media"
+    elif tk_in("xdeb"):
+        nature, role, confidence = "quality_factor", "core_regionale", "alta"
+    elif ("minimum volatility" in name or "min vol" in name or "low beta" in name
+          or "minima volatilita" in name or "volatilita minima" in name):
+        # Stesso principio del ramo quality sopra (Task V-bis, 2026-09-05,
+        # buco residuo di P3 - vedi commento gemello in
+        # _nature_role_from_profile): senza questo ramo un ETF a fattore
+        # minimum-volatility/low-beta cade nel fallback generico "world"/
+        # "global" qualche riga sotto (il nome contiene quasi sempre
+        # "World", es. "MSCI World Minimum Volatility") ed esce etichettato
+        # core azionario globale - competendo direttamente con un vero core
+        # market-cap-weighted, quando questo ramo del CATALOGO (nessuna
+        # cache InstrumentAnalysis ancora disponibile) e' l'unico attivo.
+        nature, role, confidence = "quality_factor", "core_regionale", "media"
     elif tk_in("xdre", "iwda"):
         nature, role, confidence = "real_estate", "satellite_tematico", "alta"
     elif "real estate" in name or "immobil" in name or "reit" in name or "property" in name:
@@ -420,7 +434,7 @@ def infer_sator_metadata(item: dict[str, Any], in_portfolio: bool) -> dict[str, 
         "role": role,
         "confidence": confidence,
         "comparison_group": _infer_comparison_group(nature, role, ticker, name),
-        "function_label": _infer_function_label(nature, role),
+        "function_label": _infer_function_label(nature, role, name),
         "commission_mode": "zero_commissioni" if zero_commission else "standard",
         "pac_enabled": category != "GOV",
         "zero_commission": zero_commission,
@@ -506,7 +520,27 @@ def _nature_role_from_profile(profile: Any, category: str) -> tuple[str, str, st
     if theme == "clean_energy":
         return "energia", "satellite_tematico", confidence
 
-    if factor == "quality":
+    if factor in {"quality", "minimum_volatility", "low_beta"}:
+        # Task V-bis (2026-09-05, buco residuo di P3 trovato nello
+        # stress-test esteso): P3 aveva ribilanciato minimum_volatility/
+        # low_beta a 35/15/50 C/D/S SOLO in _hierarchical_role_prior
+        # (core/instrument_analysis/cds.py, il motore che calcola le
+        # percentuali C/D/S) - questo ramo, che decide invece "nature"/
+        # "comparison_group" (con cosa uno strumento viene confrontato e
+        # l'etichetta "Gruppo" mostrata in tabella), gestiva SOLO
+        # factor=="quality": un fattore singolo min-vol/low-beta cadeva nel
+        # fallback generico "geo_scope==global" qualche riga sotto e finiva
+        # etichettato "core azionario globale" - competendo direttamente
+        # (stesso comparison_group) con un vero core market-cap-weighted
+        # come SWDA.MI, esattamente lo scenario che aveva originato la
+        # contestazione dell'utente all'inizio di Task V. Verificato dal
+        # vivo su XDEB.MI (Xtrackers MSCI World Minimum Volatility): CDS
+        # gia' corretto (40% Core/60% Satellite) ma nature/comparison_group
+        # ancora "azionario_globale_core"/"core_azionario_globale" prima di
+        # questo fix. Nessuna nature dedicata esiste per min-vol/low-beta
+        # (SATOR_NATURE_VALUES): riusa "quality_factor" - stesso principio
+        # metodologico di P3 (un fattore singolo e' una scommessa attiva,
+        # non un sostituto del core), non una nature nuova inventata qui.
         return "quality_factor", "core_regionale", confidence
 
     if structural_type in {"SMALL_CAP_EQUITY", "EX_MEGA_CAP_EQUITY"}:
@@ -833,14 +867,22 @@ def apply_sator_universe_editor_frame(data: dict[str, Any], editor_df: pd.DataFr
         nature = str(row.get("Natura") or "").strip() or "altro"
         role = _coerce_choice(row.get("Ruolo"), SATOR_ROLE_VALUES, "altro")
         zero = bool(row.get("Zero commissioni", False))
-        # gruppo e funzione sono DERIVATI da natura/ruolo: non si chiedono all'utente
+        # gruppo e funzione sono DERIVATI da natura/ruolo: non si chiedono
+        # all'utente, e per lo stesso motivo non vanno MAI persistiti qui
+        # (Task V-octies, 2026-09-05, bug reale trovato: un valore scritto
+        # qui restava congelato per sempre in _meta_strutturale/user_edited,
+        # anche dopo un miglioramento futuro di _infer_comparison_group -
+        # verificato dal vivo su 13 strumenti reali con un comparison_group
+        # ormai disallineato dalla logica corrente. Stesso principio gia'
+        # applicato da apply_classification_override, che li rimuove
+        # esplicitamente quando il ruolo cambia - qui semplicemente non
+        # vengono mai scritti). _score_universe li ricalcola sempre da
+        # nature/role risolti, mai da questo payload.
         payload = {
             "active": bool(row.get("Attivo SATOR", True)),
             "state": _resolve_sator_state(row.get("Stato"), "watchlist"),
             "nature": nature,
             "role": role,
-            "comparison_group": _infer_comparison_group(nature, role, ticker, str(row.get("Nome") or "")),
-            "function_label": _infer_function_label(nature, role),
             # le commissioni si riducono a: zero, oppure no (e il costo e' nel TER)
             "commission_mode": "zero_commissioni" if zero else "standard",
             "pac_enabled": True,
@@ -971,20 +1013,22 @@ def run_sator_analysis(
     budget: float,
     selected_categories: list[str] | None = None,
     include_fee_instruments: bool = True,
-    concentration_severity: float = 1.0,
 ) -> dict[str, Any]:
+    # Task V-ventitreesima (2026-09-06): concentration_severity (il
+    # selettore "Bassa/Media/Alta/Massima" nel form SATOR) rimosso su
+    # richiesta esplicita dell'utente dopo aver verificato dal vivo, con
+    # uno sweep su 8 budget molto diversi (300-80.000 EUR), che le 4
+    # opzioni producevano risultati finali identici o quasi - il
+    # coefficiente di penalita' (vedi ex _score_fit) scatta solo quando un
+    # candidato e' gia' sopra il proprio tetto/obiettivo di bucket, e nei
+    # picchi di classifica reali questo non succede quasi mai: il
+    # punteggio interno era davvero distinto (test unitario dedicato), ma
+    # la differenza non arrivava mai a cambiare una decisione di acquisto.
+    # _score_fit ora applica sempre il coefficiente allo stesso livello
+    # "standard" che prima era il default per Pianificazione (severity=1.0).
     ensure_sator_metadata(data)
     cfg = ensure_sator_settings(settings)
     budget = max(0.0, _safe_float(budget, cfg["default_budget"]))
-    # Task V (2026-09-05, bug reale trovato in stress-test): il tetto era
-    # 2.0, ma la UI SATOR offre 4 livelli (1 Bassa, 2 Media, 3 Alta, 4
-    # Massima) passati cosi' come sono - Media/Alta/Massima collassavano
-    # tutte sullo stesso valore interno 2.0, producendo un risultato
-    # byte-identico per 3 opzioni su 4 (verificato: stesso identico HHI di
-    # concentrazione a piu' cifre decimali). Alzato a 4.0 cosi' i 4 livelli
-    # restano distinti; il default (1.0, "standard", invariato per chi non
-    # specifica il parametro, es. Pianificazione) non cambia.
-    concentration_severity = float(min(4.0, max(0.0, _safe_float(concentration_severity, 1.0))))
 
     state = compute_portfolio_state(data, include_closed=True)
     state_df = state.get("df", pd.DataFrame())
@@ -1031,7 +1075,6 @@ def run_sator_analysis(
         bucket_weights=bucket_weights, portfolio_value=portfolio_value,
         correlations=correlations, selected_categories=allowed,
         include_fee_instruments=bool(include_fee_instruments), liquidita=liquidita,
-        concentration_severity=concentration_severity,
         blocked_buckets_quota=blocked_buckets_quota,
         instrument_bucket_exposures=instrument_bucket_exposures,
     )
@@ -1109,6 +1152,7 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
             continue
 
         nature = _meta_strutturale(sator, inf, "nature")
+        role_resolved = _meta_strutturale(sator, inf, "role")
         metrics = metrics_batch.get(ticker, {k: np.nan for k in ("ret_1m", "ret_3m", "ret_6m", "ret_12m", "vol", "drawdown", "rend_vol", "n_punti")})
         peso_natura = ctx.nature_weights.get(nature, 0.0)
         rows.append({
@@ -1119,9 +1163,21 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
             "state": state,
             "in_portfolio": in_ptf,
             "nature": nature,
-            "role": _meta_strutturale(sator, inf, "role"),
-            "comparison_group": _meta_strutturale(sator, inf, "comparison_group"),
-            "function_label": _meta_strutturale(sator, inf, "function_label"),
+            "role": role_resolved,
+            # SEMPRE ricalcolati da nature/role risolti, mai letti da un
+            # eventuale user_edited persistito (Task V-octies, 2026-09-05,
+            # bug reale trovato mentre si indagava perche' EM13.MI non
+            # competeva mai in un gruppo proprio nonostante il fix a
+            # _infer_comparison_group: XBAE.MI aveva comparison_group/
+            # function_label CONGELATI a un valore vecchio da un
+            # user_edited=True salvato in passato dall'editor universo, che
+            # non li ricalcola mai - stesso principio gia' applicato sopra
+            # a commission_mode, "derivati da natura/ruolo: non si chiedono
+            # all'utente" per esplicito commento di
+            # apply_sator_universe_editor_frame, quindi non devono mai
+            # essere frozen come nature/role stessi).
+            "comparison_group": _infer_comparison_group(nature, role_resolved, ticker, str(item.get("nome") or ticker)),
+            "function_label": _infer_function_label(nature, role_resolved, str(item.get("nome") or ticker)),
             # Costo: SEMPRE dal valore live (Strumenti -> Arricchimento), mai
             # dal vecchio editor universo dormiente — anche se in passato uno
             # strumento e' stato marcato user_edited=True da li', quel dato e'
@@ -1147,7 +1203,6 @@ def _score_universe(ctx: SatorContext, cfg: dict[str, Any]) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
-    df["_sev"] = float(getattr(ctx, "concentration_severity", 1.0))
 
     caps = cfg.get("concentration_caps", CAP_MORBIDO_NATURA)
     portfolio_objective = ctx.settings.get("portfolio_objective", {}) if isinstance(ctx.settings, dict) else {}
@@ -1203,14 +1258,27 @@ def _score_fit(
     riempimento = min(1.5, _safe_float(row.get("nature_weight"), 0.0) / cap) if cap > 0 else 1.0
     concentrazione_linea = min(1.5, _safe_float(row.get("current_weight"), 0.0) / cap) if cap > 0 else 0.0
     score = 0.55 + float(np.clip((1.0 - riempimento) * 0.45, -0.35, 0.30))
-    # penalita' per la linea gia' sovrappesata, scalata dalla severita' scelta
-    # dall'utente: 0 = ignora la concentrazione, 1 = standard (default di
-    # Pianificazione quando non specificato, "Bassa" nel form SATOR), fino
-    # a 4 = "Massima" nel form - vedi run_sator_analysis per il tetto.
-    severita = _safe_float(row.get("_sev"), 1.0)
-    score -= float(np.clip(concentrazione_linea * 0.22, 0.0, 0.25)) * severita
-    if str(row.get("role")) in {"core_globale", "core_regionale", "core_difensivo"}:
-        score += 0.05
+    # penalita' per la linea gia' sovrappesata. Task V-ventitreesima
+    # (2026-09-06): il moltiplicatore di "severita'" scelto dall'utente
+    # (0-4) e' stato rimosso - livello "standard" sempre applicato (era il
+    # default 1.0, invariato per chi non specificava il parametro, es.
+    # Pianificazione).
+    score -= float(np.clip(concentrazione_linea * 0.22, 0.0, 0.25))
+    # RIMOSSO (Task V-bis, 2026-09-05, trovato nello stress-test esteso
+    # chiesto dall'utente dopo P1-P6): bonus fisso +0.05 per qualunque
+    # ruolo "core_*", incondizionato - si sommava anche quando il bucket
+    # Core era GIA' sopra il proprio target e un candidato Satellite sotto
+    # target competeva per lo stesso budget. Verificato dal vivo: Core al
+    # 65% (target 60%, leggermente sopra) batteva comunque un candidato
+    # Satellite al 15% (target 20%, sotto target) - 0,8875 contro 0,85 -
+    # SOLO per il bonus di ruolo, in diretta contraddizione con la
+    # definizione di Fit mostrata in UI ("quanto la funzione serve ORA al
+    # portafoglio", ui/form_server/sator.py) e con la penalita' per
+    # sforamento target poche righe sotto in questa stessa funzione. Il
+    # bisogno reale di un ruolo e' gia' rappresentato dal termine
+    # `riempimento` (nature_weight/cap) sopra e dalla penalita' di
+    # scostamento dal target bucket sotto: nessun bonus incondizionato
+    # aggiuntivo serve, ne' e' mai stato documentato nella UI.
     if bucket_weights and bucket_targets:
         exposure = row.get("_bucket_exposure") or {_role_bucket(str(row.get("role"))): 1.0}
         penalty = 0.0
@@ -1222,7 +1290,7 @@ def _score_fit(
             if target > 0:
                 eccesso_bucket = max(0.0, (peso_bucket / target) - 1.0)
                 penalty += frac * float(np.clip(eccesso_bucket * 0.15, 0.0, 0.20))
-        score -= penalty * severita
+        score -= penalty
     return float(np.clip(score, 0.0, 1.0))
 
 
@@ -1412,7 +1480,7 @@ def build_sator_matrix_frame(
                 sorted(blocked),
             )
         suggerite = _suggested_quotes_by_bucket(
-            work, budget, deficits, blocked, max_lines_per_bucket=len(work),
+            work, budget, deficits, blocked, max_lines_per_bucket=len(work), max_lines_total=max_lines,
             bucket_weights=bucket_weights, bucket_targets=objective,
             max_share=cfg["max_share_per_line"],
         )
@@ -1496,6 +1564,12 @@ def build_sator_matrix_frame(
         "_cost": pd.to_numeric(work["cost_efficiency"], errors="coerce").fillna(0.0),
         "_rango_gruppo": pd.to_numeric(work["rango_gruppo"], errors="coerce").fillna(0).astype(int),
         "_bucket": work.get("_bucket", work["role"].astype(str).map(_role_bucket)).astype(str),
+        # Passthrough dell'esposizione frazionata reale (Task V-undecies,
+        # 2026-09-05): fino a qui usata solo per calcolare i punteggi, mai
+        # arrivata alla UI - il pallino di ruolo in tabella mostrava sempre
+        # e solo `_bucket` (il bucket dominante), nascondendo la
+        # ripartizione vera per uno strumento diviso su piu' bucket.
+        "_bucket_exposure": work.get("_bucket_exposure", pd.Series([{} for _ in range(len(work))], index=work.index)),
         "_funzione": work["function_label"].astype(str),
         "_storico_ok": work["storico_sufficiente"].astype(bool),
         "_why": work["selection_reason"].astype(str),
@@ -2403,6 +2477,7 @@ def _suggested_quotes(
     bucket_weights: dict[str, float] | None = None,
     bucket_targets: dict[str, float] | None = None,
     max_share: float = 0.35,
+    cap_reference_budget: float | None = None,
 ) -> list[int]:
     """Allocazione suggerita a quote intere, guidata dall'utilita' marginale.
 
@@ -2410,7 +2485,28 @@ def _suggested_quotes(
     suggerite sono finanziate con un punteggio decisionale separato: ogni quota
     simulata deve risultare utile rispetto a target, cap, dati, costi e qualita'
     generale. Il residuo puo' restare liquido.
-    """
+
+    cap_reference_budget: base su cui calcolare cap_linea (tetto di
+    concentrazione per riga), se DIVERSA dal budget effettivamente speso in
+    questa chiamata (default None: usa `budget`, comportamento storico).
+
+    Task V-septies (2026-09-05, bug reale trovato dall'utente - due scenari
+    diversi, 1300€/Media/4 linee e 1300€/Alta/3 linee, entrambi con un
+    residuo enorme nonostante candidati economici e abbondanti): nel
+    percorso bucket-first (_suggested_quotes_by_bucket), `budget` qui e' la
+    FETTA di un singolo bucket (proporzionale al suo deficit, es. 483€ su
+    un totale di 1300€), non il budget totale scelto dall'utente - ma il
+    commento originale di DEFAULT_SATOR_SETTINGS e' esplicito: "nessuna
+    linea oltre il 35% DEL BUDGET SUGGERITO" (quello totale, mai definito
+    come "del bucket"). Calcolare cap_linea sulla fetta invece che sul
+    totale rende il tetto assoluto sempre piu' stretto quanto piu' un
+    bucket riceve una fetta piccola (per pochi bucket eleggibili, o per un
+    deficit sbilanciato) - senza alcun rapporto con un vero rischio di
+    concentrazione sul portafoglio complessivo, che si misura sul totale
+    investito, non su una suddivisione contabile interna. Verificato dal
+    vivo: XBAE.MI (20,64€/quota, candidati economici e abbondanti) restava
+    fermo a 8 quote (165€) con fetta Difensivo 483€*35%=169€, anche con
+    centinaia di euro liquidi altrove nello stesso budget totale."""
     n = len(ranking_df)
     quote = [0] * n
     if budget <= 0 or n == 0:
@@ -2422,7 +2518,7 @@ def _suggested_quotes(
     # effetto sul tetto di concentrazione per riga. Ora il chiamante lo
     # passa esplicitamente (default 0.35 solo per compatibilita' dei
     # chiamanti che non lo passano ancora).
-    cap_linea = budget * float(max_share)
+    cap_linea = (cap_reference_budget if cap_reference_budget is not None else budget) * float(max_share)
     # Un solo candidato per funzione: il piu' utile operativamente per una quota.
     # Cosi' il suggerito non coincide per forza col voto piu' alto se peggiora
     # target/cap o ha dati deboli.
@@ -2488,6 +2584,70 @@ def _suggested_quotes(
         quote[i] += 1
         speso += price
         progredito = True
+    # Task V-ventiquattresima (2026-09-06), richiesta esplicita dell'utente
+    # dopo aver visto budget grandi restare per meta' liquidi anche con il
+    # tetto per riga al 100%: "non dobbiamo fare i farmacisti - l'importante
+    # e' avvicinarci il piu' possibile agli obiettivi". Il giro sopra si
+    # ferma non appena la quota AGGIUNTIVA marginale scende sotto 0.50 (una
+    # soglia pensata per "vale la pena comprare ADESSO", non per "non
+    # sforare mai il budget"): sulle stesse righe gia' aperte, una volta
+    # servite le esigenze piu' forti, il marginale scende presto sotto
+    # quella soglia anche quando la riga resta comunque utile (target non
+    # peggiorato, cap non sforato, solo meno urgente).
+    #
+    # Un secondo giro con soglia piu' permissiva (0.30: _purchase_decision_score
+    # penalizza gia' sotto quella soglia chi peggiora davvero il target o
+    # sfora il cap, quindi resta un filtro reale, non "compra qualunque
+    # cosa") continua a versare il residuo - MA a differenza del giro
+    # sopra (una quota alla volta, pensato per poche unita' e importi
+    # medi) qui si calcola in BLOCCO quante quote aggiuntive del prezzo
+    # corrente entrano nel budget/cap residuo, invece di incrementare di 1
+    # e ricalcolare il punteggio ad ogni singola quota: con budget grandi
+    # (es. 500.000 EUR su uno strumento da 10 EUR) il giro a singola quota
+    # richiederebbe decine di migliaia di iterazioni - verificato dal vivo:
+    # oltre il timeout di un minuto su un budget realistico. Il punteggio
+    # marginale si ricalcola solo alla fine del blocco (sul totale
+    # raggiunto), non ad ogni singola unita' - leggermente meno preciso
+    # nello stimare quando il marginale scende sotto 0.30 a meta' blocco,
+    # ma l'obiettivo qui e' avvicinarsi al budget speso, non l'ottimo alla
+    # singola quota (gia' garantito dal giro sopra).
+    progredito = True
+    while progredito:
+        progredito = False
+        best: tuple[float, float, int, float, int] | None = None  # (score, -price, i, price, n_quote_blocco)
+        for i, _score, price in candidati:
+            residuo_budget = budget - speso
+            if price <= 0 or residuo_budget < price:
+                continue
+            max_per_budget = int(residuo_budget // price)
+            max_per_cap = int((cap_linea - quote[i] * price) // price) if price > 0 else 0
+            n_blocco = max(0, min(max_per_budget, max_per_cap))
+            if n_blocco <= 0:
+                continue
+            next_amount = (quote[i] + n_blocco) * price
+            step_score = _purchase_decision_score(df.iloc[i], next_amount, bucket_weights=bucket_weights, bucket_targets=bucket_targets)
+            if step_score < 0.30:
+                continue
+            # Guardia esplicita, non solo il punteggio composito: una
+            # soglia di punteggio permissiva puo' restare comunque alta
+            # per altri motivi (qualita' dati, costo) anche quando la
+            # riga peggiora chiaramente il target di bucket - qui NON
+            # basta "punteggio abbastanza alto", serve anche "non stia
+            # allontanando il portafoglio dall'obiettivo" (la richiesta
+            # dell'utente era esplicitamente "avvicinarci il piu' possibile
+            # agli obiettivi", mai il contrario).
+            metrics = _compute_marginal_purchase_metrics(df.iloc[i], next_amount, bucket_weights=bucket_weights, bucket_targets=bucket_targets)
+            if _safe_float(metrics.get("target_improvement_pp"), 0.0) < -0.10:
+                continue
+            candidate = (step_score, -price, i, price, n_blocco)
+            if best is None or candidate > best:
+                best = candidate
+        if best is None:
+            break
+        _step_score, _neg_price, i, price, n_blocco = best
+        quote[i] += n_blocco
+        speso += price * n_blocco
+        progredito = True
     return quote
 
 
@@ -2495,15 +2655,149 @@ def _dominant_bucket(
     exposure: dict[str, float], eligible_buckets: list[str], bucket_deficits: dict[str, float],
 ) -> str | None:
     """Tra i bucket a cui lo strumento appartiene (frazione > 0) E che sono
-    eleggibili (non bloccati, deficit positivo), quello col deficit euro
-    maggiore - li' dove il denaro serve di piu'. Per uno strumento non
-    diviso (un solo bucket in exposure) collassa al suo unico bucket,
-    IDENTICO al comportamento di oggi (filtro df["_bucket"] == bucket).
-    None se nessuno dei bucket a cui appartiene e' eleggibile."""
+    eleggibili (non bloccati, deficit positivo): preferisce SEMPRE il
+    bucket della PROPRIA esposizione maggioritaria (quello con la frazione
+    piu' alta), se eleggibile - solo se quel bucket non e' eleggibile
+    ricade sul deficit euro maggiore tra i restanti (li' dove il denaro
+    serve di piu', tra le opzioni rimaste). Per uno strumento non diviso
+    (un solo bucket in exposure) collassa al suo unico bucket, IDENTICO al
+    comportamento di sempre (filtro df["_bucket"] == bucket). None se
+    nessuno dei bucket a cui appartiene e' eleggibile.
+
+    Task V-ter (2026-09-05, bug reale piu' severo trovato nello
+    stress-test: prima di questo fix la priorita' era SEMPRE il deficit
+    euro, mai la propria esposizione. Quando un bucket (es. Core) ha un
+    deficit enormemente piu' grande degli altri, QUALUNQUE strumento con
+    anche solo il 20-30% di esposizione a quel bucket veniva instradato
+    per intero nella sua fetta di budget - anche se per il 70-80% restante
+    era di un altro bucket. Verificato dal vivo: XMGA.MI (30% Core/70%
+    Satellite), XDWT.MI e XDWH.MI (25/75) vincevano il pool "Core" battendo
+    SWDA.MI (100% Core) sul punteggio decisionale - il denaro "per il Core"
+    finiva per il 70-75% in esposizione reale Satellite, vanificando lo
+    scopo del ribilanciamento bucket-first (scenario segnalato dall'utente:
+    budget 1200€, severita' Alta, 3 linee -> 3 strumenti a maggioranza
+    Satellite nonostante Core fosse il bucket piu' carente di gran lunga)."""
     candidati = [b for b, frac in exposure.items() if frac > 0 and b in eligible_buckets]
     if not candidati:
         return None
+    proprio_bucket_principale = max(exposure.items(), key=lambda kv: kv[1])[0]
+    if proprio_bucket_principale in candidati:
+        return proprio_bucket_principale
     return max(candidati, key=lambda b: bucket_deficits.get(b, 0.0))
+
+
+def _optimal_line_allocation_across_buckets(
+    df: pd.DataFrame,
+    dominant_bucket: pd.Series,
+    eligible_buckets: list[str],
+    sub_budgets: dict[str, float],
+    prices: pd.Series,
+    max_lines_total: int,
+    max_lines_per_bucket: int,
+    bucket_weights: dict[str, float] | None,
+    bucket_targets: dict[str, float] | None,
+    max_share: float,
+    total_budget: float,
+) -> tuple[list[int], dict[str, float], dict[str, int]]:
+    """Sceglie quante righe assegnare a CIASCUN bucket per massimizzare la
+    spesa totale entro il tetto `max_lines_total`, invece di assegnare i
+    "posti riga" bucket per bucket (in sequenza o per quota fissa) prima
+    ancora di sapere quanto ciascun bucket riuscirebbe davvero a spendere.
+
+    Task V-sexies (2026-09-05, richiesta esplicita dell'utente dopo aver
+    visto un tentativo di riparto proporzionale peggiorare la spesa totale
+    - "trova tu la proposta che spenda la cifra impostata"): per ogni
+    bucket eleggibile si costruisce la "curva di spesa" (quanto spenderebbe
+    con 0, 1, 2, ... righe, riusando _suggested_quotes invariata come
+    oracolo) e si enumera ESAUSTIVAMENTE ogni combinazione di righe per
+    bucket che rispetta il tetto totale, scegliendo quella con la spesa
+    complessiva piu' alta (a parita' di spesa, quella con meno righe
+    aperte in totale - non aprire una riga che non aggiunge nulla). Spazio
+    di ricerca piccolo per costruzione (pochi bucket eleggibili, poche
+    funzioni/gruppi di confronto distinti per bucket - mai piu' di una
+    manciata di combinazioni reali), enumerato per intero invece di un
+    riparto proporzionale o di un ordine di elaborazione fisso, che
+    lasciavano soldi non spesi in un bucket con pochi candidati mentre un
+    altro bucket con candidati validi restava senza righe disponibili.
+
+    Ritorna (quote, speso_per_bucket, cap_righe_per_bucket) nello stesso
+    formato gia' prodotto dal vecchio riparto sequenziale, cosi' la
+    redistribuzione del residuo verso i bucket saturi (sotto, invariata)
+    continua a funzionare senza modifiche."""
+    n = len(df)
+    quote = [0] * n
+    bucket_dfs = {b: df.loc[dominant_bucket == b] for b in eligible_buckets}
+    max_k: dict[str, int] = {}
+    for b in eligible_buckets:
+        bdf = bucket_dfs[b]
+        n_gruppi = int(bdf["comparison_group"].nunique()) if not bdf.empty and "comparison_group" in bdf.columns else len(bdf)
+        max_k[b] = max(0, min(max_lines_total, max_lines_per_bucket, n_gruppi))
+
+    quote_by_k: dict[tuple[str, int], list[int]] = {}
+    spend_by_k: dict[tuple[str, int], float] = {}
+    lines_by_k: dict[tuple[str, int], int] = {}
+    for b in eligible_buckets:
+        bdf = bucket_dfs[b]
+        quote_by_k[(b, 0)] = []
+        spend_by_k[(b, 0)] = 0.0
+        lines_by_k[(b, 0)] = 0
+        if bdf.empty or sub_budgets.get(b, 0.0) <= 0:
+            for k in range(1, max_k[b] + 1):
+                quote_by_k[(b, k)] = []
+                spend_by_k[(b, k)] = 0.0
+                lines_by_k[(b, k)] = 0
+            continue
+        for k in range(1, max_k[b] + 1):
+            bq = _suggested_quotes(
+                bdf, sub_budgets[b], max_lines=k,
+                bucket_weights=bucket_weights, bucket_targets=bucket_targets, max_share=max_share,
+                cap_reference_budget=total_budget,
+            )
+            spesa_k = sum(q * float(prices.loc[i]) for i, q in zip(bdf.index, bq))
+            # Task V-ventiquattresima (2026-09-06): _suggested_quotes e'
+            # un'euristica GREEDY (sceglie la quota marginale migliore un
+            # passo alla volta, non un ottimo esaustivo) - un candidato in
+            # piu' nel pool (k piu' alto) puo' occasionalmente deviare la
+            # sequenza greedy verso una spesa totale PIU' BASSA a parita' di
+            # sotto-budget (trovato dal vivo nello stress-test: bucket
+            # Difensivo, stesso sotto-budget, spendeva di piu' con
+            # max_lines=5 che con max_lines=6). Un max_lines piu' permissivo
+            # non deve mai poter peggiorare il risultato: la soluzione
+            # trovata per k-1 resta valida anche per k (usa comunque al
+            # massimo k-1 righe, entro il tetto k), quindi se il nuovo
+            # tentativo con k righe spende meno di quello con k-1, si tiene
+            # il risultato di k-1 invece di quello (peggiore) appena calcolato.
+            if k > 1 and spend_by_k[(b, k - 1)] > spesa_k + 1e-9:
+                bq = quote_by_k[(b, k - 1)]
+                spesa_k = spend_by_k[(b, k - 1)]
+            quote_by_k[(b, k)] = bq
+            spend_by_k[(b, k)] = spesa_k
+            lines_by_k[(b, k)] = sum(1 for q in bq if q > 0)
+
+    buckets_list = list(eligible_buckets)
+    ranges = [range(0, max_k[b] + 1) for b in buckets_list]
+    best_combo = tuple(0 for _ in buckets_list)
+    best_spend = 0.0
+    best_lines = 0
+    for combo in itertools.product(*ranges):
+        total_lines = sum(lines_by_k[(b, k)] for b, k in zip(buckets_list, combo))
+        if total_lines > max_lines_total:
+            continue
+        total_spend = sum(spend_by_k[(b, k)] for b, k in zip(buckets_list, combo))
+        if total_spend > best_spend + 1e-9 or (
+            abs(total_spend - best_spend) <= 1e-9 and total_lines < best_lines
+        ):
+            best_spend, best_lines, best_combo = total_spend, total_lines, combo
+
+    speso_per_bucket: dict[str, float] = {}
+    cap_righe_per_bucket: dict[str, int] = {}
+    for b, k in zip(buckets_list, best_combo):
+        cap_righe_per_bucket[b] = k
+        speso_per_bucket[b] = spend_by_k[(b, k)]
+        bdf = bucket_dfs[b]
+        for local_idx, q in zip(bdf.index, quote_by_k[(b, k)]):
+            quote[local_idx] = q
+    return quote, speso_per_bucket, cap_righe_per_bucket
 
 
 def _suggested_quotes_by_bucket(
@@ -2513,6 +2807,7 @@ def _suggested_quotes_by_bucket(
     blocked_buckets: set[str],
     *,
     max_lines_per_bucket: int | None = None,
+    max_lines_total: int | None = None,
     bucket_weights: dict[str, float] | None = None,
     bucket_targets: dict[str, float] | None = None,
     max_share: float = 0.35,
@@ -2540,6 +2835,19 @@ def _suggested_quotes_by_bucket(
 
     max_lines_per_bucket=None (default): nessun tetto predeterminato, ogni
     riga del bucket puo' essere finanziata (equivalente a len(ranking_df)).
+
+    max_lines_total (Task max-linee-bucket-first, 2026-09-05, bug reale
+    trovato dall'utente: con bucket_first_allocation attivo, il tetto "Max
+    linee" scelto in UI arrivava qui SOLO come max_lines_per_bucket=len(work)
+    - cioe' nessun tetto reale, uno per bucket e di fatto illimitato - quindi
+    veniva ignorato: 1500 euro / severita' alta / max linee 3 restituiva 13
+    righe, non 3. Se valorizzato, e' il tetto GLOBALE (su tutti i bucket
+    insieme) al numero di righe con quota > 0 nel risultato finale, applicato
+    ad ogni chiamata interna a _suggested_quotes tramite un contatore di
+    righe gia' finanziate: una volta raggiunto, nessun bucket - nemmeno in
+    redistribuzione o nel giro "starved" - puo' aprirne altre (puo' solo
+    versare altro budget sulle righe gia' aperte). None (default) preserva
+    il comportamento precedente per chi non lo passa.
 
     Stesso contratto di _suggested_quotes: lista di interi allineata
     all'indice di ranking_df (dopo reset_index).
@@ -2575,19 +2883,37 @@ def _suggested_quotes_by_bucket(
         )
     sub_budgets = {b: budget * bucket_deficits[b] / total_deficit for b in eligible_buckets}
     speso_per_bucket: dict[str, float] = {}
-    for bucket in eligible_buckets:
-        sub_budget = sub_budgets[bucket]
-        if sub_budget <= 0:
-            speso_per_bucket[bucket] = 0.0
-            continue
-        bucket_df = df.loc[dominant_bucket == bucket]
-        if bucket_df.empty:
-            speso_per_bucket[bucket] = 0.0
-            continue
-        bucket_quote = _suggested_quotes(bucket_df, sub_budget, max_lines=max_lines_per_bucket, bucket_weights=bucket_weights, bucket_targets=bucket_targets, max_share=max_share)
-        for local_idx, q in zip(bucket_df.index, bucket_quote):
-            quote[local_idx] = q
-        speso_per_bucket[bucket] = sum(quote[i] * prices[i] for i in bucket_df.index)
+    if max_lines_total is None:
+        # Percorso storico invariato: nessun tetto di righe da rispettare,
+        # ogni bucket usa tutte le righe che il proprio budget permette.
+        cap_righe_per_bucket = {b: max_lines_per_bucket for b in eligible_buckets}
+        for bucket in eligible_buckets:
+            sub_budget = sub_budgets[bucket]
+            cap_righe = cap_righe_per_bucket[bucket]
+            if sub_budget <= 0 or cap_righe <= 0:
+                speso_per_bucket[bucket] = 0.0
+                continue
+            bucket_df = df.loc[dominant_bucket == bucket]
+            if bucket_df.empty:
+                speso_per_bucket[bucket] = 0.0
+                continue
+            bucket_quote = _suggested_quotes(bucket_df, sub_budget, max_lines=cap_righe, bucket_weights=bucket_weights, bucket_targets=bucket_targets, max_share=max_share, cap_reference_budget=budget)
+            for local_idx, q in zip(bucket_df.index, bucket_quote):
+                quote[local_idx] = q
+            speso_per_bucket[bucket] = sum(quote[i] * prices[i] for i in bucket_df.index)
+    else:
+        # Task V-sexies (2026-09-05): quante righe dare a ciascun bucket si
+        # decide TUTTO INSIEME per massimizzare la spesa complessiva entro
+        # il tetto scelto in UI - non piu' bucket per bucket (ne' in
+        # sequenza, ne' per quota fissa proporzionale al deficit), che
+        # potevano lasciare soldi non spesi in un bucket con pochi
+        # candidati mentre un altro con candidati validi restava senza
+        # righe disponibili. Vedi _optimal_line_allocation_across_buckets.
+        quote, speso_per_bucket, cap_righe_per_bucket = _optimal_line_allocation_across_buckets(
+            df, dominant_bucket, eligible_buckets, sub_budgets, prices,
+            int(max_lines_total), max_lines_per_bucket, bucket_weights, bucket_targets, max_share,
+            budget,
+        )
 
     leftover = sum(sub_budgets[b] - speso_per_bucket.get(b, 0.0) for b in eligible_buckets)
     saturated = [
@@ -2602,7 +2928,10 @@ def _suggested_quotes_by_bucket(
             bucket_df = df.loc[dominant_bucket == bucket]
             if bucket_df.empty:
                 continue
-            bucket_quote = _suggested_quotes(bucket_df, new_sub_budget, max_lines=max_lines_per_bucket, bucket_weights=bucket_weights, bucket_targets=bucket_targets, max_share=max_share)
+            cap_righe = cap_righe_per_bucket.get(bucket, max_lines_per_bucket)
+            if cap_righe <= 0:
+                continue
+            bucket_quote = _suggested_quotes(bucket_df, new_sub_budget, max_lines=cap_righe, bucket_weights=bucket_weights, bucket_targets=bucket_targets, max_share=max_share, cap_reference_budget=budget)
             for local_idx, q in zip(bucket_df.index, bucket_quote):
                 quote[local_idx] = q
         logger.info(
@@ -2634,10 +2963,17 @@ def _suggested_quotes_by_bucket(
     starved = [b for b in eligible_buckets if speso_per_bucket.get(b, 0.0) <= 0.0]
     if residuo_reale > 0.01 and starved:
         starved_df = df.loc[dominant_bucket.isin(starved)]
-        if not starved_df.empty:
+        # Pool dei tetti di riga gia' riservati ai bucket starved (mai
+        # utilizzati, dato che questi bucket hanno speso zero): sommarli
+        # invece di ricalcolare un tetto globale residuo evita che il pool
+        # comune finisca a zero solo perche' altri bucket hanno gia'
+        # esaurito le RIGHE (non i soldi) nella prima passata.
+        cap_righe = sum(cap_righe_per_bucket.get(b, 0) for b in starved)
+        if not starved_df.empty and cap_righe > 0:
             pooled_quote = _suggested_quotes(
-                starved_df, residuo_reale, max_lines=max_lines_per_bucket,
+                starved_df, residuo_reale, max_lines=cap_righe,
                 bucket_weights=bucket_weights, bucket_targets=bucket_targets, max_share=max_share,
+                cap_reference_budget=budget,
             )
             for local_idx, q in zip(starved_df.index, pooled_quote):
                 quote[local_idx] = q
@@ -3061,7 +3397,6 @@ def _infer_comparison_group(nature: str, role: str, ticker: str, name: str) -> s
         "azionario_emergenti": "azionario_emergenti",
         "monetario": "monetario",
         "bond_governativo": "bond_governativi",
-        "bond_globale": "bond_globali",
         "oro": "oro",
         "tecnologia_ai": "satelliti_ai",
         "healthcare": "satelliti_difensivi",
@@ -3077,19 +3412,41 @@ def _infer_comparison_group(nature: str, role: str, ticker: str, name: str) -> s
     }
     if nature in mapping:
         return mapping[nature]
+    if nature == "bond_globale":
+        # Task V-octies (2026-09-05, bug reale segnalato dall'utente:
+        # EM13.MI - Amundi Euro Government Bond 1-3Y, un governativo a
+        # breve duration - non veniva mai proposto da SATOR nonostante un
+        # voto ragionevole, perche' "bond_globale" era UN SOLO gruppo di
+        # confronto per qualunque obbligazionario: competeva testa a testa
+        # con XBAE.MI/XBAG.MI (Global Aggregate Bond, duration/rischio ben
+        # diversi) e perdeva sempre, un solo vincitore per gruppo. Un
+        # governativo a breve duration, un aggregato globale e un
+        # inflation-linked sono funzioni di portafoglio diverse (sicurezza/
+        # duration corta vs esposizione ampia vs copertura inflazione), non
+        # sostituti intercambiabili - separati per parola chiave nel nome
+        # (stesso principio delle altre catene keyword di questo file),
+        # cosi' ciascuna funzione ha il proprio vincitore invece di farne
+        # sparire due su tre. La nature "bond_globale" (cap di
+        # concentrazione, pesi di bucket) resta invariata: cambia solo con
+        # chi lo strumento compete, non come viene pesato/limitato.
+        name_low = name.lower()
+        if any(k in name_low for k in ("govern", " govt", "gov bond", "treasury")):
+            return "bond_globali_governativi"
+        if any(k in name_low for k in ("inflat", "inf-link", "inf link", "linker")):
+            return "bond_globali_inflazione"
+        return "bond_globali_aggregato"
     if role == "core_difensivo":
         return "core_difensivi"
     base = (ticker.split(".")[0] or name[:6]).lower()
     return f"altro_{base}"
 
 
-def _infer_function_label(nature: str, role: str) -> str:
+def _infer_function_label(nature: str, role: str, name: str = "") -> str:
     mapping = {
         "azionario_globale_core": "core azionario globale",
         "azionario_emergenti": "mercati emergenti",
         "monetario": "liquidita remunerata",
         "bond_governativo": "stabilita governativa",
-        "bond_globale": "obbligazionario globale",
         "oro": "copertura reale / oro",
         "tecnologia_ai": "satellite AI / crescita",
         "healthcare": "difensivo settoriale",
@@ -3106,6 +3463,18 @@ def _infer_function_label(nature: str, role: str) -> str:
     }
     if nature in mapping:
         return mapping[nature]
+    if nature == "bond_globale":
+        # Stessa differenziazione di _infer_comparison_group (Task V-octies):
+        # l'etichetta mostrata in tabella deve riflettere il sottogruppo
+        # reale, non un'unica voce "obbligazionario globale" che nasconde
+        # perche' due strumenti con lo stesso nome di funzione non
+        # competono piu' per la stessa riga.
+        name_low = name.lower()
+        if any(k in name_low for k in ("govern", " govt", "gov bond", "treasury")):
+            return "obbligazionario governativo globale"
+        if any(k in name_low for k in ("inflat", "inf-link", "inf link", "linker")):
+            return "obbligazionario inflation-linked"
+        return "obbligazionario globale aggregato"
     if role == "core_globale":
         return "pilastro core"
     return "strumento osservato"

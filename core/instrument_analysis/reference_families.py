@@ -34,7 +34,19 @@ REFERENCE_FAMILIES: dict[str, tuple[str, ...]] = {
     "EMERGING_EQUITY": ("EEM", "^HSI", "000001.SS", "^BSESN"),
     "SMALL_CAP": ("^RUT",),
     "TECH_GROWTH": ("^NDX", "^IXIC"),
-    "ENERGY": ("^GSPE",),
+    #: ^GSPC aggiunto 2026-09-06 (Task V-ventunesima) - bug reale: ^GSPE
+    #: (unico candidato) ha smesso di pubblicare quotazioni su Yahoo dopo il
+    #: 17/07/2026 (verificato con piu' chiamate dirette a yfinance, anche
+    #: sull'alias ^SP500-1010, stesso feed morto - ^DJUSEN/^SPSIEN non
+    #: hanno storico utilizzabile su Yahoo). Nessun indice ufficiale
+    #: Energy-only vivo trovato: ^GSPC (gia' usato come rete di sicurezza
+    #: in GLOBAL_EQUITY/USA_EQUITY sopra) resta un secondo candidato
+    #: SOLO per il controllo di sorgente-ferma in
+    #: core/dashboard_datasets.py::_build_quotazioni_category_ticker_bundles_payload
+    #: (mai scelto dalla geometria/scoring qui sopra a meno che ^GSPE
+    #: risulti davvero fermo da settimane) - richiesta esplicita
+    #: dell'utente di un indice ufficiale, anche generale, mai un ETF.
+    "ENERGY": ("^GSPE", "^GSPC"),
     "MATERIALS": ("^SP500-15",),
     "HEALTHCARE": ("^SP500-35",),
     "REAL_ESTATE": ("^SP500-60", "^DJUSRE"),

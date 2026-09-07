@@ -61,6 +61,14 @@ class BenchmarkAssignment:
     coverage_obs: int = 0
     components: tuple[dict[str, Any], ...] = field(default_factory=tuple)
 
+    # Task V-diciannovesima (2026-09-06): esposti anche quando NON sono il
+    # ticker scelto (`ticker` puo' gia' essere questo stesso valore, se
+    # series_is_fetchable=False). Servono a chi vuole rilevare una sorgente
+    # ferma/morta a runtime e verificare se esiste gia' un'alternativa
+    # ufficiale nota nel motore di risoluzione, senza inventarne una nuova.
+    fallback_fetchable_series: str = ""
+    fallback_fetchable_label: str = ""
+
     @property
     def has_benchmark(self) -> bool:
         return bool(str(self.ticker or "").strip())
@@ -145,6 +153,26 @@ def resolve_instrument_benchmark(
     fetchable_ticker = (
         b.operational_series if b.series_is_fetchable else b.fallback_fetchable_series
     )
+
+    # Task V-diciannovesima (2026-09-06): sorgente rilevata ferma/morta da
+    # oltre 14 giorni (vedi core/dashboard_datasets.py::_benchmark_source_is_stale)
+    # con un'alternativa ufficiale gia' nota nel motore di risoluzione -
+    # scritta qui da quel controllo periodico, applicata al prossimo giro.
+    # Priorita' minore di un override manuale (sopra), maggiore della
+    # risoluzione automatica pura: se l'utente modifica manualmente il
+    # benchmark, quella scelta vince sempre e questo marcatore va ignorato.
+    # `label` NON cambia (resta l'identita' ufficiale, come da contratto
+    # della classe sopra): solo il ticker tecnico usato per scaricare i
+    # prezzi passa all'alternativa, l'identita' del benchmark resta la stessa.
+    auto_fallback = master.get("auto_benchmark_fallback") or {}
+    if (
+        prefer_master
+        and isinstance(auto_fallback, dict)
+        and auto_fallback.get("active")
+        and _norm(auto_fallback.get("from_ticker")) == _norm(fetchable_ticker)
+        and _norm(auto_fallback.get("to_ticker"))
+    ):
+        fetchable_ticker = _norm(auto_fallback.get("to_ticker"))
     components = tuple(
         {
             "series_id": c.series_id,
@@ -173,6 +201,8 @@ def resolve_instrument_benchmark(
         selection_score=b.selection_score,
         coverage_obs=b.coverage_obs,
         components=components,
+        fallback_fetchable_series=_norm(b.fallback_fetchable_series),
+        fallback_fetchable_label=_norm(b.fallback_fetchable_label),
     )
 
 
