@@ -13,6 +13,7 @@ import streamlit as st
 from ui.notifications import queue_info, queue_success, update_status
 
 from core.cache import invalidate_portfolio_cache, record_cache_decision, set_last_mutation_details
+from core.page_cache import clear_page_artifact_disk_cache
 import pandas as pd
 
 from persistence.storage import (
@@ -326,6 +327,27 @@ def render_sidebar(data: dict) -> None:
         _msg_area = st.container()
 
     with _arresta_area:
+        # Spostato qui dalla scheda Gestione Dati (era sotto un expander,
+        # richiesta esplicita dell'utente 2026-09-08: "utilissimo tasto"
+        # va tenuto raggiungibile in sidebar, non nascosto). Stessa identica
+        # logica di prima (Task V-terdecies, 2026-09-05): un solo
+        # st.cache_resource.clear() non basta se il bundle Quotazioni e'
+        # anche in core.page_cache._PROCESS_CACHE (dict modulo-level, non
+        # uno st.cache_*) - clear_page_artifact_disk_cache() lo svuota
+        # esplicitamente, e le chiavi "_page_artifact::..." in
+        # session_state (cache di sessione di get_or_build_page_artifact,
+        # mai toccate ne' da clear_page_artifact_disk_cache() ne' da
+        # cache_resource.clear()) vengono rimosse a mano, cosi' un solo
+        # pulsante fa TUTTO invece di lasciarne una quarta via dormiente.
+        if st.button("🔄 Riavvia sessione app", width="stretch", key="sidebar_restart_session",
+                     help="Ricarica dati, benchmark, artefatti pagina e cache interna da zero, senza chiudere il terminale. Non cancella dati di portafoglio."):
+            clear_page_artifact_disk_cache()
+            for _key in [k for k in list(st.session_state.keys()) if str(k).startswith("_page_artifact::")]:
+                del st.session_state[_key]
+            st.session_state["_clear_streamlit_cache"] = True
+            queue_success("Sessione riavviata: dati, benchmark e cache interna ricaricati da zero.")
+            st.rerun()
+
         if st.button("⏻ Arresta Streamlit", width="stretch", key="sidebar_shutdown_streamlit"):
             st.session_state["portfolio_dashboard_shutdown_requested"] = True
             st.session_state["_portfolio_shutdown_timer_started"] = False

@@ -1,5 +1,16 @@
 # Changelog
 
+## 5.0-pre - Pulsante "Riavvia sessione app" spostato in sidebar, colori del grafico P/L Overview scambiati
+
+- **"Riavvia sessione app" spostato dalla scheda Dati (era sotto un
+  expander) direttamente in sidebar**, sempre visibile accanto ad "Arresta
+  Streamlit": ricarica dati, benchmark, artefatti pagina e cache interna
+  con un solo click, senza chiudere il terminale.
+- Nel grafico "P/L del portafoglio" di Overview, gli stili delle linee
+  "P/L storico" e "P/L pos. aperte" sono stati scambiati (la prima è ora
+  la tratteggiata blu, la seconda la piena verde) su richiesta esplicita
+  dell'utente - i dati rappresentati restano invariati.
+
 ## 5.0-pre - Ristrutturazione motore SATOR, grafico Allocazione a barre, lista della spesa CSV, benchmark auto-correttivo su Quotazioni
 
 - **La cache dei grafici di Quotazioni non si aggiornava mai quando cambiava

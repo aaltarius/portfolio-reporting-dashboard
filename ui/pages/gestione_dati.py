@@ -1286,50 +1286,11 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     else:
                         st.info("Pre-warming già in esecuzione.")
 
-            # Bug reale segnalato dall'utente (2026-09-05, "modifichi il codice
-            # ma io vedo sempre la stessa identica rappresentazione"): StateManager
-            # (core/state.py) e' un singleton @st.cache_resource che sopravvive
-            # all'hot-reload di sviluppo di Streamlit (reimport dei moduli .py
-            # dopo una modifica) - Streamlit reimporta il CODICE ma non ricrea
-            # l'ISTANZA gia' in cache_resource, che resta legata alle classi/
-            # metodi del momento in cui e' stata creata (prima colta nel 2026-08
-            # per lo stesso motivo su start_form_server, vedi STATO_OPERATIVO).
-            # Risultato pratico: una correzione a core/state.py, o a qualunque
-            # funzione richiamata SOLO tramite l'istanza StateManager gia' in
-            # cache (es. data caricato una volta e mai piu' ricontrollato),
-            # restava invisibile finche' l'utente non riavviava per intero il
-            # processo (mai bastato un refresh del browser) - l'unico modo
-            # "morbido" per ottenere lo stesso effetto (st.cache_resource.clear())
-            # esisteva gia' in app.py ma non era MAI collegato a nessun pulsante.
             st.caption(
-                "Ricarica tutto da zero (dati, benchmark, artefatti pagina, cache interna) senza chiudere il "
-                "terminale - un solo click, nessuna conferma richiesta: non cancella dati di portafoglio, "
-                "usalo quando una correzione recente non sembra avere alcun effetto nell'app."
+                "Il pulsante \"Riavvia sessione app\" (dati, benchmark, artefatti pagina, "
+                "cache interna ricaricati da zero) si trova ora in sidebar, sempre "
+                "raggiungibile invece che qui sotto un expander."
             )
-            if st.button("🔄 Riavvia sessione app", width="stretch", type="secondary", key="datahub_restart_session"):
-                # Task V-terdecies (2026-09-05, l'utente ha premuto il
-                # pulsante precedente e non e' cambiato nulla): un solo
-                # cache_resource.clear() non basta se il bundle Quotazioni
-                # e' anche in core.page_cache._PROCESS_CACHE (un dict
-                # modulo-level, non uno st.cache_* - clear_page_artifact_disk_cache()
-                # lo svuota gia', vedi pulsante "Svuota cache" sopra) - qui
-                # ripetuto esplicitamente cosi' un solo pulsante fa TUTTO
-                # invece di richiedere all'utente di premerne due in
-                # sequenza per essere sicuro dell'effetto.
-                clear_page_artifact_disk_cache()
-                # La cache "sessione" di get_or_build_page_artifact (ordine
-                # sessione->processo->disco->build) vive in st.session_state
-                # sotto chiavi "_page_artifact::...", mai toccate da
-                # clear_page_artifact_disk_cache() (solo disco+processo) ne'
-                # da st.cache_resource.clear() (un dict Python normale, non
-                # uno st.cache_*) - rimosse esplicitamente qui per non
-                # lasciare una quarta via per cui un bundle vecchio
-                # sopravviva al riavvio.
-                for _key in [k for k in list(st.session_state.keys()) if str(k).startswith("_page_artifact::")]:
-                    del st.session_state[_key]
-                st.session_state["_clear_streamlit_cache"] = True
-                queue_success("Sessione riavviata: dati, benchmark e cache interna ricaricati da zero.")
-                st.rerun()
 
             with st.expander("Dettagli, diagnostica e regole cache", expanded=False):
                 st.caption("Sintesi read-only di cache figure, pre-warming, spazio fisico e ultime azioni di manutenzione.")

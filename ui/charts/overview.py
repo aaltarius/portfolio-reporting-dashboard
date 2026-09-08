@@ -131,12 +131,14 @@ def build_overview_time_chart(dfh_top, da_frame, view, pl_color, pl_total, chart
         pl_cols = [c for c in dfh_top.columns if c.startswith("PL_")]
         pl_attuale = pd.to_numeric(dfh_top[pl_cols].sum(axis=1), errors="coerce") if pl_cols else pd.Series(0.0, index=dfh_top.index)
         realized_net = pd.to_numeric(dfh_top.get("P/L Realizzato Netto", 0), errors="coerce").fillna(0.0)
-        # "P/L storico" (verde) torna alla formula originale: P/L posizioni
-        # aperte + P/L realizzato netto gia' maturato (stesso valore del KPI
-        # "P/L Storico" in overview.py, pl_totale). Resta una linea distinta
-        # dalla blu tratteggiata, non coincide piu' con essa (richiesta
-        # dell'utente 2026-09-05: le tre curve restano come erano prima del
-        # fix Fase C del 04/09).
+        # "P/L storico": P/L posizioni aperte + P/L realizzato netto gia'
+        # maturato (stesso valore del KPI "P/L Storico" in overview.py,
+        # pl_totale). Resta una linea distinta da "P/L pos. aperte", non
+        # coincide con essa (richiesta dell'utente 2026-09-05: le tre curve
+        # restano come erano prima del fix Fase C del 04/09). Stile linea
+        # (blu tratteggiata) scambiato con "P/L pos. aperte" su richiesta
+        # esplicita dell'utente il 2026-09-08 - prima era la verde piena,
+        # ora e' la blu tratteggiata; il dato rappresentato non e' cambiato.
         pl_storico = pl_attuale + realized_net
         current_open_pl = 0.0
         if da_frame is not None and not da_frame.empty and "P/L €" in da_frame.columns:
@@ -155,26 +157,27 @@ def build_overview_time_chart(dfh_top, da_frame, view, pl_color, pl_total, chart
                 y=chart_pl_storico,
                 mode="lines",
                 name="P/L storico",
-                line=dict(color=pl_color, width=2.2),
+                line=dict(color=P["blue"], width=2.0, dash="dash"),
                 fill="tozeroy",
                 fillcolor=hex_to_rgba(theme.colors["success"], 0.06) if float(pl_total) >= 0 else hex_to_rgba(theme.colors["danger"], 0.06),
                 hovertemplate="Data: %{x|%d/%m/%Y}<br>P/L storico: € %{y:,.2f}<extra></extra>",
             )
         )
-        # La blu va aggiunta PRIMA dell'arancione (non dopo, come le altre
-        # due tracce): "tonexty" riempie sempre rispetto alla traccia
-        # immediatamente precedente. Cosi' l'area arancione ora si allarga
-        # dalla blu (capitale impegnato) fino al totale, inglobando anche il
-        # realizzato netto e non solo i proventi come prima (richiesta
-        # dell'utente 2026-09-05) — la linea verde resta visibile sopra,
-        # senza un fill proprio aggiuntivo tra blu e arancione.
+        # "P/L pos. aperte" va aggiunta PRIMA dell'arancione (non dopo, come
+        # le altre due tracce): "tonexty" riempie sempre rispetto alla
+        # traccia immediatamente precedente. Cosi' l'area arancione si
+        # allarga da "P/L pos. aperte" (capitale impegnato) fino al totale,
+        # inglobando anche il realizzato netto e non solo i proventi come
+        # prima (richiesta dell'utente 2026-09-05) — "P/L storico" (blu
+        # tratteggiata, dal 2026-09-08) resta visibile sopra, senza un fill
+        # proprio aggiuntivo tra questa traccia e l'arancione.
         fig.add_trace(
             go.Scatter(
                 x=chart_dates_open,
                 y=chart_pl_attuale,
                 mode="lines",
                 name="P/L pos. aperte",
-                line=dict(color=P["blue"], width=2.0, dash="dash"),
+                line=dict(color=pl_color, width=2.2),
                 hovertemplate="Data: %{x|%d/%m/%Y}<br>P/L posizioni aperte: € %{y:,.2f}<extra></extra>",
             )
         )
