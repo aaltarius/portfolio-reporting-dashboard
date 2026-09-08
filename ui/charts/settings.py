@@ -1149,7 +1149,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'y_nticks': 12,
      'x_nticks': 6,
      'x_tickformat': '%d/%m/%y',
-     'x_dtick': 7776000000,
+     'x_dtick': 15552000000,
      'x_tickangle': 0,
      'quarter_mode': 'year',
      'y_bottom_padding': -0.7,

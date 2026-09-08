@@ -1,5 +1,17 @@
 # Changelog
 
+## 5.0 - Prima versione stabile
+
+Chiude il ciclo di sviluppo 5.0-pre. Le voci sotto (dalla ristrutturazione
+SATOR post stress-test in poi) documentano il lavoro dell'ultimo giorno di
+questo ciclo: review "avvocato del diavolo" estesa a tutto l'applicativo,
+audit del motore finanziario con esecuzione reale, prima navigazione
+dal vivo per un audit di usabilità, e infine `/code-review ultra` - che
+ha trovato e permesso di correggere due bug critici di perdita dati
+introdotti dalla correzione di persistenza della stessa giornata, prima
+che potessero mai toccare dati reali. Changelog completo delle versioni
+precedenti (4.9.40 e a scendere) in `CHANGELOG_ARCHIVE.md`.
+
 ## 5.0-pre - /code-review ultra: corretti due bug critici di perdita dati introdotti dal fix di persistenza di oggi, più 4 rifiniture SATOR
 
 Prima esecuzione di `/code-review ultra` sul lavoro di oggi. Ha trovato,

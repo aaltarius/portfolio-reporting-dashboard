@@ -408,7 +408,7 @@ def build_market_base100_frame(data: dict | None, *, observations: int = 90) -> 
 def _market_data_sig(data: dict[str, Any], ctx: SimpleNamespace) -> str:
     return build_market_data_signature(
         data,
-        app_version=str(getattr(ctx, "app_version", "5.0-pre")),
+        app_version=str(getattr(ctx, "app_version", "5.0")),
         schema_version=str(getattr(ctx, "schema_version", "n/d")),
         include_benchmark_data=True,
     )
