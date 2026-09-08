@@ -506,7 +506,14 @@ def _build_last_day_summary(
     delta_pl = raw_delta_pl if daily_report is not None else raw_delta_pl - day_income
 
     prev_pl_value = float(prev["P/L"]) if float(prev["P/L"]) != 0 else 0.0
-    pct_var = (delta_pl / prev_pl_value) if abs(prev_pl_value) > 1e-9 else 0
+    # Divide per il MODULO di prev_pl_value, non per il suo valore con segno:
+    # quando il P/L di ieri era negativo, un delta_pl positivo (miglioramento)
+    # diviso per una base negativa darebbe una percentuale negativa - segno
+    # opposto a sign_color_v/sign_color_pl sotto (decisi dal segno di
+    # delta_pl, corretto) e al colore mostrato. Col modulo il segno di
+    # pct_var coincide sempre con quello di delta_pl: un recupero da -5.000€
+    # a -4.800€ (delta +200€) mostra "+4,00%" verde, non "-4,00%" verde.
+    pct_var = (delta_pl / abs(prev_pl_value)) if abs(prev_pl_value) > 1e-9 else 0
 
     col_green = theme.colors["success"]
     col_red = theme.colors["danger"]

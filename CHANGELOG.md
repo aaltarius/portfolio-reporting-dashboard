@@ -1,5 +1,79 @@
 # Changelog
 
+## 5.0-pre - Review avvocato-del-diavolo su tutto l'applicativo: corretti 13 problemi reali (dati, SATOR, Analitica, obbligazioni)
+
+Round di correzioni su 13 criticità trovate con una review "avvocato del
+diavolo" estesa a tutto l'applicativo (non solo SATOR): motore
+finanziario, cache/persistenza, benchmark/classificazione strumenti,
+servizi Cruscotti/Analitica, form-server/mutazione dati, pagine UI.
+
+- **Corretta una possibile perdita silenziosa di operazioni/strumenti**:
+  `save_data()` scriveva `strumenti`/`registro_eventi`/`instrument_master`
+  senza mai confrontarli con quanto già su disco - se aggiornavi le
+  quotazioni dalla sidebar (richiede alcuni secondi) mentre inserivi
+  un'operazione dal form-server, l'operazione appena salvata poteva
+  sparire al salvataggio successivo della sessione principale. Aggiunto
+  un merge a 3 vie (stesso principio già in uso per i dati benchmark):
+  un elemento aggiunto da un altro processo non va più perso, una
+  cancellazione esplicita resta comunque rispettata.
+- **I backup automatici prima di ogni salvataggio sono ora davvero attivi
+  di default**: il default reale era disattivato, in contraddizione con
+  la documentazione interna del progetto.
+- **Cancellare un acquisto auto-liquidato ora cancella anche il
+  versamento di cassa collegato** (e viceversa), invece di lasciarlo
+  orfano nel registro a gonfiare la liquidità disponibile. Corretta anche
+  la sincronizzazione: modificare il versamento direttamente non lascia
+  più il trade collegato disallineato. Sistemato anche l'ordine
+  cronologico acquisto/versamento nel registro eventi (il versamento che
+  finanzia un acquisto ora precede sempre l'acquisto stesso).
+- **SATOR**: corretto il meccanismo di recupero del budget per i bucket
+  "a secco" (nessun candidato comprabile con la propria fetta), che con
+  l'allocazione bucket-first non scattava quasi mai; un ruolo impostato
+  manualmente su uno strumento non classificato ora incide davvero sul
+  gruppo di confronto invece di essere ignorato; l'indicatore "quanto
+  target manca ancora" ora riflette l'effetto combinato di più righe
+  d'acquisto nello stesso bucket, non la somma di effetti isolati che
+  sottostimava il progresso reale.
+- **Monte Carlo (Analitica)**: quando la simulazione esclude strumenti
+  nuovi o con quotazioni frammentate, il punto "Oggi" del grafico ora lo
+  dichiara esplicitamente invece di mostrare un controvalore ridotto
+  senza spiegazione, leggibile come un errore di dati.
+- **L'avviso "Peso dominante" ora rispetta una soglia di concentrazione
+  più bassa impostata da te** in Impostazioni, invece di restare sempre
+  ancorato a un pavimento fisso del 18% quando gli "Alert attivi" sono
+  spenti.
+- **Overview**: corretto un caso in cui il riquadro "Andamento
+  dell'ultima giornata" mostrava una percentuale di segno opposto al
+  colore (un miglioramento del P/L visualizzato come percentuale
+  negativa in verde) quando il P/L del giorno precedente era negativo.
+- **Obbligazioni**: la scadenza di un BTP non viene più letta male quando
+  il nome combina un tasso a due decimali con un formato data senza
+  giorno esplicito (es. "3,45% AG2029" non è più interpretato come
+  2045); il calendario cedole, quando mancano tutti i riferimenti
+  temporali dello strumento, si ancora ora alla scadenza reale invece
+  che alla data odierna.
+- Rimane un limite noto e non ancora risolto in SATOR: uno strumento con
+  esposizione divisa tra bucket viene sempre instradato al bucket della
+  propria maggioranza, anche quando un bucket minoritario a cui
+  appartiene ha un deficit molto più grave - correggerlo richiederebbe
+  ribaltare una scelta di design già presa e testata in precedenza (Task
+  V-ter), quindi non è stato toccato senza una decisione esplicita.
+- **Corretta una didascalia disallineata in Pianificazione**: il testo
+  sopra il grafico "Allocazione: bucket e strumenti" descriveva ancora il
+  vecchio doppio anello ("Anello interno/esterno"), mai aggiornato quando
+  il grafico è stato sostituito da barre orizzontali in una sessione
+  precedente - trovato navigando l'app dal vivo, non solo leggendo il
+  codice.
+- **Motore finanziario verificato con esecuzione reale, non solo lettura
+  del codice**: XIRR, TWR, CAGR, volatilità/Sharpe, drawdown massimo, PMC
+  e P&L realizzato, aliquote fiscali - ogni formula testata su scenari
+  con valore atteso calcolato indipendentemente (mai copiando la logica
+  del codice stesso). Nessun errore trovato.
+
+Verificato con l'intera suite di test locale (258 file) dopo ogni
+correzione e di nuovo con tutte le modifiche insieme: nessuna
+regressione.
+
 ## 5.0-pre - Pulsante "Riavvia sessione app" spostato in sidebar, colori del grafico P/L Overview scambiati
 
 - **"Riavvia sessione app" spostato dalla scheda Dati (era sotto un

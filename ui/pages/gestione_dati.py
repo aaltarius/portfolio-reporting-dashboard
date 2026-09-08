@@ -1069,7 +1069,11 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             )
             backup_before_save_cfg = p3.checkbox(
                 "Backup prima dei salvataggi",
-                value=bool(backup_cfg.get("backup_before_save", False)),
+                # Default True se il campo non è mai stato impostato, coerente
+                # col default corretto in persistence/storage.py:default_settings()
+                # (era False per errore fino al 2026-09-08, in contraddizione con
+                # quanto CLAUDE.md dichiarava già attivo di default).
+                value=bool(backup_cfg.get("backup_before_save", True)),
                 key="datahub_policy_backup_save",
                 help="Crea una copia prima dei salvataggi ordinari. È più sicuro ma può generare molti backup.",
             )

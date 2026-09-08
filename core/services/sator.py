@@ -2676,7 +2676,24 @@ def _dominant_bucket(
     finiva per il 70-75% in esposizione reale Satellite, vanificando lo
     scopo del ribilanciamento bucket-first (scenario segnalato dall'utente:
     budget 1200€, severita' Alta, 3 linee -> 3 strumenti a maggioranza
-    Satellite nonostante Core fosse il bucket piu' carente di gran lunga)."""
+    Satellite nonostante Core fosse il bucket piu' carente di gran lunga).
+
+    NOTA (2026-09-08, review avvocato-del-diavolo, finding non risolto):
+    resta un limite strutturale noto, mai affrontato - se il bucket
+    maggioritario ha un deficit quasi soddisfatto mentre un bucket
+    minoritario a cui lo strumento appartiene comunque ha un deficit molto
+    piu' grave, lo strumento va comunque sempre al maggioritario, anche se
+    sarebbe un buon candidato per il bucket che ne ha davvero piu' bisogno.
+    Un primo tentativo di correzione (soglia di sbilanciamento deficit) e'
+    stato scritto e poi RIMOSSO in questa stessa sessione perche' rompeva
+    `test_dominant_bucket_split_instrument_prefers_its_own_majority_exposure`,
+    che blocca deliberatamente "il maggioritario vince sempre" come esito
+    esplicito e testato di V-ter (bug allora piu' severo: il deficit da
+    solo instradava per intero uno strumento con appena il 20-30% di
+    esposizione). Correggere questo residuo richiede una decisione di
+    design condivisa con l'utente (quale soglia bilancia i due rischi),
+    non un fix unilaterale che rovescerebbe una scelta gia' presa e
+    testata."""
     candidati = [b for b, frac in exposure.items() if frac > 0 and b in eligible_buckets]
     if not candidati:
         return None
@@ -2963,12 +2980,27 @@ def _suggested_quotes_by_bucket(
     starved = [b for b in eligible_buckets if speso_per_bucket.get(b, 0.0) <= 0.0]
     if residuo_reale > 0.01 and starved:
         starved_df = df.loc[dominant_bucket.isin(starved)]
-        # Pool dei tetti di riga gia' riservati ai bucket starved (mai
-        # utilizzati, dato che questi bucket hanno speso zero): sommarli
-        # invece di ricalcolare un tetto globale residuo evita che il pool
-        # comune finisca a zero solo perche' altri bucket hanno gia'
-        # esaurito le RIGHE (non i soldi) nella prima passata.
-        cap_righe = sum(cap_righe_per_bucket.get(b, 0) for b in starved)
+        if max_lines_total is None:
+            # Percorso storico (nessun tetto globale): cap_righe_per_bucket[b]
+            # e' sempre max_lines_per_bucket per OGNI bucket, anche quelli
+            # a spesa zero - una riserva genuina mai consumata, sommarla e'
+            # corretto invariato da prima di questo fix.
+            cap_righe = sum(cap_righe_per_bucket.get(b, 0) for b in starved)
+        else:
+            # Bug reale (2026-09-08, trovato in review avvocato-del-diavolo):
+            # con max_lines_total valorizzato (bucket_first_allocation, l'unico
+            # percorso usato oggi in produzione), cap_righe_per_bucket[b] per
+            # un bucket starved e' il numero di righe REALMENTE SCELTE da
+            # _optimal_line_allocation_across_buckets per quel bucket - quasi
+            # sempre 0 (un bucket a spesa zero non ha mai vinto righe nella
+            # combinatoria), non una riserva. Sommare valori quasi sempre 0
+            # azzerava sistematicamente questo guard, disattivando il rescue
+            # per il caso esatto per cui era stato scritto (2 bucket starved
+            # con fette troppo piccole, residuo reale combinabile). Il tetto
+            # corretto e' quanto resta del tetto GLOBALE scelto in UI, non la
+            # somma di cap gia' consumati/decisi altrove.
+            righe_gia_aperte = sum(1 for q in quote if q > 0)
+            cap_righe = max(0, int(max_lines_total) - righe_gia_aperte)
         if not starved_df.empty and cap_righe > 0:
             pooled_quote = _suggested_quotes(
                 starved_df, residuo_reale, max_lines=cap_righe,
@@ -3097,6 +3129,43 @@ def build_sator_decision_record(
                 entry["data_quality_score"] = round(float(_safe_float(r.get("data_quality_score"), 0.0)), 4)
                 entry["data_quality_label"] = str(r.get("data_quality_label") or "N/D")
         enriched_lines.append(entry)
+
+    # Bug reale (2026-09-08, review avvocato-del-diavolo): target_improvement_pp
+    # sopra e' calcolato riga per riga assumendo di essere l'UNICO acquisto
+    # (bucket_weight/bucket_target sono lo snapshot pre-acquisto, identico
+    # per ogni riga dello stesso bucket) - sommare o mediare questo valore
+    # per riga sottostima sistematicamente l'effetto reale di comprare piu'
+    # righe dello stesso bucket insieme (verificato dal vivo: 2 righe da
+    # 1.500 EUR nello stesso bucket mostravano +1,81pp isolate ciascuna,
+    # l'effetto combinato reale comprandole entrambe e' +3,49pp). Aggiunto
+    # bucket_target_improvement_pp: UN SOLO ricalcolo per bucket
+    # sull'importo TOTALE delle righe di quel bucket in questa decisione -
+    # i consumatori che aggregano piu' righe (KPI storico "target lasciato"
+    # in Pianificazione, punteggio "Target" delle card /sator) devono
+    # preferire questo campo, mai sommare/mediare target_improvement_pp
+    # per riga.
+    bucket_totals: dict[str, float] = {}
+    bucket_repr_ticker: dict[str, str] = {}
+    for line in enriched_lines:
+        bucket = str(line.get("bucket") or "")
+        amount_line = _safe_float(line.get("amount"), 0.0)
+        if not bucket or amount_line <= 0:
+            continue
+        bucket_totals[bucket] = bucket_totals.get(bucket, 0.0) + amount_line
+        bucket_repr_ticker.setdefault(bucket, str(line.get("ticker", "")))
+    bucket_cumulative_improvement: dict[str, float] = {}
+    if not ranking.empty:
+        for bucket, total_amount in bucket_totals.items():
+            repr_row = ranking[ranking["ticker"].astype(str) == bucket_repr_ticker.get(bucket, "")]
+            if repr_row.empty:
+                continue
+            bucket_cumulative_improvement[bucket] = _compute_marginal_purchase_metrics(
+                repr_row.iloc[0], total_amount,
+            )["target_improvement_pp"]
+    for line in enriched_lines:
+        bucket = str(line.get("bucket") or "")
+        if bucket in bucket_cumulative_improvement:
+            line["bucket_target_improvement_pp"] = bucket_cumulative_improvement[bucket]
 
     # Ripartizione core/difensivo/satellite (importi e percentuali)
     totale = sum(_safe_float(l.get("amount"), 0.0) for l in enriched_lines)
@@ -3391,6 +3460,46 @@ def _compute_nature_weights(
 # Inferenze di gruppo / funzione
 # --------------------------------------------------------------------------- #
 
+# Task V-26 (2026-09-08, review avvocato-del-diavolo): un Ruolo impostato a
+# mano dall'utente nell'editor universo SATOR su uno strumento con nature
+# ancora "altro" (o qualunque nature non riconosciuta) non aveva PRIMA
+# alcun effetto sul gruppo di confronto/etichetta - _infer_comparison_group
+# guardava quasi solo "nature" (l'unico ramo che guardava "role" era
+# "core_difensivo", gia' presente), quindi lo strumento finiva sempre in
+# f"altro_{ticker[:6]}", un gruppo di un solo membro, "vincitore per
+# solitudine" indipendentemente dal punteggio - come se la modifica manuale
+# non fosse mai stata applicata, senza errore ne' avviso. Estesa la stessa
+# idea a tutti i valori di SATOR_ROLE_VALUES: un ruolo scelto esplicitamente
+# ora fa competere lo strumento in un gruppo coerente con quella funzione,
+# invece di isolarlo. "liquidita"/"oro" riusano i gruppi nature gia'
+# esistenti (stesso significato pratico); gli altri usano un gruppo
+# dedicato "per ruolo" per non confondersi con gruppi nature specifici gia'
+# curati (es. azionario_emergenti, fattoriali) che rispondono a criteri piu'
+# stretti di un ruolo generico.
+_ROLE_FALLBACK_COMPARISON_GROUP: dict[str, str] = {
+    "core_difensivo": "core_difensivi",
+    "core_globale": "core_azionario_globale",
+    "core_regionale": "core_regionali_altro",
+    "satellite_crescita": "satelliti_crescita_altro",
+    "satellite_difensivo": "satelliti_difensivi",
+    "satellite_tematico": "satelliti_tematici_altro",
+    "liquidita": "monetario",
+    "oro": "oro",
+    "bond": "bond_altro",
+}
+_ROLE_FALLBACK_FUNCTION_LABEL: dict[str, str] = {
+    "core_difensivo": "pilastro core difensivo",
+    "core_globale": "pilastro core",
+    "core_regionale": "core regionale (ruolo manuale)",
+    "satellite_crescita": "satellite crescita (ruolo manuale)",
+    "satellite_difensivo": "difensivo settoriale (ruolo manuale)",
+    "satellite_tematico": "satellite tematico (ruolo manuale)",
+    "liquidita": "liquidita remunerata",
+    "oro": "copertura reale / oro",
+    "bond": "obbligazionario (ruolo manuale)",
+}
+
+
 def _infer_comparison_group(nature: str, role: str, ticker: str, name: str) -> str:
     mapping = {
         "azionario_globale_core": "core_azionario_globale",
@@ -3435,8 +3544,8 @@ def _infer_comparison_group(nature: str, role: str, ticker: str, name: str) -> s
         if any(k in name_low for k in ("inflat", "inf-link", "inf link", "linker")):
             return "bond_globali_inflazione"
         return "bond_globali_aggregato"
-    if role == "core_difensivo":
-        return "core_difensivi"
+    if role in _ROLE_FALLBACK_COMPARISON_GROUP:
+        return _ROLE_FALLBACK_COMPARISON_GROUP[role]
     base = (ticker.split(".")[0] or name[:6]).lower()
     return f"altro_{base}"
 
@@ -3475,8 +3584,8 @@ def _infer_function_label(nature: str, role: str, name: str = "") -> str:
         if any(k in name_low for k in ("inflat", "inf-link", "inf link", "linker")):
             return "obbligazionario inflation-linked"
         return "obbligazionario globale aggregato"
-    if role == "core_globale":
-        return "pilastro core"
+    if role in _ROLE_FALLBACK_FUNCTION_LABEL:
+        return _ROLE_FALLBACK_FUNCTION_LABEL[role]
     return "strumento osservato"
 
 

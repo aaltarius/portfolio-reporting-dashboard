@@ -363,7 +363,16 @@ def default_settings():
         "backup": {
             "enabled": True,
             "backup_before_migration": True,
-            "backup_before_save": False,
+            # Bug reale trovato in review avvocato-del-diavolo (2026-09-08):
+            # il default qui era False, in aperta contraddizione con
+            # CLAUDE.md ("lo sono di default, 20 backup conservati") - per
+            # qualunque installazione che non avesse mai toccato questo
+            # campo esplicitamente, save_data() non creava MAI un backup
+            # prima di scrivere, proprio la rete di sicurezza che avrebbe
+            # attutito il danno di un save concorrente (vedi
+            # _merge_concurrent_writes). Allineato al comportamento
+            # documentato e atteso.
+            "backup_before_save": True,
             "keep_last_n": 20,
             "folder": "backups"
         },
@@ -1317,7 +1326,149 @@ def load_data():
     if raw != d:
         _write_json_file(DATA_FILE, d)
     logger.debug("Dati caricati: strumenti=%s eventi=%s storico_prezzi=%s", len(d.get("strumenti", [])), len(d.get("registro_eventi", [])), len(d.get("storico_prezzi", {})))
+    # Istantanea "base" per il merge a 3 vie in save_data() (vedi
+    # _merge_concurrent_writes) - MAI scritta su disco: save_data() costruisce
+    # il payload da salvare elencando le chiavi esplicitamente, questa non ci
+    # finisce mai dentro. Chiave privata con underscore, stesso stile di
+    # "_event_seq"/altri campi di bookkeeping interni gia' presenti in data.
+    d["_loaded_snapshot"] = {
+        "strumenti": json.loads(json.dumps(d.get("strumenti", []))),
+        "registro_eventi": json.loads(json.dumps(d.get("registro_eventi", []))),
+        "instrument_master": json.loads(json.dumps(d.get("instrument_master", {}))),
+    }
     return d
+
+
+def _index_by_key(items, key):
+    """dict {chiave: item} da una lista di dict; ultima vince per chiavi duplicate."""
+    out: dict[str, dict] = {}
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        k = str(item.get(key) or "").strip()
+        if k:
+            out[k] = item
+    return out
+
+
+def _three_way_merge_by_key(base_items, ours_items, theirs_items, key):
+    """Merge a 3 vie (base = istantanea al momento del caricamento, ours =
+    vista del chiamante, theirs = versione attualmente su disco) per una
+    lista di dict identificati da `key`. Stesso principio gia' in uso per
+    benchmark_data (_merged_benchmark_cache_payload), esteso qui a
+    registro_eventi/strumenti/instrument_master.
+
+    Bug reale di perdita dati (2026-09-08, review avvocato-del-diavolo):
+    save_data() scriveva questi campi VERBATIM dalla vista in memoria del
+    chiamante, senza mai confrontarli col disco - il form-server (processo/
+    richiesta indipendente, carica e salva `data` direttamente da disco a
+    ogni submit) e la sessione Streamlit principale (un solo `data`
+    caricato una volta e tenuto in memoria per l'intera sessione, es.
+    durante "Aggiorna Quotazioni") potevano scriversi a vicenda sopra:
+    un'operazione inserita dal form-server mentre la sessione principale
+    aveva gia' in memoria uno snapshot piu' vecchio spariva silenziosamente
+    al successivo save_data() della sessione principale.
+
+    Regola (merge a 3 vie standard, stesso principio di un merge git):
+    un elemento su disco ma assente da base e chiamante e' stato aggiunto
+    da un altro processo dopo il caricamento -> si tiene, mai perso. Un
+    elemento in base e nel chiamante ma assente su disco e' stato
+    cancellato da un altro processo -> si rispetta la cancellazione, a
+    meno che il chiamante lo abbia modificato rispetto alla base (allora
+    vince la modifica, per non perdere lavoro). Simmetrico per un elemento
+    cancellato dal chiamante ma ancora presente altrove.
+
+    Ritorna (lista_unita, n_differenze_da_ours) - il secondo valore serve
+    solo per loggare quando il merge ha davvero cambiato qualcosa rispetto
+    a quello che il chiamante avrebbe scritto da solo.
+    """
+    base_by_key = _index_by_key(base_items, key)
+    ours_by_key = _index_by_key(ours_items, key)
+    theirs_by_key = _index_by_key(theirs_items, key)
+    all_keys = list(dict.fromkeys(list(theirs_by_key.keys()) + list(ours_by_key.keys())))
+
+    merged: dict[str, dict] = {}
+    for k in all_keys:
+        in_base = k in base_by_key
+        in_ours = k in ours_by_key
+        in_theirs = k in theirs_by_key
+        if in_ours and in_theirs:
+            merged[k] = ours_by_key[k] if ours_by_key[k] != base_by_key.get(k) else theirs_by_key[k]
+        elif in_ours and not in_theirs:
+            if in_base and ours_by_key[k] == base_by_key[k]:
+                continue  # cancellato da un altro processo: rispetta la cancellazione
+            merged[k] = ours_by_key[k]
+        elif in_theirs and not in_ours:
+            if in_base:
+                continue  # cancellato dal chiamante: rispetta la cancellazione
+            merged[k] = theirs_by_key[k]  # aggiunto da un altro processo: recuperato
+
+    merged_list = list(merged.values())
+    n_diff = len(set(merged.keys()) ^ set(ours_by_key.keys()))
+    return merged_list, n_diff
+
+
+def _three_way_merge_dict(base_d, ours_d, theirs_d):
+    """Come _three_way_merge_by_key ma per un dict piatto chiave->valore
+    (usato per instrument_master, gia' un dict {ticker: {...}})."""
+    base_d = base_d if isinstance(base_d, dict) else {}
+    ours_d = ours_d if isinstance(ours_d, dict) else {}
+    theirs_d = theirs_d if isinstance(theirs_d, dict) else {}
+    all_keys = list(dict.fromkeys(list(theirs_d.keys()) + list(ours_d.keys())))
+    merged: dict = {}
+    for k in all_keys:
+        in_base, in_ours, in_theirs = k in base_d, k in ours_d, k in theirs_d
+        if in_ours and in_theirs:
+            merged[k] = ours_d[k] if ours_d[k] != base_d.get(k) else theirs_d[k]
+        elif in_ours and not in_theirs:
+            if in_base and ours_d[k] == base_d[k]:
+                continue
+            merged[k] = ours_d[k]
+        elif in_theirs and not in_ours:
+            if in_base:
+                continue
+            merged[k] = theirs_d[k]
+    return merged
+
+
+def _merge_concurrent_writes(data: dict) -> tuple[list, list, dict]:
+    """Merge a 3 vie di strumenti/registro_eventi/instrument_master contro
+    lo stato attuale su disco, usando l'istantanea presa al momento del
+    caricamento (data["_loaded_snapshot"], stampata da load_data()) come
+    base comune. Se `data` non porta un'istantanea (dict costruito a mano,
+    non passato da load_data - es. test/fixture), nessun merge: si
+    restituisce verbatim la vista del chiamante, comportamento identico a
+    prima di questo fix - il merge scatta solo per il percorso realistico
+    load_data() -> mutazione -> save_data()."""
+    snapshot = data.get("_loaded_snapshot")
+    ours_strumenti = data.get("strumenti", []) or []
+    ours_eventi = data.get("registro_eventi", []) or []
+    ours_master = data.get("instrument_master", {}) or {}
+    if not isinstance(snapshot, dict):
+        return ours_strumenti, ours_eventi, ours_master
+
+    disk_raw = _read_json_file(DATA_FILE, {})
+    disk_raw = disk_raw if isinstance(disk_raw, dict) else {}
+    theirs_strumenti = disk_raw.get("strumenti", []) or []
+    theirs_eventi = disk_raw.get("registro_eventi", []) or []
+    theirs_master = disk_raw.get("instrument_master", {}) or {}
+
+    merged_strumenti, strumenti_diff = _three_way_merge_by_key(
+        snapshot.get("strumenti", []), ours_strumenti, theirs_strumenti, "ticker",
+    )
+    merged_eventi, eventi_diff = _three_way_merge_by_key(
+        snapshot.get("registro_eventi", []), ours_eventi, theirs_eventi, "event_id",
+    )
+    merged_master = _three_way_merge_dict(
+        snapshot.get("instrument_master", {}), ours_master, theirs_master,
+    )
+    if strumenti_diff or eventi_diff:
+        logger.warning(
+            "save_data: scrittura concorrente rilevata, uniti %d strumenti e %d eventi "
+            "modificati da un altro processo dal caricamento di questa sessione (nessun dato perso)",
+            strumenti_diff, eventi_diff,
+        )
+    return merged_strumenti, merged_eventi, merged_master
 
 
 def save_data(data, *, include_storico: bool = True):
@@ -1332,16 +1483,18 @@ def save_data(data, *, include_storico: bool = True):
     if include_storico:
         save_storico_prezzi_hybrid(storico_prezzi, STORICO_PREZZI_FILE)
 
+    merged_strumenti, merged_eventi, merged_master = _merge_concurrent_writes(data)
+
     core = {
         "schema_version": SCHEMA_VERSION,
         "portfolio_id": data.get("portfolio_id", "main"),
-        "strumenti": data.get("strumenti", []),
+        "strumenti": merged_strumenti,
         "operazioni": data.get("operazioni", []),
         "storico_prezzi": {},  # Empty reference (loaded separately from Parquet/JSON)
         "proventi": data.get("proventi", []),
         "last_quotes_update": data.get("last_quotes_update"),
-        "instrument_master": data.get("instrument_master") or _build_instrument_master(data.get("strumenti", []), data.get("benchmark_data", {})),
-        "registro_eventi": data.get("registro_eventi", []),
+        "instrument_master": merged_master or _build_instrument_master(merged_strumenti, data.get("benchmark_data", {})),
+        "registro_eventi": merged_eventi,
         "registro_liquidita": data.get("registro_liquidita", []),
         "cache_posizioni": data.get("cache_posizioni", {}),
         "cache_storico_portafoglio": data.get("cache_storico_portafoglio", {}),

@@ -1304,7 +1304,13 @@ function decisionMetrics(lines){{
     const am=parseFloat(l.amount||l.importo||0);
     if(!(am>0))return;
     amount+=am;
-    target+=(parseFloat(l.target_improvement_pp||0))*am;
+    // bucket_target_improvement_pp (decisioni salvate dal 2026-09-08 in
+    // poi) e' il ricalcolo cumulativo per bucket sull'importo totale delle
+    // righe di quel bucket, non la stima isolata per riga - target_improvement_pp
+    // da solo assume di essere l'unico acquisto e sottostima l'effetto
+    // reale quando piu' righe dello stesso bucket sono proposte insieme.
+    const targetPp=l.bucket_target_improvement_pp!=null?parseFloat(l.bucket_target_improvement_pp):parseFloat(l.target_improvement_pp||0);
+    target+=targetPp*am;
     data+=(parseFloat(l.data_quality_score||0))*am;
     const cap=parseFloat(l.cap_headroom_after_pp||0);
     if(cap<0)capBad++;
@@ -1437,7 +1443,7 @@ function decisionLearningRows(items){{
       const key=bucket+' · '+role;
       const rec=rows[key]||{{key,bucket,role,proposed:0,executed:0,skipped:0,amount:0,skippedAmount:0,skippedImpact:0,capIssues:0,weakData:0}};
       const amount=parseFloat(line.amount||line.importo||0)||0;
-      const target=parseFloat(line.target_improvement_pp||0)||0;
+      const target=line.bucket_target_improvement_pp!=null?(parseFloat(line.bucket_target_improvement_pp)||0):(parseFloat(line.target_improvement_pp||0)||0);
       const cap=parseFloat(line.cap_headroom_after_pp||0);
       const data=parseFloat(line.data_quality_score||0);
       rec.proposed+=1;rec.amount+=amount;

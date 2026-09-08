@@ -66,13 +66,47 @@ def _fs_rebuild_registers(data: dict) -> None:
     data["registro_liquidita"] = _rebuild_cash_ledger_from_events(get_registro_eventi(data))
 
 
+def _fs_linked_event_id(data: dict, event_id: str) -> str:
+    """Trova l'event_id del "gemello" di una partita di giro ACQUISTO<->
+    VERSAMENTO automatico, in entrambe le direzioni: se `event_id` e' il
+    trade, cerca il VERSAMENTO che lo referenzia via linked_trade_event_id;
+    se `event_id` e' gia' il VERSAMENTO, il gemello e' il trade che
+    referenzia lui stesso. Stringa vuota se non e' un trade auto-liquidato
+    ne' un versamento automatico collegato."""
+    from persistence.storage import _normalize_event_record
+    eventi = data.get("registro_eventi", []) or []
+    target = next(
+        (ev for ev in eventi if str(_normalize_event_record(ev).get("event_id", "")) == event_id),
+        None,
+    )
+    if target is None:
+        return ""
+    own_link = str(target.get("linked_trade_event_id", "") or "")
+    if own_link:
+        return own_link  # target e' il VERSAMENTO, il gemello e' il trade
+    sibling = next(
+        (ev for ev in eventi if str(ev.get("linked_trade_event_id", "") or "") == event_id),
+        None,
+    )
+    return str(_normalize_event_record(sibling).get("event_id", "")) if sibling is not None else ""
+
+
 def _fs_delete_event(data: dict, event_id: str) -> bool:
     from persistence.storage import _normalize_event_record, save_data
     event_id = str(event_id or "")
     before = len(data.get("registro_eventi", []) or [])
+    # Bug reale trovato in review avvocato-del-diavolo (2026-09-08):
+    # cancellare un ACQUISTO auto-liquidato lasciava il VERSAMENTO
+    # collegato orfano nel registro (e viceversa) - i due sono una singola
+    # "partita di giro" (stesso principio gia' applicato da
+    # _fs_sync_linked_versamento), quindi si cancellano sempre insieme.
+    ids_to_remove = {event_id}
+    linked_id = _fs_linked_event_id(data, event_id)
+    if linked_id:
+        ids_to_remove.add(linked_id)
     data["registro_eventi"] = [
         ev for ev in data.get("registro_eventi", [])
-        if str(_normalize_event_record(ev).get("event_id", "")) != event_id
+        if str(_normalize_event_record(ev).get("event_id", "")) not in ids_to_remove
     ]
     if len(data.get("registro_eventi", [])) == before:
         return False
@@ -138,6 +172,25 @@ def _fs_update_event(data: dict, event_id: str, updates: dict) -> bool:
                 ev["importo_netto"] = lordo - ev["imposte"]
             elif tipo == "VERSAMENTO":
                 ev["importo_netto"] = _safe_float(ev.get("importo_lordo", 0))
+                # Bug reale trovato in review avvocato-del-diavolo
+                # (2026-09-08): _fs_sync_linked_versamento veniva richiamata
+                # solo modificando il TRADE - modificare direttamente qui il
+                # VERSAMENTO collegato (es. da "Liquidita' gestione") non
+                # risincronizzava mai il trade, rompendo silenziosamente la
+                # "singola partita di giro" gia' documentata sopra. Se questo
+                # versamento e' collegato a un trade esistente, il trade
+                # resta la fonte di verita': qualunque tentativo di modificare
+                # data/importo qui viene subito riallineato al trade invece
+                # di lasciare i due a divergere.
+                linked_trade_id = str(ev.get("linked_trade_event_id", "") or "")
+                if linked_trade_id:
+                    trade_ev = next(
+                        (e for e in data.get("registro_eventi", [])
+                         if str(_normalize_event_record(e).get("event_id", "")) == linked_trade_id),
+                        None,
+                    )
+                    if trade_ev is not None:
+                        _fs_sync_linked_versamento(data, trade_ev)
             elif tipo in {"PRELIEVO", "COMMISSIONE", "IMPOSTA"}:
                 ev["importo_netto"] = -_safe_float(ev.get("importo_lordo", 0))
             try:

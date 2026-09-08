@@ -542,6 +542,18 @@ async def post_form(cart_data: str = Form("[]")):
                     raise ValueError("Quote, Prezzo e Importo devono essere tutti maggiori di zero.")
                 netto = -(imp_f + comm_f + tax_f) if evento == "ACQUISTO" else (imp_f - comm_f - tax_f)
 
+                # event_id del Versamento automatico (se applicabile) assegnato
+                # PRIMA di quello del trade: _new_event_id incrementa un
+                # contatore di sequenza per-processo (_event_seq), e
+                # _event_sort_key ordina gli eventi con la stessa data anche
+                # per event_id - il versamento che finanzia l'acquisto deve
+                # ordinare PRIMA dell'acquisto stesso ("deposito, poi compro"),
+                # non dopo (bug reale trovato in review avvocato-del-diavolo,
+                # 2026-09-08: assegnando prima l'id del trade, il versamento
+                # gemello riceveva sempre un numero di sequenza piu' alto e
+                # finiva ordinato DOPO l'acquisto che finanziava, invertendo
+                # la causalita' reale in registro_eventi/registro_liquidita).
+                versamento_event_id = _new_event_id(data) if (auto_liq and evento == "ACQUISTO") else None
                 # event_id del trade assegnato subito (non nel loop di flush
                 # piu' sotto) cosi' il Versamento automatico puo' riferirlo
                 # con linked_trade_event_id: senza questo collegamento, una
@@ -552,6 +564,7 @@ async def post_form(cart_data: str = Form("[]")):
 
                 if auto_liq and evento == "ACQUISTO":
                     events_to_append.append({
+                        "event_id": versamento_event_id,
                         "data": str(data_obj),
                         "ticker": "",
                         "tipo_evento": "VERSAMENTO",

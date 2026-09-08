@@ -224,14 +224,25 @@ def _build_concentration_insight(
         return None
     alerts = settings.get("alerts", {}) if isinstance(settings, dict) else {}
     threshold_raw = alerts.get("concentration_threshold_pct")
-    threshold = _safe_float(threshold_raw, 0.0) / 100.0 if threshold_raw not in (None, "") else 0.25
+    user_set_threshold = threshold_raw not in (None, "")
+    threshold = _safe_float(threshold_raw, 0.0) / 100.0 if user_set_threshold else 0.25
     threshold = threshold if threshold > 0 else 0.25
     weights = pd.to_numeric(da["Peso %"], errors="coerce").fillna(0.0)
     if weights.empty:
         return None
     idx = weights.idxmax()
     top_weight = float(weights.loc[idx])
-    if top_weight < max(0.18, threshold * 0.75):
+    # Bug reale segnalato dall'utente (avvocato-del-diavolo, 2026-09-08): il
+    # pavimento 0.18 e' un default prudente per non generare rumore quando
+    # l'utente non ha mai impostato una soglia propria (ui/pages/impostazioni.py
+    # salva None se lasciata a 0, cioe' "mai toccata") - ma applicato sempre
+    # sovrascriveva silenziosamente anche una soglia PIU' BASSA impostata
+    # esplicitamente dall'utente (con "Alert attivi" spento, questo insight
+    # e' l'unica fonte di avviso: build_portfolio_alerts in core/services/
+    # alerts.py non emette nulla in quel caso). Il pavimento resta solo per
+    # il default implicito, mai per una scelta esplicita dell'utente.
+    info_floor = threshold * 0.75 if user_set_threshold else max(0.18, threshold * 0.75)
+    if top_weight < info_floor:
         return None
     row = da.loc[idx]
     ticker = str(row.get("Ticker") or "").strip().upper()

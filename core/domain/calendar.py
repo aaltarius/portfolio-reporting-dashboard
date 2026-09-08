@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import math
 
 import pandas as pd
+
+logger = logging.getLogger("portafoglio.core.domain.calendar")
 
 
 CEDOLA_FREQ_MONTHS = {
@@ -152,10 +155,11 @@ def build_btp_calendar(data: dict) -> pd.DataFrame:
             continue
         scadenza = scadenza.normalize()
 
+        _first_purchase = _first_purchase_date(registro_eventi, ticker)
         purchase_date = (
             _to_ts(strumento.get("data_acquisto"))
             or _to_ts(strumento.get("data_origine"))
-            or _first_purchase_date(registro_eventi, ticker)
+            or _first_purchase
             or today
         )
         purchase_date = purchase_date.normalize()
@@ -165,11 +169,38 @@ def build_btp_calendar(data: dict) -> pd.DataFrame:
         quantita = _finite_float(qty_by_ticker.get(ticker), 1.0, zero_as_default=True)
 
         cedola_freq = str(strumento.get("cedola_frequenza", "annuale") or "annuale").strip().lower()
-        prima_cedola = (
-            _to_ts(strumento.get("prima_cedola"))
-            or _to_ts(strumento.get("data_origine"))
-            or purchase_date
-        )
+        _prima_cedola_raw = _to_ts(strumento.get("prima_cedola")) or _to_ts(strumento.get("data_origine"))
+        if _prima_cedola_raw is not None:
+            prima_cedola = _prima_cedola_raw
+        elif _to_ts(strumento.get("data_acquisto")) or _first_purchase:
+            # Nessuna prima_cedola/data_origine esplicita, ma purchase_date
+            # viene comunque da un riferimento reale (acquisto o primo
+            # evento registrato) - approssimazione invariata rispetto a prima.
+            prima_cedola = purchase_date
+        else:
+            # Nessun riferimento temporale reale (ne' prima_cedola/
+            # data_origine/data_acquisto ne' un evento di acquisto
+            # registrato): purchase_date sarebbe "oggi" per pura assenza di
+            # dati, producendo un calendario cedole con date di stacco
+            # arbitrarie rispetto al vero calendario dell'emittente. La
+            # scadenza e' comunque una data di pagamento reale (rimborso +
+            # ultima cedola coincidono sempre a scadenza per un BTP): si
+            # ricava l'ancora andando a ritroso dalla scadenza a passi di
+            # cedola_freq mesi, invece di usare oggi.
+            cedola_freq_months = CEDOLA_FREQ_MONTHS.get(cedola_freq, 12)
+            anchor = scadenza
+            for _ in range(1000):
+                prev = anchor - pd.DateOffset(months=cedola_freq_months)
+                if prev <= today:
+                    break
+                anchor = prev
+            prima_cedola = anchor
+            logger.warning(
+                "build_btp_calendar: nessuna data di riferimento (prima_cedola/data_origine/"
+                "data_acquisto/eventi) per %s - calendario cedole ricavato a ritroso dalla "
+                "scadenza (%s), approssimato.",
+                ticker, scadenza.date(),
+            )
         prima_cedola = prima_cedola.normalize()
         aliquota_cedola = _finite_float(strumento.get("aliquota_cedola"), TAX_RATE_GOV_PCT, zero_as_default=True)
 

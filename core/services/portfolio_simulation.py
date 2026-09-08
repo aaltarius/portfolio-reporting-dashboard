@@ -54,6 +54,16 @@ class PortfolioSimulationResult:
     excluded_weight: float = 0.0
     excluded_fragmented_tickers: tuple[str, ...] = ()
     excluded_fragmented_weight: float = 0.0
+    #: Controvalore di TUTTI gli strumenti posseduti passati a questa
+    #: simulazione (eligible + esclusi), non solo del sottoinsieme
+    #: simulato. Bug reale segnalato dall'utente (avvocato-del-diavolo,
+    #: 2026-09-08): initial_value (base del fan chart, etichettata "Oggi"
+    #: in ui/charts/analitica.py) e' gia' correttamente il controvalore dei
+    #: soli ticker eligible, ma senza un riferimento esplicito al totale
+    #: reale un utente con esclusioni consistenti (strumenti nuovi/
+    #: frammentati) legge "Oggi: 48.000 EUR" come un errore di dati invece
+    #: che come il sottoinsieme simulato di un portafoglio da 60.000 EUR.
+    full_portfolio_value: float = 0.0
 
 
 def _unavailable(reason: str, n_observations: int) -> PortfolioSimulationResult:
@@ -172,6 +182,10 @@ def build_portfolio_simulation(
     if initial_value <= 0:
         return _unavailable("Controvalore complessivo non disponibile.", n_observations)
 
+    full_portfolio_value = float(
+        pd.to_numeric(risk_df["Controvalore"], errors="coerce").fillna(0.0).sum()
+    )
+
     rng = np.random.default_rng(seed)
     draws = rng.choice(portfolio_returns.to_numpy(), size=(int(n_scenarios), HORIZON_DAYS_MAX), replace=True)
     paths = np.cumprod(1.0 + draws, axis=1)
@@ -217,4 +231,5 @@ def build_portfolio_simulation(
         excluded_weight=excluded_weight,
         excluded_fragmented_tickers=tuple(excluded_fragmented),
         excluded_fragmented_weight=excluded_fragmented_weight,
+        full_portfolio_value=full_portfolio_value,
     )

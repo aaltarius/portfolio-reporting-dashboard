@@ -152,10 +152,25 @@ def _render_monte_carlo_analitica(bundle: Any) -> None:
         f"di trovare abbastanza giorni in comune con gli altri strumenti."
         if mc_result.excluded_fragmented_tickers else ""
     )
+    # Bug reale segnalato dall'utente (avvocato-del-diavolo, 2026-09-08): il
+    # punto "Oggi" del grafico (initial_value) e' il controvalore dei soli
+    # strumenti simulati, non il controvalore totale del portafoglio - con
+    # esclusioni consistenti la differenza puo' sembrare un errore di dati.
+    # Reso esplicito qui col controvalore reale a confronto, cosi' l'utente
+    # vede subito che i due numeri sono legittimamente diversi e perche'.
+    full_value_note = (
+        f" Il punto \"Oggi\" del grafico ({fmt_eur_it(mc_result.initial_value, 0)}) riflette "
+        f"solo gli strumenti inclusi nella simulazione: il controvalore reale del portafoglio "
+        f"e' {fmt_eur_it(mc_result.full_portfolio_value, 0)}."
+        if (mc_result.excluded_tickers or mc_result.excluded_fragmented_tickers)
+        and abs(mc_result.full_portfolio_value - mc_result.initial_value) > 0.01
+        else ""
+    )
     st.caption(
         f"Simulazione basata su {mc_result.n_observations} osservazioni storiche reali del "
         f"portafoglio attuale, {mc_result.n_scenarios} scenari ricampionati (bootstrap storico, "
         f"non un modello previsivo).{extrapolation_note}{excluded_note}{excluded_fragmented_note}"
+        f"{full_value_note}"
     )
     legend_block("Ogni scenario è un percorso possibile ricostruito ricampionando la storia reale del portafoglio, non una previsione: la mediana è il centro della distribuzione simulata, le bande mostrano quanto può variare l'esito.", variant="bottom")
 

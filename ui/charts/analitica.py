@@ -426,10 +426,24 @@ def build_portfolio_simulation_chart(result, theme):
 	# Punto di partenza ("oggi") ed etichetta di valore sulla mediana finale:
 	# le linee prendono valore all'estremo (marks-and-anatomy), non un
 	# numero su ogni punto.
+	#
+	# Bug reale segnalato dall'utente (avvocato-del-diavolo, 2026-09-08):
+	# initial_value/fan["p50"].iloc[0] e' il controvalore dei soli strumenti
+	# INCLUSI nella simulazione (esclude strumenti nuovi/quotazioni
+	# frammentate, vedi build_portfolio_simulation) - su un'esclusione
+	# consistente l'etichetta "Oggi: 48.000 EUR" con un portafoglio reale
+	# da 60.000 EUR si legge come un errore di dati, non come il limite
+	# dichiarato della simulazione. Se esistono esclusioni, l'etichetta lo
+	# dice esplicitamente invece di mostrare solo "Oggi".
+	has_exclusions = bool(getattr(result, "excluded_tickers", ()) or getattr(result, "excluded_fragmented_tickers", ()))
+	today_label = (
+		f"Oggi (solo simulati): {fmt_eur_it(fan['p50'].iloc[0], 0)}"
+		if has_exclusions else f"Oggi: {fmt_eur_it(fan['p50'].iloc[0], 0)}"
+	)
 	fig.add_trace(go.Scatter(
 		x=[x.iloc[0]], y=[fan["p50"].iloc[0]], mode="markers+text",
 		marker=dict(size=8, color=band_color, line=dict(color="white", width=1.5)),
-		text=[f"Oggi: {fmt_eur_it(fan['p50'].iloc[0], 0)}"], textposition="middle left",
+		text=[today_label], textposition="middle left",
 		textfont=dict(size=10, color=band_color), showlegend=False, hoverinfo="skip",
 		cliponaxis=False,
 	))

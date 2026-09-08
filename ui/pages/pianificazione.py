@@ -533,7 +533,14 @@ def _summarize_sator_execution_history(decisions: list[dict] | None) -> dict | N
             skipped_by_ticker[ticker] = skipped_by_ticker.get(ticker, 0) + 1
             line = planned_by_ticker[ticker]
             amount = _decision_line_amount(line)
-            improvement = max(0.0, _decision_float(line.get("target_improvement_pp"), 0.0))
+            # bucket_target_improvement_pp (se presente, decisioni salvate dal
+            # 2026-09-08 in poi) e' il ricalcolo cumulativo per bucket, non la
+            # stima isolata per riga - piu' accurato quando piu' righe dello
+            # stesso bucket sono state proposte insieme. Fallback al campo
+            # storico per le decisioni salvate prima di questo fix.
+            improvement = max(0.0, _decision_float(
+                line.get("bucket_target_improvement_pp", line.get("target_improvement_pp")), 0.0
+            ))
             if amount > 0 and improvement > 0:
                 target_left_weighted += improvement * amount
                 target_left_amount += amount
@@ -910,7 +917,15 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
         st.info("Nessuno strumento posseduto: la mappa di allocazione comparira' dopo il primo acquisto.")
     else:
         render_section_title(
-            "Allocazione: bucket e strumenti", comment="Anello interno: Core/Difensivo/Satellite. Anello esterno: natura/esposizione (piu' strumenti della stessa natura si aggregano in un'unica fetta, colorata per natura; l'hover elenca i singoli strumenti che la compongono).", gap_after="sm",
+            "Allocazione: bucket e strumenti",
+            # Didascalia riscritta (2026-09-08, trovata disallineata in un audit
+            # di usabilita' dal vivo): descriveva ancora il vecchio doppio
+            # anello ("Anello interno/esterno"), sostituito da barre orizzontali
+            # impilate una per bucket nella sessione precedente (Task V-nonies/
+            # V-decies) - la didascalia non era mai stata aggiornata di
+            # conseguenza, disallineata dal grafico realmente mostrato sotto.
+            comment="Una barra per bucket (Core/Difensivo/Satellite): ogni segmento e' uno strumento, colorato per natura (stesso colore per strumenti della stessa natura nello stesso bucket). L'hover mostra ticker, nome e quota sul bucket di ciascun segmento.",
+            gap_after="sm",
         )
         with profile_step("Pianificazione/SATOR", "allocation_rings_chart"):
             fig_rings = build_allocation_rings_chart(rings_df, objective, theme)

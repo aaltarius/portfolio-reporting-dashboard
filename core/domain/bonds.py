@@ -1,11 +1,14 @@
 """core/domain/bonds.py — Calcoli finanziari obbligazionari (YTM, Duration)."""
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger("portafoglio.core.domain.bonds")
 
 
 def _finite_float(value: Any, default: float = 0.0) -> float:
@@ -74,8 +77,33 @@ def calc_ytm_and_duration(
             or strumento.get("data_acquisto")
         )
         prima_cedola_ts = _to_ts(prima_cedola_raw) if prima_cedola_raw else None
-        prima_cedola = prima_cedola_ts.normalize() if prima_cedola_ts is not None else today
         cedola_freq_str = str(strumento.get("cedola_frequenza") or "annuale").strip().lower()
+        if prima_cedola_ts is not None:
+            prima_cedola = prima_cedola_ts.normalize()
+        else:
+            # Nessun riferimento temporale (prima_cedola/data_origine/
+            # data_acquisto tutti assenti): la scadenza e' comunque una
+            # data di pagamento reale (rimborso + ultima cedola coincidono
+            # sempre a scadenza per un BTP) - si ricava il calendario
+            # andando a ritroso dalla scadenza a passi di
+            # CEDOLA_FREQ_MONTHS mesi, invece di ancorare arbitrariamente a
+            # oggi (che produce date di stacco sfalsate rispetto al vero
+            # calendario dell'emittente, es. gennaio/luglio invece di
+            # marzo/settembre). Se anche la scadenza fosse assente si
+            # sarebbe gia' usciti sopra (return None, None).
+            _months_fallback = CEDOLA_FREQ_MONTHS.get(cedola_freq_str, 12)
+            _anchor = scadenza
+            for _ in range(1000):
+                _prev = _anchor - pd.DateOffset(months=_months_fallback)
+                if _prev <= today:
+                    break
+                _anchor = _prev
+            prima_cedola = _anchor
+            logger.warning(
+                "calc_ytm_and_duration: nessuna data di riferimento per %s - calendario "
+                "cedole ricavato a ritroso dalla scadenza (%s), approssimato.",
+                strumento.get("ticker") or strumento.get("nome") or "?", scadenza.date(),
+            )
     except Exception:
         return None, None
 

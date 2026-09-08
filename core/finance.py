@@ -1125,6 +1125,25 @@ def extract_gov_maturity_date(name: Any) -> date | None:
                 return pd.Timestamp(year=year, month=month, day=day)
             except Exception:
                 pass
+    # BTP il cui nome ha solo mese+anno senza giorno esplicito (es. "BTP TF
+    # 3,45% AG2029 EUR"): senza questo pattern intermedio si cadeva subito
+    # nel fallback sotto, che prende la prima coppia di cifre nell'intera
+    # stringa - in un nome con un tasso cedola a due decimali (es. "3,45%")
+    # quelle cifre precedono l'anno vero e venivano lette come anno di
+    # scadenza (2045 invece di 2029). Anno richiesto a 4 cifre (mai a 2):
+    # un mese + sole 2 cifre senza giorno e' un pattern troppo ambiguo per
+    # fidarsene. Giorno sconosciuto: usa il 1° del mese come approssimazione
+    # dichiarata, non il 31/12 del fallback generico sotto (che non conosce
+    # nemmeno il mese).
+    m = re.search(r'(?<![A-Z])([A-Z]{2,3})\s*(20\d{2})(?!\d)', txt)
+    if m:
+        month = month_map.get(m.group(1)[:3], month_map.get(m.group(1)[:2]))
+        year = int(m.group(2))
+        if month:
+            try:
+                return pd.Timestamp(year=year, month=month, day=1)
+            except Exception:
+                pass
     m = re.search(r'(20\d{2}|\d{2})', txt)
     if m:
         year = int(m.group(1))
