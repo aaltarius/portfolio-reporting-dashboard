@@ -282,10 +282,25 @@ def _get_yahoo_chart_history(tk: str, period: str = "max") -> dict[str, float]:
     history: dict[str, float] = {}
     try:
         encoded_ticker = quote(str(tk or "").strip(), safe="")
-        encoded_period = quote(str(period or "max").strip(), safe="")
         if not encoded_ticker:
             return history
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded_ticker}?interval=1d&range={encoded_period}"
+        period_norm = str(period or "max").strip()
+        if period_norm == "max":
+            # Yahoo, per range=max con interval=1d, restituisce lato server una
+            # serie sotto-campionata (poche decine/centinaia di punti invece
+            # dello storico giornaliero pieno) — riprodotto empiricamente per
+            # XDEQ.MI/XXSC.MI/XDEB.MI/XBAG.MI (66-223 punti invece di
+            # 2700-4700). yfinance non passa mai "range=" come stringa: usa
+            # timestamp Unix period1/period2 espliciti, che non attivano il
+            # sotto-campionamento. period1=0 (epoch) copre qualunque data di
+            # lancio dello strumento.
+            url = (
+                f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded_ticker}"
+                f"?interval=1d&period1=0&period2={int(time.time())}"
+            )
+        else:
+            encoded_period = quote(period_norm, safe="")
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded_ticker}?interval=1d&range={encoded_period}"
         r = requests.get(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=12)
         if hasattr(r, "raise_for_status"):
             r.raise_for_status()
