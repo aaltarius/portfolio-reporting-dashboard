@@ -28,6 +28,20 @@ def build_btp_calendar_figure(
     ritorna una go.Figure() vuota (mai None: il chiamante passa sempre il
     risultato a st.plotly_chart).
     """
+    # Guardia difensiva aggiunta in audit 2026-09-08: entrambi i chiamanti
+    # reali gia' controllano None/vuoto prima di chiamare questa funzione
+    # (render_btp_calendar qui sotto, ui/pages/cruscotti.py) - mai raggiunta
+    # in produzione, ma la funzione stessa deve restare sicura da chiamare
+    # in isolamento (stesso principio gia' applicato a tutti gli altri
+    # build_* di ui/charts/), non dipendere solo dal chiamante. "data"/
+    # "ticker"/"tipo_riga" sono indicizzate direttamente (mai via .get())
+    # qualche riga sotto: un DataFrame non vuoto ma senza queste colonne
+    # sollevava KeyError invece di restituire una figura vuota (bug reale
+    # trovato in questo stesso audit, stessa classe del KeyError: 'Data'
+    # gia' corretto in passato altrove).
+    required_columns = {"data", "ticker", "tipo_riga", "tipo_evento", "stato_evento"}
+    if calendar_df is None or calendar_df.empty or not required_columns.issubset(calendar_df.columns):
+        return go.Figure()
     df = calendar_df.copy()
     midday = pd.Timedelta(hours=12)
     df["data"] = pd.to_datetime(df["data"], errors="coerce").dt.normalize() + midday

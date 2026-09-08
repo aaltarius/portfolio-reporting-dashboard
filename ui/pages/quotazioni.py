@@ -83,7 +83,16 @@ def _clear_quotazioni_perf_legacy_cache(fcache) -> None:
 
 
 def _get_freshness_badge(last_refresh_dt: Any) -> str:
-    """Ritorna emoji di freschezza basato su quanto tempo fa è avvenuto il refresh."""
+    """Ritorna emoji di freschezza basato su quanto tempo fa è avvenuto il refresh.
+
+    Bug di usabilita' trovato in un audit dal vivo (2026-09-08): oltre i 60
+    minuti il badge era rosso, lo stesso colore usato dalla card "Errori"
+    proprio accanto (vedi render_quotazioni_page) - 29/29 letture OK e 0
+    errori con il badge comunque rosso si leggeva a colpo d'occhio come un
+    problema, quando significa solo "sono passati piu' di 60 minuti".
+    Cambiato in arancione, lo stesso colore gia' usato dalla card "Warning"
+    nella stessa schermata: il rosso resta riservato solo a errori reali.
+    """
     if not last_refresh_dt:
         return "⚪"
     try:
@@ -99,7 +108,7 @@ def _get_freshness_badge(last_refresh_dt: Any) -> str:
         elif minutes < 60:
             return "🟡"  # Recente (5-60 min)
         else:
-            return "🔴"  # Stale (> 60 min)
+            return "🟠"  # Stale (> 60 min) - non un errore, vedi docstring
     except Exception:
         return "⚪"
 

@@ -2678,22 +2678,24 @@ def _dominant_bucket(
     budget 1200€, severita' Alta, 3 linee -> 3 strumenti a maggioranza
     Satellite nonostante Core fosse il bucket piu' carente di gran lunga).
 
-    NOTA (2026-09-08, review avvocato-del-diavolo, finding non risolto):
-    resta un limite strutturale noto, mai affrontato - se il bucket
-    maggioritario ha un deficit quasi soddisfatto mentre un bucket
-    minoritario a cui lo strumento appartiene comunque ha un deficit molto
-    piu' grave, lo strumento va comunque sempre al maggioritario, anche se
-    sarebbe un buon candidato per il bucket che ne ha davvero piu' bisogno.
-    Un primo tentativo di correzione (soglia di sbilanciamento deficit) e'
-    stato scritto e poi RIMOSSO in questa stessa sessione perche' rompeva
+    DECISIONE CHIUSA (2026-09-08, review avvocato-del-diavolo, delegata
+    esplicitamente dall'utente - "prendi tu la decisione per me"): "il
+    maggioritario vince sempre quando eleggibile" resta il comportamento
+    DEFINITIVO, non piu' un limite aperto. Un residuo teorico esiste (se il
+    bucket maggioritario ha un deficit quasi soddisfatto mentre un bucket
+    minoritario a cui lo strumento appartiene ha un deficit molto piu'
+    grave, lo strumento non compete mai per il bucket che ne avrebbe piu'
+    bisogno) - ma un primo tentativo di correzione (soglia di
+    sbilanciamento deficit) rompeva
     `test_dominant_bucket_split_instrument_prefers_its_own_majority_exposure`,
-    che blocca deliberatamente "il maggioritario vince sempre" come esito
-    esplicito e testato di V-ter (bug allora piu' severo: il deficit da
-    solo instradava per intero uno strumento con appena il 20-30% di
-    esposizione). Correggere questo residuo richiede una decisione di
-    design condivisa con l'utente (quale soglia bilancia i due rischi),
-    non un fix unilaterale che rovescerebbe una scelta gia' presa e
-    testata."""
+    che blocca deliberatamente questo stesso comportamento come esito
+    testato di V-ter (bug allora molto piu' severo e frequente: il deficit
+    da solo instradava per intero uno strumento con appena il 20-30% di
+    esposizione, diluendo sistematicamente gli acquisti). Nessuna soglia
+    di sbilanciamento e' mai stata osservata scattare su dati reali
+    dell'utente - semplicita' e prevedibilita' di un comportamento gia'
+    validato battono un fix rischioso per un caso limite mai confermato.
+    Non riaprire senza un caso reale concreto che lo giustifichi."""
     candidati = [b for b, frac in exposure.items() if frac > 0 and b in eligible_buckets]
     if not candidati:
         return None

@@ -854,8 +854,14 @@ def build_category_dashboard_metrics(
         {"label": "Giacenza media", "value": avg_balance, "kind": "eur", "note": "Media ponderata nel tempo del controvalore"},
         {"label": "Rend. su giacenza media", "value": avg_balance_return, "kind": "pct", "note": "P/L / giacenza media"},
         {"label": "Annualizzato lineare", "value": annualized_linear, "kind": "pct", "note": "Rendimento semplice / anni"},
-        {"label": "XIRR", "value": xirr_value, "kind": "pct", "note": "Money-weighted return"},
-        {"label": "TWR proxy", "value": twr_total, "kind": "pct", "note": "Time-weighted return proxy"},
+        # Note estese (audit di usabilita' dal vivo, 2026-09-08): XIRR/TWR
+        # possono avere segno diverso da P/L assoluto/rendimento semplice
+        # sulla stessa card row - non e' un'incongruenza, sono metriche
+        # diverse (pesano tempo/flussi di cassa, P/L assoluto no) che
+        # divergono piu' facilmente su periodi brevi. Prima non c'era
+        # alcuna nota che lo spiegasse, osservato confusionario dal vivo.
+        {"label": "XIRR", "value": xirr_value, "kind": "pct", "note": "Money-weighted return - può differire dal P/L semplice su periodi brevi"},
+        {"label": "TWR proxy", "value": twr_total, "kind": "pct", "note": "Time-weighted return proxy - può differire dal P/L semplice su periodi brevi"},
         {"label": "Volatilità", "value": volatility_ann, "kind": "pct", "note": "Volatilità annualizzata"},
     ]
 

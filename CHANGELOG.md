@@ -1,5 +1,33 @@
 # Changelog
 
+## 5.0-pre - Chiusura dei punti aperti verso la 5.0 definitiva: decisione SATOR, badge freschezza, audit difensivo grafici
+
+- **Decisione definitiva su SATOR**: il routing per esposizione maggioritaria
+  tra bucket (`_dominant_bucket`) resta il comportamento voluto - non più un
+  limite aperto in attesa di conferma. Un tentativo di correzione precedente
+  reintroduceva un bug più grave e frequente già risolto (Task V-ter);
+  semplicità e prevedibilità già validate sui dati reali battono un fix
+  rischioso per un caso limite mai osservato.
+- **Corretta un'incoerenza cromatica in Quotazioni**: il badge "Ultimo
+  refresh" diventava rosso dopo 60 minuti, lo stesso colore usato per
+  "Errori" nella stessa schermata - risultato: 29/29 letture OK ma badge
+  comunque rosso, leggibile come un problema. Ora arancione, coerente con
+  "Warning" nella stessa schermata; il rosso resta riservato a errori reali.
+- Aggiunta una nota esplicativa alle card XIRR/TWR proxy in Cruscotti: può
+  divergere dal P/L semplice su periodi brevi, prima non spiegato.
+- **Audit difensivo sistematico dei chart builder** (`ui/charts/`): 10
+  moduli senza copertura dedicata verificati uno per uno con esecuzione
+  reale su input degeneri (None, DataFrame vuoto, colonne mancanti).
+  Trovato e corretto un vero gap: `build_btp_calendar_figure` sollevava
+  `KeyError` su un DataFrame non vuoto ma privo delle colonne richieste
+  (stessa classe del `KeyError: 'Data'` già risolto in passato altrove) -
+  ora restituisce una figura vuota come tutti gli altri builder. Gli altri
+  9 moduli erano già correttamente guardati. Aggiunti 5 nuovi file di test
+  di regressione seguendo la convenzione esistente del progetto.
+
+Verificato con la suite di test locale completa (258+ file): nessuna
+regressione.
+
 ## 5.0-pre - Review avvocato-del-diavolo su tutto l'applicativo: corretti 13 problemi reali (dati, SATOR, Analitica, obbligazioni)
 
 Round di correzioni su 13 criticità trovate con una review "avvocato del
