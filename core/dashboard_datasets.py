@@ -806,7 +806,13 @@ def _build_quotazioni_category_ticker_bundles_payload(
         return {"category_tickers": category_tickers, "ticker_bundles": ticker_bundles}
 
     benchmark_runtime_cache: dict[str, dict[str, Any]] = {}
-    normalized_benchmark_cache: dict[tuple[str, str], tuple[str, list[pd.Timestamp], list[float]] | None] = {}
+    # Chiave a 3 elementi (ticker, start_key, base_key) dal Task V-ventesima
+    # (2026-09-06, ancoraggio benchmark a 100 sulla data di acquisto) -
+    # annotazione a 2 elementi corretta da /code-review ultra (2026-09-08),
+    # disallineata dalla firma di _get_runtime_normalized_benchmark_series
+    # qualche centinaio di righe sotto: nessun effetto a runtime, ma le due
+    # annotazioni vanno tenute sincronizzate per restare auto-esplicative.
+    normalized_benchmark_cache: dict[tuple[str, str, str], tuple[str, list[pd.Timestamp], list[float]] | None] = {}
 
     benchmark_tickers = []
     for tk in category_tickers:

@@ -2411,6 +2411,7 @@ def _purchase_decision_score(
     row: pd.Series, amount: float, *,
     bucket_weights: dict[str, float] | None = None,
     bucket_targets: dict[str, float] | None = None,
+    metrics: dict[str, float] | None = None,
 ) -> float:
     """Priorita' operativa dell'acquisto, distinta dal voto dello strumento.
 
@@ -2418,9 +2419,18 @@ def _purchase_decision_score(
     valuta invece se l'importo simulato e' utile adesso per il portafoglio:
     target, cap, qualita' dati, costi e qualita' generale vengono combinati in
     una metrica 0-1 usata solo per decidere cosa finanziare con il budget.
+
+    `metrics` (nit da /code-review ultra, 2026-09-08): se il chiamante ha
+    gia' calcolato _compute_marginal_purchase_metrics per lo stesso
+    row/amount (es. il giro a blocchi in _suggested_quotes, che ne aveva
+    bisogno anche per un secondo controllo esplicito su target_improvement_pp),
+    puo' passarlo qui per evitare di ricalcolarlo una seconda volta - stesso
+    identico risultato, il default (None) ricalcola come sempre per tutti
+    gli altri chiamanti.
     """
     amount = max(0.0, _safe_float(amount, 0.0))
-    metrics = _compute_marginal_purchase_metrics(row, amount, bucket_weights=bucket_weights, bucket_targets=bucket_targets)
+    if metrics is None:
+        metrics = _compute_marginal_purchase_metrics(row, amount, bucket_weights=bucket_weights, bucket_targets=bucket_targets)
     target_pp = _safe_float(metrics.get("target_improvement_pp"), 0.0)
     headroom_pp = _safe_float(metrics.get("cap_headroom_after_pp"), 0.0)
     quality = _safe_float(row.get("data_quality_score"), _data_quality_score(row.get("n_punti", 0)))
@@ -2625,7 +2635,14 @@ def _suggested_quotes(
             if n_blocco <= 0:
                 continue
             next_amount = (quote[i] + n_blocco) * price
-            step_score = _purchase_decision_score(df.iloc[i], next_amount, bucket_weights=bucket_weights, bucket_targets=bucket_targets)
+            # Nit da /code-review ultra (2026-09-08): un solo calcolo delle
+            # metriche marginali per candidato per iterazione (prima erano
+            # due: una dentro _purchase_decision_score, una esplicita qui
+            # sotto per il controllo su target_improvement_pp) - proprio nel
+            # loop pensato per restare veloce su budget grandi con molti
+            # candidati e molte iterazioni.
+            metrics = _compute_marginal_purchase_metrics(df.iloc[i], next_amount, bucket_weights=bucket_weights, bucket_targets=bucket_targets)
+            step_score = _purchase_decision_score(df.iloc[i], next_amount, bucket_weights=bucket_weights, bucket_targets=bucket_targets, metrics=metrics)
             if step_score < 0.30:
                 continue
             # Guardia esplicita, non solo il punteggio composito: una
@@ -2636,7 +2653,6 @@ def _suggested_quotes(
             # allontanando il portafoglio dall'obiettivo" (la richiesta
             # dell'utente era esplicitamente "avvicinarci il piu' possibile
             # agli obiettivi", mai il contrario).
-            metrics = _compute_marginal_purchase_metrics(df.iloc[i], next_amount, bucket_weights=bucket_weights, bucket_targets=bucket_targets)
             if _safe_float(metrics.get("target_improvement_pp"), 0.0) < -0.10:
                 continue
             candidate = (step_score, -price, i, price, n_blocco)
@@ -3158,11 +3174,27 @@ def build_sator_decision_record(
     bucket_cumulative_improvement: dict[str, float] = {}
     if not ranking.empty:
         for bucket, total_amount in bucket_totals.items():
-            repr_row = ranking[ranking["ticker"].astype(str) == bucket_repr_ticker.get(bucket, "")]
-            if repr_row.empty:
+            # Nit trovato da /code-review ultra (2026-09-08): `entry["bucket"]`
+            # sopra (usato per raggruppare, riga ~3122) e' _role_bucket(role) -
+            # una mappa semplice ruolo->bucket - MENTRE la colonna "_bucket"
+            # del ranking (da cui derivano bucket_weight/bucket_target, vedi
+            # _score_universe) e' _primary_bucket_from_exposure(), basata
+            # sull'esposizione frazionata reale (Task C3). Per uno strumento
+            # diviso i due possono differire: leggere bucket_weight/
+            # bucket_target dalla riga di un ticker rappresentante scelto per
+            # _role_bucket poteva restituire i valori del bucket SBAGLIATO
+            # (quello dell'esposizione frazionata di quel ticker, non quello
+            # del gruppo). Preferisci sempre una riga la cui "_bucket" (colonna
+            # frazionata) coincide davvero col bucket del gruppo; il ticker
+            # rappresentante resta solo un fallback per un gruppo senza alcuna
+            # riga con quella corrispondenza esatta (raro).
+            bucket_rows = ranking[ranking.get("_bucket", pd.Series(dtype=str)).astype(str) == bucket] if "_bucket" in ranking.columns else ranking.iloc[0:0]
+            if bucket_rows.empty:
+                bucket_rows = ranking[ranking["ticker"].astype(str) == bucket_repr_ticker.get(bucket, "")]
+            if bucket_rows.empty:
                 continue
             bucket_cumulative_improvement[bucket] = _compute_marginal_purchase_metrics(
-                repr_row.iloc[0], total_amount,
+                bucket_rows.iloc[0], total_amount,
             )["target_improvement_pp"]
     for line in enriched_lines:
         bucket = str(line.get("bucket") or "")

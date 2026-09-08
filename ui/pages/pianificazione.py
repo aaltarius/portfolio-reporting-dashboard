@@ -529,21 +529,57 @@ def _summarize_sator_execution_history(decisions: list[dict] | None) -> dict | N
         skipped_total += len(skipped)
         added_total += len(added)
 
+        # Bug reale trovato da /code-review ultra (2026-09-08):
+        # bucket_target_improvement_pp e' un SOLO valore cumulativo per
+        # bucket (identico su ogni riga di quel bucket, vedi
+        # build_sator_decision_record) - usarlo TAL QUALE come contributo di
+        # UNA riga saltata nella media pesata sotto restituisce l'intero
+        # miglioramento cumulativo del bucket anche quando solo una parte
+        # delle sue righe e' stata saltata (es. 1 riga su 3), sovrastimando
+        # sistematicamente "target lasciato". Fix: aggregare le righe saltate
+        # PER BUCKET (non per singola riga) prima di pesare - un solo
+        # contributo per bucket, scalato sulla quota dell'importo pianificato
+        # di quel bucket effettivamente saltata in QUESTA decisione. Pesare
+        # per riga invece che per bucket sembra equivalente ma non lo e':
+        # amount_i/bucket_totale moltiplicato una seconda volta per amount_i
+        # nella media pesata introduce un effetto quadratico nell'importo che
+        # non riduce piu' esattamente al cumulativo intero quando l'intero
+        # bucket e' saltato (verificato con un test dedicato).
+        planned_amount_by_bucket: dict[str, float] = {}
+        for line in planned_lines:
+            bucket = str(line.get("bucket") or "")
+            if bucket:
+                planned_amount_by_bucket[bucket] = planned_amount_by_bucket.get(bucket, 0.0) + _decision_line_amount(line)
+
+        skipped_amount_by_bucket: dict[str, float] = {}
+        bucket_cumulative_pp: dict[str, float] = {}
         for ticker in skipped:
             skipped_by_ticker[ticker] = skipped_by_ticker.get(ticker, 0) + 1
             line = planned_by_ticker[ticker]
             amount = _decision_line_amount(line)
-            # bucket_target_improvement_pp (se presente, decisioni salvate dal
-            # 2026-09-08 in poi) e' il ricalcolo cumulativo per bucket, non la
-            # stima isolata per riga - piu' accurato quando piu' righe dello
-            # stesso bucket sono state proposte insieme. Fallback al campo
-            # storico per le decisioni salvate prima di questo fix.
-            improvement = max(0.0, _decision_float(
-                line.get("bucket_target_improvement_pp", line.get("target_improvement_pp")), 0.0
-            ))
-            if amount > 0 and improvement > 0:
-                target_left_weighted += improvement * amount
-                target_left_amount += amount
+            bucket = str(line.get("bucket") or "")
+            has_cumulative = line.get("bucket_target_improvement_pp") not in (None, "")
+            if has_cumulative and bucket and planned_amount_by_bucket.get(bucket, 0.0) > 0:
+                skipped_amount_by_bucket[bucket] = skipped_amount_by_bucket.get(bucket, 0.0) + amount
+                bucket_cumulative_pp.setdefault(bucket, max(0.0, _decision_float(line.get("bucket_target_improvement_pp"), 0.0)))
+            else:
+                # Fallback al campo storico isolato per riga (decisioni
+                # salvate prima di questo fix, gia' scalato per costruzione
+                # perche' calcolato sulla singola riga - contributo diretto,
+                # non aggregato per bucket).
+                improvement = max(0.0, _decision_float(line.get("target_improvement_pp"), 0.0))
+                if amount > 0 and improvement > 0:
+                    target_left_weighted += improvement * amount
+                    target_left_amount += amount
+
+        for bucket, skipped_amount in skipped_amount_by_bucket.items():
+            bucket_planned_total = planned_amount_by_bucket.get(bucket, 0.0)
+            if bucket_planned_total <= 0 or skipped_amount <= 0:
+                continue
+            scaled = bucket_cumulative_pp.get(bucket, 0.0) * (skipped_amount / bucket_planned_total)
+            if scaled > 0:
+                target_left_weighted += scaled * skipped_amount
+                target_left_amount += skipped_amount
 
     if executed_count <= 0:
         return None

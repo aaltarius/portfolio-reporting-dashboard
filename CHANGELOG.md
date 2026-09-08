@@ -1,5 +1,38 @@
 # Changelog
 
+## 5.0-pre - /code-review ultra: corretti due bug critici di perdita dati introdotti dal fix di persistenza di oggi, più 4 rifiniture SATOR
+
+Prima esecuzione di `/code-review ultra` sul lavoro di oggi. Ha trovato,
+tra gli altri, due bug seri **causati proprio dal merge a 3 vie introdotto
+poche ore prima nella stessa sessione** per proteggere da perdite di dati
+- la correzione più delicata della giornata aveva un suo proprio bug.
+
+- **[Critico] Modalità Privacy + il nuovo merge potevano cancellare per
+  sempre gli strumenti nascosti da disco** e sovrascrivere il ticker reale
+  dei loro eventi collegati con il segnaposto privacy. La vista filtrata
+  per la Modalità Privacy non deve mai raggiungere una scrittura reale (il
+  suo stesso contratto lo dichiarava da tempo, ma nessun controllo lo
+  faceva rispettare): ora `save_data()` rifiuta esplicitamente qualunque
+  dato marcato come filtrato per privacy, invece di limitarsi a
+  documentare la regola.
+- **[Critico] Un file dati corrotto o illeggibile per un errore di I/O
+  transitorio veniva trattato come "tutto cancellato da un altro
+  processo"**, azzerando quasi per intero strumenti/eventi/anagrafica ad
+  ogni salvataggio successivo - l'esatto opposto della rete di sicurezza
+  che il merge doveva introdurre. Ora un file esistente ma non leggibile
+  in modo affidabile blocca il merge e scrive comunque i dati del
+  chiamante, senza mai presumere una cancellazione.
+- **SATOR**: l'indicatore "quanto target manca ancora" sovrastimava il
+  progresso lasciato indietro quando solo una parte delle righe proposte
+  per lo stesso bucket veniva saltata (mostrava l'intero miglioramento del
+  bucket anche per una sola riga su tre); corretto uno scambio di bucket
+  nel calcolo del miglioramento cumulativo che poteva usare per errore i
+  numeri di un bucket diverso da quello giusto; rimossa una chiamata
+  duplicata nel motore di acquisto a blocchi per budget grandi.
+
+Tutti i fix verificati con nuovi test di regressione mirati e con la
+suite di test locale completa: nessuna regressione.
+
 ## 5.0-pre - Chiusura dei punti aperti verso la 5.0 definitiva: decisione SATOR, badge freschezza, audit difensivo grafici
 
 - **Decisione definitiva su SATOR**: il routing per esposizione maggioritaria

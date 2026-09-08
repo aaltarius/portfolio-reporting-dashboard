@@ -1447,7 +1447,30 @@ def _merge_concurrent_writes(data: dict) -> tuple[list, list, dict]:
     if not isinstance(snapshot, dict):
         return ours_strumenti, ours_eventi, ours_master
 
-    disk_raw = _read_json_file(DATA_FILE, {})
+    # Bug reale trovato da /code-review ultra (2026-09-08): _read_json_file
+    # ritorna silenziosamente {} sia quando DATA_FILE non esiste ancora
+    # (primo salvataggio: legittimo, niente da unire) sia quando esiste ma
+    # la lettura fallisce (IO error transitorio, JSON corrotto, disco pieno
+    # a meta' scrittura di un altro processo) - i due casi sono
+    # indistinguibili dal solo valore di ritorno. Trattare il secondo caso
+    # come "tutto cancellato da un altro processo" cancellava quasi tutto
+    # strumenti/registro_eventi/instrument_master ad ogni lettura fallita -
+    # l'esatto opposto della rete di sicurezza che questo merge doveva
+    # introdurre. Un file che esiste ma non produce un dict con
+    # "schema_version" (la firma che save_data() scrive SEMPRE, vedi sotto)
+    # non e' mai un'autorita' affidabile per il merge: si salta il merge e
+    # si scrive `ours` verbatim, stesso comportamento sicuro del caso
+    # "nessuna istantanea disponibile" sopra.
+    if os.path.exists(DATA_FILE):
+        disk_raw = _read_json_file(DATA_FILE, {})
+        if not isinstance(disk_raw, dict) or "schema_version" not in disk_raw:
+            logger.error(
+                "save_data: DATA_FILE esiste ma non e' leggibile in modo affidabile "
+                "(JSON corrotto o errore IO) - merge saltato, scrittura verbatim per sicurezza."
+            )
+            return ours_strumenti, ours_eventi, ours_master
+    else:
+        disk_raw = {}
     disk_raw = disk_raw if isinstance(disk_raw, dict) else {}
     theirs_strumenti = disk_raw.get("strumenti", []) or []
     theirs_eventi = disk_raw.get("registro_eventi", []) or []
@@ -1473,6 +1496,26 @@ def _merge_concurrent_writes(data: dict) -> tuple[list, list, dict]:
 
 def save_data(data, *, include_storico: bool = True):
     from persistence.parquet_utils import save_storico_prezzi_hybrid
+
+    # Bug reale trovato da /code-review ultra (2026-09-08): un dict passato
+    # da apply_privacy_filter() non deve MAI raggiungere save_data() - il suo
+    # stesso docstring lo dichiara da tempo, ma nessun controllo lo faceva
+    # rispettare finche' un chiamante a valle (auto-fallback benchmark in
+    # core/dashboard_datasets.py, aggiunto in questa stessa sessione) non ha
+    # violato il contratto passando `ctx.data` privacy-filtrato: strumenti
+    # nascosti cancellati per sempre da disco, ticker reali degli eventi
+    # collegati sovrascritti con PRIVACY_HIDDEN_TICKER_SENTINEL. Rifiutato
+    # qui, al punto di massima leva, invece di rincorrere ogni futuro punto
+    # di chiamata che potrebbe ripetere lo stesso errore - nessuna riga viene
+    # scritta, il chiamante puo' riprovare al prossimo salvataggio con dati
+    # non filtrati (nessuno stato viene perso, solo non persistito ora).
+    if data.get("_privacy_filtered"):
+        logger.error(
+            "save_data: rifiutata scrittura di un dict privacy-filtrato (vedi "
+            "apply_privacy_filter) - avrebbe cancellato permanentemente gli "
+            "strumenti nascosti da disco. Nessuna scrittura eseguita."
+        )
+        return
 
     settings = load_settings()
     if settings.get("backup", {}).get("enabled") and settings.get("backup", {}).get("backup_before_save"):
@@ -1625,7 +1668,17 @@ from core.config import PRIVACY_HIDDEN_TICKER_SENTINEL  # noqa: E402  (fonte uni
 def apply_privacy_filter(data: dict, settings: dict) -> dict:
     """Filtra in memoria gli strumenti nascosti dalla Modalita' Privacy. Non
     tocca mai i dati su disco: opera su una copia, da usare solo per il
-    rendering (mai per un dict che poi finisce in save_data()).
+    rendering (mai per un dict che poi finisce in save_data() - vedi il
+    flag "_privacy_filtered" stampato sotto, che save_data() controlla e
+    rifiuta esplicitamente: bug reale trovato da /code-review ultra il
+    2026-09-08, non solo teorico - un chiamante a valle nella pipeline
+    Quotazioni (auto-fallback benchmark in core/dashboard_datasets.py)
+    violava gia' questo contratto passando la copia filtrata a save_data(),
+    cancellando permanentemente gli strumenti nascosti da disco e
+    riscrivendo il ticker reale dei loro eventi con
+    PRIVACY_HIDDEN_TICKER_SENTINEL - prima solo documentato, ora anche
+    impedito attivamente al punto di massima leva invece di rincorrere
+    ogni possibile punto di chiamata che potrebbe violarlo).
 
     Rimuove lo strumento nascosto da ``strumenti`` e ``storico_prezzi``. Gli
     eventi collegati (ACQUISTO/VENDITA/CEDOLA/DIVIDENDO/...) restano nel
@@ -1650,6 +1703,14 @@ def apply_privacy_filter(data: dict, settings: dict) -> dict:
             all_hidden.add(tk)
     if not all_hidden:
         return data
+    # Marcatore esplicito controllato da save_data() (mai scritto su disco:
+    # non e' tra le chiavi elencate esplicitamente nel dict `core` costruito
+    # li'). Rimossa anche l'istantanea di base per il merge a 3 vie
+    # (_loaded_snapshot, sopravviveva al deepcopy) - non deve mai guidare un
+    # merge su questa vista filtrata, che non e' una continuazione fedele
+    # dello stato caricato.
+    data["_privacy_filtered"] = True
+    data.pop("_loaded_snapshot", None)
     data["strumenti"] = [
         s for s in (data.get("strumenti") or [])
         if str(s.get("ticker") or "") not in all_hidden
