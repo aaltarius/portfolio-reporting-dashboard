@@ -389,8 +389,20 @@ def build_portfolio_simulation_chart(result, theme):
 	fan = result.fan_percentiles
 	band_color = getattr(theme, "color_blue", "#1f5eff")
 	muted = COLORS.get("gray", "#6b7280")
-	x = fan["trading_day"]
-	hover_pct = "Giorno %{x}: %{y:,.0f} €<extra></extra>"
+	# Bug reale segnalato dall'utente (2026-09-09): il motore simula un passo
+	# per ogni giorno DI TRADING (methodologia corretta per il bootstrap, non
+	# va toccata), ma l'asse mostrava quel conteggio grezzo (126/252/378 per
+	# 6/12/18 mesi, a 21 giorni di trading/mese) sotto etichette "N mesi" -
+	# l'utente si aspettava i giorni DI CALENDARIO convenzionali (180/360/540,
+	# 30 giorni/mese), non il conteggio interno della simulazione. Qui si
+	# riscala solo la VISUALIZZAZIONE (asse, hover, posizione delle linee di
+	# riferimento) nell'equivalente calendario 30/21 - i dati e il numero di
+	# passi simulati restano quelli calcolati in core/services/portfolio_simulation.py.
+	_CALENDAR_DAYS_PER_MONTH = 30
+	_TRADING_DAYS_PER_MONTH = 21
+	_DAY_SCALE = _CALENDAR_DAYS_PER_MONTH / _TRADING_DAYS_PER_MONTH
+	x = fan["trading_day"] * _DAY_SCALE
+	hover_pct = "Giorno %{x:.0f}: %{y:,.0f} €<extra></extra>"
 	fig = go.Figure()
 
 	# Bande annidate 5-95/10-90/25-75/40-60, opacita' crescente verso il
@@ -460,17 +472,25 @@ def build_portfolio_simulation_chart(result, theme):
 	# valore finale, quindi non serve ripeterlo. 18 mesi (378 giorni) e' solo
 	# un riferimento visivo sul grafico, non un nuovo orizzonte calcolato
 	# nella tabella sotto (quella resta 6/12/24, come da metodologia).
-	last_day = int(x.iloc[-1])
+	last_day = int(round(x.iloc[-1]))
 	reference_points = sorted({(h.trading_days, h.label) for h in result.horizons} | {(378, "18 mesi")})
+	tick_days = [0]
 	for trading_days, label in reference_points:
-		if trading_days >= last_day:
+		calendar_days = int(round(trading_days * _DAY_SCALE))
+		if calendar_days >= last_day:
 			continue
 		fig.add_vline(
-			x=trading_days, line_dash="dot", line_width=1,
+			x=calendar_days, line_dash="dot", line_width=1,
 			line_color=hex_to_rgba(muted, 0.55),
 			annotation_text=label, annotation_position="top",
 			annotation_font=dict(size=10, color=muted),
 			annotation_yshift=-18,
 		)
+		tick_days.append(calendar_days)
+	tick_days.append(last_day)
+	# I tick dell'asse coincidono sempre esattamente con le linee di
+	# riferimento (stesso principio del fix precedente, ora sui giorni di
+	# calendario invece che sui giorni di trading grezzi).
+	fig.update_xaxes(tickmode="array", tickvals=tick_days, ticktext=[str(d) for d in tick_days])
 
 	return apply_settings(fig, "analisi_monte_carlo")

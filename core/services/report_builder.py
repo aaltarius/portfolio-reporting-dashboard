@@ -478,7 +478,18 @@ class _ChartEmbedder:
 
 
 def _force_figure_full_x_range(fig: Any) -> None:
+    """Estende l'asse X al periodo intero e ricalcola l'asse Y di conseguenza.
+
+    Charts a barre/categoriali (es. "Rendimento annuale", x=anno come stringa)
+    non hanno un vero asse temporale: pd.to_datetime() li converte comunque
+    in date valide (coercizione silenziosa), e forzare un range temporale su
+    un asse categoriale svuota il grafico (le barre restano ancorate alle
+    posizioni categoriali originarie, fuori dal nuovo range). Vanno quindi
+    esclusi qui, non solo dai chiamanti.
+    """
     try:
+        if any(str(getattr(trace, "type", "")) == "bar" for trace in getattr(fig, "data", []) or []):
+            return
         dates = []
         for trace in getattr(fig, "data", []) or []:
             x_vals = getattr(trace, "x", None)
@@ -493,8 +504,48 @@ def _force_figure_full_x_range(fig: Any) -> None:
         if x_min >= x_max:
             return
         fig.update_xaxes(range=[x_min, x_max], autorange=False, rangeselector=dict(visible=False, buttons=[]), rangeslider=dict(visible=False))
+        # L'asse X ora copre l'intero periodo, ma l'asse Y del grafico
+        # interattivo resta quello calcolato per la finestra del bottone di
+        # default (es. 3M/1Y — vedi dynamic_y_to_initial_range in
+        # ui/charts/settings.py): senza ricalcolo, dati fuori da quella
+        # finestra vengono tagliati fuori dal range Y visibile. Non si importa
+        # ui/charts/ranges.py qui (core/ non deve dipendere da ui/, vedi
+        # tests/test_report_builder_chart_embedder.py): dato che x_min/x_max
+        # coprono gia' l'intero dominio di ogni traccia, "visibile nel range
+        # forzato" equivale a "tutti i punti della traccia", quindi basta
+        # un min/max diretto per asse Y, senza il filtro per finestra x
+        # necessario invece ai bottoni temporali dell'interattivo.
+        _recompute_y_range_for_full_period(fig)
     except Exception:
         return
+
+
+def _recompute_y_range_for_full_period(fig: Any) -> None:
+    grouped: dict[str, list[float]] = {}
+    for trace in getattr(fig, "data", []) or []:
+        y_vals = getattr(trace, "y", None)
+        if y_vals is None:
+            continue
+        axis_ref = str(getattr(trace, "yaxis", None) or "y")
+        axis_name = "yaxis" + (axis_ref[1:] if axis_ref[1:].isdigit() else "")
+        nums: list[float] = []
+        for v in y_vals:
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                continue
+            if fv == fv:  # esclude NaN
+                nums.append(fv)
+        if nums:
+            grouped.setdefault(axis_name, []).extend(nums)
+    for axis_name, values in grouped.items():
+        vmin, vmax = min(values), max(values)
+        span = (vmax - vmin) if vmax > vmin else max(abs(vmax), 1.0)
+        pad = span * 0.08
+        try:
+            fig.update_layout({axis_name: {"range": [vmin - pad, vmax + pad], "autorange": False}})
+        except Exception:
+            continue
 
 
 def _cover(payload: dict[str, Any], options: dict[str, Any], generated_at: datetime) -> str:

@@ -1022,9 +1022,23 @@ CHARTS: dict[str, dict[str, Any]] = {
      'height': 460,
      'legend': 'bottom',
      'show_buttons': False,
-     'margin_delta': {'t': 0, 'b': 0, 'l': 60, 'r': -20},
+     # t:+36 (bug reale segnalato dall'utente, 2026-09-09): le annotazioni
+     # delle linee di riferimento 6/12/18 mesi (add_vline in
+     # ui/charts/analitica.py, annotation_position="top") si ancorano al
+     # bordo superiore dell'area del grafico — con soli 44px di margine base
+     # (margin_top_with_title) l'etichetta "12 mesi" (vicina al centro
+     # orizzontale) finiva sovrapposta al titolo centrato. Margine
+     # aumentato invece di spostare le annotazioni sopra il titolo:
+     # l'ordine visivo titolo-poi-contenuto resta quello atteso.
+     'margin_delta': {'t': 36, 'b': 0, 'l': 60, 'r': -20},
      'y_title': 'Valore simulato (€)',
-     'x_title': 'Giorni di trading',
+     # "Giorni" e non "Giorni di trading" (2026-09-09): il builder in
+     # ui/charts/analitica.py riscala l'asse in equivalente calendario
+     # (30 giorni/mese) per mostrare 180/360/540 su 6/12/18 mesi invece del
+     # conteggio grezzo di giorni di trading (126/252/378) usato solo
+     # internamente dalla simulazione - un titolo asse che dicesse ancora
+     # "di trading" sarebbe di nuovo disallineato con i numeri mostrati.
+     'x_title': 'Giorni',
      'title': '<b>Simulazione Monte Carlo del portafoglio</b>'},
 
     'home_radar_allocation': {'type': 'radar',

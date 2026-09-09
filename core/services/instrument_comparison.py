@@ -83,12 +83,33 @@ def get_all_historical_tickers(
 
 
 def _normalized_series(
-    price_df: pd.DataFrame, price_col: str, *, start_date: str | None, align_starts: bool
+    price_df: pd.DataFrame, price_col: str, *, start_date: str | None, align_starts: bool, period: str | None = None
 ) -> tuple[list[str], list[float]] | None:
     if price_df is None or price_df.empty:
         return None
     df = price_df.copy()
-    if not align_starts and start_date:
+    # L'indice sintetico "Giorno 0,1,2..." ha senso solo quando si confronta
+    # tutto lo storico disponibile (align_starts + "Tutto"): strumenti con
+    # date di lancio diverse non hanno altro riferimento comune se non il
+    # proprio inizio. Con un periodo definito (es. "ultimi 6 mesi") invece
+    # bisogna restare su date di calendario reali: uno strumento con meno
+    # storico del periodo scelto deve apparire sfalsato sulla porzione
+    # recente condivisa (stessa data finale, inizio piu' tardivo), non
+    # forzato a sovrapporsi dall'inizio con gli altri come se tutti
+    # partissero nello stesso momento (bug reale segnalato dall'utente,
+    # 2026-09-09: "mi aspetterei che per lo strumento di 3 mesi non venga
+    # fatta corrispondere l'origine, ma venga sfalsata di conseguenza").
+    delta = _PERIOD_DELTAS.get(period or "Tutto") if align_starts else None
+    use_day_index = align_starts and delta is None
+    if align_starts:
+        if delta is not None:
+            # Finestra trailing sulle ultime N di QUESTO strumento (non una
+            # data comune globale): cosi' il periodo scelto si applica anche
+            # a chi ha storico piu' corto della finestra, invece di essere
+            # ignorato del tutto (bug reale precedente, stessa data).
+            window_start = df["date"].iloc[-1] - delta
+            df = df[df["date"] >= window_start]
+    elif start_date:
         df = df[df["date"] >= pd.to_datetime(start_date)]
     if df.empty:
         return None
@@ -97,7 +118,7 @@ def _normalized_series(
         return None
     dates = (
         [str(i) for i in range(len(normalized))]
-        if align_starts
+        if use_day_index
         else df["date"].dt.strftime("%Y-%m-%d").tolist()
     )
     return dates, normalized.tolist()
@@ -109,6 +130,7 @@ def build_comparison_frame(
     *,
     start_date: str | None = None,
     align_starts: bool = False,
+    period: str | None = None,
     benchmark_for: str | None = None,
     exclude_tickers: frozenset[str] = frozenset(),
 ) -> list[ComparisonSeries]:
@@ -128,7 +150,7 @@ def build_comparison_frame(
         if ticker in exclude_tickers:
             continue
         price_df = instrument_price_history(data, ticker)
-        series = _normalized_series(price_df, "strumento", start_date=start_date, align_starts=align_starts)
+        series = _normalized_series(price_df, "strumento", start_date=start_date, align_starts=align_starts, period=period)
         if series is None:
             continue
         dates, values = series
@@ -155,7 +177,7 @@ def build_comparison_frame(
             if assignment.has_benchmark:
                 bench_df = benchmark_price_history(data, assignment.ticker)
                 bench_series = _normalized_series(
-                    bench_df, "benchmark", start_date=start_date, align_starts=align_starts
+                    bench_df, "benchmark", start_date=start_date, align_starts=align_starts, period=period
                 )
                 if bench_series is not None:
                     bench_dates, bench_values = bench_series

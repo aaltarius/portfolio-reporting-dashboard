@@ -190,6 +190,32 @@ def summary_series_df(summary_payload):
     return hist, bench
 
 
+def _declutter_pl_labels(peso: list, pl_pct: list, controvalore: list, min_dist: float = 0.12) -> list[bool]:
+    """Sceglie quali bolle del grafico 'Distribuzione P/L' mostrano l'etichetta
+    testo statica: con molti strumenti a basso peso il testo 'top center' su
+    ogni bolla si sovrappone illeggibile (visto nel report portafoglio,
+    cluster di strumenti sotto il 2% di peso). Etichetta solo i punti che
+    restano a distanza minima da un punto gia' etichettato in spazio
+    peso/P%-normalizzato, dando priorita' alle posizioni piu' grandi
+    (controvalore): le bolle senza etichetta restano comunque leggibili via
+    hover, nessuna informazione persa."""
+    n = len(peso)
+    if n == 0:
+        return []
+    x_span = max(peso) or 1.0
+    y_min, y_max = min(pl_pct), max(pl_pct)
+    y_span = (y_max - y_min) or 1.0
+    order = sorted(range(n), key=lambda i: -controvalore[i])
+    placed: list[tuple[float, float]] = []
+    show = [False] * n
+    for i in order:
+        nx, ny = peso[i] / x_span, (pl_pct[i] - y_min) / y_span
+        if all(((nx - px) ** 2 + (ny - py) ** 2) ** 0.5 >= min_dist for px, py in placed):
+            placed.append((nx, ny))
+            show[i] = True
+    return show
+
+
 def summary_category_series_df(summary_payload):
     cat = pd.DataFrame(summary_payload.get("category_history", []))
     if cat.empty:
@@ -380,10 +406,12 @@ def build_summary_figures(summary_payload, settings=None, include_advanced=True,
         if len(sc) >= 3:
             def _build_pl_scatter():
                 fig_sc = go.Figure()
-                for cat in sc["categoria"].unique():
-                    cdf = sc[sc["categoria"] == cat]
+                sc_local = sc.assign(_show_label=_declutter_pl_labels(sc["peso"].tolist(), sc["pl_pct"].tolist(), sc["controvalore"].tolist()))
+                for cat in sc_local["categoria"].unique():
+                    cdf = sc_local[sc_local["categoria"] == cat]
                     sizes = [max(10, min(50, float(v) / max(float(sc["controvalore"].max()), 1) * 50)) for v in cdf["controvalore"]]
-                    fig_sc.add_trace(go.Scatter(x=cdf["peso"].values, y=cdf["pl_pct"].values, mode="markers+text", name=str(cat), text=cdf["ticker"].tolist(), textposition="top center", textfont=dict(size=9), marker=dict(size=sizes, color=macro_color(str(cat)), opacity=0.82, line=dict(width=1.2, color="white")), hovertemplate="<b>%{text}</b><br>Peso: %{x:.1%}<br>P/L: %{y:.1%}<br><extra></extra>"))
+                    labels = [tk if show else "" for tk, show in zip(cdf["ticker"], cdf["_show_label"])]
+                    fig_sc.add_trace(go.Scatter(x=cdf["peso"].values, y=cdf["pl_pct"].values, mode="markers+text", name=str(cat), text=labels, hovertext=cdf["ticker"].tolist(), textposition="top center", textfont=dict(size=9), marker=dict(size=sizes, color=macro_color(str(cat)), opacity=0.82, line=dict(width=1.2, color="white")), hovertemplate="<b>%{hovertext}</b><br>Peso: %{x:.1%}<br>P/L: %{y:.1%}<br><extra></extra>"))
                 fig_sc.add_hline(y=0, line_dash="dash", line_color="rgba(0,0,0,0.25)", line_width=1)
                 return _apply_summary_settings(fig_sc, "summary_pl_scatter")
 
@@ -414,6 +442,17 @@ def _strip_report_time_controls(fig):
         except Exception:
             pass
     try:
+        # Grafici a barre/categoriali (es. "Rendimento annuale", x=anno come
+        # stringa) non hanno un vero asse temporale: pd.to_datetime() sotto
+        # li converte comunque in date valide (coercizione silenziosa), e
+        # forzare un range temporale su un asse categoriale svuota il
+        # grafico (le barre restano ancorate alle posizioni categoriali
+        # originarie, fuori dal nuovo range date). Stesso identico bug e
+        # stessa guardia gia' applicati in
+        # core/services/report_builder.py::_force_figure_full_x_range.
+        if any(str(getattr(trace, "type", "")) == "bar" for trace in getattr(fig, "data", []) or []):
+            fig.update_xaxes(rangeselector=dict(visible=False, buttons=[]), rangeslider=dict(visible=False), fixedrange=False)
+            return
         dates = []
         for trace in getattr(fig, "data", []) or []:
             x_vals = getattr(trace, "x", None)

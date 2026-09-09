@@ -453,7 +453,12 @@ register_cache_artifact(
         level="L3",
         owner="core.services.report_builder.build_portfolio_report_html",
         storage="report_archive_plus_page_artifact",
-        version="summary-report-payload-v1",
+        # v2 (2026-09-09): la firma dipende solo da dati/opzioni/tema, mai dal
+        # codice del builder — un fix ai grafici del report (report_builder.py,
+        # ui/charts/summary.py) a parita' di dati/opzioni restava invisibile,
+        # servito dall'HTML gia' su disco. Bump manuale ogni volta che cambia
+        # la logica di rendering del report, non solo i suoi input.
+        version="summary-report-payload-v2",
         dependencies=(
             "portfolio_data_signature",
             "report_options",

@@ -169,7 +169,9 @@ def _render_monte_carlo_analitica(bundle: Any) -> None:
     st.caption(
         f"Simulazione basata su {mc_result.n_observations} osservazioni storiche reali del "
         f"portafoglio attuale, {mc_result.n_scenarios} scenari ricampionati (bootstrap storico, "
-        f"non un modello previsivo).{extrapolation_note}{excluded_note}{excluded_fragmented_note}"
+        f"non un modello previsivo). L'asse dei giorni nel grafico è in equivalente di calendario "
+        f"(30 giorni/mese): la simulazione avanza internamente per giorni di trading (21/mese)."
+        f"{extrapolation_note}{excluded_note}{excluded_fragmented_note}"
         f"{full_value_note}"
     )
     legend_block("Ogni scenario è un percorso possibile ricostruito ricampionando la storia reale del portafoglio, non una previsione: la mediana è il centro della distribuzione simulata, le bande mostrano quanto può variare l'esito.", variant="bottom")

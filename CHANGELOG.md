@@ -1,5 +1,40 @@
 # Changelog
 
+## 5.0 - Storico prezzi Yahoo troncato, dati benchmark contaminati da test, 4 grafici rotti nel report, unità sbagliata in Monte Carlo, confronto strumenti in Pianificazione
+
+Round di bug reali segnalati dall'utente in uso normale (non una review sistematica).
+
+- **[Critico] Arricchimento storico prezzi Yahoo troncato a poche decine di
+  punti**: la Chart API di Yahoo, per `range=max`, restituisce lato server
+  una serie sotto-campionata invece dello storico giornaliero pieno (66
+  punti invece di 2400+ su alcuni ETC). Corretto usando timestamp Unix
+  (`period1`/`period2`) come fa `yfinance` internamente, invece della
+  stringa `range=`. Storico esteso sui 4 strumenti coinvolti.
+- **[Critico] Dati di benchmark contaminati da fixture di test**
+  (`bench_IWDA.AS`, `bench_^GSPE`, `bench_SUB.OK`): due test senza
+  isolamento dei path scrivevano dati sintetici direttamente nella cache
+  benchmark reale ad ogni esecuzione della suite. Isolati con monkeypatch,
+  cache reale ripulita.
+- **[Report Summary] 4 grafici rotti**: il benchmark contaminato faceva
+  esplodere l'asse Y di "Andamento TWR proxy"; l'asse X forzato al periodo
+  intero rompeva "Rendimento annuale" (grafico a barre, coercizione
+  silenziosa di anni in date) e non ricalcolava l'asse Y di "Drawdown";
+  etichette sovrapposte in "Distribuzione P/L". Bump di versione della
+  cache del report, perché la firma non includeva mai il codice del
+  generatore e continuava a servire l'HTML vecchio.
+- **[Analitica] Monte Carlo**: l'asse mostrava i giorni di trading grezzi
+  della simulazione (126/252/378 per 6/12/18 mesi) invece dei giorni di
+  calendario attesi (180/360/540); rietichettato nell'equivalente di
+  calendario senza toccare la metodologia di simulazione. Corretta anche
+  una sovrapposizione titolo/etichette.
+- **[Pianificazione] Confronto strumenti poco utile con "Origini
+  allineate"**: il periodo scelto (1M/3M/6M...) veniva ignorato in quella
+  modalità, mostrando sempre tutto lo storico. Ora il periodo tronca ogni
+  strumento alle sue ultime N; con un periodo definito le date restano di
+  calendario reale (uno strumento con meno storico appare sfalsato sulla
+  porzione recente condivisa, non forzato a sovrapporsi dall'inizio); con
+  "Tutto" resta l'indice sintetico Giorno 0.
+
 ## 5.0 - Prima versione stabile
 
 Chiude il ciclo di sviluppo 5.0-pre. Le voci sotto (dalla ristrutturazione

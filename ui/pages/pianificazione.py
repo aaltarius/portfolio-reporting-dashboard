@@ -879,7 +879,7 @@ def _render_instrument_comparison_section(ctx: SimpleNamespace, exclude_tickers:
     with col_align:
         align_starts = st.checkbox(
             "Origini allineate", value=False, key="_pianificazione_comparison_align",
-            help="Ogni strumento parte da Giorno 0 alla propria prima data disponibile, invece che da una data di calendario comune.",
+            help="Ogni strumento riparte da Giorno 0: il periodo scelto sopra si applica agli ultimi N di storico di ciascuno strumento (non a una data di calendario comune), cosi' il confronto resta leggibile anche tra strumenti con storie di lunghezza diversa.",
         )
     benchmark_for = None
     with col_bench:
@@ -901,8 +901,8 @@ def _render_instrument_comparison_section(ctx: SimpleNamespace, exclude_tickers:
 
     with profile_step("Pianificazione/Confronto", "build_comparison_frame", count=len(selected)):
         series = build_comparison_frame(
-            data, selected, start_date=start_date, align_starts=align_starts, benchmark_for=benchmark_for,
-            exclude_tickers=exclude_tickers,
+            data, selected, start_date=start_date, align_starts=align_starts, period=period,
+            benchmark_for=benchmark_for, exclude_tickers=exclude_tickers,
         )
 
     plotted = {s.ticker for s in series if not s.is_benchmark}
