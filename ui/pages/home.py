@@ -788,10 +788,12 @@ def _render_home_andamento_clone(
         with profile_step("Portafoglio/UltimaGiornata", "render fig portfolio pl category"):
             st.plotly_chart(fig_cat, width="stretch")
             legend_block(
-                "Composizione % del movimento P/L giornaliero per categoria (barre impilate al 100%). Diversa "
-                "dal grafico sopra: qui la lettura è \"quanto pesa ciascuna categoria sul movimento del "
-                "giorno\", non il valore assoluto. Anche questa vista considera qualunque strumento con un "
-                "movimento quel giorno, aperto o chiuso durante il periodo."
+                "Composizione % del movimento P/L giornaliero per categoria: quanto pesa ciascuna categoria "
+                "sul movimento totale del giorno (in valore assoluto, le percentuali sommano sempre 100%), "
+                "ma con il segno giusto — categoria in perdita sotto la linea dello zero, in guadagno sopra. "
+                "Diversa dal grafico sopra, che mostra il valore assoluto in euro. Anche questa vista "
+                "considera qualunque strumento con un movimento quel giorno, aperto o chiuso durante il "
+                "periodo."
             )
 
 

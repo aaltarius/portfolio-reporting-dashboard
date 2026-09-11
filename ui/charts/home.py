@@ -185,7 +185,16 @@ def build_portfolio_pl_chart(dfh, delta_colors, delta_text, dfmt, theme):
 
 
 def build_portfolio_pl_category_chart(dfh, data, theme, settings: dict[str, Any] | None = None):
-    """Build 100% stacked daily P/L composition chart by macro category for Home."""
+    """Build daily P/L composition chart by macro category for Home.
+
+    Ogni categoria pesa |P/L categoria| / somma(|P/L categoria|) del giorno
+    (quindi le percentuali sommano sempre 100% in valore assoluto, come nella
+    versione precedente), ma il segno del P/L decide la posizione: categoria
+    in perdita sotto la linea dello zero, in guadagno sopra. Normalizzare sul
+    totale assoluto (invece che sul P/L netto del giorno) evita l'instabilita'
+    di un'eventuale normalizzazione sul netto, che esploderebbe nei giorni in
+    cui guadagni e perdite quasi si compensano (netto vicino a zero).
+    """
     if dfh is None or dfh.empty:
         return empty_chart("home_portfolio_pl_category")
 
@@ -207,19 +216,31 @@ def build_portfolio_pl_category_chart(dfh, data, theme, settings: dict[str, Any]
         total_abs = total_abs.add(series.abs(), fill_value=0.0)
     total_abs = total_abs.replace(0, pd.NA)
 
+    pct_by_cat: dict[str, pd.Series] = {
+        cat: ((category_series[cat] / total_abs) * 100.0).fillna(0.0)
+        for cat in visible_categories
+        if cat in category_series
+    }
+    pct_frame = pd.DataFrame(pct_by_cat, index=dfh.index) if pct_by_cat else pd.DataFrame(index=dfh.index)
+    stack_top = pct_frame.clip(lower=0.0).sum(axis=1)
+    stack_bottom = pct_frame.clip(upper=0.0).sum(axis=1)
+
     fig = go.Figure()
-    last_labels: list[tuple[str, str, float]] = []
-    running_last = 0.0
+    last_labels: list[list[Any]] = []
+    running_pos = 0.0
+    running_neg = 0.0
     for cat in visible_categories:
-        if cat not in category_series:
+        if cat not in pct_by_cat:
             continue
-        pct_series = (category_series[cat].abs() / total_abs) * 100.0
-        pct_series = pct_series.fillna(0.0)
+        pct_series = pct_by_cat[cat]
         if len(pct_series) > 0:
             last_pct = float(pct_series.iloc[-1] or 0.0)
             if last_pct > 0:
-                last_labels.append((cat, macro_color(cat), running_last + last_pct / 2.0))
-            running_last += last_pct
+                last_labels.append([cat, macro_color(cat), running_pos + last_pct / 2.0, last_pct])
+                running_pos += last_pct
+            elif last_pct < 0:
+                last_labels.append([cat, macro_color(cat), running_neg + last_pct / 2.0, last_pct])
+                running_neg += last_pct
         fig.add_trace(
             go.Bar(
                 x=dfh["Data"],
@@ -230,15 +251,50 @@ def build_portfolio_pl_category_chart(dfh, data, theme, settings: dict[str, Any]
                 hovertemplate=(
                     "Data: %{x|%d/%m/%Y}<br>"
                     + f"{cat}: "
-                    + "%{y:.1f}%<br>"
+                    + "%{y:+.1f}%<br>"
                     + "P/L categoria: %{customdata:,.2f} €<extra></extra>"
                 ),
             )
         )
+    # Tracce invisibili (nessun marker/linea disegnata, fuori legenda e hover):
+    # comunicano al motore di range dinamico condiviso (ui/charts/ranges.py,
+    # usato via dynamic_y_to_initial_range/dynamic_y_by_button) l'effettiva
+    # estensione verticale dello stack — somma dei positivi e somma dei
+    # negativi per ciascun giorno. Senza queste tracce il motore leggerebbe
+    # solo il valore di ogni singola categoria (min/max per traccia), troppo
+    # stretto per un barmode="relative" con piu' categorie impilate sullo
+    # stesso lato dello zero.
+    fig.add_trace(
+        go.Scatter(
+            x=dfh["Data"],
+            y=stack_top,
+            mode="markers",
+            marker=dict(size=0, opacity=0),
+            showlegend=False,
+            hoverinfo="skip",
+            name="_stack_top",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=dfh["Data"],
+            y=stack_bottom,
+            mode="markers",
+            marker=dict(size=0, opacity=0),
+            showlegend=False,
+            hoverinfo="skip",
+            name="_stack_bottom",
+        )
+    )
     fig.update_layout(barmode="relative")
     fig = finalize_chart(fig, "home_portfolio_pl_category", hovermode="x unified", uirevision="home-pl-cat")
     fig.update_yaxes(domain=[0.0, 0.90])
-    fig.update_yaxes(ticksuffix="%", zeroline=True, zerolinecolor=hex_to_rgba(theme.color_blue, 0.18))
+    fig.update_yaxes(
+        ticksuffix="%",
+        zeroline=True,
+        zerolinecolor=hex_to_rgba(theme.color_blue, 0.85),
+        zerolinewidth=2.5,
+    )
     tick_dates = pd.Index(pd.to_datetime(dfh["Data"], errors="coerce").dropna()).drop_duplicates()
     if len(tick_dates) > 0:
         last_date = tick_dates[-1]
@@ -247,15 +303,39 @@ def build_portfolio_pl_category_chart(dfh, data, theme, settings: dict[str, Any]
             tickvals=tick_dates.to_list(),
             ticktext=[value.strftime("%d/%m") for value in tick_dates],
         )
-        for cat, color, y_mid in last_labels:
-            pct_value = next(
-                (
-                    float(((category_series[cat].abs() / total_abs) * 100.0).fillna(0.0).iloc[-1] or 0.0)
-                    for _ in [0]
-                ),
-                0.0,
-            )
-            pct_text = f"{pct_value:>5.1f}%".replace(" ", "&nbsp;")
+        if last_labels:
+            # Distanzia le etichette di fine linea quando le percentuali
+            # dell'ultimo giorno sono troppo vicine tra loro e si
+            # sovrapporrebbero (font 11px + bordo): spinge verso l'alto,
+            # nell'ordine, quelle che finirebbero a meno di min_gap dalla
+            # precedente gia' posizionata. min_gap e' proporzionale
+            # all'ampiezza REALE dell'asse Y gia' risolta da finalize_chart
+            # (dynamic_y_to_initial_range, sopra) — non a quella del solo
+            # ultimo giorno: la finestra visibile puo' essere piu' larga se
+            # altri giorni hanno oscillazioni maggiori, e usare solo l'ultimo
+            # giorno come riferimento sottostima il gap in pixel (bug reale:
+            # etichette di categorie adiacenti, es. ETC ed ETF, che si
+            # sovrapponevano quando un altro giorno della finestra allargava
+            # l'asse). Nessun tetto massimo al gap: e' proporzionale allo
+            # spazio pixel disponibile, non ha senso limitarlo dall'alto.
+            axis_range = getattr(fig.layout.yaxis, "range", None)
+            if axis_range and len(axis_range) == 2:
+                reference_span = max(float(axis_range[1]) - float(axis_range[0]), 1.0)
+            else:
+                last_top = float(stack_top.iloc[-1]) if len(stack_top) else 0.0
+                last_bottom = float(stack_bottom.iloc[-1]) if len(stack_bottom) else 0.0
+                reference_span = max(last_top - last_bottom, 1.0)
+            min_gap = max(reference_span * 0.09, 2.5)
+            last_labels.sort(key=lambda item: item[2])
+            placed_y: float | None = None
+            for entry in last_labels:
+                y_mid = entry[2]
+                if placed_y is not None and y_mid < placed_y + min_gap:
+                    y_mid = placed_y + min_gap
+                entry[2] = y_mid
+                placed_y = y_mid
+        for cat, color, y_mid, pct_value in last_labels:
+            pct_text = f"{pct_value:>+6.1f}%".replace(" ", "&nbsp;")
             fig.add_annotation(
                 x=1.0,
                 y=y_mid,

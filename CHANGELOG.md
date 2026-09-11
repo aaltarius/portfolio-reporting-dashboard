@@ -1,5 +1,28 @@
 # Changelog
 
+## 5.0 - Grafico "Composizione % del P/L per Macro-Categoria" raccontava una storia falsa
+
+Segnalato dall'utente in uso normale: il grafico mostrava GOV al 31,9% di
+"composizione" nello stesso giorno in cui GOV era in perdita di circa 500€.
+
+- **[Portafoglio] Segno del P/L perso nel grafico di composizione**: la
+  percentuale di ogni categoria era calcolata sul valore assoluto sia al
+  numeratore che al denominatore, quindi una categoria in perdita veniva
+  impilata verso l'alto esattamente come una in guadagno — il "100%" del
+  grafico era un totale lordo che nascondeva completamente il segno. La
+  percentuale resta normalizzata sul totale assoluto del giorno (somma
+  sempre 100% in valore assoluto, nessuna instabilità), ma ora il segno
+  decide la posizione nello stack: perdita sotto la linea dello zero,
+  guadagno sopra. Range Y reso dinamico invece di fisso a ±100% (tracce
+  invisibili comunicano al motore di scala condiviso l'estensione reale
+  dello stack positivo/negativo di ogni giorno, non solo il valore di ogni
+  singola categoria) ed etichette di fine linea distanziate quando si
+  sovrappongono, calibrate sul range dell'asse realmente visualizzato
+  (non sul solo ultimo giorno, che poteva sottostimare lo spazio
+  necessario e far sovrapporre due etichette adiacenti). Linea dello zero
+  resa piu' marcata, visto che ora e' lo spartiacque guadagno/perdita e
+  non piu' decorativa.
+
 ## 5.0 - Storico prezzi Yahoo troncato, dati benchmark contaminati da test, 4 grafici rotti nel report, unità sbagliata in Monte Carlo, confronto strumenti in Pianificazione
 
 Round di bug reali segnalati dall'utente in uso normale (non una review sistematica).
