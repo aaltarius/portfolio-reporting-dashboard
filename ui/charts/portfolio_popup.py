@@ -8,9 +8,10 @@ from datetime import date
 import pandas as pd
 from core.config import COLORS
 from core.domain.calendar import CEDOLA_FREQ_MONTHS, CEDOLA_FREQ_PAYMENTS, TAX_RATE_GOV_PCT, build_btp_calendar
+from core.services.instrument_quality import enrichment_completeness
 from core.services.sator import resolve_instrument_nature
 from persistence.storage import macro_cat
-from ui.charts.instrument_badges import ISSUER_BADGE_CSS, commission_badge, issuer_badge
+from ui.charts.instrument_badges import ISSUER_BADGE_CSS, commission_badge, enrichment_complete_badge, issuer_badge
 from ui.charts.natura_icons import get_nature_visual
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it
 from ui.streamlit_compat import iframe_height_for_rows, render_html_iframe
@@ -668,6 +669,7 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
         # "Zero commissioni" esiste solo come campo per ETF/ETC: per le altre
         # categorie il badge non e' applicabile, non va mostrato di default.
         comm_badge = commission_badge(info.get("zero_commissioni")) if tipo_code in ("ETF", "ETC") else ""
+        enrich_badge = enrichment_complete_badge(enrichment_completeness(info))
         btp_badge = _btp_info_badge(tk, info, btp_badges.get(tk)) if tipo_code == "GOV" else ""
         issuer_badge_html = issuer_badge(info, ticker=tk, tipo_code=tipo_code)
         col = _cat_col(tipo)
@@ -734,7 +736,7 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
             "down_big": "4",
         }.get(state, "2")
         rows_html += (
-            f'''<tr>\n          <td data-sort="{tk}">{issuer_badge_html}<a class="tk-link" style="color:{col}" href="#" onclick="showModal('{tk}');return false;">{tk}</a>{comm_badge}</td>\n'''
+            f'''<tr>\n          <td data-sort="{tk}">{issuer_badge_html}<a class="tk-link" style="color:{col}" href="#" onclick="showModal('{tk}');return false;">{tk}</a>{comm_badge}{enrich_badge}</td>\n'''
             f'''          <td data-sort="{nome}" style="color:{col};max-width:112px;" title="{nome}">{nome[:21]}</td>\n'''
             f'''          <td data-sort="{tipo_code}" style="color:{col};font-weight:700;max-width:54px;" title="{tipo}">{tipo_code}</td>\n'''
             f'''          <td class="natura-cell" title="{natura_label}" style="color:{natura_color};width:20px;text-align:center;">{natura_svg}</td>\n'''
@@ -989,6 +991,7 @@ def render_weekly_pl_table(result, da, data):
         # "Zero commissioni" esiste solo come campo per ETF/ETC: per le altre
         # categorie il badge non e' applicabile, non va mostrato di default.
         comm_badge = commission_badge(info_map.get(tk, {}).get("zero_commissioni")) if tipo_code in ("ETF", "ETC") else ""
+        enrich_badge = enrichment_complete_badge(enrichment_completeness(info))
         issuer_badge_html = issuer_badge(info_map.get(tk, {}), ticker=tk, tipo_code=tipo_code)
         cells = ""
         for i, v in enumerate(row["deltas"]):
@@ -1016,7 +1019,7 @@ def render_weekly_pl_table(result, da, data):
         )
         rows_html += (
             f'<tr style="{row_bg}">\n'
-            f'<td data-sort="{tk}">{issuer_badge_html}<a class="tk-link" style="color:{col}" href="#" onclick="showModal(\'{tk}\');return false;">{tk}</a>{comm_badge}{chiuso_badge}</td>\n'
+            f'<td data-sort="{tk}">{issuer_badge_html}<a class="tk-link" style="color:{col}" href="#" onclick="showModal(\'{tk}\');return false;">{tk}</a>{comm_badge}{enrich_badge}{chiuso_badge}</td>\n'
             f'<td data-sort="{strumento}" style="color:{col};max-width:130px;" title="{strumento}">{strumento[:24]}</td>\n'
             f'<td data-sort="{tipo_code}" style="color:{col};">{tipo_code}</td>\n'
             f'<td class="natura-cell" title="{natura_label}" style="color:{natura_color};width:20px;text-align:center;">{natura_svg}</td>\n'

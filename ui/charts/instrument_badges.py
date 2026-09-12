@@ -51,6 +51,27 @@ def commission_badge(zero_commissioni_raw: Any) -> str:
     )
 
 
+def enrichment_complete_badge(completeness: Any) -> str:
+    """Badge "✓" da affiancare al ticker per strumenti con anagrafica arricchita al 100%.
+
+    Stesso stile/dimensione di commission_badge sopra, verde invece di
+    giallo perché qui segnala uno stato positivo (completo), non
+    un'eccezione da notare. completeness viene da
+    core/services/instrument_quality.py::enrichment_completeness (0-100),
+    unica fonte del calcolo — nessuna soglia ridefinita qui.
+    """
+    try:
+        if int(completeness) < 100:
+            return ""
+    except (TypeError, ValueError):
+        return ""
+    return (
+        "<span title=\"Anagrafica arricchita al 100%\" "
+        "style=\"display:inline-block;font-size:.7rem;font-weight:800;border-radius:4px;"
+        "padding:1px 4px;margin-left:3px;line-height:1.2;background:#dcfce7;color:#166534;\">✓</span>"
+    )
+
+
 def issuer_badge(info: dict[str, Any] | None, ticker: str = "", tipo_code: str = "") -> str:
     """Logo sintetico dell'emittente da affiancare al ticker nelle tabelle HTML.
 

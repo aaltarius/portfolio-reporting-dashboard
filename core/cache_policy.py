@@ -177,7 +177,20 @@ register_cache_artifact(
         level="L2",
         owner="core.services.instrument_quality.build_instrument_quality_dataset",
         storage="page_artifact",
-        version="quality-light-v2",
+        # v3 (2026-09-12): aggiunta la colonna candidato_acquisto al dataset
+        # (core/services/instrument_quality.py) per la colonna Ptf/★☆ in
+        # Gestione Dati. La firma non include il codice del builder, solo
+        # questa stringa: senza il bump, un artefatto gia' in cache (da
+        # prima della colonna nuova) veniva servito cosi' com'era e
+        # ui/pages/gestione_dati.py andava in KeyError leggendola - stesso
+        # meccanismo gia' visto e corretto per la cache dei report.
+        # v4 (2026-09-12, stesso giorno): cambiata la formula stessa di
+        # enrichment_completeness per i BTP (cedola_annuale -> cedola_perc,
+        # rating_emittente rimosso dai campi richiesti - vedi commento su
+        # ENRICHMENT_REQUIRED_FIELDS in instrument_quality.py). Un
+        # artefatto v3 gia' in cache mostrerebbe ancora le percentuali
+        # calcolate con la formula vecchia finche' i dati non cambiano.
+        version="quality-light-v4",
         dependencies=("portfolio_data_signature", "instrument_registry", "price_history", "privacy_filter", "asof_date"),
         clear_group="dati",
         stale_policy="rebuild_on_data_or_history_change",

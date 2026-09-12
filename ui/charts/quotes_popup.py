@@ -10,8 +10,9 @@ from core.render_profiler import profile_step
 from persistence.storage import macro_cat
 from core.finance import build_ptf_df
 from core.instrument_classification import is_nav_fund
+from core.services.instrument_quality import enrichment_completeness
 from core.services.sator import resolve_instrument_nature
-from ui.charts.instrument_badges import ISSUER_BADGE_CSS, commission_badge, issuer_badge
+from ui.charts.instrument_badges import ISSUER_BADGE_CSS, commission_badge, enrichment_complete_badge, issuer_badge
 from ui.charts.natura_icons import get_nature_visual
 from ui.formatting import fmt_num_it, fmt_pct_it, hex_to_rgba
 from ui.streamlit_compat import iframe_height_for_rows, iframe_scroll_for_rows, render_html_iframe
@@ -112,6 +113,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
         # ui/form_server/strumenti.py): per le altre categorie il badge non è
         # applicabile, non va mostrato di default solo perché il campo manca.
         comm_badge = commission_badge(info.get("zero_commissioni")) if macro_cat(tipo) in ("ETF", "ETC") else ""
+        enrich_badge = enrichment_complete_badge(enrichment_completeness(info))
         issuer_badge_html = issuer_badge(info, ticker=ticker, tipo_code=macro_cat(tipo))
         try:
             delta_val = float(delta) if delta is not None else 0.0
@@ -175,7 +177,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
             f'<tr style="{row_background}">'
             f'<td data-sort="{sym_sort}" style="text-align:center;color:{sym_col};font-weight:800;">{sym}</td>'
             f'<td class="num" data-sort="{_sort_num(delta_val)}" style="color:{sym_col};font-weight:700;">{fmt_pct_it(delta, 2, signed=True)}</td>'
-            f'<td data-sort="{ticker}">{issuer_badge_html}<a class="tk-link" style="color:{color}" href="#" onclick="showQuoteModal(\'{ticker}\');return false;">{ticker}</a>{comm_badge}</td>'
+            f'<td data-sort="{ticker}">{issuer_badge_html}<a class="tk-link" style="color:{color}" href="#" onclick="showQuoteModal(\'{ticker}\');return false;">{ticker}</a>{comm_badge}{enrich_badge}</td>'
             f'<td data-sort="{name}" style="color:{color};" title="{name}">{name}</td>'
             f'<td data-sort="{nature_label}" style="text-align:center;padding-left:4px;padding-right:4px;">'
             f'<span class="type-icon" title="{nature_label}" aria-label="{nature_label}" style="color:{nature_color};">{icon_svg}</span></td>'

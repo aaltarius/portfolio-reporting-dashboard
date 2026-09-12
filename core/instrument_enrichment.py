@@ -423,10 +423,45 @@ _BTP_FIELD_MAP = {
     "periodicita' cedola":                   "cedola_frequenza",
     "periodicità cedola":                    "cedola_frequenza",
     "tasso cedola periodale":                "cedola_tasso",
+    # "Tasso Cedola su base Annua" (non "periodale", un valore diverso):
+    # e' il dato che il motore di calcolo cedole/rendimenti usa davvero
+    # (core/domain/bonds.py legge solo cedola_perc, mai cedola_tasso) -
+    # verificato sulla pagina reale (IT0005340929: 2,80% su base annua vs
+    # il tasso per singola cedola semestrale). Prima non veniva scraped
+    # affatto: l'arricchimento automatico non poteva mai aggiornare
+    # cedola_perc, nemmeno quando il valore cambia (es. dopo un evento di
+    # step-up su un BTP Valore).
+    "tasso cedola su base annua":            "cedola_perc",
     "emittente":                             "emittente_btp",
+    # "Struttura Bond" (es. "Plain Vanilla") e' anche il tipo di cedola
+    # (fissa/indicizzata/step-up) richiesto dal conteggio di completezza
+    # arricchimento (core/services/instrument_quality.py) - vedi il set
+    # aggiuntivo di tipo_cedola sotto, stesso valore, due nomi diversi
+    # perche' "struttura" e' gia' mostrato con la sua label in
+    # ui/form_server/scheda_strumento.py e non va rimosso.
     "struttura bond":                        "struttura",
     "data godimento":                        "data_godimento",
 }
+
+# Campi percentuali che il motore finanziario legge come float veri (non
+# stringa di display): il testo scraped ("2,80%") va normalizzato prima di
+# essere assegnato, altrimenti float("2,80%") solleva ValueError e
+# core/domain/bonds.py::_finite_float lo silenzia a 0.0 - una cedola letta
+# come 0% invece del valore reale, bug scoperto ragionando sul motivo per
+# cui l'arricchimento automatico dei BTP non arrivava mai al 100%.
+_BTP_NUMERIC_FIELDS = {"cedola_perc"}
+
+
+def _parse_percent_to_float(raw: str) -> float | None:
+    """Percentuali sotto il 100% (cedole BTP): mai un separatore delle
+    migliaia da ripulire, solo virgola italiana da convertire in punto —
+    a differenza di importi in euro, qui sostituire alla cieca anche i
+    punti avrebbe rotto un eventuale "2.80" gia' in formato corretto."""
+    cleaned = raw.strip().rstrip("%").strip().replace(",", ".")
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
 
 _JUSTETF_INFO_KEYS = {
     "indice":                              "benchmark",
@@ -476,8 +511,19 @@ def enrich_btp(strumento: dict) -> dict:
                                 break
                             except ValueError:
                                 continue
+                    elif field in _BTP_NUMERIC_FIELDS:
+                        parsed = _parse_percent_to_float(value)
+                        if parsed is None:
+                            break
+                        value = parsed
                     strumento[field] = value
                     src[field] = "auto"
+                    if field == "struttura":
+                        # Stesso valore ("Plain Vanilla"/indicizzata/step-up)
+                        # anche come tipo_cedola: vedi commento sulla entry
+                        # "struttura bond" nella mappa sopra.
+                        strumento["tipo_cedola"] = value
+                        src["tipo_cedola"] = "auto"
                     break
         strumento["enriched_at"] = _now_iso()
         existing_src = strumento.get("enrichment_source") or {}

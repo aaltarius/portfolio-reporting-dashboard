@@ -1,5 +1,34 @@
 # Changelog
 
+## 5.0 - Timeout porta 8502 e BTP bloccati al 62% di arricchimento
+
+Due problemi reali segnalati dall'utente in uso normale.
+
+- **[Critico] Timeout "Porta 8502" nel form-server (Strumenti, SATOR,
+  Privacy, ecc.)**: `save_data()` riscrive sempre anche l'intero storico
+  prezzi (JSON+gzip+Parquet) — misurato 5,35s su dati reali (31
+  strumenti, 871 giorni), anche per un salvataggio che non tocca lo
+  storico per niente. Il form-server e' un unico processo async condiviso
+  da tutte le route: un salvataggio da 5s+ stallava anche le altre pagine
+  contro un timeout di probe di 1,2s. Aggiunto `include_storico=False`
+  a tutte le 9 azioni di `ui/form_server/strumenti.py` che non toccano
+  `storico_prezzi` (arricchimento, import PDF, modifica manuale,
+  classificazione SATOR, bucket exposure, toggle candidato/osservazione
+  prezzo, aggiunta strumento) — scese a 0,36s. Le 4 azioni che toccano
+  davvero lo storico (recupera/elimina storico, elimina strumento,
+  rinomina ticker) restano invariate.
+- **[Strumenti] BTP bloccati al 62% di arricchimento, senza modo di
+  capire perché**: il calcolo di completezza controllava un campo
+  (`cedola_annuale`) mai scritto da nessuna parte dell'app — il motore di
+  calcolo cedole (`core/domain/bonds.py`) usa solo `cedola_perc`.
+  Verificato sulla pagina reale di Borsa Italiana: "rating emittente" non
+  è dato per singolo BTP (rimosso dai campi richiesti); "Struttura Bond"
+  e "Tasso Cedola su base Annua" sono presenti ma non venivano scraped
+  nei campi giusti. Un BTP arricchito automaticamente ora arriva al 100%
+  reale. Aggiunta anche una lista campo-per-campo (✓/✗ + come ottenere
+  ciò che manca) nella scheda Arricchimento di Strumenti, per tutti i
+  tipi di strumento.
+
 ## 5.0 - Nuovo: "Candidato all'acquisto" per gli strumenti osservati in Quotazioni
 
 Richiesta dell'utente: tra gli strumenti osservati (mai acquistati) in

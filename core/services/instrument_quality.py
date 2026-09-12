@@ -19,15 +19,23 @@ from core.domain.returns import compute_instrument_stats
 RETURN_WINDOWS = {"ret_1m": 21, "ret_3m": 63, "ret_6m": 126, "ret_12m": 252}
 
 ENRICHMENT_REQUIRED_FIELDS: dict[str, list[str]] = {
+    # "cedola_annuale" (fino al 2026-09-12) non veniva MAI scritto da
+    # nessuna parte dell'app: il motore di calcolo cedole/rendimenti
+    # (core/domain/bonds.py) legge solo "cedola_perc" - quello che il
+    # form di inserimento/modifica strumento salva davvero. "rating_emittente"
+    # rimosso: verificato che non e' dato per singolo BTP (e' il rating
+    # sovrano dell'Italia, uguale per ogni BTP) e non compare sulla pagina
+    # Borsa Italiana usata dall'arricchimento automatico
+    # (core/instrument_enrichment.py::enrich_btp) - non ha senso trattarlo
+    # come campo "da completare" strumento per strumento.
     "btp": [
         "ytm_netto",
         "ytm_lordo",
         "duration_modificata",
         "scadenza",
-        "cedola_annuale",
+        "cedola_perc",
         "cedola_frequenza",
         "tipo_cedola",
-        "rating_emittente",
     ],
     "etf": [
         "rendimento_1a",
@@ -60,6 +68,109 @@ ENRICHMENT_REQUIRED_FIELDS: dict[str, list[str]] = {
     ],
 }
 
+ENRICHMENT_FIELD_LABELS: dict[str, str] = {
+    "ytm_netto": "Rendimento netto a scadenza",
+    "ytm_lordo": "Rendimento lordo a scadenza",
+    "duration_modificata": "Duration modificata",
+    "scadenza": "Scadenza",
+    "cedola_perc": "Tasso cedola annuo",
+    "cedola_frequenza": "Frequenza cedola",
+    "tipo_cedola": "Struttura/tipo cedola",
+    "rendimento_ytd": "Rendimento da inizio anno",
+    "rendimento_1a": "Rendimento 1 anno",
+    "rendimento_3a": "Rendimento 3 anni",
+    "ter": "TER (costo annuo)",
+    "benchmark": "Benchmark/indice",
+    "categoria_etf": "Categoria",
+    "categoria_fam": "Categoria",
+    "distribuzione": "Politica di distribuzione",
+    "data_lancio": "Data di lancio",
+    "rating_morningstar": "Rating Morningstar",
+    "patrimonio": "Patrimonio gestito",
+}
+
+# Da dove puo' realisticamente arrivare ciascun campo, per tipo di
+# strumento: "auto" = "Arricchisci automaticamente" puo' compilarlo (anche
+# se non sempre: es. rendimento_ytd per un fondo dipende da cosa risponde
+# Yahoo per quel ticker); "pdf" = disponibile solo importando il PDF
+# Fineco dello strumento, e nemmeno li' e' garantito (es. un ETF troppo
+# giovane non ha "rendimento 3 anni"). Unica fonte di verita' su cosa
+# arriva da dove - deve restare sincronizzata con
+# core/instrument_enrichment.py (enrich_btp/enrich_etf_etc/enrich_fondo
+# per "auto", parse_fineco_pdf per "pdf") ogni volta che quel modulo
+# cambia cosa scarica.
+ENRICHMENT_FIELD_SOURCE: dict[str, dict[str, str]] = {
+    "btp": {
+        "ytm_netto": "auto",
+        "ytm_lordo": "auto",
+        "duration_modificata": "auto",
+        "scadenza": "auto",
+        "cedola_perc": "auto",
+        "cedola_frequenza": "auto",
+        "tipo_cedola": "auto",
+    },
+    "etf": {
+        "ter": "auto",
+        "benchmark": "auto",
+        "distribuzione": "auto",
+        "rendimento_1a": "pdf",
+        "rendimento_3a": "pdf",
+        "categoria_etf": "pdf",
+        "data_lancio": "pdf",
+        "rating_morningstar": "pdf",
+    },
+    "etc": {
+        "ter": "auto",
+        "benchmark": "auto",
+        "distribuzione": "auto",
+        "rendimento_1a": "pdf",
+        "rendimento_3a": "pdf",
+        "categoria_etf": "pdf",
+        "data_lancio": "pdf",
+    },
+    "fondo": {
+        "rendimento_ytd": "auto",
+        "data_lancio": "auto",
+        "rendimento_1a": "pdf",
+        "rendimento_3a": "pdf",
+        "ter": "pdf",
+        "categoria_fam": "pdf",
+        "rating_morningstar": "pdf",
+        "patrimonio": "pdf",
+    },
+}
+
+_ENRICHMENT_SOURCE_HINT = {
+    "auto": "Prova 'Arricchisci automaticamente'.",
+    "pdf": "Disponibile solo importando il PDF Fineco dello strumento.",
+}
+
+
+def enrichment_field_breakdown(instrument: dict[str, Any]) -> list[dict[str, Any]]:
+    """Elenco dei campi richiesti per il tipo di strumento, con etichetta
+    leggibile, presente/mancante e (se mancante) come provare a ottenerlo.
+
+    Unica fonte di verita' per la lista campi (ENRICHMENT_REQUIRED_FIELDS)
+    e per l'etichetta di ciascuno (ENRICHMENT_FIELD_LABELS) - riusata sia
+    dal calcolo della percentuale (enrichment_completeness) sia dalla
+    lista dettagliata mostrata in Strumenti, cosi' i due non possono mai
+    disallinearsi.
+    """
+    kind = _enrichment_kind(instrument.get("tipo"))
+    fields = ENRICHMENT_REQUIRED_FIELDS.get(kind, [])
+    source_map = ENRICHMENT_FIELD_SOURCE.get(kind, {})
+    rows: list[dict[str, Any]] = []
+    for field in fields:
+        present = instrument.get(field) not in (None, "", "—", "-")
+        source = source_map.get(field, "auto")
+        rows.append({
+            "field": field,
+            "label": ENRICHMENT_FIELD_LABELS.get(field, field),
+            "present": present,
+            "hint": "" if present else _ENRICHMENT_SOURCE_HINT.get(source, ""),
+        })
+    return rows
+
 
 def _finite_float(value: Any) -> float | None:
     try:
@@ -88,7 +199,14 @@ def _enrichment_status(instrument: dict[str, Any]) -> str:
     return "Mai"
 
 
-def _enrichment_completeness(instrument: dict[str, Any]) -> int:
+def enrichment_completeness(instrument: dict[str, Any]) -> int:
+    """Percentuale (0-100) di campi obbligatori compilati per il tipo di strumento.
+
+    Pubblica (non prefissata _) perché riusata anche fuori da questo modulo
+    per il badge "anagrafica completa" accanto al ticker in Quotazioni e
+    Portafoglio (ui/charts/instrument_badges.py) — unica fonte di verità,
+    mai un secondo calcolo della stessa percentuale altrove.
+    """
     if not instrument.get("enriched_at"):
         return 0
     fields = ENRICHMENT_REQUIRED_FIELDS.get(_enrichment_kind(instrument.get("tipo")), [])
@@ -370,7 +488,7 @@ def build_instrument_quality_dataset(
             metrics_available = bool(stats) and int(trailing.get(ticker, {}).get("n_punti", 0.0) or 0.0) >= 20
         else:
             metrics_available = len(series) >= 20
-        enrichment_completeness = _enrichment_completeness(instrument)
+        completeness = enrichment_completeness(instrument)
         score = _quality_score(len(series), stale_days, gap_ratio, metrics_available)
         category = infer_category_code(instrument.get("tipo", ""), default="ALTRO")
         trail = trailing.get(ticker, {})
@@ -381,10 +499,11 @@ def build_instrument_quality_dataset(
             "category": category,
             "tipo": str(instrument.get("tipo") or ""),
             "in_portfolio": abs(held_qty) > 1e-9,
+            "candidato_acquisto": bool(instrument.get("candidato_acquisto", False)),
             "enrichment_status": _enrichment_status(instrument),
             "enrichment_source_label": _enrichment_source_label(instrument),
             "enriched_at": str(instrument.get("enriched_at") or "")[:10],
-            "enrichment_completeness": enrichment_completeness,
+            "enrichment_completeness": completeness,
             "last_price": last_price,
             "last_price_date": last_date.strftime("%Y-%m-%d") if last_date is not None else "",
             "history_points": int(len(series)),
@@ -399,7 +518,7 @@ def build_instrument_quality_dataset(
             "data_quality_label": _quality_label(score),
             "action_required": _action_required(
                 instrument,
-                completeness=enrichment_completeness,
+                completeness=completeness,
                 points=len(series),
                 stale_days=stale_days,
                 missing_days=missing_days,

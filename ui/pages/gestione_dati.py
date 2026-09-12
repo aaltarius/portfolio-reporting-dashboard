@@ -589,9 +589,18 @@ def _render_arricchimento(data: dict, ctx) -> None:
             return "n/d"
 
     if not quality.empty:
+        def _ptf_symbol(row: pd.Series) -> str:
+            if bool(row.get("in_portfolio", False)):
+                return "-"
+            # .get() con default, non row["candidato_acquisto"]: un
+            # artefatto cache costruito prima che questa colonna esistesse
+            # (vedi bump version in core/cache_policy.py, "dati.quality_table")
+            # non deve far esplodere la pagina con un KeyError.
+            return "★" if bool(row.get("candidato_acquisto", False)) else "☆"
+
         display = pd.DataFrame({
             "Ticker": quality["ticker"].astype(str),
-            "Ptf": quality["in_portfolio"].map(lambda v: "Sì" if bool(v) else "—"),
+            "Ptf": quality.apply(_ptf_symbol, axis=1),
             "Cat": quality["category"].astype(str),
             "Qualità dati": quality["data_quality_label"].astype(str),
             "Arricchimento": quality["enrichment_completeness"].round().astype(int),
@@ -612,12 +621,13 @@ def _render_arricchimento(data: dict, ctx) -> None:
 
         # Colore di categoria (stesso registro centralizzato usato ovunque
         # nell'app, ui.theme.macro_color) su Ticker/Cat, e distinzione visiva
-        # "in portafoglio" vs "solo osservato" sulla colonna Ptf — prima
-        # assenti in questa tabella (richiesta esplicita 2026-08-20).
+        # "in portafoglio" (-) / "candidato all'acquisto" (★) / "solo
+        # osservato" (☆) sulla colonna Ptf — stessa simbologia e stessa
+        # colorazione gia' usate nella tabella quotazioni
+        # (ui/charts/quotes_popup.py).
         def _style_quality_row(row: pd.Series) -> list[str]:
             cat_color = macro_color(str(row.get("Cat", "")))
-            in_ptf = str(row.get("Ptf", "")) == "Sì"
-            ptf_color = COLORS["success"] if in_ptf else "#9CA3AF"
+            ptf_color = COLORS["info"] if str(row.get("Ptf", "")) == "★" else "#9CA3AF"
             styles = []
             for col in row.index:
                 if col in {"Ticker", "Cat"}:
@@ -635,9 +645,9 @@ def _render_arricchimento(data: dict, ctx) -> None:
             column_config={
                 "Ticker": st.column_config.TextColumn("Ticker", width=72),
                 "Ptf": st.column_config.TextColumn(
-                    "Ptf",
+                    "★☆",
                     width=36,
-                    help="Sì se lo strumento è realmente in portafoglio (quote possedute); — se è solo osservato/tracciato.",
+                    help="- se lo strumento è realmente in portafoglio (quote possedute); ★ se è un candidato all'acquisto; ☆ se è solo osservato/tracciato.",
                 ),
                 "Cat": st.column_config.TextColumn(
                     "Cat.",

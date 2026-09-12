@@ -16,6 +16,7 @@ from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from core.domain.calendar import TAX_RATE_GOV_PCT
+from core.services.instrument_quality import enrichment_completeness, enrichment_field_breakdown
 from ui.form_server.shell import CSS, STREAMLIT_URL, TAB_JS
 
 logger = logging.getLogger("portafoglio.form_server.strumenti")
@@ -97,7 +98,14 @@ def _fs_arricchisci_strumento(data: dict, ticker: str) -> tuple:
     if strumento is None:
         return False, f"Strumento '{ticker}' non trovato."
     enrich_strumento(strumento)
-    save_data(data)
+    # include_storico=False: l'arricchimento tocca solo i campi anagrafici
+    # dello strumento (YTM, TER, cedole, ecc.), mai data["storico_prezzi"].
+    # Stesso fix di osserva_prezzo_on/off e candidato_on/off sopra (vedi i
+    # loro commenti per i numeri misurati: 5s+ -> 0,36s) — "Arricchisci
+    # automaticamente" e' il pulsante piu' cliccato proprio in questa
+    # sessione di lavoro sull'arricchimento BTP/ETF, quindi il piu'
+    # responsabile dei timeout ripetuti sulla porta 8502.
+    save_data(data, include_storico=False)
     if strumento.get("enrichment_error"):
         return False, f"{ticker}: {strumento['enrichment_error']}"
     return True, f"{ticker}: arricchimento completato."
@@ -589,6 +597,30 @@ def _render_strumenti_page(
             return f"arricchito {fmt_date_only_it((s.get('enriched_at') or '')[:10])}"
         return "mai arricchito"
 
+    def _enrichment_breakdown_html(s: dict) -> str:
+        """Lista campo-per-campo di cosa manca per arrivare al 100% di
+        arricchimento, e come provare a ottenerlo — prima il numero (es.
+        "88%") non spiegava nulla, richiesta esplicita dell'utente
+        2026-09-12 dopo essersi bloccato su XEON.MI/XDRE.MI senza capire
+        cosa mancasse."""
+        rows = enrichment_field_breakdown(s)
+        if not rows:
+            return ""
+        pct = enrichment_completeness(s)
+        cells = "".join(
+            f'<tr><td>{escape(row["label"])}</td>'
+            f'<td style="text-align:center;color:{"#166534" if row["present"] else "#9CA3AF"};font-weight:700;">'
+            f'{"✓" if row["present"] else "✗"}</td>'
+            f'<td class="hint">{escape(row["hint"])}</td></tr>'
+            for row in rows
+        )
+        return (
+            f'<div class="hint" style="margin:4px 0 10px">Completezza anagrafica: <b>{pct}%</b></div>'
+            '<table class="table-simple" style="margin-bottom:18px"><thead><tr>'
+            '<th>Campo</th><th></th><th>Se manca</th>'
+            f'</tr></thead><tbody>{cells}</tbody></table>'
+        )
+
     arricchimento_opts = "\n".join(
         f'<option value="{escape(s.get("ticker",""))}"{" selected" if s.get("ticker","")==selected_ticker else ""}>'
         f'{escape(s.get("ticker",""))} — {escape(str(s.get("nome",""))[:35])} ({_enrichment_status_label(s)})</option>'
@@ -771,8 +803,10 @@ def _render_strumenti_page(
         _stato_sel = escape(_enrichment_status_label(strumento_arricchimento))
         _fields_html = _fs_render_dati_completi_fields(strumento_arricchimento)
         _classificazione_html = _fs_render_classificazione_section(data, strumento_arricchimento, _tk_sel, _tk_raw)
+        _breakdown_html = _enrichment_breakdown_html(strumento_arricchimento)
         arricchimento_dettaglio = f"""
-    <div class="hint" style="margin:14px 0 20px">Stato: <b>{_stato_sel}</b></div>
+    <div class="hint" style="margin:14px 0 8px">Stato: <b>{_stato_sel}</b></div>
+    {_breakdown_html}
 
     <form method="POST" action="/strumenti" autocomplete="off" style="margin-bottom:26px">
       <input type="hidden" name="azione" value="arricchisci">
@@ -994,7 +1028,9 @@ async def post_strumenti(
         }
         strumento_record.update(enrichment_result)
         d.setdefault("strumenti", []).append(strumento_record)
-        save_data(d)
+        # include_storico=False: un nuovo strumento non ha ancora storico
+        # prezzi proprio, e non tocca quello degli altri.
+        save_data(d, include_storico=False)
         from urllib.parse import quote as urlquote
         return RedirectResponse(f"/strumenti?tab=edit&ok={urlquote('Aggiunto '+str(nm or tk))}", status_code=303)
 
@@ -1072,7 +1108,14 @@ async def post_strumenti(
         if se is None:
             return err_page("Strumento non trovato.", "closed")
         se["osserva_prezzo"] = azione == "osserva_prezzo_on"
-        save_data(d)
+        # include_storico=False: questo toggle non tocca data["storico_prezzi"],
+        # quindi non c'e' motivo di riscrivere l'intero storico prezzi (JSON +
+        # gzip + Parquet, verificato costare 5s+ su dati reali - misurato
+        # 2026-09-12 dopo che il toggle "candidato" sotto ha reso piu' frequenti
+        # questi salvataggi e fatto emergere timeout sulla porta 8502: il
+        # form-server e' un unico processo async, un save_data() bloccante
+        # per 5s+ stallava anche le altre route durante la scrittura).
+        save_data(d, include_storico=False)
         from urllib.parse import quote as urlquote
         msg = "Osservazione prezzo attivata." if se["osserva_prezzo"] else "Osservazione prezzo disattivata."
         return RedirectResponse(f"/strumenti?tab=closed&ok={urlquote(msg)}", status_code=303)
@@ -1089,7 +1132,10 @@ async def post_strumenti(
         if se is None:
             return err_page("Strumento non trovato.", "edit")
         se["candidato_acquisto"] = azione == "candidato_on"
-        save_data(d)
+        # include_storico=False: vedi commento identico su osserva_prezzo_on/off
+        # sopra - stesso toggle di un solo booleano, stessa riscrittura inutile
+        # (e stesso costo, 5s+) evitata.
+        save_data(d, include_storico=False)
         from urllib.parse import quote as urlquote
         msg = "Segnato come candidato all'acquisto." if se["candidato_acquisto"] else "Rimosso dai candidati all'acquisto."
         return RedirectResponse(f"/strumenti?tab=edit&ok={urlquote(msg)}", status_code=303)
@@ -1173,7 +1219,8 @@ async def post_strumenti(
             strumento["enrichment_source"] = src
             import datetime as _dt
             strumento["enriched_at"] = _dt.datetime.utcnow().isoformat()
-            save_data(d)
+            # include_storico=False: l'import PDF tocca solo campi anagrafici.
+            save_data(d, include_storico=False)
         except Exception as exc:
             return err_page(str(exc)[:120], "arricchimento", ticker)
         return RedirectResponse(f"/strumenti?tab=arricchimento&ticker={urlquote(ticker)}&ok={urlquote('PDF importato con successo.')}", status_code=303)
@@ -1202,7 +1249,8 @@ async def post_strumenti(
         strumento["enrichment_source"] = src
         import datetime as _dt
         strumento["enriched_at"] = _dt.datetime.utcnow().isoformat()
-        save_data(d)
+        # include_storico=False: modifica manuale, solo campi anagrafici.
+        save_data(d, include_storico=False)
         from urllib.parse import quote as urlquote
         return RedirectResponse(f"/strumenti?tab=arricchimento&ticker={urlquote(ticker)}&ok={urlquote('Modifiche salvate.')}", status_code=303)
 
@@ -1228,7 +1276,8 @@ async def post_strumenti(
             d, strumento,
             role_val=role_val, benchmark_code_val=benchmark_code_val, benchmark_label_val=benchmark_label_val,
         ):
-            save_data(d)
+            # include_storico=False: override di ruolo/benchmark, solo metadati.
+            save_data(d, include_storico=False)
         from urllib.parse import quote as urlquote
         return RedirectResponse(f"/strumenti?tab=arricchimento&ticker={urlquote(ticker)}&ok={urlquote('Classificazione aggiornata.')}", status_code=303)
 
@@ -1265,7 +1314,8 @@ async def post_strumenti(
                 status_code=303,
             )
         if changed:
-            save_data(d)
+            # include_storico=False: override di bucket exposure, solo metadati.
+            save_data(d, include_storico=False)
         return RedirectResponse(f"/strumenti?tab=arricchimento&ticker={urlquote(ticker)}&ok={urlquote('Esposizione tra bucket aggiornata.')}", status_code=303)
 
     elif azione == "ricalcola_automatico":
@@ -1290,7 +1340,8 @@ async def post_strumenti(
                 overrides["bucket_exposure_user_edited"] = False
                 # Nessun override trovato = nulla da resettare: evita un
                 # backup-bundle + riscrittura completa a vuoto per un no-op.
-                save_data(d)
+                # include_storico=False: reset di override, solo metadati.
+                save_data(d, include_storico=False)
         from urllib.parse import quote as urlquote
         return RedirectResponse(f"/strumenti?tab=arricchimento&ticker={urlquote(ticker)}&ok={urlquote('Ripristinato il calcolo automatico.')}", status_code=303)
 
