@@ -13,7 +13,7 @@ from core.instrument_classification import is_nav_fund
 from core.services.sator import resolve_instrument_nature
 from ui.charts.instrument_badges import ISSUER_BADGE_CSS, commission_badge, issuer_badge
 from ui.charts.natura_icons import get_nature_visual
-from ui.formatting import fmt_num_it, fmt_pct_it
+from ui.formatting import fmt_num_it, fmt_pct_it, hex_to_rgba
 from ui.streamlit_compat import iframe_height_for_rows, iframe_scroll_for_rows, render_html_iframe
 from ui.theme import macro_color
 
@@ -35,11 +35,13 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
         holdings_map = {str(row.get("Ticker", "")): row for _, row in holdings_df.iterrows()}
     cat_map = {s.get("ticker", ""): s.get("tipo", "") for s in data.get("strumenti", [])}
 
-    # Ordine di apertura richiesto esplicitamente (2026-08-20): prima chiave
-    # Ptf (gia' applicata via sortQ(11) piu' sotto, ordinamento JS stabile),
-    # seconda chiave categoria alfabetica (GOV/FND/ecc.). Pre-ordiniamo qui
-    # per categoria: il sort JS lato client, essendo stabile, preserva
-    # quest'ordine come chiave secondaria dentro ciascun gruppo Ptf.
+    # Ordine di apertura richiesto esplicitamente (2026-08-20, aggiornato
+    # 2026-09-11 con la colonna Candidato): prima chiave Candidato (gia'
+    # applicata via sortQ(11) piu' sotto, ordinamento JS stabile: "-"/in
+    # portafoglio, poi Si/candidato, poi No), seconda chiave categoria
+    # alfabetica (GOV/FND/ecc.). Pre-ordiniamo qui per categoria: il sort JS
+    # lato client, essendo stabile, preserva quest'ordine come chiave
+    # secondaria dentro ciascun gruppo Candidato.
     if "Ticker" in qdf.columns:
         qdf = qdf.copy()
         qdf["_macro_cat"] = qdf["Ticker"].map(lambda tk: macro_cat(cat_map.get(str(tk or ""), "")))
@@ -88,10 +90,22 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
         except Exception:
             holding_ctv = 0.0
         in_portfolio = abs(holding_qty) > 0 or abs(holding_ctv) > 0
-        holding_label = "Sì" if in_portfolio else "No"
-        holding_sort = "0" if in_portfolio else "1"
-        holding_color = COLORS["success"] if in_portfolio else "#9CA3AF"
-        row_background = "" if in_portfolio else "background:#f3f4f6;"
+        is_candidato = bool(info.get("candidato_acquisto", False))
+        if in_portfolio:
+            # Già posseduto: il concetto di "candidato all'acquisto" non si applica.
+            holding_label, holding_sort, holding_color, row_background = "-", "0", "#9CA3AF", ""
+            holding_title = "In portafoglio"
+        elif is_candidato:
+            # ★/☆ invece di Sì/No: la colonna (4.6% larghezza, stessa di "Ptf"
+            # prima) non ha spazio per una parola — stessa icona gia' usata
+            # per il toggle in Strumenti (vedi ui/form_server/strumenti.py).
+            holding_label, holding_sort, holding_color = "★", "1", COLORS["info"]
+            row_background = f"background:{hex_to_rgba(COLORS['info'], 0.20)};"
+            holding_title = "Candidato all'acquisto"
+        else:
+            holding_label, holding_sort, holding_color = "☆", "2", "#9CA3AF"
+            holding_title = "Osservato"
+            row_background = "background:#f3f4f6;"
         nature = resolve_instrument_nature(data, info, in_portfolio)
         nature_color, icon_svg, nature_label = get_nature_visual(nature)
         # "Zero commissioni" esiste solo come campo per ETF/ETC (vedi
@@ -171,7 +185,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
             f'<td class="num" data-sort="{_delta_eur_sort}" style="color:{_delta_eur_col};font-weight:700;">{_delta_eur_fmt}</td>'
             f'<td data-sort="{fonte}" title="{fonte}">{fonte}</td>'
             f'<td class="num" data-sort="{_sort_dt}" style="color:#6b7280;white-space:nowrap;" title="{_title_dt}">{price_date_fmt}</td>'
-            f'<td data-sort="{holding_sort}" style="text-align:center;color:{holding_color};font-weight:700;">{holding_label}</td>'
+            f'<td data-sort="{holding_sort}" style="text-align:center;color:{holding_color};font-weight:700;" title="{holding_title}">{holding_label}</td>'
             f'<td data-sort="{esito_label}" style="color:{esito_col};font-weight:700;"{esito_title_attr}>{esito_label}</td>'
             f'</tr>'
         )
@@ -522,7 +536,7 @@ svg.spark{width:100%;height:152px;display:block;border-radius:10px;background:#f
   <th data-col="8">Δ Prezzo<span class="sort-ind"></span><span class="rh"></span></th>
   <th data-col="9">Fonte<span class="sort-ind"></span><span class="rh"></span></th>
   <th data-col="10">Data quot.<span class="sort-ind"></span><span class="rh"></span></th>
-  <th data-col="11">Ptf<span class="sort-ind"></span><span class="rh"></span></th>
+  <th data-col="11" title="Candidato all'acquisto">★☆<span class="sort-ind"></span><span class="rh"></span></th>
   <th data-col="12">Esito<span class="sort-ind"></span><span class="rh"></span></th>
 </tr></thead>
 <tbody id="quotes-body">__ROWS__</tbody>

@@ -79,7 +79,16 @@ def build_quote_history_time_chart(ticker, instrument, normalized_series, benchm
             pass
     quote_title_name = str(instrument.get("nome", "") or "").strip() if isinstance(instrument, dict) else ""
     quote_title_suffix = f" — {quote_title_name[:30]}" if quote_title_name else ""
-    fig.update_layout(title=f"<b>{ticker}</b>{quote_title_suffix}", hovermode="x unified")
+    # Stessa icona della colonna "Candidato" in Quotazioni (ui/charts/quotes_popup.py):
+    # stella piena per i candidati all'acquisto, vuota per i semplici osservati,
+    # nessuna per chi e' gia' in portafoglio (il concetto non si applica).
+    if in_portfolio:
+        quote_title_star = ""
+    elif isinstance(instrument, dict) and bool(instrument.get("candidato_acquisto", False)):
+        quote_title_star = "★ "
+    else:
+        quote_title_star = "☆ "
+    fig.update_layout(title=f"<b>{quote_title_star}{ticker}</b>{quote_title_suffix}", hovermode="x unified")
     fig = apply_settings_base100(fig, "quotazioni_quote_history")
     if not in_portfolio:
         fig.update_layout(

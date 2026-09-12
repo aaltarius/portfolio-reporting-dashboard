@@ -170,6 +170,12 @@ def _normalized_instrument_signature_payload(strumenti: list[dict[str, Any]]) ->
             "prima_cedola": str(item.get("prima_cedola", "") or "").strip(),
             "aliquota_cedola": _finite_float_or_none(item.get("aliquota_cedola")),
             "nominale": _finite_float_or_none(item.get("nominale")),
+            # Stessa classe di bug di "natura"/campi cedola sopra: senza
+            # questo campo, segnare/togliere un candidato all'acquisto in
+            # Strumenti non cambia la firma dati e il grafico storico
+            # quotazioni (titolo con stella piena/vuota, vedi
+            # ui/charts/quotazioni.py) resta bloccato sull'icona vecchia.
+            "candidato_acquisto": bool(item.get("candidato_acquisto", False)),
         })
     return sorted(normalized, key=lambda row: (row["ticker"], row["isin"], row["tipo"]))
 

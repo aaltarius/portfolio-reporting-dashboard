@@ -512,6 +512,12 @@ def _render_strumenti_page(
         and not _statuses[str(s.get("ticker") or "")].is_open
         and _statuses[str(s.get("ticker") or "")].has_any_event
     ]
+    osservati = [
+        s for s in strumenti
+        if str(s.get("ticker") or "") in _statuses
+        and not _statuses[str(s.get("ticker") or "")].is_open
+        and not _statuses[str(s.get("ticker") or "")].has_any_event
+    ]
 
     from persistence.storage import get_registro_eventi
     from core.formatting import fmt_date_only_it
@@ -623,6 +629,33 @@ def _render_strumenti_page(
     else:
         chiusi_html = '<div class="cart-empty">Nessuno strumento chiuso.</div>'
 
+    if osservati:
+        rows_osv = []
+        for s in osservati:
+            tk = str(s.get("ticker") or "")
+            is_candidato = bool(s.get("candidato_acquisto", False))
+            azione = "candidato_off" if is_candidato else "candidato_on"
+            label = "★ Candidato — rimuovi" if is_candidato else "☆ Segna candidato"
+            toggle_cell = (
+                f'<form method="POST" action="/strumenti" style="display:inline">'
+                f'<input type="hidden" name="azione" value="{azione}">'
+                f'<input type="hidden" name="ticker" value="{escape(tk)}">'
+                f'<button type="submit" class="btn-sm">{label}</button></form>'
+            )
+            rows_osv.append(
+                f'<tr><td>{escape(tk)}</td><td>{escape(str(s.get("nome",""))[:45])}</td>'
+                f'<td>{escape(str(s.get("tipo","")))}</td>'
+                f'<td>{"Sì" if is_candidato else "No"}</td>'
+                f'<td>{toggle_cell}</td></tr>'
+            )
+        osservati_html = (
+            '<table class="table-simple"><thead><tr>'
+            '<th>Ticker</th><th>Nome</th><th>Tipo</th><th>Candidato</th><th></th>'
+            f'</tr></thead><tbody>{"".join(rows_osv)}</tbody></table>'
+        )
+    else:
+        osservati_html = '<div class="cart-empty">Nessuno strumento osservato (mai acquistato).</div>'
+
     feedback = ""
     if ok_msg:
         feedback = f'<div class="alert-ok">{escape(ok_msg)}</div>'
@@ -637,6 +670,11 @@ def _render_strumenti_page(
     )
 
     tab_edit = no_str if not strumenti else f"""
+    <h2>Candidati all'acquisto</h2>
+    <div class="hint" style="margin-bottom:14px">Strumenti osservati (mai acquistati) segnati come priorità d'acquisto: in Quotazioni compaiono evidenziati nella colonna "Candidato" della tabella quotazioni.</div>
+    {osservati_html}
+
+    <h2 style="margin-top:26px">Modifica dati anagrafici</h2>
     <label class="lbl">Strumento</label>
     <select id="sel_edit" onchange="loadEdit()">
       {str_opts}
@@ -1038,6 +1076,23 @@ async def post_strumenti(
         from urllib.parse import quote as urlquote
         msg = "Osservazione prezzo attivata." if se["osserva_prezzo"] else "Osservazione prezzo disattivata."
         return RedirectResponse(f"/strumenti?tab=closed&ok={urlquote(msg)}", status_code=303)
+
+    elif azione in {"candidato_on", "candidato_off"}:
+        ticker = ticker.strip()
+        if not ticker:
+            return err_page("Ticker non specificato.", "edit")
+        try:
+            d = _ld()
+        except Exception as exc:
+            return err_page(str(exc), "edit")
+        se = next((s for s in d.get("strumenti", []) if s.get("ticker") == ticker), None)
+        if se is None:
+            return err_page("Strumento non trovato.", "edit")
+        se["candidato_acquisto"] = azione == "candidato_on"
+        save_data(d)
+        from urllib.parse import quote as urlquote
+        msg = "Segnato come candidato all'acquisto." if se["candidato_acquisto"] else "Rimosso dai candidati all'acquisto."
+        return RedirectResponse(f"/strumenti?tab=edit&ok={urlquote(msg)}", status_code=303)
 
     elif azione == "recupera_storico":
         ticker = ticker.strip()

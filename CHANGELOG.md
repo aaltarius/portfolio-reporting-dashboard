@@ -1,5 +1,28 @@
 # Changelog
 
+## 5.0 - Nuovo: "Candidato all'acquisto" per gli strumenti osservati in Quotazioni
+
+Richiesta dell'utente: tra gli strumenti osservati (mai acquistati) in
+Quotazioni, poter evidenziare quelli passati da semplice osservazione a
+priorità d'acquisto.
+
+- **[Strumenti]** Nuovo flag `candidato_acquisto` per strumento, attivabile
+  dal tab "✏️ Modifica" (nuova mini tabella "Candidati all'acquisto" in
+  cima, un bottone ☆/★ per riga) — stesso meccanismo già usato per
+  "Osservazione prezzo" sugli strumenti chiusi.
+- **[Quotazioni]** La colonna "Ptf" della tabella "Ultime quotazioni
+  aggiornate" è diventata la colonna Candidato: intestazione ★☆, celle
+  "-" (già in portafoglio) / ★ (candidato) / ☆ (osservato semplice),
+  sfondo riga azzurro tenue per i candidati. Ordinamento di apertura:
+  in portafoglio, poi candidati, poi osservati semplici. Stessa icona
+  ★/☆ anche nel titolo dei grafici storico quotazioni per singolo
+  strumento.
+- **[Cache]** Aggiunto `candidato_acquisto` alla firma dati condivisa
+  (`core/cache_signatures.py::_normalized_instrument_signature_payload`,
+  la stessa già estesa in passato per "natura" e i campi cedola BTP):
+  senza, attivare/disattivare un candidato non avrebbe invalidato la
+  cache del grafico per-ticker.
+
 ## 5.0 - Grafico "Composizione % del P/L per Macro-Categoria" raccontava una storia falsa
 
 Segnalato dall'utente in uso normale: il grafico mostrava GOV al 31,9% di
