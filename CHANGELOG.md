@@ -1,5 +1,28 @@
 # Changelog
 
+## 5.0 - Conferma cedole maturate, badge NEW e badge SATOR in Portafoglio
+
+Tre richieste dell'utente via brainstorming, sulla stessa colonna icone
+già usata per i badge BTP in tabella Controvalore.
+
+- **[Cruscotti/Portafoglio] Conferma cedola incassata in un click**: nuova
+  `cedole_maturate_da_registrare()` (simmetrica a `matured_unredeemed_gov`)
+  segnala in Home le cedole BTP con stato "incassata" nel calendario senza
+  un evento CEDOLA reale registrato. Un bottone apre `/operazioni` già
+  precompilato (ticker/data/importo lordo); la scrittura resta un click
+  esplicito dell'utente sul form esistente, nessuna scrittura automatica.
+- **[Portafoglio] Badge "N" per acquisti recenti**: visibile 5 giorni
+  dall'ultimo evento ACQUISTO registrato per il ticker, rinforzi di
+  posizioni già aperte inclusi. Bug reale trovato e corretto in giornata:
+  la prima versione guardava il *primo* acquisto in assoluto
+  (`first_purchase_date`), quindi un rinforzo su una posizione aperta da
+  mesi non faceva mai comparire il badge — corretto con la nuova
+  `most_recent_purchase_date()`.
+- **[Portafoglio] Badge "S" per candidati SATOR**: segnala gli strumenti
+  presenti nell'ultima fotografia SATOR salvata (stessa fonte già usata
+  da Pianificazione). Si azzera per l'intera foto al primo acquisto
+  successivo registrato, non per singolo ticker.
+
 ## 5.0 - Timeout porta 8502 e BTP bloccati al 62% di arricchimento
 
 Due problemi reali segnalati dall'utente in uso normale.
