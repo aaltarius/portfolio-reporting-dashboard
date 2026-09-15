@@ -7,15 +7,20 @@ from datetime import date
 
 import pandas as pd
 from core.config import COLORS
-from core.domain.calendar import CEDOLA_FREQ_MONTHS, CEDOLA_FREQ_PAYMENTS, TAX_RATE_GOV_PCT, build_btp_calendar
+from core.domain.calendar import CEDOLA_FREQ_MONTHS, CEDOLA_FREQ_PAYMENTS, TAX_RATE_GOV_PCT, build_btp_calendar, most_recent_purchase_date
 from core.services.instrument_quality import enrichment_completeness
-from core.services.sator import resolve_instrument_nature
-from persistence.storage import macro_cat
+from core.services.sator import latest_sator_decision, load_sator_decisions, resolve_instrument_nature
+from persistence.storage import get_registro_eventi, macro_cat
 from ui.charts.instrument_badges import ISSUER_BADGE_CSS, commission_badge, enrichment_complete_badge, issuer_badge
 from ui.charts.natura_icons import get_nature_visual
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it
 from ui.streamlit_compat import iframe_height_for_rows, render_html_iframe
 from ui.theme import CATEGORY_COLORS, macro_color
+
+# Finestra di visibilita' del badge "N" (acquisto recente): decisione
+# esplicita dell'utente 2026-09-16, via brainstorming (non 3, che era il
+# limite inferiore proposto).
+NEW_INSTRUMENT_BADGE_WINDOW_DAYS = 5
 
 # Modulo shared HTML/popup.
 # Ruolo:
@@ -274,6 +279,85 @@ def _build_btp_badge_map(data: dict) -> dict[str, dict[str, object]]:
                     entry["coupon_12m"] = float(coupon_amount or 0.0)
         entry.update(_estimate_btp_accrued_interest(strumento, today))
     return out
+
+
+def _build_new_purchase_map(data: dict) -> dict[str, pd.Timestamp]:
+    """Ticker -> data dell'ACQUISTO piu' recente registrato, per qualsiasi
+    strumento (non solo BTP) — un rinforzo su una posizione gia' aperta da
+    tempo deve far comparire il badge "NEW" tanto quanto una posizione
+    aperta per la prima volta (bug reale, 2026-09-16: usando
+    first_purchase_date il rinforzo restava invisibile). Stessa fonte di
+    verita' di core.domain.calendar.most_recent_purchase_date."""
+    eventi = get_registro_eventi(data)
+    out: dict[str, pd.Timestamp] = {}
+    for strumento in data.get("strumenti", []) or []:
+        ticker = str(strumento.get("ticker") or "").strip()
+        if not ticker:
+            continue
+        purchase = most_recent_purchase_date(eventi, ticker)
+        if purchase is not None:
+            out[ticker] = purchase
+    return out
+
+
+def _new_instrument_badge(purchase_date, today: pd.Timestamp, window_days: int = NEW_INSTRUMENT_BADGE_WINDOW_DAYS) -> str:
+    """Badge 'N' per uno strumento con un ACQUISTO registrato (rinforzo di
+    una posizione gia' aperta incluso, non solo apertura nuova) non piu' di
+    window_days giorni fa. Ha priorita' sul badge BTP cedola/scadenza nella
+    stessa cella (decisione esplicita 2026-09-16)."""
+    if purchase_date is None or pd.isna(purchase_date):
+        return ""
+    days_since = (today.normalize() - pd.Timestamp(purchase_date).normalize()).days
+    if days_since < 0 or days_since > window_days:
+        return ""
+    days_label = "1 giorno fa" if days_since == 1 else (f"{days_since} giorni fa" if days_since else "oggi")
+    return (
+        f'<span class="btp-pill btp-new" data-sort="-1" '
+        f'title="Acquisto registrato {days_label}" aria-label="Acquisto recente">N</span>'
+    )
+
+
+def _build_sator_candidate_tickers(data: dict) -> frozenset[str]:
+    """Ticker nell'ultima fotografia SATOR salvata (order_lines), stessa
+    fonte gia' usata da Pianificazione per la mappa a bolle "Prossimo
+    acquisto" (core.services.sator.build_next_purchase_bubble_frame).
+
+    Reset dell'intera foto (decisione esplicita 2026-09-16): se un
+    ACQUISTO qualsiasi e' stato registrato il giorno della fotografia o
+    dopo, la foto e' "consumata" — nessun ticker viene segnalato finche'
+    non se ne salva una nuova."""
+    decisions = load_sator_decisions()
+    items = list((decisions or {}).get("items") or [])
+    latest = latest_sator_decision(items)
+    if latest is None:
+        return frozenset()
+
+    created_at = pd.to_datetime(latest.get("created_at"), errors="coerce")
+    if pd.notna(created_at):
+        created_date = created_at.normalize()
+        acquisti = [
+            pd.to_datetime(ev.get("data"), errors="coerce")
+            for ev in get_registro_eventi(data)
+            if str(ev.get("tipo_evento") or "").strip().upper() == "ACQUISTO"
+        ]
+        acquisti = [ts for ts in acquisti if pd.notna(ts)]
+        if acquisti and max(acquisti).normalize() >= created_date:
+            return frozenset()
+
+    return frozenset(
+        str(line.get("ticker") or "").strip().upper()
+        for line in latest.get("order_lines", []) or []
+        if str(line.get("ticker") or "").strip()
+    )
+
+
+def _sator_candidate_badge(ticker: str, candidate_tickers: frozenset[str]) -> str:
+    if str(ticker or "").strip().upper() not in candidate_tickers:
+        return ""
+    return (
+        '<span class="btp-pill btp-sator" data-sort="-1" '
+        'title="Nell\'ultima fotografia SATOR salvata" aria-label="Candidato SATOR">S</span>'
+    )
 
 
 def _btp_info_badge(ticker: str, info: dict, status: dict[str, object] | None) -> str:
@@ -617,6 +701,9 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
     info_map = {s["ticker"]: s for s in data.get("strumenti", [])}
     ticker_info = _build_ticker_info(df, data)
     btp_badges = _build_btp_badge_map(data)
+    new_purchase_map = _build_new_purchase_map(data)
+    sator_candidate_tickers = _build_sator_candidate_tickers(data)
+    _today_ts = pd.Timestamp(date.today()).normalize()
     cat_color_map = CATEGORY_COLORS
 
     def _cat_col(tipo):
@@ -670,7 +757,13 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
         # categorie il badge non e' applicabile, non va mostrato di default.
         comm_badge = commission_badge(info.get("zero_commissioni")) if tipo_code in ("ETF", "ETC") else ""
         enrich_badge = enrichment_complete_badge(enrichment_completeness(info))
-        btp_badge = _btp_info_badge(tk, info, btp_badges.get(tk)) if tipo_code == "GOV" else ""
+        new_badge = _new_instrument_badge(new_purchase_map.get(tk), _today_ts)
+        sator_badge = _sator_candidate_badge(tk, sator_candidate_tickers)
+        btp_badge = (
+            new_badge
+            or sator_badge
+            or (_btp_info_badge(tk, info, btp_badges.get(tk)) if tipo_code == "GOV" else "")
+        )
         issuer_badge_html = issuer_badge(info, ticker=tk, tipo_code=tipo_code)
         col = _cat_col(tipo)
         direction = _direction_entry(tk)
@@ -819,6 +912,8 @@ tbody td:nth-child(4),tbody td:nth-child(5),tbody td:nth-child(16){{padding:8px 
 .btp-pill.btp-info{{background:#EFF6FF;color:#2563EB;}}
 .btp-pill.btp-coupon{{background:#ECFDF3;color:#1E8449;}}
 .btp-pill.btp-maturity{{background:#FFF7ED;color:#F59E0B;border-radius:5px;}}
+.btp-pill.btp-new{{background:#F5F3FF;color:#7C3AED;border-radius:5px;font-size:9px;}}
+.btp-pill.btp-sator{{background:#FEF3C7;color:#92400E;border-radius:5px;font-size:9px;}}
 .mini-spark-cell{{text-align:center;padding:5px 4px;}}
 .mini-spark{{display:block;width:64px;height:28px;margin:0 auto;overflow:visible;max-width:100%;}}
 .mini-spark-empty{{color:#9CA3AF;font-weight:700;}}
@@ -857,7 +952,7 @@ tfoot td:last-child{{border-right:none;}}
   <th data-col="1">Strumento<span class="sort-ind"></span><span class="rh"></span></th>
   <th data-col="2">Cat.<span class="sort-ind"></span><span class="rh"></span></th>
   <th data-col="3"></th>
-  <th data-col="4" title="Cedole/scadenza BTP"></th>
+  <th data-col="4" title="Cedole/scadenza BTP · N = acquisto recente · S = candidato ultima foto SATOR"></th>
   <th data-col="5">PMC<span class="sort-ind"></span><span class="rh"></span></th>
   <th data-col="6">Peso %<span class="sort-ind"></span><span class="rh"></span></th>
   <th data-col="7">Quote<span class="sort-ind"></span><span class="rh"></span></th>

@@ -81,6 +81,45 @@ def matured_unredeemed_gov(data: dict[str, Any], today: date | None = None) -> l
     return sorted(result, key=lambda item: item["giorni_scaduto"], reverse=True)
 
 
+def cedole_maturate_da_registrare(
+    data: dict[str, Any], today: date | None = None, calendar_df: pd.DataFrame | None = None
+) -> list[dict[str, Any]]:
+    """Cedole BTP con stato 'incassata' nel calendario (core.domain.calendar.
+    build_btp_calendar) e nessun evento CEDOLA reale corrispondente entro
+    tolleranza — build_btp_calendar lascia 'imposte' a None in quel caso.
+    Simmetrica a matured_unredeemed_gov: segnala, non genera alcun evento in
+    automatico.
+
+    calendar_df: calendario gia' calcolato dal chiamante (ui/runtime_context.py
+    lo costruisce comunque una volta per run) per evitare di ricalcolarlo."""
+    today_ts = pd.Timestamp(today or date.today())
+    open_tickers = held_tickers(data)
+    if calendar_df is None:
+        from core.domain.calendar import build_btp_calendar
+        calendar_df = build_btp_calendar(data)
+    if calendar_df.empty:
+        return []
+
+    mask = (
+        (calendar_df["tipo_evento"] == "cedola")
+        & (calendar_df["stato_evento"] == "incassata")
+        & (calendar_df["imposte"].isna())
+        & (pd.to_datetime(calendar_df["data"]) <= today_ts)
+        & (calendar_df["ticker"].isin(open_tickers))
+    )
+    result = [
+        {
+            "ticker": str(row["ticker"]),
+            "nome": str(row["nome"]),
+            "data": str(pd.Timestamp(row["data"]).date()),
+            "importo_netto": _finite_float(row["importo"]),
+            "importo_lordo": _finite_float(row["importo_lordo"]),
+        }
+        for _, row in calendar_df[mask].iterrows()
+    ]
+    return sorted(result, key=lambda item: item["data"])
+
+
 def build_income_scadenze_summary(data: dict[str, Any], da: pd.DataFrame, calendar_df: pd.DataFrame | None) -> dict[str, Any]:
     if calendar_df is None or calendar_df.empty:
         return {

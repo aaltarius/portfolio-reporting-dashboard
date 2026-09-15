@@ -171,6 +171,9 @@ def build_runtime_context_data(
     btp_calendar_df = build_btp_calendar(data)
     if logger: logger.info("[TIMING] build_btp_calendar: %.2fs", time.perf_counter() - _t)
 
+    from core.services.income_scadenze import cedole_maturate_da_registrare
+    cedole_da_confermare = cedole_maturate_da_registrare(data, calendar_df=btp_calendar_df)
+
     result = {
         "data": data,
         "settings": settings,
@@ -215,6 +218,7 @@ def build_runtime_context_data(
         "portfolio_radar_payload": portfolio_radar_payload,
         "portfolio_alerts": portfolio_alerts,
         "maturity_alerts": maturity_alerts,
+        "cedole_da_confermare": cedole_da_confermare,
         "capital_flows": capital_flows,
         "calculations_settings": calculations_settings,
         "include_proventi_in_total_return_effective": include_proventi,

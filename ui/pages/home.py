@@ -797,6 +797,43 @@ def _render_home_andamento_clone(
             )
 
 
+def _cedola_confirm_query_params(item: dict[str, Any]) -> dict[str, str]:
+    """Query params per precompilare /operazioni (ui/form_server/inserisci.py)
+    con la cedola gia' maturata: l'utente conferma con un click invece di
+    ridigitare ticker/data/importo a mano."""
+    return {
+        "cedola_ticker": str(item.get("ticker") or ""),
+        "cedola_data": str(item.get("data") or ""),
+        "cedola_lordo": f"{_safe_float(item.get('importo_lordo'), 0.0):.2f}",
+    }
+
+
+def _render_cedole_da_confermare_box(cedole: list[dict[str, Any]]) -> None:
+    """Cedole maturate (core.services.income_scadenze.
+    cedole_maturate_da_registrare) senza un evento CEDOLA ancora
+    registrato: un click apre /operazioni gia' precompilato, la scrittura
+    resta un'azione esplicita dell'utente su quella pagina ('Registra
+    tutto'), nessuna scrittura automatica avviene da qui."""
+    from urllib.parse import urlencode
+    from ui.sidebar import _open_form_server_page
+
+    plural = len(cedole) != 1
+    st.warning(f"💶 {len(cedole)} cedol{'e' if plural else 'a'} maturat{'e' if plural else 'a'} da confermare.")
+    for item in cedole:
+        col_info, col_action = st.columns([3, 1])
+        with col_info:
+            st.caption(
+                f"{item.get('nome')} ({item.get('ticker')}) — {item.get('data')} — "
+                f"lordo {_safe_float(item.get('importo_lordo'), 0.0):.2f} € · "
+                f"netto {_safe_float(item.get('importo_netto'), 0.0):.2f} €"
+            )
+        with col_action:
+            button_key = f"cedola_confirm_{item.get('ticker')}_{item.get('data')}"
+            if st.button("Registra", key=button_key, width="stretch"):
+                query = urlencode(_cedola_confirm_query_params(item))
+                _open_form_server_page(f"operazioni?{query}", "Conferma cedola")
+
+
 def _file_fingerprint(path_value: str) -> dict[str, Any]:
     path = Path(str(path_value or ""))
     try:
@@ -1376,6 +1413,9 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         total_count = sum(1 for s in data.get("strumenti", []) if str(s.get("ticker") or "") not in _chiusi_tk)
         suffix = f"{active_count} strumenti attivi su {total_count} osservati"
         if should_render_section("Portafoglio", "Controvalore del Portafoglio", settings):
+            _cedole_da_confermare = getattr(ctx, "cedole_da_confermare", None) or []
+            if _cedole_da_confermare:
+                _render_cedole_da_confermare_box(_cedole_da_confermare)
             _portfolio_da = da
             _portfolio_direction_map: dict[str, Any] = {}
             _portfolio_daily_report: dict[str, Any] | None = None

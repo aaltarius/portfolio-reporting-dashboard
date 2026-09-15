@@ -288,13 +288,22 @@ _JS = (
 )
 
 
-def _render_form(tickers: list[dict], error: str = "") -> str:
+def _render_form(tickers: list[dict], error: str = "", prefill: dict | None = None) -> str:
     today = date.today().isoformat()
+    prefill_ticker = str(prefill.get("ticker") or "") if prefill else ""
     ticker_opts = "\n".join(
         f'<option value="{escape(t["ticker"])}" '
-        f'data-gov="{str(t["is_gov"]).lower()}">'
+        f'data-gov="{str(t["is_gov"]).lower()}"'
+        f'{" selected" if t["ticker"] == prefill_ticker else ""}>'
         f'{escape(t["label"])}</option>'
         for t in tickers
+    )
+    cedola_selected = " selected" if prefill else ""
+    data_titolo_value = escape(str(prefill.get("data") or today)) if prefill else today
+    lordo_value = f' value="{escape(str(prefill["lordo"]))}"' if prefill and prefill.get("lordo") else ""
+    auto_add_script = (
+        "<script>document.addEventListener('DOMContentLoaded',()=>{addToCart();});</script>"
+        if prefill else ""
     )
     err_html = f'<div class="alert-err" id="err_msg" style="display:{"" if error else "none"}">{escape(error)}</div>' \
         if error else '<div class="alert-err" id="err_msg" style="display:none"></div>'
@@ -332,7 +341,7 @@ def _render_form(tickers: list[dict], error: str = "") -> str:
           <select name="_evento_ui" id="sel_evento">
             <option value="ACQUISTO">ACQUISTO</option>
             <option value="VENDITA">VENDITA</option>
-            <option value="CEDOLA">CEDOLA</option>
+            <option value="CEDOLA"{cedola_selected}>CEDOLA</option>
             <option value="DIVIDENDO">DIVIDENDO</option>
             <option value="RIMBORSO A SCADENZA">RIMBORSO A SCADENZA</option>
           </select>
@@ -340,7 +349,7 @@ def _render_form(tickers: list[dict], error: str = "") -> str:
       </div>
 
       <label class="lbl">Data</label>
-      <input type="date" id="data_titolo" name="_data_titolo_ui" value="{today}">
+      <input type="date" id="data_titolo" name="_data_titolo_ui" value="{data_titolo_value}">
 
       <!-- trade -->
       <div id="sec_trade" class="section">
@@ -388,7 +397,7 @@ def _render_form(tickers: list[dict], error: str = "") -> str:
       <!-- provento -->
       <div id="sec_provento" class="section">
         <label class="lbl">Importo lordo €</label>
-        <input type="number" id="inp_lordo" step="0.01" min="0" placeholder="0.00">
+        <input type="number" id="inp_lordo" step="0.01" min="0" placeholder="0.00"{lordo_value}>
         <label class="lbl">Aliquota imposta %</label>
         <input type="number" id="inp_aliq" step="0.5" min="0" max="100" value="{TAX_RATE_OTHER_PCT:g}">
         <div id="provento_info" class="hint" style="display:none;color:#4338ca;margin-top:6px"></div>
@@ -445,6 +454,7 @@ def _render_form(tickers: list[dict], error: str = "") -> str:
   </div>
 </div>
 {_JS}
+{auto_add_script}
 </body>
 </html>"""
 
@@ -478,7 +488,7 @@ def _render_success(summary: str) -> str:
 
 @router.get("/", response_class=HTMLResponse)
 @router.get("/operazioni", response_class=HTMLResponse)
-async def get_form():
+async def get_form(cedola_ticker: str = "", cedola_data: str = "", cedola_lordo: str = ""):
     from persistence.storage import load_data, load_settings, apply_privacy_filter
     try:
         data = apply_privacy_filter(load_data(), load_settings())
@@ -486,7 +496,11 @@ async def get_form():
     except Exception as exc:
         logger.error("Errore caricamento dati: %s", exc)
         tickers = []
-    return HTMLResponse(_render_form(tickers))
+    prefill = (
+        {"ticker": cedola_ticker, "data": cedola_data, "lordo": cedola_lordo}
+        if cedola_ticker and cedola_data and cedola_lordo else None
+    )
+    return HTMLResponse(_render_form(tickers, prefill=prefill))
 
 
 @router.post("/operazioni", response_class=HTMLResponse)

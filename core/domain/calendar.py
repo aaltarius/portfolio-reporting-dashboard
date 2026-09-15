@@ -69,8 +69,8 @@ def _finite_float(value, default: float = 0.0, *, zero_as_default: bool = False)
     return number if math.isfinite(number) else float(default)
 
 
-def _first_purchase_date(registro_eventi: list[dict], ticker: str) -> pd.Timestamp | None:
-    purchase_dates: list[pd.Timestamp] = []
+def _purchase_dates(registro_eventi: list[dict], ticker: str) -> list[pd.Timestamp]:
+    dates: list[pd.Timestamp] = []
     for ev in registro_eventi or []:
         if str(ev.get("ticker") or "").strip() != ticker:
             continue
@@ -78,10 +78,32 @@ def _first_purchase_date(registro_eventi: list[dict], ticker: str) -> pd.Timesta
             continue
         ts = _to_ts(ev.get("data"))
         if ts is not None:
-            purchase_dates.append(ts.normalize())
-    if not purchase_dates:
-        return None
-    return min(purchase_dates)
+            dates.append(ts.normalize())
+    return dates
+
+
+def first_purchase_date(registro_eventi: list[dict], ticker: str) -> pd.Timestamp | None:
+    """Data del primo evento ACQUISTO registrato per il ticker, o None.
+
+    Unica fonte di verita' per "quando ho comprato questo strumento la
+    prima volta": usata per l'ancoraggio del calendario cedole BTP qui
+    sotto. Per "quando ho comprato l'ultima volta" (incluso un rinforzo di
+    una posizione gia' aperta), vedi most_recent_purchase_date sotto —
+    usata dal badge "NEW" in tabella Controvalore (ui/charts/
+    portfolio_popup.py), che deve intercettare anche i rinforzi, non solo
+    le posizioni aperte per la prima volta (bug reale, 2026-09-16: un
+    rinforzo su una posizione aperta mesi prima non faceva mai comparire
+    il badge)."""
+    dates = _purchase_dates(registro_eventi, ticker)
+    return min(dates) if dates else None
+
+
+def most_recent_purchase_date(registro_eventi: list[dict], ticker: str) -> pd.Timestamp | None:
+    """Data dell'ultimo evento ACQUISTO registrato per il ticker (rinforzo
+    di una posizione gia' aperta incluso), o None. Sorella di
+    first_purchase_date sopra — stessa fonte, stesso parsing date."""
+    dates = _purchase_dates(registro_eventi, ticker)
+    return max(dates) if dates else None
 
 
 def _real_events_by_type(registro_eventi: list[dict], ticker: str, tipo_evento: str) -> list[dict]:
@@ -155,7 +177,7 @@ def build_btp_calendar(data: dict) -> pd.DataFrame:
             continue
         scadenza = scadenza.normalize()
 
-        _first_purchase = _first_purchase_date(registro_eventi, ticker)
+        _first_purchase = first_purchase_date(registro_eventi, ticker)
         purchase_date = (
             _to_ts(strumento.get("data_acquisto"))
             or _to_ts(strumento.get("data_origine"))
