@@ -912,7 +912,7 @@ tbody td:nth-child(4),tbody td:nth-child(5),tbody td:nth-child(16){{padding:8px 
 .btp-pill.btp-info{{background:#EFF6FF;color:#2563EB;}}
 .btp-pill.btp-coupon{{background:#ECFDF3;color:#1E8449;}}
 .btp-pill.btp-maturity{{background:#FFF7ED;color:#F59E0B;border-radius:5px;}}
-.btp-pill.btp-new{{background:#F5F3FF;color:#7C3AED;border-radius:5px;font-size:9px;}}
+.btp-pill.btp-new{{background:#FEF2F2;color:{COLORS['danger']};border-radius:5px;font-size:9px;}}
 .btp-pill.btp-sator{{background:#FEF3C7;color:#92400E;border-radius:5px;font-size:9px;}}
 .mini-spark-cell{{text-align:center;padding:5px 4px;}}
 .mini-spark{{display:block;width:64px;height:28px;margin:0 auto;overflow:visible;max-width:100%;}}
