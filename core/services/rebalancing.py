@@ -192,7 +192,7 @@ def build_reduction_candidates(
         for c in items:
             if residuo <= 0:
                 break
-            cap_riga = surplus_eur if (c["_livello"] > 0 and len(raw) == 1) else (
+            cap_riga = surplus_eur if (c["_livello"] > 0 and len(items) == 1) else (
                 surplus_eur * _CAP_RIGA_FRAZIONE_SURPLUS if c["_livello"] > 0 else surplus_eur
             )
             quota = min(c["contributo_eur"], residuo, cap_riga)
