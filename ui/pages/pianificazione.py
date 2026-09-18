@@ -347,6 +347,7 @@ def _build_rebalancing_html(plan: dict[str, dict], theme) -> str:
                 perche = escape(str(c.get("perche", "")))
                 contributo_eur = float(c.get("contributo_eur", 0.0))
                 quota_eur = float(c.get("quota_suggerita_eur", 0.0))
+                quota_vendita_eur = float(c.get("quota_vendita_eur", quota_eur))
                 pl_eur = float(c.get("pl_eur", 0.0))
                 is_gov_bond = bool(c.get("is_gov_bond"))
                 non_toccare = bool(c.get("non_toccare"))
@@ -357,7 +358,7 @@ def _build_rebalancing_html(plan: dict[str, dict], theme) -> str:
                     if forzato:
                         azione_html = (
                             '<span class="bucket-alloc-scost bad">NON TOCCARE'
-                            f' &mdash; forzato: vendi {fmt_eur_it(quota_eur, 2)}</span>'
+                            f' &mdash; forzato: vendi {fmt_eur_it(quota_vendita_eur, 2)}</span>'
                         )
                     else:
                         azione_html = '<span class="bucket-alloc-scost bad">NON TOCCARE</span>'
@@ -365,7 +366,7 @@ def _build_rebalancing_html(plan: dict[str, dict], theme) -> str:
                     row_class = "bucket-alloc-instrument-row"
                     vendi_tutto = abs(contributo_eur - quota_eur) < 0.01
                     azione_label = "VENDI TUTTO" if vendi_tutto else "RIDUCI"
-                    azione_html = f'<span class="bucket-alloc-scost ok">{azione_label} {fmt_eur_it(quota_eur, 2)}</span>'
+                    azione_html = f'<span class="bucket-alloc-scost ok">{azione_label} {fmt_eur_it(quota_vendita_eur, 2)}</span>'
                 row_htmls.append(f'''
                 <tr class="{row_class}" style="--tone:{tone}">
                   <td class="bucket-alloc-ticker">{ticker}<span class="bucket-alloc-mini-caption">{name}</span></td>
@@ -382,6 +383,13 @@ def _build_rebalancing_html(plan: dict[str, dict], theme) -> str:
                 'venderli prima della scadenza espone al prezzo di mercato del momento '
                 '(rischio tasso), non equivale a portarli a scadenza.</div>'
                 if any(c.get("is_gov_bond") for c in candidates) else ""
+            )
+            split_note = (
+                '<div class="bucket-alloc-mini-caption">Alcuni strumenti sono esposti anche su '
+                "altri bucket: l'importo mostrato &egrave; quanto vendere in totale (non solo la "
+                "quota di questo bucket), perch&eacute; la vendita riduce l'esposizione ovunque in "
+                "proporzione.</div>"
+                if any(float(c.get("frac", 1.0)) < 0.999 for c in candidates) else ""
             )
             coverage_note = (
                 '<div class="bucket-alloc-mini-caption">Copertura parziale: gli strumenti disponibili non '
@@ -400,7 +408,7 @@ def _build_rebalancing_html(plan: dict[str, dict], theme) -> str:
                 </tr>
                 {rows}
               </tbody>
-            </table>{risk_note}{coverage_note}</div>''')
+            </table>{risk_note}{split_note}{coverage_note}</div>''')
         else:
             reinforcement = info.get("reinforcement") or []
             total_ops += len(reinforcement)

@@ -144,6 +144,7 @@ def build_reduction_candidates(
     exclude_tickers: frozenset[str] = frozenset(),
     ranking: pd.DataFrame | None = None,
     returns_frame: pd.DataFrame | None = None,
+    deficit_buckets: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Candidati alla riduzione per un bucket in surplus, classificati per
     LIVELLO di convenienza (vedi _classify_reduction_candidate), non per
@@ -152,11 +153,24 @@ def build_reduction_candidates(
     docs/superpowers/specs/2026-09-19-ribilanciamento-v2-giudizio-esperto.md.
     Esclude sempre NO_SELL e i ticker in exclude_tickers (stesso insieme
     del toggle "Escludi BTP/GOV" gia' esistente in Pianificazione, se
-    attivo). Un candidato sotto _SOGLIA_OPERATIVA_MINIMA_EUR non viene
-    proposto (la commissione supererebbe il beneficio), a meno che sia
-    l'ultimo pezzo necessario a coprire il residuo; se il taglio parziale
-    lascerebbe un residuo sulla posizione sotto la stessa soglia, si esce
-    dalla posizione per intero invece di lasciare uno scampolo."""
+    attivo). Un candidato sotto _SOGLIA_OPERATIVA_MINIMA_EUR (in euro di
+    VENDITA REALE, non di sollievo-bucket - vedi gross-up sotto) non viene
+    proposto, a meno che sia l'ultimo pezzo necessario a coprire il
+    residuo; se il taglio parziale lascerebbe un residuo di vendita reale
+    sotto la stessa soglia, si esce dalla posizione per intero invece di
+    lasciare uno scampolo.
+
+    Strumenti a esposizione frazionata su piu' bucket (frac < 1.0, es. un
+    ETF 40% Core / 60% Difensivo): sono eleggibili con un "gross-up" -
+    vendere quota_suggerita_eur di sollievo su QUESTO bucket richiede di
+    vendere quota_vendita_eur = quota_suggerita_eur / frac euro TOTALI
+    della posizione (la vendita riduce l'esposizione a TUTTI i bucket in
+    proporzione, non solo a questo). Sono ESCLUSI solo se un altro bucket
+    a cui sono esposti e' attualmente in deficit (deficit_buckets):
+    venderli peggiorerebbe quel bucket. covered_eur e coverage_pct
+    restano sempre nell'unita' di sollievo-bucket (quota_suggerita_eur),
+    mai nell'unita' di vendita reale - misurano quanto del surplus DI
+    QUESTO BUCKET e' stato coperto, non quanto si e' venduto in totale."""
     if state_df is None or state_df.empty or surplus_eur <= 0:
         return {"candidates": [], "covered_eur": 0.0, "coverage_pct": 0.0}
 
@@ -229,16 +243,24 @@ def build_reduction_candidates(
             continue
         if resolve_instrument_no_sell(data, ticker):
             continue
-        frac = float(exposures.get(ticker, {}).get(bucket, 0.0))
+        esposizioni_ticker = exposures.get(ticker, {})
+        frac = float(esposizioni_ticker.get(bucket, 0.0))
         if frac <= 0:
             continue
-        if frac < 0.999:
-            # Esclude strumenti a esposizione frazionata su piu' bucket in
-            # questo task: il gross-up (quota_bucket_eur / frac) e la
-            # distinzione "altro bucket in deficit vs in banda/surplus"
-            # arrivano nel design ma non sono implementati qui - restano
-            # come nella v1 (scartati silenziosamente). Nota per la review
-            # finale: v2 non chiude questo gap, lo eredita dalla v1.
+        # Gross-up (Addendum v2.1): uno strumento a esposizione frazionata
+        # su piu' bucket (frac < 1.0) e' eleggibile SOLO se nessun altro
+        # bucket a cui e' esposto e' attualmente in deficit - venderlo
+        # peggiorerebbe quel bucket. Se e' esposto solo su `bucket`
+        # (frac ~= 1.0) altri_bucket_esposti e' vuoto e il controllo passa
+        # sempre, comportamento identico a prima del gross-up.
+        altri_bucket_esposti = [
+            (b2, float(f2)) for b2, f2 in esposizioni_ticker.items()
+            if b2 != bucket and float(f2) > 0
+        ]
+        bucket_penalizzato = next(
+            (b2 for b2, _ in altri_bucket_esposti if b2 in deficit_buckets), None
+        )
+        if bucket_penalizzato is not None:
             continue
         row = rows_by_ticker[ticker]
         contributo_eur = frac * float(row.get("Controvalore", 0.0))
@@ -267,10 +289,18 @@ def build_reduction_candidates(
             voto_pari_ridondante=(redundant or (None, None))[1],
             rapporto_rischio_peso=(rischio_by_ticker.get(ticker) if not is_gov_bond else None),
         )
+        if frac < 0.999:
+            altri_nomi = ", ".join(sorted(b2 for b2, _ in altri_bucket_esposti))
+            motivo = motivo + (
+                f" Esposizione anche su {altri_nomi} (non in deficit): vendere qui non li "
+                "penalizza, ma l'importo da vendere e' maggiore della quota attribuita a "
+                "questo bucket."
+            )
         raw.append({
             "ticker": ticker,
             "name": row.get("Strumento", ticker),
             "contributo_eur": contributo_eur,
+            "frac": frac,
             "pl_eur": pl_eur,
             "is_minusvalenza": pl_eur < 0,
             "is_gov_bond": is_gov_bond,
@@ -294,7 +324,15 @@ def build_reduction_candidates(
             quota = min(c["contributo_eur"], residuo, cap_riga)
             if quota < _SOGLIA_OPERATIVA_MINIMA_EUR and residuo > _SOGLIA_OPERATIVA_MINIMA_EUR:
                 continue
-            if c["contributo_eur"] - quota < _SOGLIA_OPERATIVA_MINIMA_EUR:
+            # Le due soglie (skip sopra, uscita completa sotto) vanno
+            # confrontate con l'importo di VENDITA REALE (Addendum v2.1),
+            # non con la quota di sollievo-bucket: su uno strumento a frac
+            # piccolo, un residuo piccolo in termini di bucket corrisponde a
+            # un residuo di vendita reale molto piu' grande (residuo_bucket
+            # / frac), e la soglia esiste per evitare scampoli di vendita
+            # reale sotto la commissione, non scampoli di sollievo-bucket.
+            residuo_vendita_reale_eur = (c["contributo_eur"] - quota) / c["frac"]
+            if residuo_vendita_reale_eur < _SOGLIA_OPERATIVA_MINIMA_EUR:
                 # Uscita completa invece di lasciare uno scampolo sulla
                 # posizione: qui si accetta deliberatamente di superare il
                 # residuo/cap di riga (coverage_pct resta comunque limitato a
@@ -302,7 +340,11 @@ def build_reduction_candidates(
                 # vanificherebbe l'uscita completa proprio nel caso a un solo
                 # candidato che il test dedicato copre.
                 quota = c["contributo_eur"]
-            esiti.append({**c, "quota_suggerita_eur": quota})
+            esiti.append({
+                **c,
+                "quota_suggerita_eur": quota,
+                "quota_vendita_eur": quota / c["frac"],
+            })
             covered += quota
             residuo -= quota
         return esiti, covered, residuo
@@ -335,7 +377,7 @@ def build_reduction_candidates(
     forzati_tickers = {c["ticker"] for c in esiti_livello5}
     candidates = candidates + [{**c, "forzato": True} for c in esiti_livello5]
     candidates += [
-        {**c, "quota_suggerita_eur": 0.0, "forzato": False}
+        {**c, "quota_suggerita_eur": 0.0, "quota_vendita_eur": 0.0, "forzato": False}
         for c in raw_livello5
         if c["ticker"] not in forzati_tickers
     ]
@@ -453,6 +495,12 @@ def build_rebalancing_plan(
     if not drift:
         return {}
 
+    # Addendum v2.1: un bucket in deficit non compare qui come "eleggibile
+    # a farsi vendere sopra" - serve a build_reduction_candidates per
+    # escludere strumenti a esposizione frazionata che lo penalizzerebbero
+    # (vedi deficit_buckets nel loop sui ticker).
+    deficit_buckets = frozenset(b for b, i in drift.items() if i["status"] == "deficit")
+
     plan: dict[str, dict[str, Any]] = {}
     total_covered = 0.0
     # run_sator_analysis a budget 0.0: qui serve solo il `ranking` (voto per
@@ -470,6 +518,7 @@ def build_rebalancing_plan(
         reduction = build_reduction_candidates(
             data, state_df, bucket, float(info["amount_eur"]), exclude_tickers,
             ranking=ranking_per_riduzione, returns_frame=returns_frame_condiviso,
+            deficit_buckets=deficit_buckets,
         )
         plan[bucket] = {**info, "reduction": reduction}
         total_covered += reduction["covered_eur"]
