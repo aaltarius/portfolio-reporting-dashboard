@@ -16,6 +16,7 @@ from typing import Any
 import pandas as pd
 
 from core.domain.bonds import calc_ytm_and_duration
+from core.finance import build_risk_contribution_table
 from core.services.instrument_clustering import _build_redundant_pairs
 from core.services.sator import (
     compute_bucket_bands,
@@ -74,14 +75,16 @@ def _classify_reduction_candidate(
     voto_medio_bucket: float | None = None,
     correlazione_ridondante: float | None = None,
     voto_pari_ridondante: float | None = None,
+    rapporto_rischio_peso: float | None = None,
 ) -> tuple[int, tuple[float, ...], str]:
     """Classifica un candidato alla riduzione in un livello di convenienza
     (0 = venduto per primo) con una chiave interna omogenea al livello e
-    una frase 'perche''. Livello 3b (rischio/peso) e' aggiunto in un task
-    successivo - qui 0 (liquidita'), 1 (ridondanza per correlazione), 2
-    (bassa convinzione SATOR), 3a (duration titoli di Stato), 5
-    (anti-raccomandazione) e il fallback 4, la struttura e' pero' gia'
-    definitiva.
+    una frase 'perche''. Livelli: 0 (liquidita'), 1 (ridondanza per
+    correlazione), 2 (bassa convinzione SATOR), 3a (duration titoli di
+    Stato) e 3b (rischio/peso sproporzionato, stesso livello numerico "3"
+    di 3a - non competono mai per lo stesso strumento, vedi il controllo
+    is_gov_bond che precede 3b nell'ordine), 5 (anti-raccomandazione) e il
+    fallback 4.
 
     Nessun punteggio composito: livelli discreti, mai una somma pesata tra
     grandezze non comparabili (voto 1-10, anni di duration, correlazione
@@ -104,6 +107,12 @@ def _classify_reduction_candidate(
         return 2, (voto, pl_eur), (
             f"Convinzione piu' bassa della media del bucket (voto {voto:.1f} contro "
             f"media {voto_medio_bucket:.1f}): tra i meno convincenti da tenere."
+        )
+
+    if rapporto_rischio_peso is not None and rapporto_rischio_peso > 1.2:
+        return 3, (-rapporto_rischio_peso, pl_eur), (
+            f"Porta il {rapporto_rischio_peso:.1f}x del rischio rispetto al suo peso nel "
+            "portafoglio: venderlo libera piu' rischio per euro di quanto suggerisca il suo importo."
         )
 
     if is_gov_bond and duration_anni is not None:
@@ -192,6 +201,19 @@ def build_reduction_candidates(
                         if prev is None or corr > prev[0]:
                             redundant_by_ticker[me] = (corr, voto_other)
 
+    # Livello 3b (rischio/peso): calcolato una sola volta per tutti i ticker
+    # posseduti (non per ogni candidato dentro il loop) riusando
+    # build_risk_contribution_table gia' esistente in core/finance.py -
+    # nessuna formula di rischio ricalcolata qui.
+    rischio_by_ticker: dict[str, float] = {}
+    if returns_frame is not None and not returns_frame.empty:
+        risk_table = build_risk_contribution_table(held.reset_index(drop=True), returns_frame)
+        if not risk_table.empty:
+            rischio_by_ticker = dict(zip(
+                risk_table["Ticker"].astype(str).str.upper(),
+                risk_table["Rapporto rischio/peso"],
+            ))
+
     raw: list[dict[str, Any]] = []
     for ticker in tickers:
         if ticker in exclude_tickers:
@@ -234,6 +256,7 @@ def build_reduction_candidates(
             voto=voto_by_ticker.get(ticker), voto_medio_bucket=voto_medio_bucket,
             correlazione_ridondante=(redundant or (None, None))[0],
             voto_pari_ridondante=(redundant or (None, None))[1],
+            rapporto_rischio_peso=(rischio_by_ticker.get(ticker) if not is_gov_bond else None),
         )
         raw.append({
             "ticker": ticker,
