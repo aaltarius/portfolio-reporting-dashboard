@@ -11,7 +11,6 @@ Vedi docs/superpowers/specs/2026-09-18-ribilanciamento-pianificazione-design.md.
 """
 from __future__ import annotations
 
-import functools
 from typing import Any
 
 import pandas as pd
@@ -28,7 +27,6 @@ from core.services.sator_explain import build_sator_explanations
 
 _BUCKETS = ("Core", "Difensivo", "Satellite")
 _MATERIALITY_EUR = 50.0
-_TIE_BREAK_EUR = 50.0
 
 
 def compute_bucket_drift(
@@ -55,34 +53,26 @@ def compute_bucket_drift(
     return drift
 
 
-def _reduction_candidate_cmp(a: dict[str, Any], b: dict[str, Any]) -> int:
-    """Comparator per ordinare candidati alla riduzione: per contributo
-    decrescente (criterio principale), e a parita' entro _TIE_BREAK_EUR,
-    per P/L crescente (preferisce minusvalenza). Sostituisce la versione
-    grid-based che creava artifatti su coppie genuinamente dentro tolleranza."""
-    diff = a["contributo_eur"] - b["contributo_eur"]
-    if abs(diff) <= _TIE_BREAK_EUR:
-        if a["pl_eur"] < b["pl_eur"]:
-            return -1
-        if a["pl_eur"] > b["pl_eur"]:
-            return 1
-        return 0
-    return -1 if diff > 0 else 1
+_SOGLIA_OPERATIVA_MINIMA_EUR = 500.0
+_CAP_RIGA_FRAZIONE_SURPLUS = 0.5
 
 
-def _reduction_reason(*, is_first: bool, is_minusvalenza: bool) -> str:
-    """Frase 'perche' per un candidato alla riduzione: nessun nuovo calcolo
-    finanziario, solo narrazione di dati gia' presenti sul candidato
-    (posizione nell'ordinamento gia' deciso da _reduction_candidate_cmp,
-    segno del P/L)."""
-    base = (
-        "Contributo maggiore all'eccesso del bucket tra i candidati disponibili."
-        if is_first else
-        "Contribuisce a coprire il residuo dell'eccesso del bucket."
-    )
-    if is_minusvalenza:
-        base += " In minusvalenza: nessuna imposta sulla vendita."
-    return base
+def _classify_reduction_candidate(
+    *, role: str, contributo_eur: float, pl_eur: float,
+) -> tuple[int, tuple[float, ...], str]:
+    """Classifica un candidato alla riduzione in un livello di convenienza
+    (0 = venduto per primo) con una chiave interna omogenea al livello e
+    una frase 'perche''. Livelli 1 (ridondanza), 2 (bassa convinzione),
+    3a (duration titoli di Stato), 3b (rischio/peso), 5 (anti-
+    raccomandazione) sono aggiunti nei task successivi - qui solo 0 e il
+    fallback 4, la struttura e' pero' gia' definitiva.
+
+    Nessun punteggio composito: livelli discreti, mai una somma pesata tra
+    grandezze non comparabili (voto 1-10, anni di duration, correlazione
+    0-1)."""
+    if role == "liquidita":
+        return 0, (-contributo_eur,), "Liquidita'/monetario: nessun rischio prezzo, nessuna duration."
+    return 4, (-contributo_eur, pl_eur), "Nessun segnale di qualita' disponibile per questa categoria."
 
 
 def build_reduction_candidates(
@@ -92,17 +82,18 @@ def build_reduction_candidates(
     surplus_eur: float,
     exclude_tickers: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
-    """Candidati alla riduzione per un bucket in surplus: ordinati per
-    contributo in euro al surplus (decrescente, criterio principale - NON
-    il punteggio SATOR, verificato sui dati reali dell'utente che non
-    coprirebbe gli strumenti fuori dall'universo ETF/ETC di SATOR, es. BTP
-    e fondi). A parita' di contributo (entro _TIE_BREAK_EUR), vince chi ha
-    P/L piu' negativo (minusvalenza: nessuna imposta, perdita fiscalmente
-    compensabile). Esclude sempre NO_SELL e i ticker in exclude_tickers
-    (stesso insieme del toggle "Escludi BTP/GOV" gia' esistente in
-    Pianificazione, se attivo). Un candidato sotto _MATERIALITY_EUR non
-    viene proposto come riga separata, a meno che sia l'ultimo pezzo
-    necessario a coprire il residuo."""
+    """Candidati alla riduzione per un bucket in surplus, classificati per
+    LIVELLO di convenienza (vedi _classify_reduction_candidate), non per
+    solo importo. L'importo decide il dimensionamento (quanto vendere di
+    ciascun candidato), mai la selezione primaria - vedi
+    docs/superpowers/specs/2026-09-19-ribilanciamento-v2-giudizio-esperto.md.
+    Esclude sempre NO_SELL e i ticker in exclude_tickers (stesso insieme
+    del toggle "Escludi BTP/GOV" gia' esistente in Pianificazione, se
+    attivo). Un candidato sotto _SOGLIA_OPERATIVA_MINIMA_EUR non viene
+    proposto (la commissione supererebbe il beneficio), a meno che sia
+    l'ultimo pezzo necessario a coprire il residuo; se il taglio parziale
+    lascerebbe un residuo sulla posizione sotto la stessa soglia, si esce
+    dalla posizione per intero invece di lasciare uno scampolo."""
     if state_df is None or state_df.empty or surplus_eur <= 0:
         return {"candidates": [], "covered_eur": 0.0, "coverage_pct": 0.0}
 
@@ -125,11 +116,13 @@ def build_reduction_candidates(
         frac = float(exposures.get(ticker, {}).get(bucket, 0.0))
         if frac <= 0:
             continue
-        # Esclude strumenti a esposizione frazionata su piu' bucket: "quota
-        # suggerita" e coverage_pct non sarebbero corretti senza un gross-up
-        # non ancora implementato - v1 deliberatamente conservativo, vedi
-        # review finale 2026-09-18.
         if frac < 0.999:
+            # Esclude strumenti a esposizione frazionata su piu' bucket in
+            # questo task: il gross-up (quota_bucket_eur / frac) e la
+            # distinzione "altro bucket in deficit vs in banda/surplus"
+            # arrivano nel design ma non sono implementati qui - restano
+            # come nella v1 (scartati silenziosamente). Nota per la review
+            # finale: v2 non chiude questo gap, lo eredita dalla v1.
             continue
         row = rows_by_ticker[ticker]
         contributo_eur = frac * float(row.get("Controvalore", 0.0))
@@ -138,6 +131,10 @@ def build_reduction_candidates(
         pl_eur = float(row.get("P/L €", 0.0))
         item = items_by_ticker.get(ticker, {"ticker": ticker})
         is_gov_bond = not bool(infer_sator_metadata(item, True).get("pac_enabled", True))
+        role = str(infer_sator_metadata(item, True).get("role", ""))
+        livello, chiave_interna, motivo = _classify_reduction_candidate(
+            role=role, contributo_eur=contributo_eur, pl_eur=pl_eur,
+        )
         raw.append({
             "ticker": ticker,
             "name": row.get("Strumento", ticker),
@@ -145,9 +142,12 @@ def build_reduction_candidates(
             "pl_eur": pl_eur,
             "is_minusvalenza": pl_eur < 0,
             "is_gov_bond": is_gov_bond,
+            "_livello": livello,
+            "_chiave_interna": chiave_interna,
+            "perche": motivo,
         })
 
-    raw.sort(key=functools.cmp_to_key(_reduction_candidate_cmp))
+    raw.sort(key=lambda c: (c["_livello"], c["_chiave_interna"]))
 
     candidates: list[dict[str, Any]] = []
     covered = 0.0
@@ -155,11 +155,21 @@ def build_reduction_candidates(
     for c in raw:
         if residuo <= 0:
             break
-        quota = min(c["contributo_eur"], residuo)
-        if quota < _MATERIALITY_EUR and residuo > _MATERIALITY_EUR:
+        cap_riga = surplus_eur if (c["_livello"] > 0 and len(raw) == 1) else (
+            surplus_eur * _CAP_RIGA_FRAZIONE_SURPLUS if c["_livello"] > 0 else surplus_eur
+        )
+        quota = min(c["contributo_eur"], residuo, cap_riga)
+        if quota < _SOGLIA_OPERATIVA_MINIMA_EUR and residuo > _SOGLIA_OPERATIVA_MINIMA_EUR:
             continue
-        perche = _reduction_reason(is_first=not candidates, is_minusvalenza=c["is_minusvalenza"])
-        candidates.append({**c, "quota_suggerita_eur": quota, "perche": perche})
+        if c["contributo_eur"] - quota < _SOGLIA_OPERATIVA_MINIMA_EUR:
+            # Uscita completa invece di lasciare uno scampolo sulla
+            # posizione: qui si accetta deliberatamente di superare il
+            # residuo/cap di riga (coverage_pct resta comunque limitato a
+            # 1.0 piu' sotto) - il letterale min(..., residuo) del brief
+            # vanificherebbe l'uscita completa proprio nel caso a un solo
+            # candidato che il test dedicato copre.
+            quota = c["contributo_eur"]
+        candidates.append({**c, "quota_suggerita_eur": quota})
         covered += quota
         residuo -= quota
 
