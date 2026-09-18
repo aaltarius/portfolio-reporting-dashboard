@@ -1468,7 +1468,7 @@ def build_sator_matrix_frame(
             data, state_df, current_weights, exclude_tickers=exclude, use_fractional_exposure=True,
         )
         objective = settings.get("portfolio_objective", {}) if isinstance(settings, dict) else {}
-        bands = _compute_bucket_bands(objective, cfg["band_tolerance_pp"])
+        bands = compute_bucket_bands(objective, cfg["band_tolerance_pp"])
         portfolio_value = _safe_float(work["portfolio_value"].iloc[0], 0.0) if "portfolio_value" in work.columns else 0.0
         deficits, blocked = _compute_bucket_deficits(bucket_weights, objective, bands, portfolio_value, budget)
         if not deficits:
@@ -1804,7 +1804,7 @@ def compute_instrument_bucket_exposures(data: dict[str, Any], held_tickers: set[
 _BUCKET_OBJECTIVE_KEYS = {"Core": "core", "Difensivo": "difensivo", "Satellite": "satellite"}
 
 
-def _compute_bucket_bands(objective: dict[str, float], tolerance_pp: float) -> dict[str, dict[str, float]]:
+def compute_bucket_bands(objective: dict[str, float], tolerance_pp: float) -> dict[str, dict[str, float]]:
     """Banda [min,max] simmetrica attorno al target di ciascun bucket.
 
     tolerance_pp e' la meta'-ampiezza in punti percentuali (frazione, es.
