@@ -498,8 +498,10 @@ def build_rebalancing_plan(
     # Addendum v2.1: un bucket in deficit non compare qui come "eleggibile
     # a farsi vendere sopra" - serve a build_reduction_candidates per
     # escludere strumenti a esposizione frazionata che lo penalizzerebbero
-    # (vedi deficit_buckets nel loop sui ticker).
-    deficit_buckets = frozenset(b for b, i in drift.items() if i["status"] == "deficit")
+    # (vedi deficit_bucket_names nel loop sui ticker). Nome distinto da
+    # deficit_buckets (il dict bucket->info usato piu' sotto per il lato
+    # rinforzo) apposta: stesso concetto, tipo diverso, mai da confondere.
+    deficit_bucket_names = frozenset(b for b, i in drift.items() if i["status"] == "deficit")
 
     plan: dict[str, dict[str, Any]] = {}
     total_covered = 0.0
@@ -518,7 +520,7 @@ def build_rebalancing_plan(
         reduction = build_reduction_candidates(
             data, state_df, bucket, float(info["amount_eur"]), exclude_tickers,
             ranking=ranking_per_riduzione, returns_frame=returns_frame_condiviso,
-            deficit_buckets=deficit_buckets,
+            deficit_buckets=deficit_bucket_names,
         )
         plan[bucket] = {**info, "reduction": reduction}
         total_covered += reduction["covered_eur"]
