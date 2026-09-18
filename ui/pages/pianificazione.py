@@ -337,7 +337,7 @@ def _build_rebalancing_html(plan: dict[str, dict], theme) -> str:
             # un'operazione proposta, quindi va escluso dal conteggio del
             # footer (trovato in review: contarlo come operazione era una
             # dichiarazione fattualmente errata).
-            total_ops += sum(1 for c in candidates if not c.get("non_toccare"))
+            total_ops += sum(1 for c in candidates if not c.get("non_toccare") or c.get("forzato"))
             coverage_pct = reduction["coverage_pct"]
             severity = "ok" if coverage_pct >= 0.999 else ("warn" if coverage_pct >= 0.5 else "bad")
             row_htmls: list[str] = []
@@ -353,7 +353,14 @@ def _build_rebalancing_html(plan: dict[str, dict], theme) -> str:
                 attrito = _tax_friction_phrase(pl_eur, is_gov_bond)
                 if non_toccare:
                     row_class = "bucket-alloc-watchlist-row"
-                    azione_html = f'<span class="bucket-alloc-scost bad">NON TOCCARE</span>'
+                    forzato = bool(c.get("forzato"))
+                    if forzato:
+                        azione_html = (
+                            '<span class="bucket-alloc-scost bad">NON TOCCARE'
+                            f' &mdash; forzato: vendi {fmt_eur_it(quota_eur, 2)}</span>'
+                        )
+                    else:
+                        azione_html = '<span class="bucket-alloc-scost bad">NON TOCCARE</span>'
                 else:
                     row_class = "bucket-alloc-instrument-row"
                     vendi_tutto = abs(contributo_eur - quota_eur) < 0.01

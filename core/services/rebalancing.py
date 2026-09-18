@@ -76,21 +76,39 @@ def _classify_reduction_candidate(
     correlazione_ridondante: float | None = None,
     voto_pari_ridondante: float | None = None,
     rapporto_rischio_peso: float | None = None,
-) -> tuple[int, tuple[float, ...], str]:
+) -> tuple[float, tuple[float, ...], str]:
     """Classifica un candidato alla riduzione in un livello di convenienza
     (0 = venduto per primo) con una chiave interna omogenea al livello e
-    una frase 'perche''. Livelli: 0 (liquidita'), 1 (ridondanza per
-    correlazione), 2 (bassa convinzione SATOR), 3a (duration titoli di
-    Stato) e 3b (rischio/peso sproporzionato, stesso livello numerico "3"
-    di 3a - non competono mai per lo stesso strumento, vedi il controllo
-    is_gov_bond che precede 3b nell'ordine), 5 (anti-raccomandazione) e il
-    fallback 4.
+    una frase 'perche''. Livelli: 0 (liquidita'), poi SUBITO i titoli di
+    Stato (3 = duration decrescente, oppure 5 = anti-raccomandazione) -
+    controllati prima di 1/2/3b apposta, cosi' un BTP non puo' mai essere
+    intercettato dai controlli pensati per ETF/ETC anche se in futuro
+    SATOR arrivasse a dare un voto ai titoli di Stato. Poi 1 (ridondanza
+    per correlazione), 2 (bassa convinzione SATOR), 3.5 (rischio/peso
+    sproporzionato - numero diverso da 3 apposta: la chiave interna di 3
+    (anni di duration) e quella di 3.5 (rapporto di rischio) non sono
+    comparabili, non devono mai finire nello stesso livello numerico) e
+    il fallback 4.
 
     Nessun punteggio composito: livelli discreti, mai una somma pesata tra
     grandezze non comparabili (voto 1-10, anni di duration, correlazione
     0-1)."""
     if role == "liquidita":
         return 0, (-contributo_eur,), "Liquidita'/monetario: nessun rischio prezzo, nessuna duration."
+
+    if is_gov_bond and duration_anni is not None:
+        is_plusvalenza = pl_eur > 0
+        is_duration_piu_corta_nota = duration_anni <= 2.0  # soglia qualitativa "corta" per un BTP
+        is_vicino_a_scadenza = mesi_a_scadenza is not None and mesi_a_scadenza <= _MESI_SCADENZA_ANTI_RACCOMANDAZIONE
+        if is_plusvalenza and is_duration_piu_corta_nota and is_vicino_a_scadenza:
+            return 5, (-contributo_eur,), (
+                f"Non toccare se non necessario: scadenza vicina ({mesi_a_scadenza:.0f} mesi), "
+                f"duration bassa ({duration_anni:.2f} anni), in plusvalenza - torna a rimborso da sola."
+            )
+        return 3, (-duration_anni, pl_eur), (
+            f"Duration {duration_anni:.2f} anni: venderlo libera piu' rischio tasso per euro "
+            "rispetto a un titolo di Stato con scadenza piu' vicina."
+        )
 
     if correlazione_ridondante is not None and voto_pari_ridondante is not None:
         # Ridondanza per correlazione: piu' forte della sola bassa convinzione
@@ -110,23 +128,9 @@ def _classify_reduction_candidate(
         )
 
     if rapporto_rischio_peso is not None and rapporto_rischio_peso > 1.2:
-        return 3, (-rapporto_rischio_peso, pl_eur), (
+        return 3.5, (-rapporto_rischio_peso, pl_eur), (
             f"Porta il {rapporto_rischio_peso:.1f}x del rischio rispetto al suo peso nel "
             "portafoglio: venderlo libera piu' rischio per euro di quanto suggerisca il suo importo."
-        )
-
-    if is_gov_bond and duration_anni is not None:
-        is_plusvalenza = pl_eur > 0
-        is_duration_piu_corta_nota = duration_anni <= 2.0  # soglia qualitativa "corta" per un BTP
-        is_vicino_a_scadenza = mesi_a_scadenza is not None and mesi_a_scadenza <= _MESI_SCADENZA_ANTI_RACCOMANDAZIONE
-        if is_plusvalenza and is_duration_piu_corta_nota and is_vicino_a_scadenza:
-            return 5, (-contributo_eur,), (
-                f"Non toccare se non necessario: scadenza vicina ({mesi_a_scadenza:.0f} mesi), "
-                f"duration bassa ({duration_anni:.2f} anni), in plusvalenza - torna a rimborso da sola."
-            )
-        return 3, (-duration_anni, pl_eur), (
-            f"Duration {duration_anni:.2f} anni: venderlo libera piu' rischio tasso per euro "
-            "rispetto a un titolo di Stato con scadenza piu' vicina."
         )
 
     return 4, (-contributo_eur, pl_eur), "Nessun segnale di qualita' disponibile per questa categoria."
@@ -193,9 +197,14 @@ def build_reduction_candidates(
             a, b = str(prow["ticker_a"]).upper(), str(prow["ticker_b"]).upper()
             corr = float(prow["correlazione"])
             for me, other in ((a, b), (b, a)):
-                if me in held_tickers_upper and other in held_tickers_upper and other in voto_by_ticker:
+                if (
+                    me in held_tickers_upper
+                    and other in held_tickers_upper
+                    and other in voto_by_ticker
+                    and me in voto_by_ticker
+                ):
                     voto_other = float(voto_by_ticker[other])
-                    voto_me = float(voto_by_ticker.get(me, 0.0))
+                    voto_me = float(voto_by_ticker[me])
                     if voto_other > voto_me:
                         prev = redundant_by_ticker.get(me)
                         if prev is None or corr > prev[0]:
@@ -312,10 +321,24 @@ def build_reduction_candidates(
     raw_livello5 = [c for c in raw if c["_livello"] == 5]
 
     candidates, covered, residuo = _dimensiona(raw_normali, surplus_eur)
+    esiti_livello5: list[dict[str, Any]] = []
     if residuo > 0 and raw_livello5:
         esiti_livello5, covered_livello5, residuo = _dimensiona(raw_livello5, residuo)
-        candidates = candidates + esiti_livello5
         covered += covered_livello5
+
+    # Ogni candidato di Livello 5 (anti-raccomandazione) deve comparire in
+    # `candidates`, toccato o no: e' l'unico modo per cui l'utente vede
+    # "NON TOCCARE" anche quando non e' mai stato necessario forzarne la
+    # vendita. Quelli effettivamente venduti (perche' il residuo non era
+    # coperto dagli altri livelli) portano forzato=True e la loro quota;
+    # gli altri restano a quota 0 con forzato=False.
+    forzati_tickers = {c["ticker"] for c in esiti_livello5}
+    candidates = candidates + [{**c, "forzato": True} for c in esiti_livello5]
+    candidates += [
+        {**c, "quota_suggerita_eur": 0.0, "forzato": False}
+        for c in raw_livello5
+        if c["ticker"] not in forzati_tickers
+    ]
 
     coverage_pct = min(1.0, covered / surplus_eur) if surplus_eur > 0 else 0.0
     return {"candidates": candidates, "covered_eur": covered, "coverage_pct": coverage_pct}
@@ -359,7 +382,11 @@ def build_reinforcement_candidates(
         max_share=cfg["max_share_per_line"],
     )
     work = ranking.reset_index(drop=True)
-    subset_idx = work.index[work["_bucket"] == bucket].tolist()
+    # _suggested_quotes_by_bucket instrada gia' ogni riga al bucket corretto
+    # tramite _dominant_bucket (vedi sator.py), anche per strumenti a
+    # esposizione split: ri-filtrare qui per la colonna statica _bucket
+    # scarterebbe budget legittimamente allocato dall'allocatore.
+    subset_idx = [i for i in range(len(quantita)) if int(quantita[i]) > 0]
 
     posseduti_voto = work.loc[
         (work["_bucket"] == bucket) & (work["in_portfolio"] == True), "voto"
