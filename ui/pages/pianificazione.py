@@ -405,8 +405,7 @@ def _build_rebalancing_html(plan: dict[str, dict], theme) -> str:
               <tbody>
                 <tr class="bucket-alloc-bucket-row" style="--tone:{tone}">
                   <td colspan="4"><span class="bucket-alloc-bucket-name"><span class="dot" style="--tone:{tone}"></span>{escape(bucket)} fuori banda: eccesso {fmt_eur_it(info["amount_eur"], 2)} &middot; <span class="bucket-alloc-scost {severity}">copertura {fmt_pct_it(coverage_pct, 0)}</span></span></td>
-                </tr>
-                {rows}
+                </tr>{rows}
               </tbody>
             </table>{risk_note}{split_note}{coverage_note}</div>''')
         else:
@@ -441,8 +440,7 @@ def _build_rebalancing_html(plan: dict[str, dict], theme) -> str:
               <tbody>
                 <tr class="bucket-alloc-bucket-row" style="--tone:{tone}">
                   <td colspan="3"><span class="bucket-alloc-bucket-name"><span class="dot" style="--tone:{tone}"></span>{escape(bucket)} fuori banda: mancano {fmt_eur_it(info["amount_eur"], 2)}</span></td>
-                </tr>
-                {rows}
+                </tr>{rows}
               </tbody>
             </table></div>''')
     footer_word = "operazione proposta" if total_ops == 1 else "operazioni proposte"
@@ -451,7 +449,14 @@ def _build_rebalancing_html(plan: dict[str, dict], theme) -> str:
         f"Piano complessivo: {total_ops} {footer_word} in totale sui bucket fuori banda."
         "</div></div>"
     )
-    return "".join(cards)
+    # .strip(): le card iniziano con newline+indentazione (leggibilita' del
+    # codice sorgente) - lasciandolo, la stringa passata a st.markdown
+    # comincerebbe con 4+ spazi dopo un newline, che Markdown interpreta
+    # come un blocco di codice indentato e mostra l'HTML letterale invece
+    # di renderizzarlo (bug reale, mai visto perche' mai verificato in
+    # browser: la tabella "Ribilanciamento suggerito" mostrava solo il
+    # codice HTML grezzo).
+    return "".join(cards).strip()
 
 
 def _render_rebalancing_table(plan: dict[str, dict], theme) -> None:
