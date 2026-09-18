@@ -11,6 +11,7 @@ Vedi docs/superpowers/specs/2026-09-18-ribilanciamento-pianificazione-design.md.
 """
 from __future__ import annotations
 
+import functools
 from typing import Any
 
 import pandas as pd
@@ -46,6 +47,21 @@ def compute_bucket_drift(
     return drift
 
 
+def _reduction_candidate_cmp(a: dict[str, Any], b: dict[str, Any]) -> int:
+    """Comparator per ordinare candidati alla riduzione: per contributo
+    decrescente (criterio principale), e a parita' entro _TIE_BREAK_EUR,
+    per P/L crescente (preferisce minusvalenza). Sostituisce la versione
+    grid-based che creava artifatti su coppie genuinamente dentro tolleranza."""
+    diff = a["contributo_eur"] - b["contributo_eur"]
+    if abs(diff) <= _TIE_BREAK_EUR:
+        if a["pl_eur"] < b["pl_eur"]:
+            return -1
+        if a["pl_eur"] > b["pl_eur"]:
+            return 1
+        return 0
+    return -1 if diff > 0 else 1
+
+
 def build_reduction_candidates(
     data: dict[str, Any],
     state_df: pd.DataFrame,
@@ -67,7 +83,8 @@ def build_reduction_candidates(
     if state_df is None or state_df.empty or surplus_eur <= 0:
         return {"candidates": [], "covered_eur": 0.0, "coverage_pct": 0.0}
 
-    held = state_df[state_df["Controvalore"] > 0]
+    held = state_df[state_df["Controvalore"] > 0].copy()
+    held["Ticker"] = held["Ticker"].astype(str).str.strip().str.upper()
     tickers = [str(t) for t in held["Ticker"]]
     exposures = compute_instrument_bucket_exposures(data, held_tickers=set(tickers))
     rows_by_ticker = held.set_index("Ticker").to_dict(orient="index")
@@ -101,7 +118,7 @@ def build_reduction_candidates(
             "is_gov_bond": is_gov_bond,
         })
 
-    raw.sort(key=lambda c: (-round(c["contributo_eur"] / _TIE_BREAK_EUR), c["pl_eur"]))
+    raw.sort(key=functools.cmp_to_key(_reduction_candidate_cmp))
 
     candidates: list[dict[str, Any]] = []
     covered = 0.0
