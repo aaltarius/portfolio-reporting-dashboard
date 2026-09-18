@@ -69,11 +69,13 @@ def _classify_reduction_candidate(
     is_gov_bond: bool = False,
     duration_anni: float | None = None,
     mesi_a_scadenza: float | None = None,
+    voto: float | None = None,
+    voto_medio_bucket: float | None = None,
 ) -> tuple[int, tuple[float, ...], str]:
     """Classifica un candidato alla riduzione in un livello di convenienza
     (0 = venduto per primo) con una chiave interna omogenea al livello e
-    una frase 'perche''. Livelli 1 (ridondanza), 2 (bassa convinzione),
-    3b (rischio/peso) sono aggiunti nei task successivi - qui 0, 3a
+    una frase 'perche''. Livello 1 (ridondanza) e 3b (rischio/peso) sono
+    aggiunti nei task successivi - qui 0, 2 (bassa convinzione SATOR), 3a
     (duration titoli di Stato), 5 (anti-raccomandazione) e il fallback 4,
     la struttura e' pero' gia' definitiva.
 
@@ -82,6 +84,12 @@ def _classify_reduction_candidate(
     0-1)."""
     if role == "liquidita":
         return 0, (-contributo_eur,), "Liquidita'/monetario: nessun rischio prezzo, nessuna duration."
+
+    if voto is not None and voto_medio_bucket is not None and voto < voto_medio_bucket:
+        return 2, (voto, pl_eur), (
+            f"Convinzione piu' bassa della media del bucket (voto {voto:.1f} contro "
+            f"media {voto_medio_bucket:.1f}): tra i meno convincenti da tenere."
+        )
 
     if is_gov_bond and duration_anni is not None:
         is_plusvalenza = pl_eur > 0
@@ -106,6 +114,7 @@ def build_reduction_candidates(
     bucket: str,
     surplus_eur: float,
     exclude_tickers: frozenset[str] = frozenset(),
+    ranking: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     """Candidati alla riduzione per un bucket in surplus, classificati per
     LIVELLO di convenienza (vedi _classify_reduction_candidate), non per
@@ -131,6 +140,18 @@ def build_reduction_candidates(
         str(item.get("ticker") or "").strip().upper(): item
         for item in data.get("strumenti", []) or []
     }
+
+    voto_by_ticker: dict[str, float] = {}
+    voto_medio_bucket: float | None = None
+    if ranking is not None and not ranking.empty and "voto" in ranking.columns:
+        bucket_ranking = ranking[(ranking.get("_bucket") == bucket) & (ranking.get("in_portfolio") == True)]
+        if not bucket_ranking.empty:
+            voto_by_ticker = dict(zip(bucket_ranking["ticker"].astype(str).str.upper(), bucket_ranking["voto"]))
+            pesi = bucket_ranking["ticker"].astype(str).str.upper().map(
+                lambda t: float(rows_by_ticker.get(t, {}).get("Controvalore", 0.0))
+            )
+            if pesi.sum() > 0:
+                voto_medio_bucket = float((bucket_ranking["voto"] * pesi).sum() / pesi.sum())
 
     raw: list[dict[str, Any]] = []
     for ticker in tickers:
@@ -170,6 +191,7 @@ def build_reduction_candidates(
         livello, chiave_interna, motivo = _classify_reduction_candidate(
             role=role, contributo_eur=contributo_eur, pl_eur=pl_eur,
             is_gov_bond=is_gov_bond, duration_anni=duration_anni, mesi_a_scadenza=mesi_a_scadenza,
+            voto=voto_by_ticker.get(ticker), voto_medio_bucket=voto_medio_bucket,
         )
         raw.append({
             "ticker": ticker,
@@ -305,12 +327,25 @@ def build_rebalancing_plan(
     if not drift:
         return {}
 
+    # run_sator_analysis chiamata una sola volta per l'intero piano, con
+    # budget neutro (0.0): qui serve solo il `ranking` (voto per ticker) per
+    # il Livello 2 in build_reduction_candidates, non per dimensionare
+    # acquisti. NOTA (temporaneo, si chiude nel Task 7): build_reinforcement_
+    # candidates piu' sotto richiama ANCORA run_sator_analysis per conto suo
+    # con il proprio budget (per bucket in deficit) - quindi ci sono
+    # temporaneamente due chiamate al motore per render quando c'e' un
+    # surplus da reinvestire. Consolidamento completo nel Task 7.
+    result = run_sator_analysis(data, settings, budget=0.0)
+    ranking = result.get("ranking")
+
     plan: dict[str, dict[str, Any]] = {}
     total_covered = 0.0
     for bucket, info in drift.items():
         if info["status"] != "surplus":
             continue
-        reduction = build_reduction_candidates(data, state_df, bucket, float(info["amount_eur"]), exclude_tickers)
+        reduction = build_reduction_candidates(
+            data, state_df, bucket, float(info["amount_eur"]), exclude_tickers, ranking=ranking,
+        )
         plan[bucket] = {**info, "reduction": reduction}
         total_covered += reduction["covered_eur"]
 
