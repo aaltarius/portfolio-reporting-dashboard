@@ -16,6 +16,7 @@ from typing import Any
 import pandas as pd
 
 from core.domain.bonds import calc_ytm_and_duration
+from core.services.instrument_clustering import _build_redundant_pairs
 from core.services.sator import (
     compute_bucket_bands,
     compute_instrument_bucket_exposures,
@@ -71,19 +72,33 @@ def _classify_reduction_candidate(
     mesi_a_scadenza: float | None = None,
     voto: float | None = None,
     voto_medio_bucket: float | None = None,
+    correlazione_ridondante: float | None = None,
+    voto_pari_ridondante: float | None = None,
 ) -> tuple[int, tuple[float, ...], str]:
     """Classifica un candidato alla riduzione in un livello di convenienza
     (0 = venduto per primo) con una chiave interna omogenea al livello e
-    una frase 'perche''. Livello 1 (ridondanza) e 3b (rischio/peso) sono
-    aggiunti nei task successivi - qui 0, 2 (bassa convinzione SATOR), 3a
-    (duration titoli di Stato), 5 (anti-raccomandazione) e il fallback 4,
-    la struttura e' pero' gia' definitiva.
+    una frase 'perche''. Livello 3b (rischio/peso) e' aggiunto in un task
+    successivo - qui 0 (liquidita'), 1 (ridondanza per correlazione), 2
+    (bassa convinzione SATOR), 3a (duration titoli di Stato), 5
+    (anti-raccomandazione) e il fallback 4, la struttura e' pero' gia'
+    definitiva.
 
     Nessun punteggio composito: livelli discreti, mai una somma pesata tra
     grandezze non comparabili (voto 1-10, anni di duration, correlazione
     0-1)."""
     if role == "liquidita":
         return 0, (-contributo_eur,), "Liquidita'/monetario: nessun rischio prezzo, nessuna duration."
+
+    if correlazione_ridondante is not None and voto_pari_ridondante is not None:
+        # Ridondanza per correlazione: piu' forte della sola bassa convinzione
+        # (Livello 2), va controllata prima - un titolo ridondante e' da
+        # vendere anche se il suo voto SATOR non e' il piu' basso del bucket.
+        voto_display = voto if voto is not None else 0.0
+        return 1, (-correlazione_ridondante, voto_display), (
+            f"Correlazione {correlazione_ridondante:.2f} con un'altra posizione gia' posseduta "
+            f"(voto {voto_pari_ridondante:.1f} contro {voto_display:.1f} di questo): venderlo non "
+            "toglie diversificazione, la stai gia' coprendo altrove."
+        )
 
     if voto is not None and voto_medio_bucket is not None and voto < voto_medio_bucket:
         return 2, (voto, pl_eur), (
@@ -115,6 +130,7 @@ def build_reduction_candidates(
     surplus_eur: float,
     exclude_tickers: frozenset[str] = frozenset(),
     ranking: pd.DataFrame | None = None,
+    returns_frame: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     """Candidati alla riduzione per un bucket in surplus, classificati per
     LIVELLO di convenienza (vedi _classify_reduction_candidate), non per
@@ -153,6 +169,29 @@ def build_reduction_candidates(
             if pesi.sum() > 0:
                 voto_medio_bucket = float((bucket_ranking["voto"] * pesi).sum() / pesi.sum())
 
+    # Livello 1 (ridondanza per correlazione): per ogni ticker posseduto,
+    # tiene la coppia ridondante (corr >= REDUNDANCY_THRESHOLD, riusa
+    # _build_redundant_pairs - nessuna correlazione ricalcolata qui) con la
+    # correlazione piu' alta il cui "compagno" e' un'ALTRA posizione gia'
+    # posseduta (held_tickers_upper, non un candidato SATOR qualsiasi) con
+    # un voto migliore. Se ce n'e' piu' di una, vince la correlazione piu'
+    # alta, coerente con la chiave interna del Livello 1.
+    redundant_by_ticker: dict[str, tuple[float, float]] = {}
+    if ranking is not None and not ranking.empty and returns_frame is not None:
+        held_tickers_upper = set(tickers)
+        pairs = _build_redundant_pairs(ranking, returns_frame)
+        for _, prow in pairs.iterrows():
+            a, b = str(prow["ticker_a"]).upper(), str(prow["ticker_b"]).upper()
+            corr = float(prow["correlazione"])
+            for me, other in ((a, b), (b, a)):
+                if me in held_tickers_upper and other in held_tickers_upper and other in voto_by_ticker:
+                    voto_other = float(voto_by_ticker[other])
+                    voto_me = float(voto_by_ticker.get(me, 0.0))
+                    if voto_other > voto_me:
+                        prev = redundant_by_ticker.get(me)
+                        if prev is None or corr > prev[0]:
+                            redundant_by_ticker[me] = (corr, voto_other)
+
     raw: list[dict[str, Any]] = []
     for ticker in tickers:
         if ticker in exclude_tickers:
@@ -188,10 +227,13 @@ def build_reduction_candidates(
                 scadenza_ts = _to_ts(scadenza_raw)
                 if scadenza_ts is not None:
                     mesi_a_scadenza = (scadenza_ts - pd.Timestamp.today().normalize()).days / 30.44
+        redundant = redundant_by_ticker.get(ticker)
         livello, chiave_interna, motivo = _classify_reduction_candidate(
             role=role, contributo_eur=contributo_eur, pl_eur=pl_eur,
             is_gov_bond=is_gov_bond, duration_anni=duration_anni, mesi_a_scadenza=mesi_a_scadenza,
             voto=voto_by_ticker.get(ticker), voto_medio_bucket=voto_medio_bucket,
+            correlazione_ridondante=(redundant or (None, None))[0],
+            voto_pari_ridondante=(redundant or (None, None))[1],
         )
         raw.append({
             "ticker": ticker,
@@ -345,6 +387,7 @@ def build_rebalancing_plan(
             continue
         reduction = build_reduction_candidates(
             data, state_df, bucket, float(info["amount_eur"]), exclude_tickers, ranking=ranking,
+            returns_frame=result.get("returns_frame"),
         )
         plan[bucket] = {**info, "reduction": reduction}
         total_covered += reduction["covered_eur"]
