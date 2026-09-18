@@ -145,6 +145,7 @@ def build_reduction_candidates(
     ranking: pd.DataFrame | None = None,
     returns_frame: pd.DataFrame | None = None,
     deficit_buckets: frozenset[str] = frozenset(),
+    venduto_reale_by_ticker: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Candidati alla riduzione per un bucket in surplus, classificati per
     LIVELLO di convenienza (vedi _classify_reduction_candidate), non per
@@ -170,7 +171,19 @@ def build_reduction_candidates(
     venderli peggiorerebbe quel bucket. covered_eur e coverage_pct
     restano sempre nell'unita' di sollievo-bucket (quota_suggerita_eur),
     mai nell'unita' di vendita reale - misurano quanto del surplus DI
-    QUESTO BUCKET e' stato coperto, non quanto si e' venduto in totale."""
+    QUESTO BUCKET e' stato coperto, non quanto si e' venduto in totale.
+
+    Quando lo stesso strumento e' esposto (e quindi eleggibile) su piu'
+    bucket contemporaneamente in surplus, `venduto_reale_by_ticker`
+    (opzionale, chiave ticker -> euro di VENDITA REALE gia' impegnati in
+    una card di un bucket precedente nello STESSO piano) impedisce che la
+    somma delle vendite reali proposte per un ticker attraverso card
+    diverse superi il suo Controvalore reale: il residuo vendibile per
+    questo bucket e' Controvalore - venduto_reale_by_ticker.get(ticker,
+    0.0), mai il Controvalore intero. E' compito del chiamante
+    (build_rebalancing_plan) accumulare questo dict tra una chiamata e la
+    successiva, bucket per bucket - build_reduction_candidates chiamato
+    una volta da solo non puo' sapere cosa succede nelle altre card."""
     if state_df is None or state_df.empty or surplus_eur <= 0:
         return {"candidates": [], "covered_eur": 0.0, "coverage_pct": 0.0}
 
@@ -263,7 +276,17 @@ def build_reduction_candidates(
         if bucket_penalizzato is not None:
             continue
         row = rows_by_ticker[ticker]
-        contributo_eur = frac * float(row.get("Controvalore", 0.0))
+        controvalore = float(row.get("Controvalore", 0.0))
+        # Fix post-review (doppio conteggio tra bucket condivisi): il
+        # residuo vendibile per QUESTO bucket e' il Controvalore MENO
+        # quanto di questo stesso ticker e' gia' stato impegnato in una
+        # card di un bucket precedente nello stesso piano - mai il
+        # Controvalore intero, altrimenti lo stesso strumento potrebbe
+        # essere proposto per piu' del suo valore reale attraverso card
+        # diverse.
+        gia_venduto_eur = (venduto_reale_by_ticker or {}).get(ticker, 0.0)
+        residuo_vendibile_eur = max(0.0, controvalore - gia_venduto_eur)
+        contributo_eur = frac * residuo_vendibile_eur
         if contributo_eur <= 0:
             continue
         pl_eur = float(row.get("P/L €", 0.0))
@@ -505,6 +528,7 @@ def build_rebalancing_plan(
 
     plan: dict[str, dict[str, Any]] = {}
     total_covered = 0.0
+    venduto_reale_by_ticker: dict[str, float] = {}
     # run_sator_analysis a budget 0.0: qui serve solo il `ranking` (voto per
     # ticker) e il `returns_frame` per la classificazione lato riduzione
     # (Livelli 1/2/3b in build_reduction_candidates), che non dipende dal
@@ -521,9 +545,23 @@ def build_rebalancing_plan(
             data, state_df, bucket, float(info["amount_eur"]), exclude_tickers,
             ranking=ranking_per_riduzione, returns_frame=returns_frame_condiviso,
             deficit_buckets=deficit_bucket_names,
+            venduto_reale_by_ticker=venduto_reale_by_ticker,
         )
         plan[bucket] = {**info, "reduction": reduction}
         total_covered += reduction["covered_eur"]
+        # Fix post-review: ogni euro di vendita reale gia' impegnato in
+        # QUESTA card riduce cio' che resta disponibile per le card dei
+        # bucket successivi (ordine = drift.items(), cioe' l'ordine di
+        # _BUCKETS: Core, Difensivo, Satellite - un bucket precedente ha
+        # priorita' su uno successivo quando condividono lo stesso
+        # strumento, deterministico, nessuna preferenza finanziaria tra un
+        # ordine e l'altro).
+        for c in reduction["candidates"]:
+            venduto_eur = float(c.get("quota_vendita_eur", 0.0))
+            if venduto_eur > 0:
+                venduto_reale_by_ticker[c["ticker"]] = (
+                    venduto_reale_by_ticker.get(c["ticker"], 0.0) + venduto_eur
+                )
 
     deficit_buckets = {b: i for b, i in drift.items() if i["status"] == "deficit"}
     total_deficit = sum(float(i["amount_eur"]) for i in deficit_buckets.values())
