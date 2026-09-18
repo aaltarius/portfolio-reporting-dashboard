@@ -17,7 +17,9 @@ from typing import Any
 import pandas as pd
 
 from core.services.sator import (
+    compute_bucket_bands,
     compute_instrument_bucket_exposures,
+    ensure_sator_settings,
     infer_sator_metadata,
     resolve_instrument_no_sell,
     run_sator_analysis,
@@ -164,3 +166,45 @@ def build_reinforcement_candidates(
         }
         for _, row in subset.head(top_n).iterrows()
     ]
+
+
+def build_rebalancing_plan(
+    data: dict[str, Any],
+    settings: dict[str, Any],
+    state_df: pd.DataFrame,
+    current_mix: dict[str, float],
+    exclude_tickers: frozenset[str] = frozenset(),
+) -> dict[str, dict[str, Any]]:
+    """Piano di ribilanciamento completo: solo i bucket fuori banda
+    compaiono nel risultato. Il budget per il rinforzo di ciascun bucket
+    in deficit e' il ricavato EFFETTIVAMENTE coperto dai bucket in
+    surplus (mai inventato), ripartito in proporzione al deficit di
+    ciascun bucket in deficit."""
+    objective = settings.get("portfolio_objective", {}) if isinstance(settings, dict) else {}
+    cfg = ensure_sator_settings(settings)
+    bands = compute_bucket_bands(objective, cfg["band_tolerance_pp"])
+    portfolio_value = float(state_df["Controvalore"].sum()) if state_df is not None and not state_df.empty else 0.0
+
+    drift = compute_bucket_drift(current_mix, bands, portfolio_value)
+    if not drift:
+        return {}
+
+    plan: dict[str, dict[str, Any]] = {}
+    total_covered = 0.0
+    for bucket, info in drift.items():
+        if info["status"] != "surplus":
+            continue
+        reduction = build_reduction_candidates(data, state_df, bucket, float(info["amount_eur"]), exclude_tickers)
+        plan[bucket] = {**info, "reduction": reduction}
+        total_covered += reduction["covered_eur"]
+
+    deficit_buckets = {b: i for b, i in drift.items() if i["status"] == "deficit"}
+    total_deficit = sum(float(i["amount_eur"]) for i in deficit_buckets.values())
+    for bucket, info in deficit_buckets.items():
+        quota_budget = (
+            total_covered * (float(info["amount_eur"]) / total_deficit) if total_deficit > 0 else 0.0
+        )
+        reinforcement = build_reinforcement_candidates(data, settings, bucket, quota_budget)
+        plan[bucket] = {**info, "budget_eur": quota_budget, "reinforcement": reinforcement}
+
+    return plan
