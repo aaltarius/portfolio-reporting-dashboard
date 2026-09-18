@@ -24,6 +24,7 @@ from core.services.sator import (
     resolve_instrument_no_sell,
     run_sator_analysis,
 )
+from core.services.sator_explain import build_sator_explanations
 
 _BUCKETS = ("Core", "Difensivo", "Satellite")
 _MATERIALITY_EUR = 50.0
@@ -67,6 +68,21 @@ def _reduction_candidate_cmp(a: dict[str, Any], b: dict[str, Any]) -> int:
             return 1
         return 0
     return -1 if diff > 0 else 1
+
+
+def _reduction_reason(*, is_first: bool, is_minusvalenza: bool) -> str:
+    """Frase 'perche' per un candidato alla riduzione: nessun nuovo calcolo
+    finanziario, solo narrazione di dati gia' presenti sul candidato
+    (posizione nell'ordinamento gia' deciso da _reduction_candidate_cmp,
+    segno del P/L)."""
+    base = (
+        "Contributo maggiore all'eccesso del bucket tra i candidati disponibili."
+        if is_first else
+        "Contribuisce a coprire il residuo dell'eccesso del bucket."
+    )
+    if is_minusvalenza:
+        base += " In minusvalenza: nessuna imposta sulla vendita."
+    return base
 
 
 def build_reduction_candidates(
@@ -142,7 +158,8 @@ def build_reduction_candidates(
         quota = min(c["contributo_eur"], residuo)
         if quota < _MATERIALITY_EUR and residuo > _MATERIALITY_EUR:
             continue
-        candidates.append({**c, "quota_suggerita_eur": quota})
+        perche = _reduction_reason(is_first=not candidates, is_minusvalenza=c["is_minusvalenza"])
+        candidates.append({**c, "quota_suggerita_eur": quota, "perche": perche})
         covered += quota
         residuo -= quota
 
@@ -174,12 +191,17 @@ def build_reinforcement_candidates(
     if ranking is None or ranking.empty:
         return []
     subset = ranking[ranking["_bucket"] == bucket].sort_values("voto", ascending=False)
+    # Riusa la spiegazione SATOR gia' esistente (core/services/sator_explain.py,
+    # stesso ranking gia' ottenuto sopra): nessun nuovo calcolo, solo la
+    # stessa frase "perche'" gia' mostrata altrove nell'app per il voto SATOR.
+    explanations_by_ticker = {e.ticker: e.summary_text for e in build_sator_explanations(ranking)}
     return [
         {
             "ticker": row.get("ticker"),
             "name": row.get("name"),
             "voto": float(row.get("voto", 0.0)),
             "in_portfolio": bool(row.get("in_portfolio", False)),
+            "perche": explanations_by_ticker.get(str(row.get("ticker")), ""),
         }
         for _, row in subset.head(top_n).iterrows()
     ]

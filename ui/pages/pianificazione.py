@@ -305,7 +305,7 @@ def _build_rebalancing_html(plan: dict[str, dict], theme) -> str:
             severity = "ok" if coverage_pct >= 0.999 else ("warn" if coverage_pct >= 0.5 else "bad")
             rows = "".join(
                 f'''<tr class="bucket-alloc-instrument-row" style="--tone:{tone}">
-                  <td class="bucket-alloc-ticker">{escape(str(c["ticker"]))}</td>
+                  <td class="bucket-alloc-ticker">{escape(str(c["ticker"]))}<span class="bucket-alloc-mini-caption">{escape(str(c.get("perche", "")))}</span></td>
                   <td class="num">{fmt_eur_it(c["quota_suggerita_eur"], 2)}</td>
                   <td>{"Posizione in minusvalenza" if c["is_minusvalenza"] else "Posizione in plusvalenza"} {fmt_eur_it(c["pl_eur"], 2)}</td>
                 </tr>'''
@@ -339,7 +339,7 @@ def _build_rebalancing_html(plan: dict[str, dict], theme) -> str:
             reinforcement = info.get("reinforcement") or []
             rows = "".join(
                 f'''<tr class="bucket-alloc-instrument-row" style="--tone:{tone}">
-                  <td class="bucket-alloc-ticker">{escape(str(c["ticker"]))}</td>
+                  <td class="bucket-alloc-ticker">{escape(str(c["ticker"]))}<span class="bucket-alloc-mini-caption">{escape(str(c.get("perche", "")))}</span></td>
                   <td class="num">{c["voto"]:.1f}</td>
                 </tr>'''
                 for c in reinforcement
