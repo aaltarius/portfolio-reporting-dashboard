@@ -19,6 +19,7 @@ from core.domain.bonds import calc_ytm_and_duration
 from core.finance import build_risk_contribution_table
 from core.services.instrument_clustering import _build_redundant_pairs
 from core.services.sator import (
+    _suggested_quotes_by_bucket,
     compute_bucket_bands,
     compute_instrument_bucket_exposures,
     ensure_sator_settings,
@@ -26,7 +27,6 @@ from core.services.sator import (
     resolve_instrument_no_sell,
     run_sator_analysis,
 )
-from core.services.sator_explain import build_sator_explanations
 
 _BUCKETS = ("Core", "Difensivo", "Satellite")
 _MATERIALITY_EUR = 50.0
@@ -321,44 +321,78 @@ def build_reduction_candidates(
     return {"candidates": candidates, "covered_eur": covered, "coverage_pct": coverage_pct}
 
 
-# NOTA (2026-09-18, review finale): questa funzione chiama run_sator_analysis
-# per intero ad ogni bucket in deficit (fino a 2-3 volte per render) - budget
-# incide poco sullo scoring (_score_cost), quindi le classifiche sono quasi
-# identiche e gran parte del lavoro e' ridondante. Non ristrutturato qui
-# deliberatamente (fix-wave finale, rischio di un refactor cross-funzione
-# senza un secondo giro di verifica) - vedi STATO_OPERATIVO_5.0_PRE.md per il
-# follow-up aperto.
+_MARGINE_VOTO_LINEA_NUOVA = 0.5
+_QUOTA_MINIMA_LINEA_NUOVA_EUR = 1000.0
+_QUOTA_MINIMA_LINEA_NUOVA_FRAZIONE_PORTAFOGLIO = 0.01
+
+
 def build_reinforcement_candidates(
+    ranking: pd.DataFrame,
     data: dict[str, Any],
     settings: dict[str, Any],
     bucket: str,
     budget_eur: float,
+    current_mix: dict[str, float],
+    objective: dict[str, float],
+    portfolio_value: float,
+    *,
     top_n: int = 3,
 ) -> list[dict[str, Any]]:
-    """Primi top_n candidati al rinforzo per un bucket in deficit, riusando
-    interamente run_sator_analysis (nessun calcolo nuovo: e' lo stesso
-    motore che oggi propone gli acquisti in Pianificazione/SATOR)."""
-    if budget_eur <= 0:
+    """Candidati al rinforzo per un bucket in deficit, con importo reale
+    riusando l'allocatore SATOR gia' esistente (_suggested_quotes_by_bucket,
+    stesso motore della pagina SATOR principale, cap di concentrazione
+    max_share_per_line gia' rispettati). Un candidato NON posseduto viene
+    proposto solo se (a) il suo voto supera di almeno
+    _MARGINE_VOTO_LINEA_NUOVA il migliore posseduto nello stesso bucket, E
+    (b) l'importo proposto raggiunge max(_QUOTA_MINIMA_LINEA_NUOVA_EUR,
+    _QUOTA_MINIMA_LINEA_NUOVA_FRAZIONE_PORTAFOGLIO * portfolio_value) -
+    altrimenti si preferisce rinforzare una posizione gia' esistente
+    piuttosto che aprire una linea nuova troppo piccola per essere
+    gestita."""
+    if budget_eur <= 0 or ranking is None or ranking.empty:
         return []
-    result = run_sator_analysis(data, settings, budget=budget_eur)
-    ranking = result.get("ranking")
-    if ranking is None or ranking.empty:
-        return []
-    subset = ranking[ranking["_bucket"] == bucket].sort_values("voto", ascending=False)
-    # Riusa la spiegazione SATOR gia' esistente (core/services/sator_explain.py,
-    # stesso ranking gia' ottenuto sopra): nessun nuovo calcolo, solo la
-    # stessa frase "perche'" gia' mostrata altrove nell'app per il voto SATOR.
-    explanations_by_ticker = {e.ticker: e.summary_text for e in build_sator_explanations(ranking)}
-    return [
-        {
+    cfg = ensure_sator_settings(settings)
+    bucket_deficits = {bucket: budget_eur}
+    quantita = _suggested_quotes_by_bucket(
+        ranking, budget_eur, bucket_deficits, blocked_buckets=set(),
+        bucket_weights=current_mix, bucket_targets=objective,
+        max_share=cfg["max_share_per_line"],
+    )
+    work = ranking.reset_index(drop=True)
+    subset_idx = work.index[work["_bucket"] == bucket].tolist()
+
+    posseduti_voto = work.loc[
+        (work["_bucket"] == bucket) & (work["in_portfolio"] == True), "voto"
+    ]
+    miglior_voto_posseduto = float(posseduti_voto.max()) if not posseduti_voto.empty else 0.0
+    soglia_importo_linea_nuova = max(
+        _QUOTA_MINIMA_LINEA_NUOVA_EUR,
+        _QUOTA_MINIMA_LINEA_NUOVA_FRAZIONE_PORTAFOGLIO * portfolio_value,
+    )
+
+    out: list[dict[str, Any]] = []
+    for i in subset_idx:
+        qty = int(quantita[i])
+        if qty <= 0:
+            continue
+        row = work.iloc[i]
+        in_portfolio = bool(row.get("in_portfolio", False))
+        voto = float(row.get("voto", 0.0))
+        importo = qty * float(row.get("unit_price", 0.0))
+        if not in_portfolio and (
+            voto < miglior_voto_posseduto + _MARGINE_VOTO_LINEA_NUOVA
+            or importo < soglia_importo_linea_nuova
+        ):
+            continue
+        out.append({
             "ticker": row.get("ticker"),
             "name": row.get("name"),
-            "voto": float(row.get("voto", 0.0)),
-            "in_portfolio": bool(row.get("in_portfolio", False)),
-            "perche": explanations_by_ticker.get(str(row.get("ticker")), ""),
-        }
-        for _, row in subset.head(top_n).iterrows()
-    ]
+            "voto": voto,
+            "in_portfolio": in_portfolio,
+            "importo_eur": importo,
+        })
+    out.sort(key=lambda c: c["voto"], reverse=True)
+    return out[:top_n]
 
 
 def build_rebalancing_plan(
@@ -392,36 +426,55 @@ def build_rebalancing_plan(
     if not drift:
         return {}
 
-    # run_sator_analysis chiamata una sola volta per l'intero piano, con
-    # budget neutro (0.0): qui serve solo il `ranking` (voto per ticker) per
-    # il Livello 2 in build_reduction_candidates, non per dimensionare
-    # acquisti. NOTA (temporaneo, si chiude nel Task 7): build_reinforcement_
-    # candidates piu' sotto richiama ANCORA run_sator_analysis per conto suo
-    # con il proprio budget (per bucket in deficit) - quindi ci sono
-    # temporaneamente due chiamate al motore per render quando c'e' un
-    # surplus da reinvestire. Consolidamento completo nel Task 7.
-    result = run_sator_analysis(data, settings, budget=0.0)
-    ranking = result.get("ranking")
-
     plan: dict[str, dict[str, Any]] = {}
     total_covered = 0.0
+    # run_sator_analysis a budget 0.0: qui serve solo il `ranking` (voto per
+    # ticker) e il `returns_frame` per la classificazione lato riduzione
+    # (Livelli 1/2/3b in build_reduction_candidates), che non dipende dal
+    # budget - solo dal voto e dal returns_frame, quindi budget=0.0 va bene
+    # qui, separato dalla chiamata con budget reale sotto (che serve solo
+    # per dimensionare il rinforzo con _suggested_quotes_by_bucket).
+    result_riduzione = run_sator_analysis(data, settings, budget=0.0)
+    ranking_per_riduzione = result_riduzione.get("ranking")
+    returns_frame_condiviso = result_riduzione.get("returns_frame")
     for bucket, info in drift.items():
         if info["status"] != "surplus":
             continue
         reduction = build_reduction_candidates(
-            data, state_df, bucket, float(info["amount_eur"]), exclude_tickers, ranking=ranking,
-            returns_frame=result.get("returns_frame"),
+            data, state_df, bucket, float(info["amount_eur"]), exclude_tickers,
+            ranking=ranking_per_riduzione, returns_frame=returns_frame_condiviso,
         )
         plan[bucket] = {**info, "reduction": reduction}
         total_covered += reduction["covered_eur"]
 
     deficit_buckets = {b: i for b, i in drift.items() if i["status"] == "deficit"}
     total_deficit = sum(float(i["amount_eur"]) for i in deficit_buckets.values())
+    # NOTA ONESTA (Task 7): questo lascia ancora DUE chiamate a
+    # run_sator_analysis quando c'e' un surplus da reinvestire (una per il
+    # ranking di riduzione a budget 0, una per il ranking di rinforzo al
+    # budget reale total_covered) - non piu' le 2-3 chiamate ridondanti
+    # della v1 (una per bucket in deficit), ma non ancora la singola
+    # chiamata ideale descritta nello spec. Consolidarle in una sola
+    # richiederebbe verificare che il ranking a budget 0 e quello al budget
+    # reale producano un `voto` sostanzialmente identico (_score_cost usa il
+    # budget passato a run_sator_analysis) - follow-up separato, non
+    # bloccante per questo task.
+    ranking_per_rinforzo = (
+        run_sator_analysis(data, settings, budget=total_covered).get("ranking")
+        if total_covered > 0 else None
+    )
     for bucket, info in deficit_buckets.items():
         quota_budget = (
             total_covered * (float(info["amount_eur"]) / total_deficit) if total_deficit > 0 else 0.0
         )
-        reinforcement = build_reinforcement_candidates(data, settings, bucket, quota_budget)
+        quota_budget = min(quota_budget, float(info["amount_eur"]))  # mai oltre il gap-a-target
+        reinforcement = (
+            build_reinforcement_candidates(
+                ranking_per_rinforzo, data, settings, bucket, quota_budget,
+                current_mix, objective, portfolio_value,
+            )
+            if ranking_per_rinforzo is not None else []
+        )
         plan[bucket] = {**info, "budget_eur": quota_budget, "reinforcement": reinforcement}
 
     return plan
