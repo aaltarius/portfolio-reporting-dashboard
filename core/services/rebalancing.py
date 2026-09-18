@@ -44,9 +44,13 @@ def compute_bucket_drift(
         attuale = float(current_mix.get(bucket, 0.0))
         band = bands.get(bucket, {"target": 0.0, "min": 0.0, "max": 1.0})
         if attuale > band["max"]:
-            drift[bucket] = {"status": "surplus", "amount_eur": (attuale - band["max"]) * portfolio_value}
+            amount_eur = (attuale - band["max"]) * portfolio_value
+            if amount_eur >= _MATERIALITY_EUR:
+                drift[bucket] = {"status": "surplus", "amount_eur": amount_eur}
         elif attuale < band["min"]:
-            drift[bucket] = {"status": "deficit", "amount_eur": (band["min"] - attuale) * portfolio_value}
+            amount_eur = (band["min"] - attuale) * portfolio_value
+            if amount_eur >= _MATERIALITY_EUR:
+                drift[bucket] = {"status": "deficit", "amount_eur": amount_eur}
     return drift
 
 
@@ -105,6 +109,12 @@ def build_reduction_candidates(
         frac = float(exposures.get(ticker, {}).get(bucket, 0.0))
         if frac <= 0:
             continue
+        # Esclude strumenti a esposizione frazionata su piu' bucket: "quota
+        # suggerita" e coverage_pct non sarebbero corretti senza un gross-up
+        # non ancora implementato - v1 deliberatamente conservativo, vedi
+        # review finale 2026-09-18.
+        if frac < 0.999:
+            continue
         row = rows_by_ticker[ticker]
         contributo_eur = frac * float(row.get("Controvalore", 0.0))
         if contributo_eur <= 0:
@@ -140,6 +150,13 @@ def build_reduction_candidates(
     return {"candidates": candidates, "covered_eur": covered, "coverage_pct": coverage_pct}
 
 
+# NOTA (2026-09-18, review finale): questa funzione chiama run_sator_analysis
+# per intero ad ogni bucket in deficit (fino a 2-3 volte per render) - budget
+# incide poco sullo scoring (_score_cost), quindi le classifiche sono quasi
+# identiche e gran parte del lavoro e' ridondante. Non ristrutturato qui
+# deliberatamente (fix-wave finale, rischio di un refactor cross-funzione
+# senza un secondo giro di verifica) - vedi STATO_OPERATIVO_5.0_PRE.md per il
+# follow-up aperto.
 def build_reinforcement_candidates(
     data: dict[str, Any],
     settings: dict[str, Any],
@@ -173,17 +190,27 @@ def build_rebalancing_plan(
     settings: dict[str, Any],
     state_df: pd.DataFrame,
     current_mix: dict[str, float],
+    portfolio_value: float,
     exclude_tickers: frozenset[str] = frozenset(),
 ) -> dict[str, dict[str, Any]]:
     """Piano di ribilanciamento completo: solo i bucket fuori banda
     compaiono nel risultato. Il budget per il rinforzo di ciascun bucket
     in deficit e' il ricavato EFFETTIVAMENTE coperto dai bucket in
     surplus (mai inventato), ripartito in proporzione al deficit di
-    ciascun bucket in deficit."""
+    ciascun bucket in deficit.
+
+    `portfolio_value` DEVE essere lo stesso denominatore usato dal
+    chiamante per calcolare `current_mix` (mai ricavato qui da
+    `state_df["Controvalore"].sum()`): se il chiamante applica un
+    filtro come il toggle "Escludi BTP/GOV" a monte di `current_mix`
+    ma non a `state_df`, i due userebbero basi diverse e ogni importo
+    in euro del piano risulterebbe gonfiato o compresso rispetto al
+    surplus/deficit percentuale reale (bug reale, review finale
+    2026-09-18: fattore ~2x su un portafoglio reale con BTP/GOV grandi
+    e il toggle attivo)."""
     objective = settings.get("portfolio_objective", {}) if isinstance(settings, dict) else {}
     cfg = ensure_sator_settings(settings)
     bands = compute_bucket_bands(objective, cfg["band_tolerance_pp"])
-    portfolio_value = float(state_df["Controvalore"].sum()) if state_df is not None and not state_df.empty else 0.0
 
     drift = compute_bucket_drift(current_mix, bands, portfolio_value)
     if not drift:

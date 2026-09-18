@@ -1,5 +1,48 @@
 # Changelog
 
+## 5.0 - Ribilanciamento suggerito in Pianificazione
+
+Nuova tabella in Pianificazione, sotto "Allocazione: bucket e strumenti",
+che compare solo quando un bucket (Core/Difensivo/Satellite) esce dalla
+banda di tolleranza gia' usata da SATOR: propone cosa ridurre (bucket in
+surplus) e dove reinvestire il ricavato (bucket in deficit). Resta sempre
+una proposta di lettura, mai un ordine eseguito in automatico. Include la
+correzione di un bug critico trovato nella review finale prima del merge.
+
+- **[Pianificazione] Nuovo modulo `core/services/rebalancing.py`**: calcolo
+  puro, riusa interamente funzioni gia' esistenti in `core/services/sator.py`
+  (banda di tolleranza, esposizione frazionata per strumento/bucket,
+  esclusione NO_SELL, `run_sator_analysis`) — nessuna formula finanziaria
+  nuova. Per ogni bucket fuori banda: `compute_bucket_drift` calcola
+  l'importo in euro necessario per rientrare al BORDO della banda (meno
+  turnover del target esatto).
+- **[Pianificazione] Candidati alla riduzione ordinati per contributo in
+  euro, non per voto SATOR**: verificato sui dati reali dell'utente che il
+  punteggio SATOR (universo solo ETF/ETC) avrebbe proposto di vendere ETF
+  marginali ignorando il vero eccesso del bucket, causato da BTP e fondi
+  fuori da quell'universo. Il criterio corretto e' `contributo_eur =
+  frazione_bucket * Controvalore`, decrescente; a parita' (entro 50€),
+  vince chi ha P/L piu' negativo (minusvalenza venduta prima: nessuna
+  imposta, perdita fiscalmente compensabile). Rispetta sempre NO_SELL e il
+  toggle pagina "Escludi BTP/GOV" (stesso `exclude_tickers` gia' usato dal
+  resto della pagina).
+- **[Pianificazione] Candidati al rinforzo via SATOR**: il budget per
+  ciascun bucket in deficit e' il ricavato effettivamente coperto dai
+  bucket in surplus (mai inventato), ripartito in proporzione al deficit;
+  `run_sator_analysis` filtra e ordina per voto decrescente, primi 3
+  mostrati.
+- **[Critico] Denominatore di `current_mix` e `portfolio_value` disallineati
+  col toggle "Escludi BTP/GOV" attivo**: trovato in review finale prima del
+  merge. `current_mix` viene calcolato dalla pagina su `rings_df`, che
+  ESCLUDE gia' i ticker del toggle, ma `build_rebalancing_plan` ricavava
+  internamente `portfolio_value` da `state_df["Controvalore"].sum()` — lo
+  stesso `state_df` passato, MAI filtrato dal toggle. Con BTP/GOV
+  consistenti in portafoglio il fattore di gonfiamento su ogni importo in
+  euro del piano (eccedenze, deficit, quote suggerite, budget) era circa
+  2x. Corretto rendendo `portfolio_value` un parametro esplicito di
+  `build_rebalancing_plan`, valorizzato dal chiamante con lo stesso
+  `total_value` gia' usato per `current_mix` — nessun ricalcolo interno.
+
 ## 5.0 - Conferma cedole maturate, badge NEW e badge SATOR in Portafoglio
 
 Tre richieste dell'utente via brainstorming, sulla stessa colonna icone

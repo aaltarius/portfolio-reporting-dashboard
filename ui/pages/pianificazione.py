@@ -307,25 +307,34 @@ def _build_rebalancing_html(plan: dict[str, dict], theme) -> str:
                 f'''<tr class="bucket-alloc-instrument-row" style="--tone:{tone}">
                   <td class="bucket-alloc-ticker">{escape(str(c["ticker"]))}</td>
                   <td class="num">{fmt_eur_it(c["quota_suggerita_eur"], 2)}</td>
-                  <td>{"Minusvalenza" if c["is_minusvalenza"] else "Plusvalenza"} {fmt_eur_it(c["pl_eur"], 2)}</td>
+                  <td>{"Posizione in minusvalenza" if c["is_minusvalenza"] else "Posizione in plusvalenza"} {fmt_eur_it(c["pl_eur"], 2)}</td>
                 </tr>'''
                 for c in reduction["candidates"]
-            ) or '<tr class="bucket-alloc-instrument-row"><td colspan="3">Nessun candidato disponibile (esclusi NO_SELL e strumenti esclusi dal toggle).</td></tr>'
+            ) or f'<tr class="bucket-alloc-instrument-row" style="--tone:{tone}"><td colspan="3">Nessun candidato disponibile (esclusi NO_SELL e strumenti esclusi dal toggle).</td></tr>'
             risk_note = (
                 '<div class="bucket-alloc-mini-caption">⚠ Include titoli di Stato: '
                 'venderli prima della scadenza espone al prezzo di mercato del momento '
                 '(rischio tasso), non equivale a portarli a scadenza.</div>'
                 if any(c.get("is_gov_bond") for c in reduction["candidates"]) else ""
             )
+            coverage_note = (
+                '<div class="bucket-alloc-mini-caption">Copertura parziale: gli strumenti disponibili non '
+                "bastano a rientrare in banda. Valuta se intervenire anche su strumenti esclusi (NO_SELL o "
+                "dal toggle 'Escludi BTP/GOV').</div>"
+                if coverage_pct < 0.999 else ""
+            )
             cards.append(f'''
             <div class="bucket-alloc-card"><table class="bucket-alloc-table">
               <thead><tr>
-                <th colspan="3"><span class="bucket-alloc-bucket-name"><span class="dot" style="--tone:{tone}"></span>{escape(bucket)} fuori banda: eccesso {fmt_eur_it(info["amount_eur"], 2)} &middot; <span class="bucket-alloc-scost {severity}">copertura {fmt_pct_it(coverage_pct, 0)}</span></span></th>
-              </tr><tr>
-                <th>Da ridurre</th><th class="num">Quota suggerita</th><th>Fiscale</th>
+                <th>Da ridurre</th><th class="num">Quota suggerita</th><th>P/L posizione</th>
               </tr></thead>
-              <tbody>{rows}</tbody>
-            </table>{risk_note}</div>''')
+              <tbody>
+                <tr class="bucket-alloc-bucket-row" style="--tone:{tone}">
+                  <td colspan="3"><span class="bucket-alloc-bucket-name"><span class="dot" style="--tone:{tone}"></span>{escape(bucket)} fuori banda: eccesso {fmt_eur_it(info["amount_eur"], 2)} &middot; <span class="bucket-alloc-scost {severity}">copertura {fmt_pct_it(coverage_pct, 0)}</span></span></td>
+                </tr>
+                {rows}
+              </tbody>
+            </table>{risk_note}{coverage_note}</div>''')
         else:
             reinforcement = info.get("reinforcement") or []
             rows = "".join(
@@ -334,15 +343,18 @@ def _build_rebalancing_html(plan: dict[str, dict], theme) -> str:
                   <td class="num">{c["voto"]:.1f}</td>
                 </tr>'''
                 for c in reinforcement
-            ) or '<tr class="bucket-alloc-instrument-row"><td colspan="2">Nessun ricavato disponibile da altri bucket da reinvestire qui.</td></tr>'
+            ) or f'<tr class="bucket-alloc-instrument-row" style="--tone:{tone}"><td colspan="2">Nessun ricavato disponibile da altri bucket da reinvestire qui.</td></tr>'
             cards.append(f'''
             <div class="bucket-alloc-card"><table class="bucket-alloc-table">
               <thead><tr>
-                <th colspan="2"><span class="bucket-alloc-bucket-name"><span class="dot" style="--tone:{tone}"></span>{escape(bucket)} fuori banda: mancano {fmt_eur_it(info["amount_eur"], 2)}</span></th>
-              </tr><tr>
                 <th>Da rinforzare (con il ricavato)</th><th class="num">Voto SATOR</th>
               </tr></thead>
-              <tbody>{rows}</tbody>
+              <tbody>
+                <tr class="bucket-alloc-bucket-row" style="--tone:{tone}">
+                  <td colspan="2"><span class="bucket-alloc-bucket-name"><span class="dot" style="--tone:{tone}"></span>{escape(bucket)} fuori banda: mancano {fmt_eur_it(info["amount_eur"], 2)}</span></td>
+                </tr>
+                {rows}
+              </tbody>
             </table></div>''')
     return "".join(cards)
 
@@ -1054,8 +1066,14 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
                 instrument_tolerance_pp=ensure_sator_settings(settings)["instrument_quota_tolerance_pp"] * 100.0,
             )
         with profile_step("Pianificazione/SATOR", "rebalancing_table"):
-            rebalancing_plan = build_rebalancing_plan(data, settings, state_df, current_mix, exclude_tickers=exclude_tickers)
-            _render_rebalancing_table(rebalancing_plan, theme)
+            try:
+                rebalancing_plan = build_rebalancing_plan(
+                    data, settings, state_df, current_mix, total_value, exclude_tickers=exclude_tickers,
+                )
+            except Exception:
+                rebalancing_plan = None
+            if rebalancing_plan:
+                _render_rebalancing_table(rebalancing_plan, theme)
     render_section_title(
         "Prossimo acquisto: mappa decisionale",
         comment="Dati dall'ultima fotografia SATOR salvata dalla pagina SATOR attiva in sidebar, non da un'analisi dal vivo dentro Streamlit.",
