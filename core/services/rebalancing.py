@@ -15,6 +15,7 @@ from typing import Any
 
 import pandas as pd
 
+from core.domain.bonds import calc_ytm_and_duration
 from core.services.sator import (
     compute_bucket_bands,
     compute_instrument_bucket_exposures,
@@ -57,21 +58,45 @@ _SOGLIA_OPERATIVA_MINIMA_EUR = 500.0
 _CAP_RIGA_FRAZIONE_SURPLUS = 0.5
 
 
+_MESI_SCADENZA_ANTI_RACCOMANDAZIONE = 24.0
+
+
 def _classify_reduction_candidate(
-    *, role: str, contributo_eur: float, pl_eur: float,
+    *,
+    role: str,
+    contributo_eur: float,
+    pl_eur: float,
+    is_gov_bond: bool = False,
+    duration_anni: float | None = None,
+    mesi_a_scadenza: float | None = None,
 ) -> tuple[int, tuple[float, ...], str]:
     """Classifica un candidato alla riduzione in un livello di convenienza
     (0 = venduto per primo) con una chiave interna omogenea al livello e
     una frase 'perche''. Livelli 1 (ridondanza), 2 (bassa convinzione),
-    3a (duration titoli di Stato), 3b (rischio/peso), 5 (anti-
-    raccomandazione) sono aggiunti nei task successivi - qui solo 0 e il
-    fallback 4, la struttura e' pero' gia' definitiva.
+    3b (rischio/peso) sono aggiunti nei task successivi - qui 0, 3a
+    (duration titoli di Stato), 5 (anti-raccomandazione) e il fallback 4,
+    la struttura e' pero' gia' definitiva.
 
     Nessun punteggio composito: livelli discreti, mai una somma pesata tra
     grandezze non comparabili (voto 1-10, anni di duration, correlazione
     0-1)."""
     if role == "liquidita":
         return 0, (-contributo_eur,), "Liquidita'/monetario: nessun rischio prezzo, nessuna duration."
+
+    if is_gov_bond and duration_anni is not None:
+        is_plusvalenza = pl_eur > 0
+        is_duration_piu_corta_nota = duration_anni <= 2.0  # soglia qualitativa "corta" per un BTP
+        is_vicino_a_scadenza = mesi_a_scadenza is not None and mesi_a_scadenza <= _MESI_SCADENZA_ANTI_RACCOMANDAZIONE
+        if is_plusvalenza and is_duration_piu_corta_nota and is_vicino_a_scadenza:
+            return 5, (-contributo_eur,), (
+                f"Non toccare se non necessario: scadenza vicina ({mesi_a_scadenza:.0f} mesi), "
+                f"duration bassa ({duration_anni:.2f} anni), in plusvalenza - torna a rimborso da sola."
+            )
+        return 3, (-duration_anni, pl_eur), (
+            f"Duration {duration_anni:.2f} anni: venderlo libera piu' rischio tasso per euro "
+            "rispetto a un titolo di Stato con scadenza piu' vicina."
+        )
+
     return 4, (-contributo_eur, pl_eur), "Nessun segnale di qualita' disponibile per questa categoria."
 
 
@@ -132,8 +157,19 @@ def build_reduction_candidates(
         item = items_by_ticker.get(ticker, {"ticker": ticker})
         is_gov_bond = not bool(infer_sator_metadata(item, True).get("pac_enabled", True))
         role = str(infer_sator_metadata(item, True).get("role", ""))
+        duration_anni = None
+        mesi_a_scadenza = None
+        if is_gov_bond:
+            _, duration_anni = calc_ytm_and_duration(item)
+            scadenza_raw = item.get("scadenza")
+            if scadenza_raw:
+                from core.domain.calendar import _to_ts
+                scadenza_ts = _to_ts(scadenza_raw)
+                if scadenza_ts is not None:
+                    mesi_a_scadenza = (scadenza_ts - pd.Timestamp.today().normalize()).days / 30.44
         livello, chiave_interna, motivo = _classify_reduction_candidate(
             role=role, contributo_eur=contributo_eur, pl_eur=pl_eur,
+            is_gov_bond=is_gov_bond, duration_anni=duration_anni, mesi_a_scadenza=mesi_a_scadenza,
         )
         raw.append({
             "ticker": ticker,
@@ -145,33 +181,54 @@ def build_reduction_candidates(
             "_livello": livello,
             "_chiave_interna": chiave_interna,
             "perche": motivo,
+            "non_toccare": livello == 5,
         })
 
     raw.sort(key=lambda c: (c["_livello"], c["_chiave_interna"]))
 
-    candidates: list[dict[str, Any]] = []
-    covered = 0.0
-    residuo = surplus_eur
-    for c in raw:
-        if residuo <= 0:
-            break
-        cap_riga = surplus_eur if (c["_livello"] > 0 and len(raw) == 1) else (
-            surplus_eur * _CAP_RIGA_FRAZIONE_SURPLUS if c["_livello"] > 0 else surplus_eur
-        )
-        quota = min(c["contributo_eur"], residuo, cap_riga)
-        if quota < _SOGLIA_OPERATIVA_MINIMA_EUR and residuo > _SOGLIA_OPERATIVA_MINIMA_EUR:
-            continue
-        if c["contributo_eur"] - quota < _SOGLIA_OPERATIVA_MINIMA_EUR:
-            # Uscita completa invece di lasciare uno scampolo sulla
-            # posizione: qui si accetta deliberatamente di superare il
-            # residuo/cap di riga (coverage_pct resta comunque limitato a
-            # 1.0 piu' sotto) - il letterale min(..., residuo) del brief
-            # vanificherebbe l'uscita completa proprio nel caso a un solo
-            # candidato che il test dedicato copre.
-            quota = c["contributo_eur"]
-        candidates.append({**c, "quota_suggerita_eur": quota})
-        covered += quota
-        residuo -= quota
+    def _dimensiona(items: list[dict[str, Any]], residuo: float) -> tuple[list[dict[str, Any]], float, float]:
+        esiti: list[dict[str, Any]] = []
+        covered = 0.0
+        for c in items:
+            if residuo <= 0:
+                break
+            cap_riga = surplus_eur if (c["_livello"] > 0 and len(raw) == 1) else (
+                surplus_eur * _CAP_RIGA_FRAZIONE_SURPLUS if c["_livello"] > 0 else surplus_eur
+            )
+            quota = min(c["contributo_eur"], residuo, cap_riga)
+            if quota < _SOGLIA_OPERATIVA_MINIMA_EUR and residuo > _SOGLIA_OPERATIVA_MINIMA_EUR:
+                continue
+            if c["contributo_eur"] - quota < _SOGLIA_OPERATIVA_MINIMA_EUR:
+                # Uscita completa invece di lasciare uno scampolo sulla
+                # posizione: qui si accetta deliberatamente di superare il
+                # residuo/cap di riga (coverage_pct resta comunque limitato a
+                # 1.0 piu' sotto) - il letterale min(..., residuo) del brief
+                # vanificherebbe l'uscita completa proprio nel caso a un solo
+                # candidato che il test dedicato copre.
+                quota = c["contributo_eur"]
+            esiti.append({**c, "quota_suggerita_eur": quota})
+            covered += quota
+            residuo -= quota
+        return esiti, covered, residuo
+
+    # Livello 5 (anti-raccomandazione) e' escluso dal dimensionamento finche'
+    # esistono alternative: prima passata su tutti i candidati non-5, seconda
+    # passata sui soli candidati di Livello 5 e solo se il residuo resta
+    # scoperto dopo aver esaurito gli altri. Nota implementativa (task 3): la
+    # guardia a singola passata suggerita nel brief ("continue" dentro un
+    # unico for su `raw`) non funziona - raw contiene sempre candidati non-5
+    # anche dopo che sono stati esauriti, quindi la condizione "any(other
+    # is livello!=5)" resterebbe vera per sempre e i Livello 5 non
+    # verrebbero mai selezionati nemmeno a residuo scoperto. Da qui le due
+    # liste separate ed elaborate in sequenza.
+    raw_normali = [c for c in raw if c["_livello"] != 5]
+    raw_livello5 = [c for c in raw if c["_livello"] == 5]
+
+    candidates, covered, residuo = _dimensiona(raw_normali, surplus_eur)
+    if residuo > 0 and raw_livello5:
+        esiti_livello5, covered_livello5, residuo = _dimensiona(raw_livello5, residuo)
+        candidates = candidates + esiti_livello5
+        covered += covered_livello5
 
     coverage_pct = min(1.0, covered / surplus_eur) if surplus_eur > 0 else 0.0
     return {"candidates": candidates, "covered_eur": covered, "coverage_pct": coverage_pct}
