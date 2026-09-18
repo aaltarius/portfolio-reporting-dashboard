@@ -20,6 +20,7 @@ from core.services.sator import (
     compute_instrument_bucket_exposures,
     infer_sator_metadata,
     resolve_instrument_no_sell,
+    run_sator_analysis,
 )
 
 _BUCKETS = ("Core", "Difensivo", "Satellite")
@@ -135,3 +136,31 @@ def build_reduction_candidates(
 
     coverage_pct = min(1.0, covered / surplus_eur) if surplus_eur > 0 else 0.0
     return {"candidates": candidates, "covered_eur": covered, "coverage_pct": coverage_pct}
+
+
+def build_reinforcement_candidates(
+    data: dict[str, Any],
+    settings: dict[str, Any],
+    bucket: str,
+    budget_eur: float,
+    top_n: int = 3,
+) -> list[dict[str, Any]]:
+    """Primi top_n candidati al rinforzo per un bucket in deficit, riusando
+    interamente run_sator_analysis (nessun calcolo nuovo: e' lo stesso
+    motore che oggi propone gli acquisti in Pianificazione/SATOR)."""
+    if budget_eur <= 0:
+        return []
+    result = run_sator_analysis(data, settings, budget=budget_eur)
+    ranking = result.get("ranking")
+    if ranking is None or ranking.empty:
+        return []
+    subset = ranking[ranking["_bucket"] == bucket].sort_values("voto", ascending=False)
+    return [
+        {
+            "ticker": row.get("ticker"),
+            "name": row.get("name"),
+            "voto": float(row.get("voto", 0.0)),
+            "in_portfolio": bool(row.get("in_portfolio", False)),
+        }
+        for _, row in subset.head(top_n).iterrows()
+    ]
