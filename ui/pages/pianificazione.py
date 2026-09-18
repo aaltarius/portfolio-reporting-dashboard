@@ -332,7 +332,12 @@ def _build_rebalancing_html(plan: dict[str, dict], theme) -> str:
         if info["status"] == "surplus":
             reduction = info["reduction"]
             candidates = reduction["candidates"]
-            total_ops += len(candidates)
+            # Un candidato non_toccare=True e' un'anti-raccomandazione ("NON
+            # TOCCARE", riga distinta piu' sotto): il contrario esatto di
+            # un'operazione proposta, quindi va escluso dal conteggio del
+            # footer (trovato in review: contarlo come operazione era una
+            # dichiarazione fattualmente errata).
+            total_ops += sum(1 for c in candidates if not c.get("non_toccare"))
             coverage_pct = reduction["coverage_pct"]
             severity = "ok" if coverage_pct >= 0.999 else ("warn" if coverage_pct >= 0.5 else "bad")
             row_htmls: list[str] = []
@@ -425,10 +430,10 @@ def _build_rebalancing_html(plan: dict[str, dict], theme) -> str:
                 {rows}
               </tbody>
             </table></div>''')
-    footer_word = "operazione" if total_ops == 1 else "operazioni"
+    footer_word = "operazione proposta" if total_ops == 1 else "operazioni proposte"
     cards.append(
         '<div class="bucket-alloc-card"><div class="bucket-alloc-mini-caption">'
-        f"Piano complessivo: {total_ops} {footer_word} proposte in totale sui bucket fuori banda."
+        f"Piano complessivo: {total_ops} {footer_word} in totale sui bucket fuori banda."
         "</div></div>"
     )
     return "".join(cards)
