@@ -186,7 +186,7 @@ def build_reduction_candidates(
     successiva, bucket per bucket - build_reduction_candidates chiamato
     una volta da solo non puo' sapere cosa succede nelle altre card."""
     if state_df is None or state_df.empty or surplus_eur <= 0:
-        return {"candidates": [], "covered_eur": 0.0, "coverage_pct": 0.0}
+        return {"candidates": [], "tenuti": [], "covered_eur": 0.0, "coverage_pct": 0.0}
 
     held = state_df[state_df["Controvalore"] > 0].copy()
     held["Ticker"] = held["Ticker"].astype(str).str.strip().str.upper()
@@ -252,14 +252,25 @@ def build_reduction_candidates(
             ))
 
     raw: list[dict[str, Any]] = []
+    # Ogni strumento posseduto ESPOSTO a questo bucket (frac>0) deve finire
+    # da qualche parte nel risultato finale - o in candidates (vendi/non
+    # toccare) o in tenuti (tieni, con un motivo esplicito). Feedback
+    # utente 2026-09-19: "vorrei vedere tutti gli strumenti" - prima gli
+    # strumenti esclusi qui sparivano silenziosamente, senza lasciare
+    # traccia del perche' non erano stati proposti.
+    tenuti: list[dict[str, Any]] = []
     for ticker in tickers:
-        if ticker in exclude_tickers:
-            continue
-        if resolve_instrument_no_sell(data, ticker):
-            continue
         esposizioni_ticker = exposures.get(ticker, {})
         frac = float(esposizioni_ticker.get(bucket, 0.0))
         if frac <= 0:
+            continue  # non esposto a questo bucket: non e' una posizione di QUESTO bucket
+        row = rows_by_ticker[ticker]
+        name = row.get("Strumento", ticker)
+        if ticker in exclude_tickers:
+            tenuti.append({"ticker": ticker, "name": name, "motivo": "Escluso dal toggle attivo (es. \"Escludi BTP/GOV\")."})
+            continue
+        if resolve_instrument_no_sell(data, ticker):
+            tenuti.append({"ticker": ticker, "name": name, "motivo": "Marcato NO_SELL: mai proposto per la vendita."})
             continue
         # Gross-up (Addendum v2.1): uno strumento a esposizione frazionata
         # su piu' bucket (frac < 1.0) e' eleggibile SOLO se nessun altro
@@ -275,8 +286,8 @@ def build_reduction_candidates(
             (b2 for b2, _ in altri_bucket_esposti if b2 in deficit_buckets), None
         )
         if bucket_penalizzato is not None:
+            tenuti.append({"ticker": ticker, "name": name, "motivo": f"Venderlo peggiorerebbe {bucket_penalizzato}, oggi in deficit."})
             continue
-        row = rows_by_ticker[ticker]
         controvalore = float(row.get("Controvalore", 0.0))
         # Fix post-review (doppio conteggio tra bucket condivisi): il
         # residuo vendibile per QUESTO bucket e' il Controvalore MENO
@@ -289,8 +300,11 @@ def build_reduction_candidates(
         residuo_vendibile_eur = max(0.0, controvalore - gia_venduto_eur)
         contributo_eur = frac * residuo_vendibile_eur
         if contributo_eur <= 0:
+            tenuti.append({"ticker": ticker, "name": name, "motivo": "Gia' impegnato per intero in un altro bucket con cui condivide l'esposizione."})
             continue
         pl_eur = float(row.get("P/L €", 0.0))
+        prezzo = float(row.get("Prezzo", 0.0))
+        quote_possedute = float(row.get("Quote", 0.0))
         item = items_by_ticker.get(ticker, {"ticker": ticker})
         is_gov_bond = not bool(infer_sator_metadata(item, True).get("pac_enabled", True))
         role = str(infer_sator_metadata(item, True).get("role", ""))
@@ -322,9 +336,11 @@ def build_reduction_candidates(
             )
         raw.append({
             "ticker": ticker,
-            "name": row.get("Strumento", ticker),
+            "name": name,
             "contributo_eur": contributo_eur,
             "frac": frac,
+            "prezzo": prezzo,
+            "quote_possedute": quote_possedute,
             "pl_eur": pl_eur,
             "is_minusvalenza": pl_eur < 0,
             "is_gov_bond": is_gov_bond,
@@ -364,10 +380,21 @@ def build_reduction_candidates(
                 # vanificherebbe l'uscita completa proprio nel caso a un solo
                 # candidato che il test dedicato copre.
                 quota = c["contributo_eur"]
+            quota_vendita_eur = quota / c["frac"]
+            # Numero di quote da vendere (feedback utente: "non mi parla di
+            # quote") - arrotondato, mai oltre quanto realmente posseduto
+            # (min con quote_possedute: un arrotondamento per eccesso su un
+            # residuo minimo non deve mai proporre di vendere piu' di
+            # quanto si ha).
+            quote_vendita = (
+                min(c["quote_possedute"], round(quota_vendita_eur / c["prezzo"]))
+                if c["prezzo"] > 0 else 0
+            )
             esiti.append({
                 **c,
                 "quota_suggerita_eur": quota,
-                "quota_vendita_eur": quota / c["frac"],
+                "quota_vendita_eur": quota_vendita_eur,
+                "quote_vendita": quote_vendita,
             })
             covered += quota
             residuo -= quota
@@ -401,13 +428,25 @@ def build_reduction_candidates(
     forzati_tickers = {c["ticker"] for c in esiti_livello5}
     candidates = candidates + [{**c, "forzato": True} for c in esiti_livello5]
     candidates += [
-        {**c, "quota_suggerita_eur": 0.0, "quota_vendita_eur": 0.0, "forzato": False}
+        {**c, "quota_suggerita_eur": 0.0, "quota_vendita_eur": 0.0, "quote_vendita": 0, "forzato": False}
         for c in raw_livello5
         if c["ticker"] not in forzati_tickers
     ]
 
+    # Candidati classificati (Livelli 0-4) ma NON scelti dal dimensionamento
+    # (il surplus era gia' coperto da altri con priorita' maggiore): niente
+    # da vendere, ma vanno comunque mostrati come "tieni" - non spariscono
+    # in silenzio (stesso principio dei tenuti sopra).
+    venduti_tickers = {c["ticker"] for c in candidates if float(c.get("quota_suggerita_eur", 0.0)) > 0}
+    for c in raw_normali:
+        if c["ticker"] not in venduti_tickers:
+            tenuti.append({
+                "ticker": c["ticker"], "name": c["name"],
+                "motivo": f"{c['perche']} Non necessario ora: il surplus e' gia' coperto da altri candidati con priorita' maggiore.",
+            })
+
     coverage_pct = min(1.0, covered / surplus_eur) if surplus_eur > 0 else 0.0
-    return {"candidates": candidates, "covered_eur": covered, "coverage_pct": coverage_pct}
+    return {"candidates": candidates, "tenuti": tenuti, "covered_eur": covered, "coverage_pct": coverage_pct}
 
 
 _MARGINE_VOTO_LINEA_NUOVA = 0.5
@@ -424,8 +463,6 @@ def build_reinforcement_candidates(
     current_mix: dict[str, float],
     objective: dict[str, float],
     portfolio_value: float,
-    *,
-    top_n: int = 3,
 ) -> dict[str, Any]:
     """Candidati al rinforzo per un bucket in deficit, con importo E
     QUOTE reali (numero di pezzi, non solo euro) riusando l'allocatore
@@ -447,19 +484,14 @@ def build_reinforcement_candidates(
     mostrata altrove nell'app, non una frase generica: nomina esplicitamente
     quando il momentum e' uno dei fattori trainanti (o non lo e').
 
-    Ritorna un dict {"candidates": [...top_n, per la UI...], "covered_eur":
-    somma EFFETTIVA di tutte le righe finanziate dall'allocatore (non solo
-    quelle mostrate), "altri_count"/"altri_eur": quanto resta fuori dal
-    top_n mostrato. Bug reale trovato con dati reali (feedback utente
-    2026-09-18/19): prima, covered_eur/coverage_pct venivano calcolati SOLO
-    sulle top_n righe mostrate, scartando silenziosamente la stragrande
-    maggioranza di quanto l'allocatore aveva davvero deciso di investire
-    (sul portafoglio reale: allocatore al 99.98% del budget, coverage
-    mostrata al 2% per il solo taglio a top_n=3) - la tabella sembrava
-    "non arrivare mai alla cifra indicata" per un taglio di visualizzazione
-    spacciato per un limite reale del budget."""
+    Ritorna TUTTI i candidati finanziati dall'allocatore, nessun taglio a
+    top_n - feedback utente 2026-09-19: "vorrei vedere tutti gli
+    strumenti", un taglio di visualizzazione nascosto dietro una nota
+    "+ altri N" restava comunque inutilizzabile (non azionabile) per
+    l'utente. covered_eur e' la somma di TUTTI i candidati restituiti, da
+    sempre coerente con quanto mostrato."""
     if budget_eur <= 0 or ranking is None or ranking.empty:
-        return {"candidates": [], "covered_eur": 0.0, "altri_count": 0, "altri_eur": 0.0}
+        return {"candidates": [], "covered_eur": 0.0}
     cfg = ensure_sator_settings(settings)
     bucket_deficits = {bucket: budget_eur}
     quantita = _suggested_quotes_by_bucket(
@@ -532,14 +564,7 @@ def build_reinforcement_candidates(
     # ampio, sembrando (a torto) che il budget in piu' non servisse a nulla.
     out.sort(key=lambda c: (c["voto"], c["importo_eur"]), reverse=True)
     covered_eur = sum(float(c["importo_eur"]) for c in out)
-    shown = out[:top_n]
-    altri = out[top_n:]
-    return {
-        "candidates": shown,
-        "covered_eur": covered_eur,
-        "altri_count": len(altri),
-        "altri_eur": sum(float(c["importo_eur"]) for c in altri),
-    }
+    return {"candidates": out, "covered_eur": covered_eur}
 
 
 def build_rebalancing_plan(
@@ -620,42 +645,20 @@ def build_rebalancing_plan(
 
     deficit_buckets = {b: i for b, i in drift.items() if i["status"] == "deficit"}
     total_deficit = sum(float(i["amount_eur"]) for i in deficit_buckets.values())
-    # Feedback utente 2026-09-18: "e se non voglio vendere?!" - il rinforzo
-    # non puo' presupporre SOLO il ricavato dalle vendite in altri bucket.
-    # Il ranking di rinforzo va quindi calcolato ogni volta che esiste un
-    # deficit, non solo quando total_covered > 0 (altrimenti lo scenario
-    # "capitale nuovo" sotto non avrebbe alcun ranking su cui lavorare se
-    # non c'e' nessun bucket in surplus). Budget di riferimento per il
-    # costo SATOR (_score_cost) = il piu' grande tra ricavato reale e gap
-    # totale a nuovo capitale: un limite superiore plausibile per entrambi
-    # gli scenari, non un valore arbitrario.
+    # Feedback utente 2026-09-19: le "due opzioni" (con il ricavato delle
+    # vendite / a capitale nuovo) sono state RESPINTE - confondevano piu'
+    # di quanto chiarissero, nessuna delle due raggiungeva mai la cifra
+    # indicata e l'utente non riusciva a capire quale seguire. Un solo
+    # scenario, coerente con le vendite proposte nella STESSA tabella: il
+    # budget e' il ricavato REALE che quelle vendite generano (quota_budget
+    # sotto), non un'ipotesi di capitale fresco. Budget di riferimento per
+    # il costo SATOR (_score_cost) = il ricavato reale, oppure il gap
+    # totale se non c'e' ancora surplus (serve comunque un ranking per
+    # poter mostrare cosa comprerebbe se si liberasse ricavato).
     ranking_per_rinforzo = (
         run_sator_analysis(data, settings, budget=max(total_covered, total_deficit)).get("ranking")
         if total_deficit > 0 else None
     )
-
-    def _reinforcement_result(bucket: str, budget_eur: float, amount_eur: float) -> dict[str, Any]:
-        result = (
-            build_reinforcement_candidates(
-                ranking_per_rinforzo, data, settings, bucket, budget_eur,
-                current_mix, objective, portfolio_value,
-            )
-            if ranking_per_rinforzo is not None and budget_eur > 0 else
-            {"candidates": [], "covered_eur": 0.0, "altri_count": 0, "altri_eur": 0.0}
-        )
-        # Copertura del lato rinforzo (stessa semantica del lato riduzione,
-        # trovato mancante in un feedback utente 2026-09-18: senza questo
-        # numero, un elenco di acquisti che non arriva a "mancano X euro"
-        # sembra un consiglio sbagliato invece di una proposta onestamente
-        # parziale). covered_eur qui e' GIA' la somma di TUTTE le righe che
-        # l'allocatore ha finanziato (non solo le top_n mostrate - vedi
-        # build_reinforcement_candidates), quindi coverage_pct riflette il
-        # budget davvero deployabile, non un taglio di visualizzazione.
-        # Denominatore = amount_eur (il gap A TARGET), non budget_eur:
-        # mostra la verita' anche quando la causa della copertura bassa e'
-        # il budget insufficiente.
-        coverage_pct = min(1.0, result["covered_eur"] / amount_eur) if amount_eur > 0 else 0.0
-        return {**result, "coverage_pct": coverage_pct}
 
     for bucket, info in deficit_buckets.items():
         amount_eur = float(info["amount_eur"])
@@ -663,16 +666,26 @@ def build_rebalancing_plan(
             total_covered * (amount_eur / total_deficit) if total_deficit > 0 else 0.0
         )
         quota_budget = min(quota_budget, amount_eur)  # mai oltre il gap-a-target
+        result = (
+            build_reinforcement_candidates(
+                ranking_per_rinforzo, data, settings, bucket, quota_budget,
+                current_mix, objective, portfolio_value,
+            )
+            if ranking_per_rinforzo is not None and quota_budget > 0 else
+            {"candidates": [], "covered_eur": 0.0}
+        )
+        # Copertura del lato rinforzo (stessa semantica del lato riduzione):
+        # covered_eur e' GIA' la somma di TUTTI i candidati restituiti
+        # (nessun taglio a top_n - vedi build_reinforcement_candidates),
+        # quindi coverage_pct riflette il budget davvero deployabile.
+        # Denominatore = amount_eur (il gap A TARGET), non quota_budget:
+        # mostra la verita' anche quando la causa della copertura bassa e'
+        # il ricavato insufficiente dal lato vendita.
+        coverage_pct = min(1.0, result["covered_eur"] / amount_eur) if amount_eur > 0 else 0.0
         plan[bucket] = {
             **info,
             "budget_eur": quota_budget,
-            # Due scenari indipendenti, non uno solo: l'utente potrebbe non
-            # voler vendere nulla nei bucket in surplus, quindi il rinforzo
-            # "a capitale nuovo" (budget = l'intero gap, come se si
-            # investissero soldi freschi) va calcolato e mostrato SEMPRE,
-            # non solo come fallback quando il ricavato non basta.
-            "reinforcement_da_vendite": _reinforcement_result(bucket, quota_budget, amount_eur),
-            "reinforcement_capitale_nuovo": _reinforcement_result(bucket, amount_eur, amount_eur),
+            "reinforcement": {**result, "coverage_pct": coverage_pct},
         }
 
     return plan

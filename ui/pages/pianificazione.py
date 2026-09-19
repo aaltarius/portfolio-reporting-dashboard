@@ -314,226 +314,123 @@ def _tax_friction_phrase(pl_eur: float, is_gov_bond: bool) -> str:
     return "nessuna plus/minusvalenza &middot; imposta 0"
 
 
-def _build_rebalancing_reinforcement_rows(
-    scenario_label: str, scenario: dict[str, Any], tone: str, amount_eur: float,
-) -> tuple[list[str], int]:
-    """Righe per UNO scenario di rinforzo (vendite o capitale nuovo): una
-    riga di sotto-intestazione con la copertura di QUESTO scenario, poi le
-    righe strumento, poi una nota se la copertura e' parziale. Estratta a
-    parte perche' ora ci sono SEMPRE due scenari indipendenti per bucket
-    in deficit (vedi build_rebalancing_plan) - feedback utente 2026-09-18:
-    "e se non voglio vendere?!", il rinforzo non puo' presupporre solo il
-    ricavato dalle vendite."""
-    candidates = scenario["candidates"]
-    coverage_pct = float(scenario["coverage_pct"])
-    severity = "ok" if coverage_pct >= 0.999 else ("warn" if coverage_pct >= 0.5 else "bad")
-    rows = [(
-        # bucket-alloc-total-row: unica classe esistente pensata per una
-        # riga di sotto-intestazione in grassetto con un filo separatore -
-        # niente override inline, niente stile inventato.
-        '<tr class="bucket-alloc-total-row"><td colspan="4">'
-        f'{scenario_label} &middot; '
-        f'<span class="bucket-alloc-scost {severity}">copertura {fmt_pct_it(coverage_pct, 0)}</span>'
-        '</td></tr>'
-    )]
-    row_htmls: list[str] = []
-    for c in candidates:
-        ticker = escape(str(c["ticker"]))
-        name = escape(str(c.get("name", "")))
-        voto = c.get("voto")
-        importo_eur = float(c.get("importo_eur", 0.0))
-        quote = c.get("quote")
-        caption = name
-        if voto is not None:
-            caption = f"{name} &middot; voto SATOR {float(voto):.1f}" if name else f"voto SATOR {float(voto):.1f}"
-        perche_raw = str(c.get("perche", ""))
-        perche_html = escape(perche_raw) if perche_raw else ""
-        # Numero di quote esplicito (feedback utente: "mi dice di comprare
-        # ma non mi parla di quote") - l'importo in euro da solo non basta
-        # per passare un ordine, serve sapere QUANTI pezzi comprare.
-        azione_label = (
-            f"COMPRA {int(quote)} {'quota' if int(quote) == 1 else 'quote'} ({fmt_eur_it(importo_eur, 2)})"
-            if quote else f"COMPRA {fmt_eur_it(importo_eur, 2)}"
-        )
-        row_htmls.append(f'''
-                <tr class="bucket-alloc-instrument-row" style="--tone:{tone}">
-                  <td class="bucket-alloc-ticker">{ticker}<span class="bucket-alloc-mini-caption">{caption}</span></td>
-                  <td class="num"><span class="bucket-alloc-scost ok">{azione_label}</span></td>
-                  <td>{perche_html}</td>
-                  <td>&mdash;</td>
-                </tr>''')
-    rows.extend(row_htmls or [
-        f'<tr class="bucket-alloc-instrument-row" style="--tone:{tone}">'
-        '<td colspan="4">Nessun candidato disponibile per questo scenario.</td></tr>'
-    ])
-    altri_count = int(scenario.get("altri_count", 0))
-    if altri_count > 0:
-        altri_eur = float(scenario.get("altri_eur", 0.0))
-        rows.append(
-            '<tr class="bucket-alloc-instrument-row"><td colspan="4">'
-            f"<span class=\"bucket-alloc-mini-caption\">+ altri {altri_count} strumenti per "
-            f"{fmt_eur_it(altri_eur, 2)} (gia' inclusi nella copertura sopra, non elencati per "
-            "brevita').</span></td></tr>"
-        )
-    if coverage_pct < 0.999:
-        # Causa onesta, non solo il numero: dopo aver gia' contato TUTTE le
-        # righe che l'allocatore ha finanziato (non solo quelle mostrate,
-        # vedi altri_count sopra), un gap residuo significa che non ci sono
-        # abbastanza strumenti che superano le soglie di qualita' (voto
-        # minimo per aprire una linea nuova, cap di concentrazione per
-        # riga) per assorbire l'intero budget - non un errore di calcolo.
-        rows.append(
-            '<tr class="bucket-alloc-instrument-row"><td colspan="4">'
-            "<span class=\"bucket-alloc-mini-caption\">Copertura parziale: non ci sono "
-            "abbastanza strumenti che superano le soglie di qualit&agrave; (voto minimo per "
-            "una linea nuova, cap di concentrazione per riga) per assorbire l'intero gap a "
-            f"target ({fmt_eur_it(amount_eur, 2)}) - non e' un taglio di visualizzazione, "
-            "e' gi&agrave; il totale di tutto cio' che l'algoritmo ha trovato valido."
-            "</span></td></tr>"
-        )
-    return rows, len(candidates)
-
-
 def _build_rebalancing_html(plan: dict[str, dict], theme) -> str:
-    """Blocco 'ribilanciamento': UNA sola tabella con tutti i bucket fuori
-    banda (non piu' una card/tabella separata per bucket - richiesto
-    esplicitamente dal proprietario del repo, che l'aveva chiesto fin dal
-    primo giro di design di questa feature). Ogni bucket compare come una
-    riga di intestazione (bucket-alloc-bucket-row) seguita dalle sue righe
-    strumento; le note contestuali (titoli di Stato, esposizione
-    frazionata, copertura parziale) diventano righe a tutta larghezza
-    subito dopo le righe del bucket a cui si riferiscono, non piu' testo
-    fuori tabella legato a una card che non esiste piu'. Un bucket in
-    deficit mostra DUE scenari di rinforzo indipendenti (vendite vs
-    capitale nuovo - feedback utente: "e se non voglio vendere?!"), non
-    uno solo. "Perche'" e "Attrito fiscale" sono testo normale di cella
-    (non bucket-alloc-mini-caption): in questa tabella sono contenuto
-    primario da leggere, non una didascalia secondaria - la classe
-    mini-caption (piccola, opaca) resta solo per il nome esteso dello
-    strumento sotto il ticker, dove e' davvero secondario. Stesse classi
-    CSS gia' esistenti (bucket-alloc-*, definite in ui/styles.py): zero
-    CSS nuovo, nessuna icona inventata."""
+    """Blocco 'ribilanciamento': UNA sola tabella piatta, una riga per
+    strumento, senza raggruppamento per bucket Core/Difensivo/Satellite -
+    riscritta da zero su feedback esplicito del proprietario del repo
+    (2026-09-19: "non vedere questa cazzo di divisione C/D/S che non ha
+    senso nel ribilanciamento... vorrei vedere tutti gli strumenti").
+    Ogni strumento coinvolto nel ribilanciamento (posseduto in un bucket
+    fuori banda, o candidato a un acquisto) compare con un verdetto
+    (VENDI/COMPRA/NON TOCCARE/TIENI) come badge colorato - stesse classi
+    bucket-alloc-scost ok/warn/bad gia' usate altrove nell'app, nessun
+    colore o icona nuova - e un motivo di una riga, non un paragrafo.
+    "Tieni" include ESPLICITAMENTE gli strumenti classificati ma non
+    scelti (coperti da candidati con priorita' maggiore) e quelli esclusi
+    a monte (NO_SELL, toggle attivo, penalizzerebbe un altro bucket in
+    deficit): niente sparisce piu' in silenzio."""
     if not plan:
         return ""
-    body_rows: list[str] = []
-    total_ops = 0
+    _PRIORITA_VERDETTO = {"vendi": 0, "compra": 1, "non_toccare": 2, "tieni": 3}
+    righe: list[dict[str, Any]] = []
+
     for bucket in ("Core", "Difensivo", "Satellite"):
         info = plan.get(bucket)
         if not info:
             continue
-        tone = bucket_color(bucket, theme)
         if info["status"] == "surplus":
             reduction = info["reduction"]
-            candidates = reduction["candidates"]
-            # Un candidato non_toccare=True e' un'anti-raccomandazione ("NON
-            # TOCCARE", riga distinta piu' sotto): il contrario esatto di
-            # un'operazione proposta, quindi va escluso dal conteggio del
-            # footer (trovato in review: contarlo come operazione era una
-            # dichiarazione fattualmente errata).
-            total_ops += sum(1 for c in candidates if not c.get("non_toccare") or c.get("forzato"))
-            coverage_pct = reduction["coverage_pct"]
-            severity = "ok" if coverage_pct >= 0.999 else ("warn" if coverage_pct >= 0.5 else "bad")
-            body_rows.append(f'''
-                <tr class="bucket-alloc-bucket-row" style="--tone:{tone}">
-                  <td colspan="4"><span class="bucket-alloc-bucket-name"><span class="dot" style="--tone:{tone}"></span>{escape(bucket)} fuori banda: eccesso {fmt_eur_it(info["amount_eur"], 2)} &middot; <span class="bucket-alloc-scost {severity}">copertura {fmt_pct_it(coverage_pct, 0)}</span></span></td>
-                </tr>''')
-            row_htmls: list[str] = []
-            for c in candidates:
-                ticker = escape(str(c["ticker"]))
-                name = escape(str(c.get("name", "")))
-                perche = escape(str(c.get("perche", "")))
-                contributo_eur = float(c.get("contributo_eur", 0.0))
-                quota_eur = float(c.get("quota_suggerita_eur", 0.0))
-                quota_vendita_eur = float(c.get("quota_vendita_eur", quota_eur))
-                pl_eur = float(c.get("pl_eur", 0.0))
-                is_gov_bond = bool(c.get("is_gov_bond"))
+            for ordine, c in enumerate(reduction["candidates"]):
                 non_toccare = bool(c.get("non_toccare"))
-                attrito = _tax_friction_phrase(pl_eur, is_gov_bond)
+                forzato = bool(c.get("forzato"))
+                quote_vendita = int(c.get("quote_vendita", 0))
+                quota_vendita_eur = float(c.get("quota_vendita_eur", 0.0))
                 if non_toccare:
-                    row_class = "bucket-alloc-watchlist-row"
-                    forzato = bool(c.get("forzato"))
-                    if forzato:
-                        azione_html = (
-                            '<span class="bucket-alloc-scost bad">NON TOCCARE'
-                            f' &mdash; forzato: vendi {fmt_eur_it(quota_vendita_eur, 2)}</span>'
-                        )
-                    else:
-                        azione_html = '<span class="bucket-alloc-scost bad">NON TOCCARE</span>'
+                    verdetto = "non_toccare"
+                    azione_label = (
+                        f"NON TOCCARE &mdash; forzato: vendi {quote_vendita} "
+                        f"{'quota' if quote_vendita == 1 else 'quote'} ({fmt_eur_it(quota_vendita_eur, 2)})"
+                        if forzato else "NON TOCCARE"
+                    )
                 else:
-                    row_class = "bucket-alloc-instrument-row"
-                    vendi_tutto = abs(contributo_eur - quota_eur) < 0.01
-                    azione_label = "VENDI TUTTO" if vendi_tutto else "RIDUCI"
-                    azione_html = f'<span class="bucket-alloc-scost ok">{azione_label} {fmt_eur_it(quota_vendita_eur, 2)}</span>'
-                row_htmls.append(f'''
-                <tr class="{row_class}" style="--tone:{tone}">
+                    verdetto = "vendi"
+                    azione_label = (
+                        f"VENDI {quote_vendita} {'quota' if quote_vendita == 1 else 'quote'} "
+                        f"({fmt_eur_it(quota_vendita_eur, 2)})"
+                    )
+                attrito = _tax_friction_phrase(float(c.get("pl_eur", 0.0)), bool(c.get("is_gov_bond")))
+                righe.append({
+                    "verdetto": verdetto, "ordine": ordine, "ticker": c["ticker"],
+                    "name": c.get("name", ""), "azione_label": azione_label,
+                    "motivo": c.get("perche", ""), "attrito": attrito,
+                })
+            for ordine, t in enumerate(reduction["tenuti"]):
+                righe.append({
+                    "verdetto": "tieni", "ordine": ordine, "ticker": t["ticker"],
+                    "name": t.get("name", ""), "azione_label": "TIENI",
+                    "motivo": t.get("motivo", ""), "attrito": "",
+                })
+        else:
+            reinforcement = info["reinforcement"]
+            for ordine, c in enumerate(reinforcement["candidates"]):
+                quote = int(c.get("quote", 0))
+                importo_eur = float(c.get("importo_eur", 0.0))
+                azione_label = (
+                    f"COMPRA {quote} {'quota' if quote == 1 else 'quote'} ({fmt_eur_it(importo_eur, 2)})"
+                )
+                righe.append({
+                    "verdetto": "compra", "ordine": ordine, "ticker": c["ticker"],
+                    "name": c.get("name", ""), "azione_label": azione_label,
+                    "motivo": c.get("perche", ""), "attrito": "",
+                })
+
+    if not righe:
+        return ""
+
+    righe.sort(key=lambda r: (_PRIORITA_VERDETTO[r["verdetto"]], r["ordine"]))
+
+    _SEVERITY = {"vendi": "bad", "compra": "ok", "non_toccare": "warn", "tieni": ""}
+    body_rows: list[str] = []
+    conteggio_azioni = {"vendi": 0, "compra": 0, "non_toccare": 0, "tieni": 0}
+    for r in righe:
+        conteggio_azioni[r["verdetto"]] += 1
+        severity = _SEVERITY[r["verdetto"]]
+        ticker = escape(str(r["ticker"]))
+        name = escape(str(r["name"]))
+        azione_html = (
+            f'<span class="bucket-alloc-scost {severity}">{r["azione_label"]}</span>'
+            if severity else
+            f'<span class="bucket-alloc-mini-caption">{r["azione_label"]}</span>'
+        )
+        motivo = escape(str(r["motivo"]))
+        attrito_html = (
+            f'<span class="bucket-alloc-mini-caption">{r["attrito"]}</span>' if r["attrito"] else ""
+        )
+        row_class = "bucket-alloc-watchlist-row" if r["verdetto"] == "tieni" else "bucket-alloc-instrument-row"
+        body_rows.append(f'''
+                <tr class="{row_class}">
                   <td class="bucket-alloc-ticker">{ticker}<span class="bucket-alloc-mini-caption">{name}</span></td>
                   <td class="num">{azione_html}</td>
-                  <td>{perche}</td>
-                  <td>{attrito}</td>
+                  <td>{motivo}{attrito_html}</td>
                 </tr>''')
-            body_rows.extend(row_htmls or [
-                f'<tr class="bucket-alloc-instrument-row" style="--tone:{tone}">'
-                '<td colspan="4">Nessun candidato disponibile (esclusi NO_SELL e strumenti esclusi dal toggle).</td></tr>'
-            ])
-            note_texts = []
-            if any(c.get("is_gov_bond") for c in candidates):
-                note_texts.append(
-                    "Include titoli di Stato: venderli prima della scadenza espone al prezzo di "
-                    "mercato del momento (rischio tasso), non equivale a portarli a scadenza."
-                )
-            if any(float(c.get("frac", 1.0)) < 0.999 for c in candidates):
-                note_texts.append(
-                    "Alcuni strumenti sono esposti anche su altri bucket: l'importo mostrato "
-                    "&egrave; quanto vendere in totale (non solo la quota di questo bucket), "
-                    "perch&eacute; la vendita riduce l'esposizione ovunque in proporzione."
-                )
-            if coverage_pct < 0.999:
-                note_texts.append(
-                    "Copertura parziale: gli strumenti disponibili non bastano a rientrare in "
-                    "banda. Valuta se intervenire anche su strumenti esclusi (NO_SELL o dal "
-                    "toggle 'Escludi BTP/GOV')."
-                )
-            for note_text in note_texts:
-                body_rows.append(
-                    '<tr class="bucket-alloc-instrument-row"><td colspan="4">'
-                    f'<span class="bucket-alloc-mini-caption">{note_text}</span></td></tr>'
-                )
-        else:
-            amount_eur = float(info["amount_eur"])
-            body_rows.append(f'''
-                <tr class="bucket-alloc-bucket-row" style="--tone:{tone}">
-                  <td colspan="4"><span class="bucket-alloc-bucket-name"><span class="dot" style="--tone:{tone}"></span>{escape(bucket)} fuori banda: mancano {fmt_eur_it(amount_eur, 2)}</span></td>
-                </tr>''')
-            rows_vendite, n_vendite = _build_rebalancing_reinforcement_rows(
-                "Opzione A: con il ricavato delle vendite", info["reinforcement_da_vendite"], tone, amount_eur,
-            )
-            rows_capitale, n_capitale = _build_rebalancing_reinforcement_rows(
-                "Opzione B: con capitale nuovo (nessuna vendita necessaria)",
-                info["reinforcement_capitale_nuovo"], tone, amount_eur,
-            )
-            # Le due opzioni sono ALTERNATIVE (scegli una, non entrambe):
-            # sommarle in total_ops le farebbe contare come se andassero
-            # eseguite entrambe. Il conteggio resta solo sul lato riduzione
-            # (sempre cumulativo, mai alternativo); il footer segnala a
-            # parole che esistono opzioni di rinforzo, senza contarle.
-            body_rows.extend(rows_vendite)
-            body_rows.extend(rows_capitale)
-    footer_word = "operazione proposta" if total_ops == 1 else "operazioni proposte"
-    footer_text = f"Piano complessivo: {total_ops} {footer_word} in totale sui bucket fuori banda"
-    footer_text += (
-        " (piu' le opzioni di rinforzo sui bucket in deficit: scegli una tra vendite o capitale "
-        "nuovo, non sono cumulative)."
-        if any(plan.get(b, {}).get("status") == "deficit" for b in ("Core", "Difensivo", "Satellite"))
-        else "."
-    )
+
+    footer_bits = []
+    if conteggio_azioni["vendi"]:
+        footer_bits.append(f'{conteggio_azioni["vendi"]} da vendere')
+    if conteggio_azioni["compra"]:
+        footer_bits.append(f'{conteggio_azioni["compra"]} da comprare')
+    if conteggio_azioni["non_toccare"]:
+        footer_bits.append(f'{conteggio_azioni["non_toccare"]} da non toccare')
+    if conteggio_azioni["tieni"]:
+        footer_bits.append(f'{conteggio_azioni["tieni"]} da tenere')
+    footer_text = f"{len(righe)} strumenti coinvolti: " + ", ".join(footer_bits) + "."
     body_rows.append(
-        '<tr class="bucket-alloc-instrument-row"><td colspan="4">'
+        '<tr class="bucket-alloc-instrument-row"><td colspan="3">'
         f'<span class="bucket-alloc-mini-caption">{footer_text}</span></td></tr>'
     )
     return (
         '<div class="bucket-alloc-card"><table class="bucket-alloc-table">'
-        '<thead><tr><th>Strumento</th><th class="num">Azione</th><th>Perch&eacute;</th>'
-        '<th>Attrito fiscale</th></tr></thead>'
+        '<thead><tr><th>Strumento</th><th class="num">Verdetto</th><th>Motivo</th></tr></thead>'
         f'<tbody>{"".join(body_rows)}</tbody></table></div>'
     )
 
