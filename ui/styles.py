@@ -471,9 +471,9 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
   box-shadow:var(--ptf-shadow);
   overflow:hidden;
 }
-.bucket-alloc-table{width:100%;border-collapse:collapse;font-size:0.86rem}
+.bucket-alloc-table{width:100%;border-collapse:collapse;font-size:0.95rem}
 .bucket-alloc-table thead th{
-  text-align:left;padding:10px 14px;font-weight:800;font-size:0.72rem;
+  text-align:left;padding:10px 14px;font-weight:800;font-size:0.78rem;
   letter-spacing:.04em;text-transform:uppercase;color:var(--ptf-muted);
   border-bottom:1px solid var(--ptf-border);
 }
@@ -529,7 +529,7 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
 .bucket-alloc-mini-fill{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--tone);opacity:.8}
 .bucket-alloc-instrument-row.warn .bucket-alloc-mini-fill{background:var(--ptf-warning)}
 .bucket-alloc-instrument-row.bad .bucket-alloc-mini-fill{background:var(--ptf-danger)}
-.bucket-alloc-mini-caption{display:block;margin-top:3px;font-size:0.72rem;color:var(--ptf-muted)}
+.bucket-alloc-mini-caption{display:block;margin-top:3px;font-size:0.82rem;color:var(--ptf-muted)}
 .bucket-alloc-watchlist-row td{
   padding:7px 14px;border-top:1px dashed color-mix(in srgb, var(--ptf-border) 55%, transparent);
   opacity:.55;

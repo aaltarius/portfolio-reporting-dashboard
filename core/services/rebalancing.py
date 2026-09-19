@@ -18,6 +18,7 @@ import pandas as pd
 from core.domain.bonds import calc_ytm_and_duration
 from core.finance import build_risk_contribution_table
 from core.services.instrument_clustering import _build_redundant_pairs
+from core.services.sator_explain import build_sator_explanations
 from core.services.sator import (
     _suggested_quotes_by_bucket,
     compute_bucket_bands,
@@ -425,20 +426,40 @@ def build_reinforcement_candidates(
     portfolio_value: float,
     *,
     top_n: int = 3,
-) -> list[dict[str, Any]]:
-    """Candidati al rinforzo per un bucket in deficit, con importo reale
-    riusando l'allocatore SATOR gia' esistente (_suggested_quotes_by_bucket,
-    stesso motore della pagina SATOR principale, cap di concentrazione
-    max_share_per_line gia' rispettati). Un candidato NON posseduto viene
-    proposto solo se (a) il suo voto supera di almeno
-    _MARGINE_VOTO_LINEA_NUOVA il migliore posseduto nello stesso bucket, E
-    (b) l'importo proposto raggiunge max(_QUOTA_MINIMA_LINEA_NUOVA_EUR,
+) -> dict[str, Any]:
+    """Candidati al rinforzo per un bucket in deficit, con importo E
+    QUOTE reali (numero di pezzi, non solo euro) riusando l'allocatore
+    SATOR gia' esistente (_suggested_quotes_by_bucket, stesso motore della
+    pagina SATOR principale, cap di concentrazione max_share_per_line gia'
+    rispettati). Un candidato NON posseduto viene proposto solo se (a) il
+    suo voto supera di almeno _MARGINE_VOTO_LINEA_NUOVA il migliore
+    posseduto nello stesso bucket, E (b) l'importo proposto raggiunge
+    max(_QUOTA_MINIMA_LINEA_NUOVA_EUR,
     _QUOTA_MINIMA_LINEA_NUOVA_FRAZIONE_PORTAFOGLIO * portfolio_value) -
     altrimenti si preferisce rinforzare una posizione gia' esistente
     piuttosto che aprire una linea nuova troppo piccola per essere
-    gestita."""
+    gestita.
+
+    Ogni candidato porta un campo `perche'` che riusa
+    core.services.sator_explain.build_sator_explanations - la STESSA
+    scomposizione nei 5 fattori del voto SATOR (fit strategico, MOMENTUM,
+    efficienza di rischio, diversificazione, efficienza di costo) gia'
+    mostrata altrove nell'app, non una frase generica: nomina esplicitamente
+    quando il momentum e' uno dei fattori trainanti (o non lo e').
+
+    Ritorna un dict {"candidates": [...top_n, per la UI...], "covered_eur":
+    somma EFFETTIVA di tutte le righe finanziate dall'allocatore (non solo
+    quelle mostrate), "altri_count"/"altri_eur": quanto resta fuori dal
+    top_n mostrato. Bug reale trovato con dati reali (feedback utente
+    2026-09-18/19): prima, covered_eur/coverage_pct venivano calcolati SOLO
+    sulle top_n righe mostrate, scartando silenziosamente la stragrande
+    maggioranza di quanto l'allocatore aveva davvero deciso di investire
+    (sul portafoglio reale: allocatore al 99.98% del budget, coverage
+    mostrata al 2% per il solo taglio a top_n=3) - la tabella sembrava
+    "non arrivare mai alla cifra indicata" per un taglio di visualizzazione
+    spacciato per un limite reale del budget."""
     if budget_eur <= 0 or ranking is None or ranking.empty:
-        return []
+        return {"candidates": [], "covered_eur": 0.0, "altri_count": 0, "altri_eur": 0.0}
     cfg = ensure_sator_settings(settings)
     bucket_deficits = {bucket: budget_eur}
     quantita = _suggested_quotes_by_bucket(
@@ -461,6 +482,9 @@ def build_reinforcement_candidates(
         _QUOTA_MINIMA_LINEA_NUOVA_EUR,
         _QUOTA_MINIMA_LINEA_NUOVA_FRAZIONE_PORTAFOGLIO * portfolio_value,
     )
+    spiegazioni_by_ticker = {
+        e.ticker: e.summary_text for e in build_sator_explanations(ranking)
+    }
 
     out: list[dict[str, Any]] = []
     for i in subset_idx:
@@ -476,15 +500,46 @@ def build_reinforcement_candidates(
             or importo < soglia_importo_linea_nuova
         ):
             continue
+        ticker = str(row.get("ticker"))
+        spiegazione = spiegazioni_by_ticker.get(ticker, "")
+        if in_portfolio:
+            perche = f"Gia' in portafoglio, voto SATOR {voto:.1f}."
+        else:
+            perche = (
+                f"Voto SATOR {voto:.1f}, superiore di almeno {_MARGINE_VOTO_LINEA_NUOVA:.1f} punti "
+                f"al migliore gia' posseduto in questo bucket ({miglior_voto_posseduto:.1f})."
+            )
+        if spiegazione:
+            perche = f"{perche} {spiegazione}"
         out.append({
-            "ticker": row.get("ticker"),
+            "ticker": ticker,
             "name": row.get("name"),
             "voto": voto,
             "in_portfolio": in_portfolio,
+            "quote": qty,
+            "unit_price": float(row.get("unit_price", 0.0)),
             "importo_eur": importo,
+            "perche": perche,
         })
-    out.sort(key=lambda c: c["voto"], reverse=True)
-    return out[:top_n]
+    # Tie-break su importo_eur decrescente (non solo voto): con budget
+    # grandi (es. scenario "capitale nuovo") piu' candidati arrivano allo
+    # stesso voto, e un ordinamento per il solo voto tronca a top_n in un
+    # ordine arbitrario (quello originale del ranking) - potendo scartare
+    # un'opportunita' di importo molto maggiore a favore di spiccioli con
+    # lo stesso voto. Trovato con dati reali: senza questo tie-break,
+    # "capitale nuovo" mostrava gli stessi 3 importi minuscoli di
+    # "con il ricavato delle vendite" invece di sfruttare il budget piu'
+    # ampio, sembrando (a torto) che il budget in piu' non servisse a nulla.
+    out.sort(key=lambda c: (c["voto"], c["importo_eur"]), reverse=True)
+    covered_eur = sum(float(c["importo_eur"]) for c in out)
+    shown = out[:top_n]
+    altri = out[top_n:]
+    return {
+        "candidates": shown,
+        "covered_eur": covered_eur,
+        "altri_count": len(altri),
+        "altri_eur": sum(float(c["importo_eur"]) for c in altri),
+    }
 
 
 def build_rebalancing_plan(
@@ -565,32 +620,59 @@ def build_rebalancing_plan(
 
     deficit_buckets = {b: i for b, i in drift.items() if i["status"] == "deficit"}
     total_deficit = sum(float(i["amount_eur"]) for i in deficit_buckets.values())
-    # NOTA ONESTA (Task 7): questo lascia ancora DUE chiamate a
-    # run_sator_analysis quando c'e' un surplus da reinvestire (una per il
-    # ranking di riduzione a budget 0, una per il ranking di rinforzo al
-    # budget reale total_covered) - non piu' le 2-3 chiamate ridondanti
-    # della v1 (una per bucket in deficit), ma non ancora la singola
-    # chiamata ideale descritta nello spec. Consolidarle in una sola
-    # richiederebbe verificare che il ranking a budget 0 e quello al budget
-    # reale producano un `voto` sostanzialmente identico (_score_cost usa il
-    # budget passato a run_sator_analysis) - follow-up separato, non
-    # bloccante per questo task.
+    # Feedback utente 2026-09-18: "e se non voglio vendere?!" - il rinforzo
+    # non puo' presupporre SOLO il ricavato dalle vendite in altri bucket.
+    # Il ranking di rinforzo va quindi calcolato ogni volta che esiste un
+    # deficit, non solo quando total_covered > 0 (altrimenti lo scenario
+    # "capitale nuovo" sotto non avrebbe alcun ranking su cui lavorare se
+    # non c'e' nessun bucket in surplus). Budget di riferimento per il
+    # costo SATOR (_score_cost) = il piu' grande tra ricavato reale e gap
+    # totale a nuovo capitale: un limite superiore plausibile per entrambi
+    # gli scenari, non un valore arbitrario.
     ranking_per_rinforzo = (
-        run_sator_analysis(data, settings, budget=total_covered).get("ranking")
-        if total_covered > 0 else None
+        run_sator_analysis(data, settings, budget=max(total_covered, total_deficit)).get("ranking")
+        if total_deficit > 0 else None
     )
-    for bucket, info in deficit_buckets.items():
-        quota_budget = (
-            total_covered * (float(info["amount_eur"]) / total_deficit) if total_deficit > 0 else 0.0
-        )
-        quota_budget = min(quota_budget, float(info["amount_eur"]))  # mai oltre il gap-a-target
-        reinforcement = (
+
+    def _reinforcement_result(bucket: str, budget_eur: float, amount_eur: float) -> dict[str, Any]:
+        result = (
             build_reinforcement_candidates(
-                ranking_per_rinforzo, data, settings, bucket, quota_budget,
+                ranking_per_rinforzo, data, settings, bucket, budget_eur,
                 current_mix, objective, portfolio_value,
             )
-            if ranking_per_rinforzo is not None else []
+            if ranking_per_rinforzo is not None and budget_eur > 0 else
+            {"candidates": [], "covered_eur": 0.0, "altri_count": 0, "altri_eur": 0.0}
         )
-        plan[bucket] = {**info, "budget_eur": quota_budget, "reinforcement": reinforcement}
+        # Copertura del lato rinforzo (stessa semantica del lato riduzione,
+        # trovato mancante in un feedback utente 2026-09-18: senza questo
+        # numero, un elenco di acquisti che non arriva a "mancano X euro"
+        # sembra un consiglio sbagliato invece di una proposta onestamente
+        # parziale). covered_eur qui e' GIA' la somma di TUTTE le righe che
+        # l'allocatore ha finanziato (non solo le top_n mostrate - vedi
+        # build_reinforcement_candidates), quindi coverage_pct riflette il
+        # budget davvero deployabile, non un taglio di visualizzazione.
+        # Denominatore = amount_eur (il gap A TARGET), non budget_eur:
+        # mostra la verita' anche quando la causa della copertura bassa e'
+        # il budget insufficiente.
+        coverage_pct = min(1.0, result["covered_eur"] / amount_eur) if amount_eur > 0 else 0.0
+        return {**result, "coverage_pct": coverage_pct}
+
+    for bucket, info in deficit_buckets.items():
+        amount_eur = float(info["amount_eur"])
+        quota_budget = (
+            total_covered * (amount_eur / total_deficit) if total_deficit > 0 else 0.0
+        )
+        quota_budget = min(quota_budget, amount_eur)  # mai oltre il gap-a-target
+        plan[bucket] = {
+            **info,
+            "budget_eur": quota_budget,
+            # Due scenari indipendenti, non uno solo: l'utente potrebbe non
+            # voler vendere nulla nei bucket in surplus, quindi il rinforzo
+            # "a capitale nuovo" (budget = l'intero gap, come se si
+            # investissero soldi freschi) va calcolato e mostrato SEMPRE,
+            # non solo come fallback quando il ricavato non basta.
+            "reinforcement_da_vendite": _reinforcement_result(bucket, quota_budget, amount_eur),
+            "reinforcement_capitale_nuovo": _reinforcement_result(bucket, amount_eur, amount_eur),
+        }
 
     return plan
