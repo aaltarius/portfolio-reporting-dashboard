@@ -483,6 +483,7 @@ def build_reinforcement_candidates(
     objective: dict[str, float],
     portfolio_value: float,
     surplus_buckets: frozenset[str] = frozenset(),
+    already_used_tickers: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Candidati al rinforzo per un bucket in deficit, con importo E
     QUOTE reali (numero di pezzi, non solo euro) riusando l'allocatore
@@ -561,6 +562,24 @@ def build_reinforcement_candidates(
         subset_idx = [
             i for i in subset_idx
             if str(work.iloc[i].get("_bucket")) not in surplus_buckets
+        ]
+
+    # Dedup cross-bucket (bug reale utente 2026-09-21: "perche' mi ritrovo
+    # 2 volte nella tabella in ribilanciamento il consiglio di comprare 4
+    # quote di EM13.MI?!"). Uno strumento con esposizione frazionata su piu'
+    # bucket (normale, vedi CDS in auto_instrument_bucket_exposure) risulta
+    # eleggibile in OGNI chiamata isolata a questa funzione (una per bucket
+    # in deficit, vedi build_rebalancing_plan) perche' bucket_deficits ha
+    # sempre una sola chiave: il filtro surplus_buckets sopra esclude solo
+    # chi ha la propria maggioranza reale in un bucket in SURPLUS, non fa
+    # nulla quando i bucket a cui appartiene sono ENTRAMBI in deficit. Qui
+    # si esclude chi e' gia' stato proposto da una chiamata precedente per
+    # un altro bucket (il chiamante passa i ticker gia' usati, in ordine
+    # deterministico Core/Difensivo/Satellite - il primo bucket vince).
+    if already_used_tickers:
+        subset_idx = [
+            i for i in subset_idx
+            if str(work.iloc[i].get("ticker")) not in already_used_tickers
         ]
 
     posseduti_voto = work.loc[
@@ -766,6 +785,8 @@ def build_reinforcement_candidates(
             row_i = work.iloc[i]
             if str(row_i.get("ticker")) == primario_ticker:
                 continue
+            if str(row_i.get("ticker")) in already_used_tickers:
+                continue
             if _asset_class_from_nature(row_i.get("nature")) == primaria_asset_class:
                 continue
             esito_alt = _prova_concentrazione(row_i, budget_alternativa)
@@ -897,6 +918,14 @@ def build_rebalancing_plan(
         if total_deficit > 0 else None
     )
 
+    # Ticker gia' proposti come rinforzo in un bucket precedente di questo
+    # stesso ciclo (bug reale utente 2026-09-21, vedi commento su
+    # already_used_tickers in build_reinforcement_candidates): uno strumento
+    # a esposizione frazionata su piu' bucket, entrambi in deficit, non deve
+    # comparire due volte con lo stesso consiglio. Ordine = deficit_buckets
+    # .items() = ordine di _BUCKETS (Core, Difensivo, Satellite), stesso
+    # principio deterministico gia' usato per venduto_reale_by_ticker sopra.
+    reinforced_tickers: set[str] = set()
     for bucket, info in deficit_buckets.items():
         amount_eur = float(info["amount_eur"])
         quota_budget = (
@@ -908,10 +937,12 @@ def build_rebalancing_plan(
                 ranking_per_rinforzo, data, settings, bucket, quota_budget,
                 current_mix, objective, portfolio_value,
                 surplus_buckets=surplus_bucket_names,
+                already_used_tickers=frozenset(reinforced_tickers),
             )
             if ranking_per_rinforzo is not None and quota_budget > 0 else
             {"candidates": [], "covered_eur": 0.0, "budget_insufficiente": True}
         )
+        reinforced_tickers.update(str(c["ticker"]) for c in result["candidates"])
         # Copertura del lato rinforzo (stessa semantica del lato riduzione):
         # covered_eur e' GIA' la somma di TUTTI i candidati restituiti
         # (nessun taglio a top_n - vedi build_reinforcement_candidates),
