@@ -119,7 +119,7 @@ def _migrate_json_to_data_dir():
 # ---------------------------------------------------------------------------
 # Domain constants
 # ---------------------------------------------------------------------------
-APP_VERSION    = "5.0"
+APP_VERSION    = "5.1"
 SCHEMA_VERSION = "3.3"
 
 TIPI_EVENTO_PORTAFOGLIO = [

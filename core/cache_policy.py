@@ -713,6 +713,44 @@ register_cache_artifact(
 
 register_cache_artifact(
     CacheArtifactSpec(
+        artifact_id="sator.ranking_cache",
+        page_id="shared",
+        layer="ranking",
+        level="L3",
+        owner="core.sator_cache.get_cached_sator_analysis",
+        storage="page_artifact",
+        version="sator-ranking-cache-v1",
+        dependencies=("portfolio_data_signature", "sator_settings", "budget", "selected_categories", "include_fee_instruments"),
+        clear_group="sator",
+        stale_policy="rebuild_on_data_or_sator_settings_or_budget_change",
+        log_page="Pianificazione",
+        description="Cache condivisa del ranking SATOR (run_sator_analysis), usata da Pianificazione e dalla pagina SATOR standalone (form-server): prima non esisteva alcuna cache su questo calcolo, rifatto da zero ad ogni rerun anche quando nulla di rilevante per SATOR era cambiato.",
+        prebuild=False,
+        status="registered_provider",
+    )
+)
+
+register_cache_artifact(
+    CacheArtifactSpec(
+        artifact_id="sator.rebalancing_plan_cache",
+        page_id="shared",
+        layer="rebalancing_plan",
+        level="L3",
+        owner="core.sator_cache.get_cached_rebalancing_plan",
+        storage="page_artifact",
+        version="sator-rebalancing-plan-cache-v1",
+        dependencies=("portfolio_data_signature", "sator_settings", "portfolio_objective", "exclude_tickers"),
+        clear_group="sator",
+        stale_policy="rebuild_on_data_or_objective_or_sator_settings_or_exclude_change",
+        log_page="Pianificazione",
+        description="Cache del piano di ribilanciamento (build_rebalancing_plan), che internamente richiama run_sator_analysis due volte: mai cacheata prima, principale voce del costo di render di Pianificazione (~6s su ogni rerun).",
+        prebuild=False,
+        status="registered_provider",
+    )
+)
+
+register_cache_artifact(
+    CacheArtifactSpec(
         artifact_id="market_data.lookup_cache",
         page_id="mercati",
         layer="market_lookup",

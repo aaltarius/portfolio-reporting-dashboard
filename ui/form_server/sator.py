@@ -1776,19 +1776,22 @@ async def post_sator(
     if azione == "analizza":
         try:
             import pandas as pd
-            from persistence.storage import load_data as _ld, load_settings as _ls, apply_privacy_filter
-            from core.services.sator import run_sator_analysis, build_sator_matrix_frame
+            from persistence.storage import APP_VERSION, SCHEMA_VERSION, load_data as _ld, load_settings as _ls, apply_privacy_filter
+            from core.cache_signatures import build_portfolio_data_signature
+            from core.sator_cache import get_cached_sator_analysis
+            from core.services.sator import build_sator_matrix_frame
 
             settings = _ls()
             data = apply_privacy_filter(_ld(), settings)
             budget_f = float(budget or 5000)
             ml_i = max(1, min(10, int(max_lines or 5)))
 
-            analysis = run_sator_analysis(
+            analysis = get_cached_sator_analysis(
                 data, settings,
                 budget=budget_f,
                 selected_categories=categories_list,
                 include_fee_instruments=include_fee,
+                data_sig=build_portfolio_data_signature(data, app_version=APP_VERSION, schema_version=SCHEMA_VERSION),
             )
             ranking_df = analysis.get("ranking")
             if ranking_df is None or (hasattr(ranking_df, "empty") and ranking_df.empty):

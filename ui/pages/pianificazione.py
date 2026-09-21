@@ -23,14 +23,15 @@ from core.services.sator import (
     held_non_pac_tickers,
     latest_sator_decision,
     resolve_instrument_nature,
-    run_sator_analysis,
 )
+from core.cache_signatures import build_portfolio_data_signature
 from core.domain.tax import stima_imposta_vendita
+from core.sator_cache import get_cached_rebalancing_plan, get_cached_sator_analysis
 from core.services.instrument_clustering import build_instrument_map
-from core.services.rebalancing import build_full_instrument_view, build_reinforcement_candidates, build_rebalancing_plan
+from core.services.rebalancing import build_full_instrument_view, build_reinforcement_candidates
 from core.services.sator_explain import build_sator_explanations
 from core.services.sator_frontier import build_sator_frontier
-from persistence.storage import load_sator_decisions, load_settings, save_settings
+from persistence.storage import APP_VERSION, SCHEMA_VERSION, load_sator_decisions, load_settings, save_settings
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it
 from ui.i18n import t
 from ui.page_chrome import render_page_intro as render_page_intro_shared, render_section_line as render_section_line_shared
@@ -670,22 +671,31 @@ def _build_rebalancing_summary_boxes_html(righe: list[dict[str, Any]]) -> str:
 def _suggerisci_acquisto_capitale(
     data: dict[str, Any], settings: dict[str, Any], bucket: str, capitale: float,
     current_mix: dict[str, float], plan: dict[str, dict], total_value: float,
+    data_sig: str = "",
 ) -> list[dict[str, Any]]:
     """Cosa comprare se si iniettasse capitale NUOVO in questo bucket,
     riusando lo stesso motore delle proposte "con il ricavato delle
-    vendite" (run_sator_analysis + build_reinforcement_candidates,
+    vendite" (get_cached_sator_analysis + build_reinforcement_candidates,
     stesso filtro anti-surplus, stessa alternativa per asset class) -
     nessun calcolo nuovo. Risponde al feedback utente 2026-09-20: "se io
     volessi pareggiare CORE potrei decidere comunque di comprare 1113 di
     SWDA... decidendo di non comprare nessun obbligazionario" - il
     simulatore di capitale diceva solo la percentuale risultante, non
-    COSA comprare."""
+    COSA comprare.
+
+    `capitale` di default e' precompilato dal deficit del bucket (vedi
+    _render_rebalancing_table), che st.number_input mantiene stabile in
+    session_state tra i rerun finche' l'utente non lo cambia a mano:
+    root cause reale del costo esclusivo ~3s di rebalancing_table (indagine
+    2026-09-22, fino a 3 chiamate SATOR grezze a render, una per bucket in
+    deficit) - get_cached_sator_analysis lo elimina sugli stessi rerun senza
+    cambiamenti, stesso pattern gia' usato per rebalancing_table/sator_analysis."""
     if capitale <= 0:
         return []
     objective = settings.get("portfolio_objective", {}) if isinstance(settings, dict) else {}
     surplus_buckets = frozenset(b for b, i in plan.items() if i["status"] == "surplus")
     try:
-        ranking = run_sator_analysis(data, settings, budget=capitale).get("ranking")
+        ranking = get_cached_sator_analysis(data, settings, budget=capitale, data_sig=data_sig).get("ranking")
         if ranking is None or ranking.empty:
             return []
         result = build_reinforcement_candidates(
@@ -700,7 +710,7 @@ def _suggerisci_acquisto_capitale(
 def _render_rebalancing_table(
     data: dict[str, Any], state_df: pd.DataFrame, plan: dict[str, dict],
     current_mix: dict[str, float], total_value: float, theme, settings: dict[str, Any],
-    exclude_tickers: frozenset[str] = frozenset(),
+    exclude_tickers: frozenset[str] = frozenset(), data_sig: str = "",
 ) -> None:
     righe = build_full_instrument_view(data, state_df, plan, exclude_tickers=exclude_tickers)
     if not righe:
@@ -765,7 +775,7 @@ def _render_rebalancing_table(
                 # SWDA... non comprare nessun obbligazionario o titolo
                 # misto" - il simulatore ora dice anche COSA comprare con
                 # quel capitale, non solo la percentuale risultante.
-                for c in _suggerisci_acquisto_capitale(data, settings, bucket, float(capitale), current_mix, plan, total_value):
+                for c in _suggerisci_acquisto_capitale(data, settings, bucket, float(capitale), current_mix, plan, total_value, data_sig=data_sig):
                     prefisso = "Oppure compra" if c.get("alternativa") else "Compra"
                     st.caption(f"→ {prefisso} {c['quote']} quote di {c['ticker']} ({fmt_eur_it(float(c['importo_eur']), 2)})")
     html = _build_rebalancing_html(righe, theme)
@@ -1413,6 +1423,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
     fotografia SATOR salvata su disco dalla pagina standalone in sidebar."""
     data = ctx.data
     settings = ctx.settings
+    data_sig = build_portfolio_data_signature(data, app_version=APP_VERSION, schema_version=SCHEMA_VERSION)
     with profile_step("Pianificazione/SATOR", "state_and_rings"):
         ensure_sator_metadata(data)
         state_df = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
@@ -1468,15 +1479,16 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
             )
         with profile_step("Pianificazione/SATOR", "rebalancing_table"):
             try:
-                rebalancing_plan = build_rebalancing_plan(
-                    data, settings, state_df, current_mix, total_value, exclude_tickers=exclude_tickers,
+                rebalancing_plan = get_cached_rebalancing_plan(
+                    data, settings, state_df, current_mix, total_value,
+                    exclude_tickers=exclude_tickers, data_sig=data_sig,
                 )
             except Exception:
                 rebalancing_plan = None
             if rebalancing_plan:
                 _render_rebalancing_table(
                     data, state_df, rebalancing_plan, current_mix, total_value, theme, settings,
-                    exclude_tickers=exclude_tickers,
+                    exclude_tickers=exclude_tickers, data_sig=data_sig,
                 )
     render_section_title(
         "Prossimo acquisto: mappa decisionale",
@@ -1520,7 +1532,9 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
     with profile_step("Pianificazione/SATOR", "sator_analysis"):
         try:
             sator_cfg = ensure_sator_settings(settings)
-            sator_result = run_sator_analysis(data, settings, budget=sator_cfg["default_budget"])
+            sator_result = get_cached_sator_analysis(
+                data, settings, budget=sator_cfg["default_budget"], data_sig=data_sig,
+            )
         except Exception:
             sator_result = None
     with profile_step("Pianificazione/SATOR", "instrument_map"):

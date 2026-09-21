@@ -1,5 +1,75 @@
 # Changelog
 
+## 5.1 - Cache condivisa per il motore SATOR: Pianificazione da ~10,8s a millisecondi sui render dove SATOR non cambia
+
+Root cause diagnosticata da un render log reale dell'utente ("rallenta
+incredibilmente l'avvio e l'aggiornamento delle quotazioni"): Pianificazione
+era l'unica pagina principale con **zero superficie di cache** (verificato
+con `tools/cache_surface_audit.py` e un grep su tutte le API di cache
+esistenti — nessuna voce `page_id="pianificazione"` in
+`core/cache_policy.py`). `run_sator_analysis` veniva richiamato 3 volte per
+ogni render (2 dentro `build_rebalancing_plan` con budget diversi, 1 diretta
+in `pianificazione.py`), ricalcolato da zero anche quando l'evento che
+scatenava il render non aveva nulla a che vedere con SATOR (es. un
+salvataggio di impostazioni non-SATOR) — stesso motore richiamato anche
+dalla pagina SATOR standalone del form-server (porta 8502), storicamente
+gia' segnalata lenta (~9s, 2026-09-05).
+
+- **[Pianificazione][Performance] Nuovo `core/sator_cache.py`**: wrapper
+  cacheato di `run_sator_analysis` e `build_rebalancing_plan`, due nuovi
+  artefatti L3 registrati (`sator.ranking_cache`, `sator.rebalancing_plan_cache`,
+  `page_id="shared"` — riusabili sia da Pianificazione che dal form-server).
+  Firma basata SOLO sul sotto-insieme di `settings` che SATOR usa davvero
+  (`settings["sator"]`, `settings["portfolio_objective"]`, budget, ticker
+  esclusi): un salvataggio di impostazioni estranee a SATOR non invalida piu'
+  la cache. Nessuna formula finanziaria toccata — il modulo compone
+  cache + calcolo, resta fuori da `core/services/`.
+  Frontiera rischio/rendimento (slider/orizzonte, cambia ad ogni interazione
+  dell'utente) resta volutamente fuori dalla cache: va ricalcolata ad ogni
+  interazione, ma pesa solo ~0,7s.
+- **[Test] `tests/test_sator_cache.py`** (14 test, TDD): comportamento hit/miss
+  della cache (stessa firma -> nessun ricalcolo; budget/data/obiettivo/ticker
+  esclusi/impostazioni SATOR cambiati -> ricalcolo; impostazioni non-SATOR
+  cambiate -> nessun ricalcolo) + wiring per sorgente su `pianificazione.py`
+  e `ui/form_server/sator.py`. Suite `sator`/`pianificazione`/`rebalanc`/`cache`
+  (946 test) verde dopo il collegamento.
+- **[Pianificazione][Performance] Indagine di verifica sul log post-fix,
+  trovato un secondo costo mascherato**: col motore SATOR cacheato, il
+  blocco `rebalancing_table` scendeva da 6,3s a 3,0s ma non a zero — un
+  costo esclusivo di ~3s restava nascosto dentro lo stesso numero. Causa:
+  `_suggerisci_acquisto_capitale` (box "Alternativa: capitale nuovo") in
+  `_render_rebalancing_table` richiamava `run_sator_analysis` grezzo una
+  volta per bucket in deficit (fino a 3 volte a render), col budget
+  precompilato dal piano — inizialmente escluso dalla cache per errore,
+  confuso con la frontiera interattiva; in realta' `st.number_input`
+  mantiene quel valore stabile in `session_state` tra i rerun finche'
+  l'utente non lo cambia a mano, quindi e' cacheabile con lo stesso
+  `get_cached_sator_analysis`. `data_sig` ora passato a cascata da
+  `_render_decision_dashboard_section` a `_render_rebalancing_table` a
+  `_suggerisci_acquisto_capitale`. 4 test aggiuntivi (18 totali in
+  `tests/test_sator_cache.py`) + 2 test esistenti in
+  `tests/test_pianificazione_rebalancing_table.py` aggiornati (monkeypatch
+  sul nuovo wrapper). Verificato sul log reale dell'utente: `rebalancing_plan`
+  3,098s->0,022s e `ranking` 1,495s->0,028s (source=disk, cache cross-processo
+  su riavvio app a dati invariati); Pianificazione 11,517s->6,505s.
+
+## 5.1 - Aggiornamento dipendenze (Streamlit 1.64, Plotly 7.1, yfinance 1.7)
+
+- **[Dipendenze] Bump major/minor verificato**: `streamlit` 1.60.0 -> 1.64.0,
+  `plotly` 6.7.0 -> 7.1.0 (major), `yfinance` 1.5.1 -> 1.7.0, oltre a
+  `pandas`, `requests`, `beautifulsoup4`, `numpy`, `pydantic`. Breaking
+  change di Plotly 7 (Figure Factory, Kaleido/Orca, trace mapbox, parser
+  colori) verificate contro l'uso reale nel repo: nessuna applicabile. App
+  testata end-to-end con Playwright headless dopo il bump: 14 grafici
+  Plotly renderizzati, zero errori console/JS.
+- Verificato in analisi successiva: nessun guadagno di velocita' diretto
+  per questo repo dalle nuove versioni (Plotly 7 migliora `scattergl`/
+  `splom`/`parcoords`, non usati qui; yfinance 1.7 migliora
+  `curl_cffi`/thread-safety di `download()`, non sul percorso di render).
+  L'unico beneficio passivo e' il lazy-load automatico delle righe nelle
+  `st.dataframe` grandi, introdotto in Streamlit 1.61 — nessuna azione
+  richiesta, gia' incluso.
+
 ## 5.0 - Ribilanciamento in Pianificazione, riscrittura v2: ogni strumento visibile, badge grafici, alternativa per asset class, simulatore di capitale
 
 Riscrittura completa della tabella di ribilanciamento (v1 sotto), dopo
