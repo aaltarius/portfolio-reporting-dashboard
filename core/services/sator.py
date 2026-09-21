@@ -2846,6 +2846,7 @@ def _suggested_quotes_by_bucket(
     bucket_weights: dict[str, float] | None = None,
     bucket_targets: dict[str, float] | None = None,
     max_share: float = 0.35,
+    cap_reference_budget: float | None = None,
 ) -> list[int]:
     """Come _suggested_quotes, ma il budget e' prima diviso tra i bucket
     proporzionalmente al loro deficit (Allocation_k = budget * deficit_k /
@@ -2883,6 +2884,20 @@ def _suggested_quotes_by_bucket(
     redistribuzione o nel giro "starved" - puo' aprirne altre (puo' solo
     versare altro budget sulle righe gia' aperte). None (default) preserva
     il comportamento precedente per chi non lo passa.
+
+    cap_reference_budget (bug reale trovato dall'utente 2026-09-19, stessa
+    classe del Task V-septies sopra ma un livello piu' in alto): quando il
+    CHIAMANTE ha gia' ridotto `budget` a una fetta piccola (es. il ricavato
+    di una singola vendita, poche centinaia di euro, molto meno del
+    portafoglio totale) PRIMA di passarlo qui, il tetto di concentrazione
+    per riga (dentro _suggested_quotes, cap_linea = cap_reference_budget *
+    max_share) finiva comunque calcolato su quella fetta piccola - una
+    riga da 35% di 867€ = 304€ e' un tetto senza alcun rapporto con un
+    vero rischio di concentrazione sul portafoglio, che si misura sul
+    totale investito. None (default): usa `budget` come prima (nessuna
+    differenza per chi non lo passa). Il chiamante che sa qual e' la base
+    di riferimento vera (es. il valore totale del portafoglio) la passa
+    qui esplicitamente.
 
     Stesso contratto di _suggested_quotes: lista di interi allineata
     all'indice di ranking_df (dopo reset_index).
@@ -2932,7 +2947,7 @@ def _suggested_quotes_by_bucket(
             if bucket_df.empty:
                 speso_per_bucket[bucket] = 0.0
                 continue
-            bucket_quote = _suggested_quotes(bucket_df, sub_budget, max_lines=cap_righe, bucket_weights=bucket_weights, bucket_targets=bucket_targets, max_share=max_share, cap_reference_budget=budget)
+            bucket_quote = _suggested_quotes(bucket_df, sub_budget, max_lines=cap_righe, bucket_weights=bucket_weights, bucket_targets=bucket_targets, max_share=max_share, cap_reference_budget=(cap_reference_budget if cap_reference_budget is not None else budget))
             for local_idx, q in zip(bucket_df.index, bucket_quote):
                 quote[local_idx] = q
             speso_per_bucket[bucket] = sum(quote[i] * prices[i] for i in bucket_df.index)
@@ -2947,7 +2962,7 @@ def _suggested_quotes_by_bucket(
         quote, speso_per_bucket, cap_righe_per_bucket = _optimal_line_allocation_across_buckets(
             df, dominant_bucket, eligible_buckets, sub_budgets, prices,
             int(max_lines_total), max_lines_per_bucket, bucket_weights, bucket_targets, max_share,
-            budget,
+            cap_reference_budget if cap_reference_budget is not None else budget,
         )
 
     leftover = sum(sub_budgets[b] - speso_per_bucket.get(b, 0.0) for b in eligible_buckets)
@@ -2966,7 +2981,7 @@ def _suggested_quotes_by_bucket(
             cap_righe = cap_righe_per_bucket.get(bucket, max_lines_per_bucket)
             if cap_righe <= 0:
                 continue
-            bucket_quote = _suggested_quotes(bucket_df, new_sub_budget, max_lines=cap_righe, bucket_weights=bucket_weights, bucket_targets=bucket_targets, max_share=max_share, cap_reference_budget=budget)
+            bucket_quote = _suggested_quotes(bucket_df, new_sub_budget, max_lines=cap_righe, bucket_weights=bucket_weights, bucket_targets=bucket_targets, max_share=max_share, cap_reference_budget=(cap_reference_budget if cap_reference_budget is not None else budget))
             for local_idx, q in zip(bucket_df.index, bucket_quote):
                 quote[local_idx] = q
         logger.info(
@@ -3023,7 +3038,7 @@ def _suggested_quotes_by_bucket(
             pooled_quote = _suggested_quotes(
                 starved_df, residuo_reale, max_lines=cap_righe,
                 bucket_weights=bucket_weights, bucket_targets=bucket_targets, max_share=max_share,
-                cap_reference_budget=budget,
+                cap_reference_budget=(cap_reference_budget if cap_reference_budget is not None else budget),
             )
             for local_idx, q in zip(starved_df.index, pooled_quote):
                 quote[local_idx] = q

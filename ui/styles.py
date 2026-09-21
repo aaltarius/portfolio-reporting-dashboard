@@ -513,12 +513,23 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
   display:flex;justify-content:space-between;gap:8px;margin-top:5px;
   font-size:0.74rem;color:var(--ptf-muted);
 }
+.bucket-alloc-composition-bar{
+  display:flex;height:10px;border-radius:6px;overflow:hidden;min-width:80px;
+  background:color-mix(in srgb, var(--ptf-text) 10%, var(--ptf-surface));
+}
+.bucket-alloc-composition-bar > div{height:100%}
 .bucket-alloc-scost{font-weight:800;white-space:nowrap}
 .bucket-alloc-scost.ok{color:var(--ptf-success)}
 .bucket-alloc-scost.warn{color:var(--ptf-warning)}
 .bucket-alloc-scost.bad{color:var(--ptf-danger)}
 .bucket-alloc-instrument-row td{
-  padding:7px 14px;border-top:1px solid color-mix(in srgb, var(--ptf-border) 55%, transparent);
+  padding:5px 14px;border-top:1px solid color-mix(in srgb, var(--ptf-border) 55%, transparent);
+}
+.bucket-alloc-chip{
+  display:inline-block;padding:1px 8px;border-radius:999px;margin-right:6px;
+  font-size:0.72rem;font-weight:700;white-space:nowrap;
+  background:color-mix(in srgb, var(--ptf-text) 8%, var(--ptf-surface));
+  color:var(--ptf-muted);
 }
 .bucket-alloc-instrument-row:hover td{background:color-mix(in srgb, var(--tone) 6%, transparent)}
 .bucket-alloc-ticker{font-weight:700;color:var(--ptf-text)}
@@ -531,7 +542,7 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
 .bucket-alloc-instrument-row.bad .bucket-alloc-mini-fill{background:var(--ptf-danger)}
 .bucket-alloc-mini-caption{display:block;margin-top:3px;font-size:0.82rem;color:var(--ptf-muted)}
 .bucket-alloc-watchlist-row td{
-  padding:7px 14px;border-top:1px dashed color-mix(in srgb, var(--ptf-border) 55%, transparent);
+  padding:5px 14px;border-top:1px dashed color-mix(in srgb, var(--ptf-border) 55%, transparent);
   opacity:.55;
 }
 .bucket-alloc-total-row td{

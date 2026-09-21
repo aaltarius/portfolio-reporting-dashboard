@@ -27,7 +27,7 @@ from core.services.sator import (
 )
 from core.domain.tax import stima_imposta_vendita
 from core.services.instrument_clustering import build_instrument_map
-from core.services.rebalancing import build_rebalancing_plan
+from core.services.rebalancing import build_full_instrument_view, build_reinforcement_candidates, build_rebalancing_plan
 from core.services.sator_explain import build_sator_explanations
 from core.services.sator_frontier import build_sator_frontier
 from persistence.storage import load_sator_decisions, load_settings, save_settings
@@ -314,104 +314,178 @@ def _tax_friction_phrase(pl_eur: float, is_gov_bond: bool) -> str:
     return "nessuna plus/minusvalenza &middot; imposta 0"
 
 
-def _build_rebalancing_html(plan: dict[str, dict], theme) -> str:
-    """Blocco 'ribilanciamento': UNA sola tabella piatta, una riga per
-    strumento, senza raggruppamento per bucket Core/Difensivo/Satellite -
-    riscritta da zero su feedback esplicito del proprietario del repo
-    (2026-09-19: "non vedere questa cazzo di divisione C/D/S che non ha
-    senso nel ribilanciamento... vorrei vedere tutti gli strumenti").
-    Ogni strumento coinvolto nel ribilanciamento (posseduto in un bucket
-    fuori banda, o candidato a un acquisto) compare con un verdetto
-    (VENDI/COMPRA/NON TOCCARE/TIENI) come badge colorato - stesse classi
-    bucket-alloc-scost ok/warn/bad gia' usate altrove nell'app, nessun
-    colore o icona nuova - e un motivo di una riga, non un paragrafo.
-    "Tieni" include ESPLICITAMENTE gli strumenti classificati ma non
-    scelti (coperti da candidati con priorita' maggiore) e quelli esclusi
-    a monte (NO_SELL, toggle attivo, penalizzerebbe un altro bucket in
-    deficit): niente sparisce piu' in silenzio."""
-    if not plan:
-        return ""
-    _PRIORITA_VERDETTO = {"vendi": 0, "compra": 1, "non_toccare": 2, "tieni": 3}
-    righe: list[dict[str, Any]] = []
+_VERDETTO_PRIORITA = {"vendi": 0, "compra": 1, "non_toccare": 2, "tieni": 3}
+_VERDETTO_SEVERITY = {"vendi": "bad", "compra": "ok", "non_toccare": "warn", "tieni": ""}
+_BUCKET_ORDER = ("Core", "Difensivo", "Satellite")
 
-    for bucket in ("Core", "Difensivo", "Satellite"):
-        info = plan.get(bucket)
-        if not info:
-            continue
-        if info["status"] == "surplus":
-            reduction = info["reduction"]
-            for ordine, c in enumerate(reduction["candidates"]):
-                non_toccare = bool(c.get("non_toccare"))
-                forzato = bool(c.get("forzato"))
-                quote_vendita = int(c.get("quote_vendita", 0))
-                quota_vendita_eur = float(c.get("quota_vendita_eur", 0.0))
-                if non_toccare:
-                    verdetto = "non_toccare"
-                    azione_label = (
-                        f"NON TOCCARE &mdash; forzato: vendi {quote_vendita} "
-                        f"{'quota' if quote_vendita == 1 else 'quote'} ({fmt_eur_it(quota_vendita_eur, 2)})"
-                        if forzato else "NON TOCCARE"
-                    )
-                else:
-                    verdetto = "vendi"
-                    azione_label = (
-                        f"VENDI {quote_vendita} {'quota' if quote_vendita == 1 else 'quote'} "
-                        f"({fmt_eur_it(quota_vendita_eur, 2)})"
-                    )
-                attrito = _tax_friction_phrase(float(c.get("pl_eur", 0.0)), bool(c.get("is_gov_bond")))
-                righe.append({
-                    "verdetto": verdetto, "ordine": ordine, "ticker": c["ticker"],
-                    "name": c.get("name", ""), "azione_label": azione_label,
-                    "motivo": c.get("perche", ""), "attrito": attrito,
-                })
-            for ordine, t in enumerate(reduction["tenuti"]):
-                righe.append({
-                    "verdetto": "tieni", "ordine": ordine, "ticker": t["ticker"],
-                    "name": t.get("name", ""), "azione_label": "TIENI",
-                    "motivo": t.get("motivo", ""), "attrito": "",
-                })
-        else:
-            reinforcement = info["reinforcement"]
-            for ordine, c in enumerate(reinforcement["candidates"]):
-                quote = int(c.get("quote", 0))
-                importo_eur = float(c.get("importo_eur", 0.0))
+
+def _build_rebalancing_rows(righe: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Prepara le righe di build_full_instrument_view per la resa HTML:
+    calcola l'etichetta dell'azione e ordina vendi/compra/non_toccare/
+    tieni. Nessun calcolo finanziario qui, solo formattazione - i numeri
+    vengono gia' pronti da core.services.rebalancing."""
+    preparate: list[dict[str, Any]] = []
+    for r in righe:
+        verdetto = r["verdetto"]
+        if verdetto == "vendi":
+            quote = int(r.get("quote") or 0)
+            importo = float(r.get("importo_eur") or 0.0)
+            azione_label = f"VENDI {quote} {'quota' if quote == 1 else 'quote'} ({fmt_eur_it(importo, 2)})"
+        elif verdetto == "compra":
+            quote = int(r.get("quote") or 0)
+            importo = float(r.get("importo_eur") or 0.0)
+            prefisso = "OPPURE COMPRA" if r.get("alternativa") else "COMPRA"
+            azione_label = f"{prefisso} {quote} {'quota' if quote == 1 else 'quote'} ({fmt_eur_it(importo, 2)})"
+        elif verdetto == "non_toccare":
+            if r.get("forzato"):
+                quote = int(r.get("quote") or 0)
+                importo = float(r.get("importo_eur") or 0.0)
                 azione_label = (
-                    f"COMPRA {quote} {'quota' if quote == 1 else 'quote'} ({fmt_eur_it(importo_eur, 2)})"
+                    f"NON TOCCARE &mdash; forzato: vendi {quote} "
+                    f"{'quota' if quote == 1 else 'quote'} ({fmt_eur_it(importo, 2)})"
                 )
-                righe.append({
-                    "verdetto": "compra", "ordine": ordine, "ticker": c["ticker"],
-                    "name": c.get("name", ""), "azione_label": azione_label,
-                    "motivo": c.get("perche", ""), "attrito": "",
-                })
+            else:
+                azione_label = "NON TOCCARE"
+        else:
+            azione_label = "TIENI"
+        preparate.append({**r, "azione_label": azione_label})
+    preparate.sort(key=lambda r: _VERDETTO_PRIORITA[r["verdetto"]])
+    return preparate
 
+
+def _build_composition_bar_html(esposizione: dict[str, float], theme) -> str:
+    """Barra segmentata: quanto lo strumento e' esposto a ciascun bucket,
+    stessi colori di bucket_color() gia' usati ovunque nell'app per Core/
+    Difensivo/Satellite (nessun colore nuovo). Risponde al feedback
+    utente 2026-09-19: "potrebbe andar[e]" sul mockup con le barre invece
+    del solo testo."""
+    segmenti = []
+    for bucket in _BUCKET_ORDER:
+        frac = float(esposizione.get(bucket, 0.0) or 0.0)
+        if frac <= 0:
+            continue
+        tone = bucket_color(bucket, theme)
+        segmenti.append(f'<div style="width:{frac * 100:.1f}%;background:{tone};"></div>')
+    if not segmenti:
+        return ""
+    return f'<div class="bucket-alloc-composition-bar">{"".join(segmenti)}</div>'
+
+
+_LIVELLO_LABEL = {
+    0: "Liquidita'", 1: "Ridondante", 2: "Bassa convinzione",
+    3: "Duration alta", 3.5: "Rischio/peso", 4: "Generico", 5: "Vicino a scadenza",
+}
+
+
+def _voto_severity(voto: float) -> str:
+    if voto >= 7.5:
+        return "ok"
+    if voto >= 6.0:
+        return "warn"
+    return "bad"
+
+
+def _build_reason_badges_html(r: dict[str, Any]) -> str:
+    """Motivo come badge GRAFICI compatti (chip di categoria + pillola
+    numerica), non una frase intera - feedback utente 2026-09-20: "invece
+    di trovare una soluzione grafica come ti dico dall'inizio tronchi il
+    testo... follia!". Per vendi/non_toccare: la categoria di vendita gia'
+    classificata da _classify_reduction_candidate (livello) + il P/L reale
+    colorato. Per compra: il voto SATOR colorato + il fattore che pesa di
+    piu' sul voto (build_sator_explanations, stessa scomposizione a 5
+    fattori mostrata altrove nell'app, nessun nuovo calcolo). Il testo
+    completo (perche'/attrito fiscale) resta comunque leggibile in un
+    tooltip nativo per chi lo vuole, ma non e' piu' il contenuto primario
+    visibile - quello ora e' sempre grafico."""
+    verdetto = r["verdetto"]
+    bits: list[str] = []
+    if verdetto in ("vendi", "non_toccare"):
+        label = _LIVELLO_LABEL.get(r.get("livello"), "")
+        if label:
+            bits.append(f'<span class="bucket-alloc-chip">{escape(label)}</span>')
+        pl_eur = r.get("pl_eur")
+        if pl_eur is not None:
+            severity = "ok" if pl_eur > 0 else ("bad" if pl_eur < 0 else "")
+            pl_txt = fmt_eur_it(float(pl_eur), 2, signed=True)
+            bits.append(
+                f'<span class="bucket-alloc-scost {severity}">{pl_txt}</span>' if severity else
+                f'<span class="bucket-alloc-mini-caption">{pl_txt}</span>'
+            )
+    elif verdetto == "compra":
+        voto = r.get("voto")
+        if voto is not None:
+            bits.append(f'<span class="bucket-alloc-scost {_voto_severity(float(voto))}">Voto {float(voto):.1f}</span>')
+        top_factor = r.get("top_factor")
+        if top_factor:
+            bits.append(f'<span class="bucket-alloc-chip">{escape(str(top_factor))}</span>')
+    else:
+        bits.append(f'<span class="bucket-alloc-mini-caption">{escape(str(r.get("motivo", "")))}</span>')
+    return "".join(bits)
+
+
+def _build_rebalancing_html(righe: list[dict[str, Any]], theme) -> str:
+    """Blocco 'ribilanciamento': UNA sola tabella piatta, una riga per
+    strumento POSSEDUTO (tutti, non solo quelli di un bucket - vedi
+    build_full_instrument_view), senza raggruppamento per bucket Core/
+    Difensivo/Satellite - riscritta su feedback esplicito del proprietario
+    del repo (2026-09-19/20: "non vedere questa divisione C/D/S che non
+    ha senso... vorrei vedere tutti gli strumenti... perche' me ne fai
+    vedere solo 9 e non tutti?!"). Ogni riga ha un verdetto (VENDI/COMPRA/
+    NON TOCCARE/TIENI) come badge colorato (bucket-alloc-scost ok/warn/
+    bad, gia' esistenti) e una barra di composizione per bucket. Il
+    motivo e' su UNA riga troncata con ellissi (classe bucket-alloc-
+    motivo) - il testo completo resta leggibile via tooltip nativo del
+    browser (attributo title, non un menu che si apre): risponde al
+    feedback "troppo testo... voglio la tabella piu' compatta" tenendo
+    comunque la trasparenza sul perche' delle scelte."""
     if not righe:
         return ""
+    preparate = _build_rebalancing_rows(righe)
 
-    righe.sort(key=lambda r: (_PRIORITA_VERDETTO[r["verdetto"]], r["ordine"]))
-
-    _SEVERITY = {"vendi": "bad", "compra": "ok", "non_toccare": "warn", "tieni": ""}
     body_rows: list[str] = []
     conteggio_azioni = {"vendi": 0, "compra": 0, "non_toccare": 0, "tieni": 0}
-    for r in righe:
-        conteggio_azioni[r["verdetto"]] += 1
-        severity = _SEVERITY[r["verdetto"]]
+    alternative_disponibili = 0
+    for r in preparate:
+        e_alternativa = r["verdetto"] == "compra" and bool(r.get("alternativa"))
+        if e_alternativa:
+            # Un'alternativa e' un OPPURE, non una seconda spesa - non
+            # conta nel "N da comprare" del footer (feedback utente
+            # 2026-09-20: "vorrei poter fare azionario", non un secondo
+            # acquisto sommato al primo).
+            alternative_disponibili += 1
+        else:
+            conteggio_azioni[r["verdetto"]] += 1
+        severity = "" if e_alternativa else _VERDETTO_SEVERITY[r["verdetto"]]
         ticker = escape(str(r["ticker"]))
-        name = escape(str(r["name"]))
+        name = escape(str(r.get("name", "")))
         azione_html = (
             f'<span class="bucket-alloc-scost {severity}">{r["azione_label"]}</span>'
             if severity else
             f'<span class="bucket-alloc-mini-caption">{r["azione_label"]}</span>'
         )
-        motivo = escape(str(r["motivo"]))
-        attrito_html = (
-            f'<span class="bucket-alloc-mini-caption">{r["attrito"]}</span>' if r["attrito"] else ""
-        )
-        row_class = "bucket-alloc-watchlist-row" if r["verdetto"] == "tieni" else "bucket-alloc-instrument-row"
+        badges_html = _build_reason_badges_html(r)
+        if r["verdetto"] in ("vendi", "non_toccare", "compra"):
+            motivo_plain = escape(str(r.get("motivo", "")))
+            if r["verdetto"] in ("vendi", "non_toccare") and r.get("pl_eur") is not None:
+                attrito = _tax_friction_phrase(float(r["pl_eur"]), bool(r.get("is_gov_bond")))
+                tooltip_full = f'{motivo_plain} &middot; {attrito}'
+            else:
+                tooltip_full = motivo_plain
+            motivo_cell = f'<span title="{tooltip_full}">{badges_html}</span>'
+        else:
+            motivo_cell = badges_html
+        bar_html = _build_composition_bar_html(r.get("esposizione") or {}, theme)
+        # L'alternativa riusa lo stile gia' esistente delle righe
+        # 'tieni' (bordo tratteggiato, opacita' ridotta): e' informazione
+        # secondaria/opzionale, non un'azione primaria - nessuno stile
+        # nuovo, solo la classe gia' usata per lo stesso concetto altrove.
+        row_class = "bucket-alloc-watchlist-row" if (r["verdetto"] == "tieni" or e_alternativa) else "bucket-alloc-instrument-row"
         body_rows.append(f'''
                 <tr class="{row_class}">
-                  <td class="bucket-alloc-ticker">{ticker}<span class="bucket-alloc-mini-caption">{name}</span></td>
+                  <td class="bucket-alloc-ticker" title="{name}">{ticker}</td>
                   <td class="num">{azione_html}</td>
-                  <td>{motivo}{attrito_html}</td>
+                  <td>{motivo_cell}</td>
+                  <td>{bar_html}</td>
                 </tr>''')
 
     footer_bits = []
@@ -419,31 +493,271 @@ def _build_rebalancing_html(plan: dict[str, dict], theme) -> str:
         footer_bits.append(f'{conteggio_azioni["vendi"]} da vendere')
     if conteggio_azioni["compra"]:
         footer_bits.append(f'{conteggio_azioni["compra"]} da comprare')
+    if alternative_disponibili:
+        footer_bits.append(f'{alternative_disponibili} con alternativa di asset class')
     if conteggio_azioni["non_toccare"]:
         footer_bits.append(f'{conteggio_azioni["non_toccare"]} da non toccare')
     if conteggio_azioni["tieni"]:
-        footer_bits.append(f'{conteggio_azioni["tieni"]} da tenere')
-    footer_text = f"{len(righe)} strumenti coinvolti: " + ", ".join(footer_bits) + "."
+        footer_bits.append(f'{conteggio_azioni["tieni"]} da tenere cosi\' come sono')
+    footer_text = f"{len(preparate)} strumenti posseduti: " + ", ".join(footer_bits) + "."
     body_rows.append(
-        '<tr class="bucket-alloc-instrument-row"><td colspan="3">'
+        '<tr class="bucket-alloc-instrument-row"><td colspan="4">'
         f'<span class="bucket-alloc-mini-caption">{footer_text}</span></td></tr>'
     )
     return (
         '<div class="bucket-alloc-card"><table class="bucket-alloc-table">'
-        '<thead><tr><th>Strumento</th><th class="num">Verdetto</th><th>Motivo</th></tr></thead>'
+        '<thead><tr><th>Strumento</th><th class="num">Verdetto</th><th>Motivo</th><th>Composizione</th></tr></thead>'
         f'<tbody>{"".join(body_rows)}</tbody></table></div>'
     )
 
 
-def _render_rebalancing_table(plan: dict[str, dict], theme) -> None:
-    html = _build_rebalancing_html(plan, theme)
-    if not html:
+def _compute_projected_mix(
+    righe: list[dict[str, Any]], current_mix: dict[str, float], total_value: float,
+) -> dict[str, float]:
+    """Mix proiettato se si eseguissero TUTTE le vendite/acquisti proposti
+    oggi (non i tenuti/non_toccare, che non muovono nulla). Uno strumento
+    a esposizione frazionata sposta valore su PIU' bucket in proporzione
+    (stessa esposizione gia' usata dal motore per calcolare contributo_eur/
+    quota_vendita_eur - nessun nuovo calcolo finanziario, solo la stessa
+    proporzione riapplicata all'importo reale della riga). Un'alternativa
+    (stessa cifra di un'altra riga compra, asset class diversa) e' un
+    OPPURE: non muove il mix in aggiunta al primario, altrimenti la
+    stessa cifra verrebbe contata due volte."""
+    if total_value <= 0:
+        return dict(current_mix)
+    delta_eur = {b: 0.0 for b in _BUCKET_ORDER}
+    for r in righe:
+        if r.get("alternativa"):
+            continue
+        segno = 1.0 if r["verdetto"] == "compra" else (-1.0 if r["verdetto"] == "vendi" else 0.0)
+        if segno == 0.0:
+            continue
+        importo = float(r.get("importo_eur") or 0.0)
+        if importo <= 0:
+            continue
+        for b, frac in (r.get("esposizione") or {}).items():
+            if b in delta_eur and frac:
+                delta_eur[b] += segno * importo * float(frac)
+    return {
+        b: max(0.0, (current_mix.get(b, 0.0) * total_value + delta_eur.get(b, 0.0)) / total_value)
+        for b in _BUCKET_ORDER
+    }
+
+
+def _bucket_nota_ribilanciamento(info: dict[str, Any]) -> str:
+    """Perche' la barra di questo bucket non arriva (del tutto) al
+    confine banda - solo per i due casi che restavano silenziosi prima
+    (bug reali trovati dall'utente 2026-09-20): nessun acquisto proposto
+    nonostante il deficit, o vendita che copre solo una parte
+    dell'eccesso perche' il resto e' condiviso con un bucket in deficit."""
+    if info["status"] == "deficit":
+        reinforcement = info.get("reinforcement") or {}
+        if reinforcement.get("candidates"):
+            return ""
+        budget_eur = float(info.get("budget_eur", 0.0))
+        if reinforcement.get("budget_insufficiente"):
+            return f"Nessun acquisto proposto: ricavato disponibile ({fmt_eur_it(budget_eur, 2)}) troppo piccolo per un acquisto sensato."
+        return "Nessun acquisto proposto: nessun titolo SATOR eleggibile con il budget disponibile."
+    reduction = info.get("reduction") or {}
+    coverage_pct = float(reduction.get("coverage_pct", 1.0))
+    if coverage_pct >= 0.999:
+        return ""
+    covered_eur = float(reduction.get("covered_eur", 0.0))
+    amount_eur = float(info.get("amount_eur", 0.0))
+    return (
+        f"La vendita copre solo {fmt_eur_it(covered_eur, 2)} su {fmt_eur_it(amount_eur, 2)} di eccesso "
+        f"({fmt_pct_it(coverage_pct, 0)}) - il resto e' escluso (vedi la tabella sotto) o sotto la soglia minima."
+    )
+
+
+def _build_rebalancing_bucket_bars_html(
+    plan: dict[str, dict], current_mix: dict[str, float], projected_mix: dict[str, float],
+    total_value: float, theme,
+) -> str:
+    """Una barra per bucket (Core/Difensivo/Satellite), nello stesso
+    identico stile della card 'Fotografia di riferimento' qui sotto
+    (ref-snapshot-bar-track/fill/target + ref-snapshot-amount-row) - non
+    piu' uno stile inventato per il ribilanciamento: feedback utente
+    2026-09-20 "mi sarebbe piaciuta più la grafica che hai usato sempre
+    in pianificazione per... Fotografia di riferimento, con le 3 barre
+    semplici, compatte". La riga sotto la barra (quando presente) spiega
+    perche' non arriva al confine banda (vedi _bucket_nota_ribilanciamento)."""
+    rows: list[str] = []
+    for bucket in _BUCKET_ORDER:
+        info = plan.get(bucket)
+        if not info:
+            continue
+        tone = bucket_color(bucket, theme)
+        attuale = float(current_mix.get(bucket, 0.0))
+        dopo = float(projected_mix.get(bucket, attuale))
+        amount_eur = float(info["amount_eur"])
+        if info["status"] == "deficit":
+            target_frac = attuale + amount_eur / total_value if total_value > 0 else attuale
+        else:
+            target_frac = attuale - amount_eur / total_value if total_value > 0 else attuale
+        fill_pct = min(max(attuale * 100.0, 0.0), 100.0)
+        target_pct = min(max(target_frac * 100.0, 0.0), 100.0)
+        nota = _bucket_nota_ribilanciamento(info)
+        nota_html = f'<div class="ref-snapshot-note">{nota}</div>' if nota else ""
+        rows.append(f'''
+        <div style="margin-bottom:14px;">
+          <div class="ref-snapshot-amount-row">
+            <span><span class="dot" style="width:8px;height:8px;border-radius:50%;background:{tone};display:inline-block;margin-right:6px;"></span>{escape(bucket)}</span>
+            <span class="val">{fmt_pct_it(attuale, 1)} <span class="cap">&rarr; {fmt_pct_it(dopo, 1)} dopo oggi &middot; confine banda {fmt_pct_it(target_frac, 1)}</span></span>
+          </div>
+          <div class="ref-snapshot-bar-track" style="--tone:{tone};margin-bottom:{'4px' if nota else '14px'};">
+            <div class="ref-snapshot-bar-fill" style="width:{fill_pct:.2f}%"></div>
+            <div class="ref-snapshot-bar-target" style="left:{target_pct:.2f}%"></div>
+          </div>
+          {nota_html}
+        </div>''')
+    return "".join(rows)
+
+
+def _build_rebalancing_summary_boxes_html(righe: list[dict[str, Any]]) -> str:
+    """Sintesi come box colorati, stesso stile ref-snapshot-judgement gia'
+    usato da 'Fotografia di riferimento' qui sotto - non piu' un paragrafo
+    o un elenco: feedback utente 2026-09-20 "mi sarebbe piaciuta più la
+    grafica che hai usato sempre in pianificazione... box interni
+    colorati". Un box per azione (VENDI in rosso, COMPRA in verde, stessa
+    scala colori gia' usata per il badge Verdetto in tabella sotto). Le
+    alternative per asset class (OPPURE COMPRA) restano fuori, visibili
+    solo in tabella - qui la conclusione resta una sola per riga. Il
+    "perche' non basta"/"perche' niente" (bucket senza candidati, vendita
+    parziale) e' spiegato riga per riga sotto ciascuna barra bucket
+    (_bucket_nota_ribilanciamento), non piu' qui: piu' vicino al numero a
+    cui si riferisce."""
+    vendi = [r for r in righe if r["verdetto"] == "vendi"]
+    # Le alternative (stessa cifra, asset class diversa - feedback utente
+    # 2026-09-20: "vorrei poter fare azionario") sono un OPPURE, non una
+    # seconda azione: restano fuori dalla sintesi, visibili solo nella
+    # tabella sotto con l'etichetta "OPPURE COMPRA".
+    compra = [r for r in righe if r["verdetto"] == "compra" and not r.get("alternativa")]
+
+    boxes: list[str] = []
+    for r in vendi:
+        importo = float(r.get("importo_eur") or 0.0)
+        boxes.append(
+            '<div><span>Vendi</span>'
+            f'<b class="bad">{escape(str(r["ticker"]))} &middot; {fmt_eur_it(importo, 2)}</b></div>'
+        )
+    for r in compra:
+        quote = int(r.get("quote") or 0)
+        importo = float(r.get("importo_eur") or 0.0)
+        boxes.append(
+            '<div><span>Compra</span>'
+            f'<b class="ok">{quote}q {escape(str(r["ticker"]))} &middot; {fmt_eur_it(importo, 2)}</b></div>'
+        )
+    if not boxes:
+        boxes.append('<div><span>Oggi</span><b>Nessuna operazione eseguibile</b></div>')
+    return (
+        '<div class="ref-snapshot-judgement" style="grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));">'
+        + "".join(boxes) + "</div>"
+    )
+
+
+def _suggerisci_acquisto_capitale(
+    data: dict[str, Any], settings: dict[str, Any], bucket: str, capitale: float,
+    current_mix: dict[str, float], plan: dict[str, dict], total_value: float,
+) -> list[dict[str, Any]]:
+    """Cosa comprare se si iniettasse capitale NUOVO in questo bucket,
+    riusando lo stesso motore delle proposte "con il ricavato delle
+    vendite" (run_sator_analysis + build_reinforcement_candidates,
+    stesso filtro anti-surplus, stessa alternativa per asset class) -
+    nessun calcolo nuovo. Risponde al feedback utente 2026-09-20: "se io
+    volessi pareggiare CORE potrei decidere comunque di comprare 1113 di
+    SWDA... decidendo di non comprare nessun obbligazionario" - il
+    simulatore di capitale diceva solo la percentuale risultante, non
+    COSA comprare."""
+    if capitale <= 0:
+        return []
+    objective = settings.get("portfolio_objective", {}) if isinstance(settings, dict) else {}
+    surplus_buckets = frozenset(b for b, i in plan.items() if i["status"] == "surplus")
+    try:
+        ranking = run_sator_analysis(data, settings, budget=capitale).get("ranking")
+        if ranking is None or ranking.empty:
+            return []
+        result = build_reinforcement_candidates(
+            ranking, data, settings, bucket, capitale, current_mix, objective, total_value,
+            surplus_buckets=surplus_buckets,
+        )
+        return result["candidates"]
+    except Exception:
+        return []
+
+
+def _render_rebalancing_table(
+    data: dict[str, Any], state_df: pd.DataFrame, plan: dict[str, dict],
+    current_mix: dict[str, float], total_value: float, theme, settings: dict[str, Any],
+    exclude_tickers: frozenset[str] = frozenset(),
+) -> None:
+    righe = build_full_instrument_view(data, state_df, plan, exclude_tickers=exclude_tickers)
+    if not righe:
         return
     render_section_title(
         "Ribilanciamento suggerito",
-        comment="Solo i bucket fuori dalla banda di tolleranza. Proposta di lettura, mai un ordine automatico: valuta sempre tu prima di agire.",
+        comment="Ogni strumento posseduto, con un verdetto: vendi, compra, non toccare o tieni cosi' com'e'. Proposta di lettura, mai un ordine automatico: valuta sempre tu prima di agire.",
         gap_after="sm",
     )
+    projected_mix = _compute_projected_mix(righe, current_mix, total_value)
+    # Una sola card verticale (sintesi + barre), stesso identico stile
+    # ref-snapshot-* gia' usato da "Fotografia di riferimento" piu' sotto
+    # nella pagina - feedback utente 2026-09-20: "mi sarebbe piaciuta più
+    # la grafica che hai usato sempre in pianificazione per... Fotografia
+    # di riferimento, con le 3 barre semplici, compatte... box interni
+    # colorati". Risolve anche, per costruzione, il problema di allineare
+    # due box affiancati (qui non ce ne sono piu' due: e' tutto impilato
+    # in un'unica card, come nel riferimento) dopo tre round di fix
+    # CSS (Flexbox poi Grid) che non erano mai la soluzione giusta.
+    summary_html = _build_rebalancing_summary_boxes_html(righe)
+    bars_html = _build_rebalancing_bucket_bars_html(plan, current_mix, projected_mix, total_value, theme)
+    st.markdown(
+        '<div class="ref-snapshot-card"><div class="ref-snapshot-body">'
+        f'{summary_html}{bars_html}'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
+    # Box nativo Streamlit ben distinto (feedback utente 2026-09-20: "la
+    # parte capitale nuovo... starebbe bene in un box chiaro e ben
+    # individuato in quanto... introdurre denaro nuovo e' comunque una
+    # soluzione alternativa alla vendita/acquisto") - st.container(border=
+    # True), non un div HTML a mano: i widget nativi sotto (number_input,
+    # caption) non possono stare dentro un div aperto via st.markdown,
+    # mentre un container nativo li contiene davvero e rispetta il tema
+    # (bordo/colori) senza inventare nulla. Sempre tutti e tre i bucket
+    # (feedback utente: "hai messo 2 cursori C/D ma manca il terzo
+    # cursore S... oggi magari non serve ma in futuro magari si") - non
+    # solo quelli oggi in deficit. Niente st.expander: l'utente ha gia'
+    # respinto in passato ogni "menu che si apre" - il calcolatore resta
+    # sempre visibile, mai dietro un click.
+    with st.container(border=True):
+        st.markdown("**Alternativa: capitale nuovo** (invece di vendere per comprare)")
+        colonne = st.columns(len(_BUCKET_ORDER))
+        for col, bucket in zip(colonne, _BUCKET_ORDER):
+            info = plan.get(bucket)
+            amount_eur = float(info["amount_eur"]) if info and info["status"] == "deficit" else 0.0
+            default_val = int(round(amount_eur / 100.0) * 100) if amount_eur > 0 else 0
+            label = f"{bucket} (mancano {fmt_eur_it(amount_eur, 2)})" if amount_eur > 0 else bucket
+            with col:
+                capitale = st.number_input(
+                    label, min_value=0, max_value=500000, value=default_val, step=500,
+                    key=f"rebalancing_capitale_{bucket}",
+                )
+                bucket_value = float(current_mix.get(bucket, 0.0)) * total_value
+                nuovo_frac = (
+                    (bucket_value + capitale) / (total_value + capitale)
+                    if (total_value + capitale) > 0 else 0.0
+                )
+                st.caption(f"{bucket}: {fmt_pct_it(current_mix.get(bucket, 0.0), 1)} → {fmt_pct_it(nuovo_frac, 1)}")
+                # Feedback utente 2026-09-20: "se io volessi pareggiare
+                # CORE potrei decidere comunque di comprare 1113 di
+                # SWDA... non comprare nessun obbligazionario o titolo
+                # misto" - il simulatore ora dice anche COSA comprare con
+                # quel capitale, non solo la percentuale risultante.
+                for c in _suggerisci_acquisto_capitale(data, settings, bucket, float(capitale), current_mix, plan, total_value):
+                    prefisso = "Oppure compra" if c.get("alternativa") else "Compra"
+                    st.caption(f"→ {prefisso} {c['quote']} quote di {c['ticker']} ({fmt_eur_it(float(c['importo_eur']), 2)})")
+    html = _build_rebalancing_html(righe, theme)
     st.markdown(html, unsafe_allow_html=True)
 
 
@@ -1149,7 +1463,10 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
             except Exception:
                 rebalancing_plan = None
             if rebalancing_plan:
-                _render_rebalancing_table(rebalancing_plan, theme)
+                _render_rebalancing_table(
+                    data, state_df, rebalancing_plan, current_mix, total_value, theme, settings,
+                    exclude_tickers=exclude_tickers,
+                )
     render_section_title(
         "Prossimo acquisto: mappa decisionale",
         comment="Dati dall'ultima fotografia SATOR salvata dalla pagina SATOR attiva in sidebar, non da un'analisi dal vivo dentro Streamlit.",

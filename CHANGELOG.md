@@ -1,5 +1,72 @@
 # Changelog
 
+## 5.0 - Ribilanciamento in Pianificazione, riscrittura v2: ogni strumento visibile, badge grafici, alternativa per asset class, simulatore di capitale
+
+Riscrittura completa della tabella di ribilanciamento (v1 sotto), dopo
+diversi round di feedback esplicito ("non voglio le opzioni A/B", "vorrei
+vedere tutti gli strumenti", "voglio una soluzione grafica non un testo
+troncato") e un'iterazione su mockup prima di toccare il codice reale.
+Non solo estetica: nell'iterazione sono stati trovati e corretti diversi
+bug finanziari reali.
+
+- **[Pianificazione] Vista unica con TUTTI gli strumenti posseduti**:
+  nuova `build_full_instrument_view()` in `core/services/rebalancing.py`
+  unifica riduzione/rinforzo/tenuti in righe omogenee (verdetto
+  VENDI/COMPRA/NON TOCCARE/TIENI + barra di composizione per bucket).
+  Prima, gli strumenti posseduti solo in bucket in deficit non comparivano
+  mai in tabella (mai "esclusi con un motivo", semplicemente mai
+  considerati).
+- **[Pianificazione] Motivo come badge grafici, non testo troncato**: un
+  chip di categoria (livello di convenienza gia' classificato dal motore)
+  + una pillola colorata col P/L (vendita) o col voto SATOR e il fattore
+  trainante (acquisto), al posto di una frase intera con ellissi CSS —
+  respinta esplicitamente come falsa soluzione grafica. Il testo completo
+  resta comunque leggibile in un tooltip nativo.
+- **[Critico] Ripiego a concentrazione che si arrendeva su budget piccoli**:
+  con poche centinaia di euro il motore provava SOLO il candidato col voto
+  piu' alto e, se il suo prezzo non ci stava nel budget, non proponeva
+  nulla — anche quando un'alternativa piu' economica con voto di poco
+  inferiore avrebbe funzionato. Ora prova le alternative in ordine di voto
+  finche' una produce davvero un acquisto valido.
+- **[Critico] Candidato instradato al bucket sbagliato quando e' l'unico
+  eleggibile**: `_dominant_bucket` fa vincere il bucket di maggioranza
+  reale di uno strumento SOLO quando piu' bucket competono per lo stesso
+  budget; nelle chiamate per-singolo-bucket (il caso normale nel
+  rinforzo) quella garanzia non scattava mai, quindi uno strumento con
+  anche solo il 10-20% di esposizione al bucket richiesto poteva essere
+  proposto anche se la sua maggioranza reale era un bucket GIA' IN
+  SURPLUS — comprarne di piu' avrebbe aggravato il problema che il piano
+  doveva risolvere. Nuovo parametro `surplus_buckets` che li esclude.
+- **[Pianificazione] Copertura parziale sempre spiegata**: sia lato
+  vendita ("eccesso di 22.401€, venduto solo 901€" sembrava un conto
+  sbagliato — in realta' quasi tutto il resto era condiviso con un bucket
+  in deficit ed escluso di proposito) sia lato acquisto (`budget_insufficiente`,
+  nuovo campo) — prima silenziosi, ora spiegati subito sotto la barra del
+  bucket a cui si riferiscono.
+- **[Pianificazione] Alternativa per asset class**: quando la proposta di
+  acquisto si concentra su un solo titolo, se esiste un'alternativa valida
+  di asset class diversa (azionario/obbligazionario, dal campo `nature`
+  gia' presente nel ranking SATOR) per una cifra simile, viene mostrata
+  come "OPPURE COMPRA X" — mai sommata al budget disponibile.
+- **[Pianificazione] Simulatore di capitale nuovo con suggerimento reale**:
+  un `st.number_input` per bucket (sempre visibile, mai dietro un
+  `st.expander`) dentro un box dedicato (`st.container(border=True)`, dato
+  che iniettare capitale fresco e' un'alternativa concettuale alla
+  vendita/acquisto) che ora suggerisce anche COSA comprare con quella
+  cifra, non solo la percentuale risultante.
+- **[Layout] Grafica allineata a "Fotografia di riferimento"**: dopo tre
+  round di fix CSS falliti sullo stesso problema (due box affiancati
+  sempre disallineati in altezza — Flexbox, poi Grid, poi `height:100%`
+  rimosso perche' ambiguo per specifica CSS e causa verificata di una
+  card che si espandeva oltre i suoi confini), l'utente ha chiesto di
+  riusare la grafica gia' esistente della card "Fotografia di
+  riferimento" piu' sotto nella stessa pagina. Riscritto riusando le
+  stesse classi `ref-snapshot-*` (box colorati per la sintesi, barre
+  semplici con tacca obiettivo, nota sotto la barra) invece di inventare
+  stile nuovo: tutto impilato in un'unica card verticale, come nel
+  riferimento — il problema dei due box da allineare sparisce per
+  costruzione, non serve piu' risolverlo con CSS.
+
 ## 5.0 - Ribilanciamento suggerito in Pianificazione
 
 Nuova tabella in Pianificazione, sotto "Allocazione: bucket e strumenti",

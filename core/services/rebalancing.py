@@ -453,6 +453,25 @@ _MARGINE_VOTO_LINEA_NUOVA = 0.5
 _QUOTA_MINIMA_LINEA_NUOVA_EUR = 1000.0
 _QUOTA_MINIMA_LINEA_NUOVA_FRAZIONE_PORTAFOGLIO = 0.01
 
+_NATURE_OBBLIGAZIONARIO = frozenset({"bond_governativo", "bond_globale"})
+_NATURE_NON_AZIONARIO_NON_BOND = frozenset({"monetario", "oro"})
+
+
+def _asset_class_from_nature(nature: Any) -> str:
+    """Classificazione azionario/obbligazionario per la UI (feedback
+    utente 2026-09-20: "mi proponi solo di acquistare obbligazionario ma
+    non hai pensato che magari vorrei fare azionario!") - riusa il campo
+    `nature` gia' presente sul ranking SATOR (stesso vocabolario di
+    CAP_MORBIDO_NATURA in sator.py), nessuna nuova classificazione
+    finanziaria: solo un'etichetta di raggruppamento per un valore gia'
+    calcolato altrove."""
+    n = str(nature or "")
+    if n in _NATURE_OBBLIGAZIONARIO:
+        return "obbligazionario"
+    if n in _NATURE_NON_AZIONARIO_NON_BOND:
+        return n
+    return "azionario"
+
 
 def build_reinforcement_candidates(
     ranking: pd.DataFrame,
@@ -463,15 +482,20 @@ def build_reinforcement_candidates(
     current_mix: dict[str, float],
     objective: dict[str, float],
     portfolio_value: float,
+    surplus_buckets: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Candidati al rinforzo per un bucket in deficit, con importo E
     QUOTE reali (numero di pezzi, non solo euro) riusando l'allocatore
     SATOR gia' esistente (_suggested_quotes_by_bucket, stesso motore della
     pagina SATOR principale, cap di concentrazione max_share_per_line gia'
-    rispettati). Un candidato NON posseduto viene proposto solo se (a) il
-    suo voto supera di almeno _MARGINE_VOTO_LINEA_NUOVA il migliore
-    posseduto nello stesso bucket, E (b) l'importo proposto raggiunge
-    max(_QUOTA_MINIMA_LINEA_NUOVA_EUR,
+    rispettati). OGNI candidato (posseduto o no) sotto
+    _SOGLIA_OPERATIVA_MINIMA_EUR e' scartato (stessa soglia gia' usata lato
+    vendite: sotto quella cifra la commissione supererebbe il beneficio) -
+    parere esperto 2026-09-19: senza questo filtro un budget piccolo si
+    spalmava su tante mini-righe da 50-130 euro. Un candidato NON posseduto
+    viene proposto solo se, IN PIU', (a) il suo voto supera di almeno
+    _MARGINE_VOTO_LINEA_NUOVA il migliore posseduto nello stesso bucket, E
+    (b) l'importo proposto raggiunge max(_QUOTA_MINIMA_LINEA_NUOVA_EUR,
     _QUOTA_MINIMA_LINEA_NUOVA_FRAZIONE_PORTAFOGLIO * portfolio_value) -
     altrimenti si preferisce rinforzare una posizione gia' esistente
     piuttosto che aprire una linea nuova troppo piccola per essere
@@ -491,13 +515,25 @@ def build_reinforcement_candidates(
     l'utente. covered_eur e' la somma di TUTTI i candidati restituiti, da
     sempre coerente con quanto mostrato."""
     if budget_eur <= 0 or ranking is None or ranking.empty:
-        return {"candidates": [], "covered_eur": 0.0}
+        return {
+            "candidates": [], "covered_eur": 0.0,
+            "budget_insufficiente": budget_eur < _SOGLIA_OPERATIVA_MINIMA_EUR,
+        }
     cfg = ensure_sator_settings(settings)
     bucket_deficits = {bucket: budget_eur}
     quantita = _suggested_quotes_by_bucket(
         ranking, budget_eur, bucket_deficits, blocked_buckets=set(),
         bucket_weights=current_mix, bucket_targets=objective,
         max_share=cfg["max_share_per_line"],
+        # Bug reale trovato dall'utente 2026-09-19: senza questo, il tetto
+        # di concentrazione per riga (max_share * budget) veniva calcolato
+        # sul RICAVATO di questo giro (poche centinaia di euro, es. una
+        # sola vendita) invece che sul portafoglio totale - una riga da
+        # 35% di 867 euro e' un tetto senza alcun rapporto con un vero
+        # rischio di concentrazione, e finiva per bloccare OGNI candidato
+        # (nessuno superava mai la soglia minima di ticket): si vendeva
+        # qualcosa ma non si comprava mai nulla col ricavato.
+        cap_reference_budget=portfolio_value,
     )
     work = ranking.reset_index(drop=True)
     # _suggested_quotes_by_bucket instrada gia' ogni riga al bucket corretto
@@ -505,6 +541,27 @@ def build_reinforcement_candidates(
     # esposizione split: ri-filtrare qui per la colonna statica _bucket
     # scarterebbe budget legittimamente allocato dall'allocatore.
     subset_idx = [i for i in range(len(quantita)) if int(quantita[i]) > 0]
+
+    # Bug reale trovato dall'utente 2026-09-20 ("mi consigli di comprare
+    # ETFMIB quando dal grafico vedo che e' per maggior parte Satellite e
+    # oggi Satellite e' in esubero... che senso ha?!"). _dominant_bucket fa
+    # SEMPRE vincere il bucket di esposizione maggioritaria di uno
+    # strumento QUANDO piu' bucket sono eleggibili in concorrenza (Task
+    # V-ter) - ma qui bucket_deficits ha UNA SOLA chiave (il bucket
+    # richiesto): _dominant_bucket non ha alcun bucket concorrente tra cui
+    # scegliere, quindi instrada qui anche uno strumento con appena una
+    # minoranza di esposizione a questo bucket, pur di maggioranza in un
+    # ALTRO bucket. Se quell'altro bucket (la sua vera maggioranza) e' gia'
+    # in surplus, comprarne di piu' peggiora esattamente il problema che il
+    # piano dovrebbe risolvere. Filtro mirato (non il blanket "_bucket ==
+    # bucket" gia' scartato sopra, che scarterebbe anche contributi
+    # minoritari legittimi verso un bucket non in surplus): esclude solo
+    # chi ha la propria maggioranza reale in un bucket oggi in surplus.
+    if surplus_buckets:
+        subset_idx = [
+            i for i in subset_idx
+            if str(work.iloc[i].get("_bucket")) not in surplus_buckets
+        ]
 
     posseduti_voto = work.loc[
         (work["_bucket"] == bucket) & (work["in_portfolio"] == True), "voto"
@@ -515,8 +572,75 @@ def build_reinforcement_candidates(
         _QUOTA_MINIMA_LINEA_NUOVA_FRAZIONE_PORTAFOGLIO * portfolio_value,
     )
     spiegazioni_by_ticker = {
-        e.ticker: e.summary_text for e in build_sator_explanations(ranking)
+        e.ticker: e for e in build_sator_explanations(ranking)
     }
+
+    def _top_factor_label(ticker: str) -> str:
+        # Fattore SATOR con il contributo maggiore al voto (stessa
+        # scomposizione in 5 fattori di build_sator_explanations, nessun
+        # calcolo nuovo) - usato per una spiegazione GRAFICA compatta (un
+        # chip, es. "momentum") invece di una frase intera troncata
+        # (feedback utente 2026-09-20: "invece di trovare una soluzione
+        # grafica... tronchi il testo").
+        e = spiegazioni_by_ticker.get(ticker)
+        if not e or not e.contributions:
+            return ""
+        return max(e.contributions, key=lambda c: c.contribution).label
+
+    def _prova_concentrazione(row_i: pd.Series, budget: float) -> dict[str, Any] | None:
+        in_portfolio_i = bool(row_i.get("in_portfolio", False))
+        voto_i = float(row_i.get("voto", 0.0))
+        if not (in_portfolio_i or voto_i >= miglior_voto_posseduto + _MARGINE_VOTO_LINEA_NUOVA):
+            return None
+        prezzo_i = float(row_i.get("unit_price", 0.0))
+        if prezzo_i <= 0:
+            return None
+        cap_riga_eur = cfg["max_share_per_line"] * portfolio_value
+        qty_i = int(min(budget, cap_riga_eur) // prezzo_i)
+        importo_i = qty_i * prezzo_i
+        supera_soglia_linea_nuova_i = in_portfolio_i or importo_i >= soglia_importo_linea_nuova
+        if importo_i >= _SOGLIA_OPERATIVA_MINIMA_EUR and supera_soglia_linea_nuova_i:
+            return {
+                "row": row_i, "prezzo": prezzo_i, "qty": qty_i, "importo": importo_i,
+                "in_portfolio": in_portfolio_i, "voto": voto_i,
+            }
+        return None
+
+    def _candidato_da_esito(esito: dict[str, Any], *, alternativa: bool, primario_ticker: str = "") -> dict[str, Any]:
+        row, prezzo, qty_concentrato, importo_concentrato = esito["row"], esito["prezzo"], esito["qty"], esito["importo"]
+        in_portfolio, voto = esito["in_portfolio"], esito["voto"]
+        ticker = str(row.get("ticker"))
+        spiegazione_obj = spiegazioni_by_ticker.get(ticker)
+        spiegazione = spiegazione_obj.summary_text if spiegazione_obj else ""
+        if in_portfolio:
+            perche = f"Gia' in portafoglio, voto SATOR {voto:.1f}."
+        else:
+            perche = (
+                f"Voto SATOR {voto:.1f}, superiore di almeno {_MARGINE_VOTO_LINEA_NUOVA:.1f} punti "
+                f"al migliore gia' posseduto in questo bucket ({miglior_voto_posseduto:.1f})."
+            )
+        if spiegazione:
+            perche = f"{perche} {spiegazione}"
+        if alternativa:
+            perche = f"{perche} Alternativa a {primario_ticker}: cifra simile, asset class diversa - o l'uno o l'altro, non entrambi."
+        else:
+            perche = (
+                f"{perche} Budget concentrato su un solo titolo: troppo piccolo per "
+                "diversificare in modo sensato."
+            )
+        return {
+            "ticker": ticker,
+            "name": row.get("name"),
+            "voto": voto,
+            "in_portfolio": in_portfolio,
+            "quote": qty_concentrato,
+            "unit_price": prezzo,
+            "importo_eur": importo_concentrato,
+            "perche": perche,
+            "top_factor": _top_factor_label(ticker),
+            "alternativa": alternativa,
+            "nature": row.get("nature"),
+        }
 
     out: list[dict[str, Any]] = []
     for i in subset_idx:
@@ -527,13 +651,24 @@ def build_reinforcement_candidates(
         in_portfolio = bool(row.get("in_portfolio", False))
         voto = float(row.get("voto", 0.0))
         importo = qty * float(row.get("unit_price", 0.0))
+        # Ticket minimo (parere esperto 2026-09-19): prima questa soglia
+        # valeva SOLO per le linee nuove (soglia_importo_linea_nuova,
+        # 1000+) - una posizione GIA' posseduta passava senza alcun minimo,
+        # quindi un budget piccolo si spalmava su tante mini-righe da 50-
+        # 130 euro l'una (costo di commissione sproporzionato rispetto
+        # all'importo, e un piano illeggibile). Riusa la stessa soglia gia'
+        # usata lato vendite (_SOGLIA_OPERATIVA_MINIMA_EUR, "la commissione
+        # supererebbe il beneficio") invece di inventarne una nuova.
+        if importo < _SOGLIA_OPERATIVA_MINIMA_EUR:
+            continue
         if not in_portfolio and (
             voto < miglior_voto_posseduto + _MARGINE_VOTO_LINEA_NUOVA
             or importo < soglia_importo_linea_nuova
         ):
             continue
         ticker = str(row.get("ticker"))
-        spiegazione = spiegazioni_by_ticker.get(ticker, "")
+        spiegazione_obj = spiegazioni_by_ticker.get(ticker)
+        spiegazione = spiegazione_obj.summary_text if spiegazione_obj else ""
         if in_portfolio:
             perche = f"Gia' in portafoglio, voto SATOR {voto:.1f}."
         else:
@@ -552,7 +687,92 @@ def build_reinforcement_candidates(
             "unit_price": float(row.get("unit_price", 0.0)),
             "importo_eur": importo,
             "perche": perche,
+            "top_factor": _top_factor_label(ticker),
+            "alternativa": False,
+            "nature": row.get("nature"),
         })
+
+    if not out and budget_eur >= _SOGLIA_OPERATIVA_MINIMA_EUR and subset_idx:
+        # Ripiego a concentrazione su un solo titolo (bug reale trovato
+        # dall'utente 2026-09-19: "vendo XEON, poi che compro?!" - un piano
+        # che genera ricavato e non dice mai cosa farne e' inutile).
+        # L'allocatore SATOR (_suggested_quotes), per design, preferisce
+        # aprire una prima quota su PIU' titoli diversi piuttosto che una
+        # seconda quota dello stesso: l'utilita' marginale di una quota
+        # aggiuntiva sullo stesso titolo scende rapidamente sotto soglia
+        # (vedi _purchase_decision_score). Con un budget piccolo (poche
+        # centinaia di euro) il risultato e' che OGNI riga resta sotto la
+        # soglia minima di ticket e il ciclo sopra non produce nulla,
+        # anche se il budget totale basterebbe a comprare una posizione
+        # sensata se concentrato invece di spalmato. Con un budget cosi'
+        # piccolo diversificare non e' comunque possibile in modo sensato:
+        # si concentra tutto sul titolo con il voto migliore tra quelli
+        # che l'allocatore aveva gia' giudicato eleggibili (subset_idx),
+        # ignorando qui la logica di utilita' marginale per quota (che ha
+        # senso solo quando si sceglie TRA piu' titoli, non per dimensionare
+        # un'unica riga), comprando quante piu' quote il budget permette,
+        # capped al tetto di concentrazione REALE sul portafoglio totale
+        # (non sul budget di questo giro - stesso bug gia' corretto sopra
+        # con cap_reference_budget).
+        # Bug reale trovato dall'utente 2026-09-20 ("la questione budget
+        # insufficiente non ha senso... potrei preferire comprare azionario
+        # piuttosto che obbligazionario"): la versione precedente si
+        # fermava al PRIMO candidato eleggibile per voto e, se il SUO
+        # prezzo non ci stava nel budget (qty_concentrato troppo basso),
+        # si arrendeva - senza mai provare un'alternativa piu' economica
+        # con voto minore ma che avrebbe comunque superato la soglia
+        # minima. Ora si scorre l'intera lista in ordine di voto
+        # decrescente e si prende il PRIMO che produce davvero un
+        # acquisto valido (quota intera >= soglia minima di ticket, e se
+        # e' una linea nuova anche sopra la soglia di apertura linea) -
+        # non il primo semplicemente eleggibile per voto a prescindere
+        # dal prezzo.
+        candidati_ordinati = sorted(subset_idx, key=lambda i: -float(work.iloc[i].get("voto", 0.0)))
+        scelto = None
+        for i in candidati_ordinati:
+            esito = _prova_concentrazione(work.iloc[i], budget_eur)
+            if esito is not None:
+                scelto = esito
+                break
+        if scelto is not None:
+            out.append(_candidato_da_esito(scelto, alternativa=False))
+
+    # Feedback utente 2026-09-20: "mi proponi solo di acquistare
+    # obbligazionario ma non hai pensato che magari vorrei fare
+    # azionario!". Quando la proposta finale e' concentrata su UN solo
+    # titolo (che sia passata dal ripiego sopra o perche' il ciclo
+    # principale ha comunque prodotto una sola riga con budget piccolo),
+    # se esiste un'alternativa valida di asset class DIVERSA per una
+    # cifra simile, la si propone ACCANTO, non al posto: e' un OPPURE
+    # (campo "alternativa" sulla riga), mai una seconda spesa dallo
+    # stesso budget - vedi l'esclusione di alternativa=True da
+    # covered_eur sotto.
+    if len(out) == 1:
+        primario_ticker = str(out[0]["ticker"])
+        primaria_asset_class = _asset_class_from_nature(out[0].get("nature"))
+        budget_alternativa = float(out[0]["importo_eur"])
+        # Scandisce l'INTERO universo eleggibile per questo bucket
+        # (work["_bucket"] == bucket - la sua propria maggioranza reale,
+        # stessa colonna gia' usata per il filtro anti-surplus sopra), non
+        # solo subset_idx: l'allocatore marginale puo' aver instradato
+        # ZERO quota a un'alternativa perfettamente valida semplicemente
+        # perche' ha preferito concentrare tutto sulla prima (design gia'
+        # noto, vedi commento su _suggested_quotes) - qui si valuta ogni
+        # candidato del bucket da zero, indipendentemente da cosa
+        # l'allocatore gli abbia gia' assegnato.
+        candidati_bucket_idx = [i for i in range(len(work)) if str(work.iloc[i].get("_bucket")) == bucket]
+        candidati_ordinati_alt = sorted(candidati_bucket_idx, key=lambda i: -float(work.iloc[i].get("voto", 0.0)))
+        for i in candidati_ordinati_alt:
+            row_i = work.iloc[i]
+            if str(row_i.get("ticker")) == primario_ticker:
+                continue
+            if _asset_class_from_nature(row_i.get("nature")) == primaria_asset_class:
+                continue
+            esito_alt = _prova_concentrazione(row_i, budget_alternativa)
+            if esito_alt is not None:
+                out.append(_candidato_da_esito(esito_alt, alternativa=True, primario_ticker=primario_ticker))
+                break
+
     # Tie-break su importo_eur decrescente (non solo voto): con budget
     # grandi (es. scenario "capitale nuovo") piu' candidati arrivano allo
     # stesso voto, e un ordinamento per il solo voto tronca a top_n in un
@@ -563,8 +783,21 @@ def build_reinforcement_candidates(
     # "con il ricavato delle vendite" invece di sfruttare il budget piu'
     # ampio, sembrando (a torto) che il budget in piu' non servisse a nulla.
     out.sort(key=lambda c: (c["voto"], c["importo_eur"]), reverse=True)
-    covered_eur = sum(float(c["importo_eur"]) for c in out)
-    return {"candidates": out, "covered_eur": covered_eur}
+    # Un'alternativa (stesso budget, asset class diversa - vedi sopra) non
+    # e' una spesa aggiuntiva: sommarla qui raddoppierebbe il budget
+    # davvero deployabile mostrato dalla UI.
+    covered_eur = sum(float(c["importo_eur"]) for c in out if not c.get("alternativa"))
+    return {
+        "candidates": out, "covered_eur": covered_eur,
+        # Esposto per la UI (feedback utente 2026-09-20: "mi dice che
+        # mancano 1113,36 di core... ma non mi consiglia nessun core da
+        # comprare! che senso ha?!" - la lista vuota da sola non spiega
+        # SE il motivo e' che il ricavato per questo bucket e' sotto la
+        # soglia minima di ticket, o che nessun titolo era eleggibile:
+        # niente deve restare silenzioso), invece di duplicare la soglia
+        # _SOGLIA_OPERATIVA_MINIMA_EUR in ui/pages/pianificazione.py.
+        "budget_insufficiente": budget_eur < _SOGLIA_OPERATIVA_MINIMA_EUR,
+    }
 
 
 def build_rebalancing_plan(
@@ -605,6 +838,10 @@ def build_rebalancing_plan(
     # deficit_buckets (il dict bucket->info usato piu' sotto per il lato
     # rinforzo) apposta: stesso concetto, tipo diverso, mai da confondere.
     deficit_bucket_names = frozenset(b for b, i in drift.items() if i["status"] == "deficit")
+    # Passato a build_reinforcement_candidates per escludere strumenti la
+    # cui esposizione maggioritaria REALE e' un bucket gia' in surplus
+    # (vedi commento su surplus_buckets li' dentro - bug utente 2026-09-20).
+    surplus_bucket_names = frozenset(b for b, i in drift.items() if i["status"] == "surplus")
 
     plan: dict[str, dict[str, Any]] = {}
     total_covered = 0.0
@@ -670,9 +907,10 @@ def build_rebalancing_plan(
             build_reinforcement_candidates(
                 ranking_per_rinforzo, data, settings, bucket, quota_budget,
                 current_mix, objective, portfolio_value,
+                surplus_buckets=surplus_bucket_names,
             )
             if ranking_per_rinforzo is not None and quota_budget > 0 else
-            {"candidates": [], "covered_eur": 0.0}
+            {"candidates": [], "covered_eur": 0.0, "budget_insufficiente": True}
         )
         # Copertura del lato rinforzo (stessa semantica del lato riduzione):
         # covered_eur e' GIA' la somma di TUTTI i candidati restituiti
@@ -689,3 +927,120 @@ def build_rebalancing_plan(
         }
 
     return plan
+
+
+def build_full_instrument_view(
+    data: dict[str, Any],
+    state_df: pd.DataFrame,
+    plan: dict[str, dict[str, Any]],
+    exclude_tickers: frozenset[str] = frozenset(),
+) -> list[dict[str, Any]]:
+    """Vista completa: OGNI strumento posseduto compare con un verdetto
+    (vendi/compra/non_toccare/tieni), non solo quelli del bucket in
+    surplus analizzato per la vendita. Feedback utente 2026-09-19/20:
+    "perche' me ne fai vedere solo 9 e non tutti?!" - un bucket in
+    deficit (es. Core) non genera mai un candidato alla vendita per i
+    suoi strumenti gia' posseduti (non avrebbe senso venderli, il bucket
+    ha bisogno di PIU' non di meno), quindi questi restavano semplicemente
+    ASSENTI dal risultato di build_rebalancing_plan - non "esclusi con un
+    motivo", proprio mai considerati. Qui ogni strumento posseduto che il
+    piano non ha gia' toccato (ne' come vendi/non_toccare/compra, ne' come
+    tenuto nel bucket in surplus) compare comunque, con la sua
+    composizione per bucket (`esposizione`, dict bucket->frazione, per una
+    barra visiva) e un motivo minimo ("gia' in <bucket>, in deficit").
+
+    Ogni riga porta anche `controvalore` (valore reale della posizione) e
+    `esposizione`, utili per un'eventuale barra proporzionale lato UI -
+    nessun calcolo di rischio o di peso nuovo, solo dati gia' presenti in
+    build_rebalancing_plan/compute_instrument_bucket_exposures riletti in
+    forma di riga singola."""
+    if state_df is None or state_df.empty:
+        return []
+    held = state_df[state_df["Controvalore"] > 0].copy()
+    held["Ticker"] = held["Ticker"].astype(str).str.strip().str.upper()
+    tickers = [str(t) for t in held["Ticker"]]
+    exposures = compute_instrument_bucket_exposures(data, held_tickers=set(tickers))
+    rows_by_ticker = held.set_index("Ticker").to_dict(orient="index")
+
+    righe: list[dict[str, Any]] = []
+    accounted: set[str] = set()
+
+    for bucket, info in plan.items():
+        if info["status"] == "surplus":
+            for c in info["reduction"]["candidates"]:
+                ticker = str(c["ticker"])
+                righe.append({
+                    "ticker": ticker,
+                    "name": c.get("name", ""),
+                    "verdetto": "non_toccare" if c.get("non_toccare") else "vendi",
+                    "quote": c.get("quote_vendita"),
+                    "importo_eur": c.get("quota_vendita_eur"),
+                    "motivo": c.get("perche", ""),
+                    "forzato": bool(c.get("forzato", False)),
+                    "pl_eur": c.get("pl_eur"),
+                    "is_gov_bond": c.get("is_gov_bond"),
+                    # Livello di convenienza (0-5) gia' classificato da
+                    # _classify_reduction_candidate - riusato per un badge
+                    # grafico compatto lato UI invece di una frase intera.
+                    "livello": c.get("_livello"),
+                    "esposizione": exposures.get(ticker, {}),
+                    "controvalore": float(rows_by_ticker.get(ticker, {}).get("Controvalore", 0.0)),
+                })
+                accounted.add(ticker)
+            for t in info["reduction"]["tenuti"]:
+                ticker = str(t["ticker"])
+                righe.append({
+                    "ticker": ticker,
+                    "name": t.get("name", ""),
+                    "verdetto": "tieni",
+                    "motivo": t.get("motivo", ""),
+                    "esposizione": exposures.get(ticker, {}),
+                    "controvalore": float(rows_by_ticker.get(ticker, {}).get("Controvalore", 0.0)),
+                })
+                accounted.add(ticker)
+        else:
+            for c in info["reinforcement"]["candidates"]:
+                ticker = str(c["ticker"])
+                righe.append({
+                    "ticker": ticker,
+                    "name": c.get("name", ""),
+                    "verdetto": "compra",
+                    "quote": c.get("quote"),
+                    "importo_eur": c.get("importo_eur"),
+                    "motivo": c.get("perche", ""),
+                    "voto": c.get("voto"),
+                    "top_factor": c.get("top_factor"),
+                    # Un'alternativa (feedback utente 2026-09-20: "vorrei
+                    # poter fare azionario") e' un OPPURE, non un acquisto
+                    # aggiuntivo: stessa cifra del primario, non sommata al
+                    # budget disponibile - la UI deve marcarla senza
+                    # contarla come una seconda spesa.
+                    "alternativa": bool(c.get("alternativa", False)),
+                    "esposizione": exposures.get(ticker, {}),
+                    "controvalore": float(rows_by_ticker.get(ticker, {}).get("Controvalore", 0.0)),
+                })
+                accounted.add(ticker)
+
+    for ticker in tickers:
+        if ticker in accounted:
+            continue
+        esposizione = exposures.get(ticker, {})
+        bucket_labels = sorted(b for b, f in esposizione.items() if float(f) > 0)
+        row = rows_by_ticker.get(ticker, {})
+        if ticker in exclude_tickers:
+            motivo = "Escluso dal toggle attivo (es. \"Escludi BTP/GOV\")."
+        elif bucket_labels:
+            motivo = f"Gia' in {'/'.join(bucket_labels)}, oggi in deficit o in banda: nulla da vendere qui."
+        else:
+            motivo = "Nessuna esposizione a bucket nota."
+        righe.append({
+            "ticker": ticker,
+            "name": row.get("Strumento", ticker),
+            "verdetto": "tieni",
+            "motivo": motivo,
+            "esposizione": esposizione,
+            "controvalore": float(row.get("Controvalore", 0.0)),
+        })
+        accounted.add(ticker)
+
+    return righe
