@@ -599,6 +599,13 @@ def _build_rebalancing_bucket_bars_html(
         target_pct = min(max(target_frac * 100.0, 0.0), 100.0)
         nota = _bucket_nota_ribilanciamento(info)
         nota_html = f'<div class="ref-snapshot-note">{nota}</div>' if nota else ""
+        # nota_html va SEMPRE attaccato senza andare a capo su una riga
+        # dedicata: quando e' vuoto, una riga fatta di soli spazi rompe il
+        # riconoscimento "ancora HTML grezzo" di Markdown/Streamlit (stesso
+        # bug reale gia' trovato e corretto altrove in questa stessa
+        # sessione per _build_rebalancing_html - qui non era stata
+        # applicata la stessa protezione, regressione reale vista
+        # dall'utente: l'HTML appariva come testo letterale).
         rows.append(f'''
         <div style="margin-bottom:14px;">
           <div class="ref-snapshot-amount-row">
@@ -608,10 +615,14 @@ def _build_rebalancing_bucket_bars_html(
           <div class="ref-snapshot-bar-track" style="--tone:{tone};margin-bottom:{'4px' if nota else '14px'};">
             <div class="ref-snapshot-bar-fill" style="width:{fill_pct:.2f}%"></div>
             <div class="ref-snapshot-bar-target" style="left:{target_pct:.2f}%"></div>
-          </div>
-          {nota_html}
+          </div>{nota_html}
         </div>''')
-    return "".join(rows)
+    # .strip(): il primo/ultimo blocco iniziano/finiscono con un a-capo di
+    # indentazione - innocuo quando concatenato dopo _build_rebalancing_
+    # summary_boxes_html (come fa _render_rebalancing_table), ma renderebbe
+    # questa funzione fragile se mai usata da sola (una riga iniziale
+    # vuota rompe lo stesso riconoscimento "ancora HTML grezzo").
+    return "".join(rows).strip()
 
 
 def _build_rebalancing_summary_boxes_html(righe: list[dict[str, Any]]) -> str:
