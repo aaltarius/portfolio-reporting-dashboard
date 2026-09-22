@@ -1,5 +1,34 @@
 # Changelog
 
+## 5.1 - "Ripara buchi nello storico" non prova piu' Yahoo per BTP/fondi non risolvibili
+
+Bug reale segnalato dall'utente dal log applicativo ("non voglio errori
+nei log"): il bottone "🔍 Cerca date mancanti" in Gestione Dati passava a
+Yahoo Finance il ticker INTERNO grezzo (es. `BTP-15MZ28`, `FAM-PU6`) per
+ogni strumento con giorni mancanti, invece di risolverlo prima in un vero
+simbolo Yahoo come fa gia' il refresh quotazioni quotidiano
+(`get_price_details`). I BTP non sono MAI su Yahoo (fonte sempre Borsa
+Italiana) e i fondi FAM hanno un ticker interno non standard: risultato,
+404 ripetuti (`HTTP Error 404 ... Quote not found`) per 6 strumenti,
+~6s di retry/timeout ciascuno, **37s sprecati ad ogni click** per
+strumenti che non potranno mai risolversi per quella via.
+
+- **[Dati][Performance] Nuovo `resolve_history_fetch_ticker` in
+  `core/market_data.py`**: estrae la stessa cascata di routing gia' usata
+  da `get_price_details` (ticker persistito -> ticker diretto se ha un
+  punto e non e' un fondo `0P...` -> auto-detect via ISIN -> fallback sul
+  ticker cosi' com'e'), come decisione riusabile — ritorna `None` per
+  ticker/ISIN italiani (BTP), che quindi non tentano mai piu' Yahoo.
+- **`_render_ripara_buchi`** (`ui/pages/gestione_dati.py`) ora risolve il
+  ticker per ISIN prima di chiamare `get_yahoo_price_history_full`; per i
+  BTP salta del tutto la chiamata di rete (storico vuoto, stesso esito
+  che arrivava comunque dopo il 404, ma senza errore in log e senza
+  attesa).
+- **[Test] `tests/test_market_data_history_fetch_resolution.py`** (9
+  test, TDD): tutti i rami della cascata di routing + wiring per sorgente
+  su `_render_ripara_buchi`. Suite `gestione_dati`/`market_data`/`ripara`/
+  `bonifica` verde dopo il collegamento.
+
 ## 5.1 - Cache condivisa per il motore SATOR: Pianificazione da ~10,8s a millisecondi sui render dove SATOR non cambia
 
 Root cause diagnosticata da un render log reale dell'utente ("rallenta

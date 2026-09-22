@@ -536,6 +536,39 @@ def get_yahoo_ticker(isin: str) -> str | None:
     return None
 
 
+def resolve_history_fetch_ticker(isin: str, tk: str) -> str | None:
+    """Ritorna il ticker Yahoo da provare per lo storico prezzi
+    (get_yahoo_price_history_full), o None se lo strumento non va MAI
+    cercato su Yahoo.
+
+    Stessa cascata di routing gia' usata da get_price_details (ticker
+    persistito -> ticker diretto se ha un punto e non e' un fondo "0P..."
+    -> auto-detect via ISIN -> fallback sul ticker cosi' com'e'), qui
+    estratta come decisione riusabile (mai il fetch, solo "quale ticker
+    provare"): i BTP hanno sempre e solo Borsa Italiana come fonte (mai
+    Yahoo, il ticker interno "BTP-<scadenza>" non e' un simbolo di
+    mercato) — root cause reale di 404 ripetuti nel flusso "Ripara buchi
+    nello storico" (ui/pages/gestione_dati.py), che prima passava a
+    get_yahoo_price_history_full il ticker interno grezzo per OGNI
+    strumento con giorni mancanti, incluso i BTP: 6 strumenti (2 BTP + 4
+    fondi FAM con ticker non standard) x ~6s di retry/timeout = 37s ad
+    ogni click, per strumenti che non potranno mai risolversi cosi'
+    (indagine 2026-09-22, log applicativo reale dell'utente)."""
+    isin_upper = str(isin or "").strip().upper()
+    ticker_upper = str(tk or "").strip().upper()
+    if ticker_upper.startswith("BTP") or isin_upper.startswith("IT"):
+        return None
+    persisted_tk = _cache_get(_ISIN_YAHOO_TICKER_CACHE, isin)
+    if persisted_tk and persisted_tk.upper() != ticker_upper:
+        return persisted_tk
+    if "." in tk and not ticker_upper.startswith("0P"):
+        return tk
+    auto = get_yahoo_ticker(isin)
+    if auto and auto.upper() != ticker_upper:
+        return auto
+    return tk
+
+
 def get_yahoo_name(isin: str) -> str:
     try:
         r = requests.get(

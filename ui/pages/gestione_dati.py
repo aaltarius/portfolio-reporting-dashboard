@@ -748,12 +748,24 @@ def _render_ripara_buchi(data: dict, quality: pd.DataFrame) -> None:
     `preview_recent_gaps_fill`/`apply_recent_gaps_fill`
     (`core/market_data.py`), che a loro volta riusano la stessa regola di
     `backfill_storico_prezzi`: non sovrascrive mai un prezzo gia' presente."""
-    from core.market_data import apply_recent_gaps_fill, get_yahoo_price_history_full, preview_recent_gaps_fill
+    from core.market_data import (
+        apply_recent_gaps_fill, get_yahoo_price_history_full,
+        preview_recent_gaps_fill, resolve_history_fetch_ticker,
+    )
     from persistence.storage import save_data
 
     candidates = sorted(quality.loc[quality["missing_business_days"] > 0, "ticker"].astype(str).unique())
     if not candidates:
         return
+
+    # ticker -> ISIN, per instradare correttamente su Yahoo (o saltarlo del
+    # tutto per i BTP) invece di passare il ticker interno grezzo — root
+    # cause reale di 404 ripetuti per BTP/fondi FAM (indagine 2026-09-22,
+    # vedi resolve_history_fetch_ticker in core/market_data.py).
+    isin_by_ticker = {
+        str(s.get("ticker") or ""): str(s.get("isin") or "")
+        for s in (data.get("strumenti", []) or [])
+    }
 
     st.divider()
     render_section_title(
@@ -767,10 +779,15 @@ def _render_ripara_buchi(data: dict, quality: pd.DataFrame) -> None:
     if st.button("🔍 Cerca date mancanti (ultimi 30 giorni)", key="gestione_dati_ripara_buchi_scan"):
         with st.spinner(f"Recupero storico recente da Yahoo Finance per {len(candidates)} strumenti..."):
             storico = data.get("storico_prezzi", {}) or {}
-            previews = [
-                preview_recent_gaps_fill(storico, ticker, get_yahoo_price_history_full(ticker, period="1mo"))
-                for ticker in candidates
-            ]
+            previews = []
+            for ticker in candidates:
+                yahoo_ticker = resolve_history_fetch_ticker(isin_by_ticker.get(ticker, ""), ticker)
+                # None => strumento mai risolvibile su Yahoo (es. BTP, sempre
+                # Borsa Italiana): nessuna chiamata di rete, storico vuoto,
+                # stesso esito che oggi arrivava comunque dopo un 404 e
+                # ~6s di retry/timeout sprecati, ma senza errore in log.
+                history = get_yahoo_price_history_full(yahoo_ticker, period="1mo") if yahoo_ticker else {}
+                previews.append(preview_recent_gaps_fill(storico, ticker, history))
         st.session_state[preview_key] = previews
 
     previews = st.session_state.get(preview_key)
