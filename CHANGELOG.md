@@ -1,5 +1,16 @@
 # Changelog
 
+## 5.3 - Popup strumento: valore del PMC sull'asse Y
+
+- **[UI] Popup Portafoglio e Quotazioni**: l'asse Y a sinistra del grafico
+  mostra ora, oltre a massimo e minimo del periodo, anche il valore del PMC
+  (grassetto, allineato alla linea tratteggiata). Se il PMC e' a meno del
+  10% di altezza da un estremo, l'etichetta di massimo/minimo viene
+  spostata per non sovrapporsi; quella del PMC resta alla posizione esatta.
+  Non compare se il PMC non e' disponibile.
+- **[Versione] `APP_VERSION` 5.2 -> 5.3**: la 5.2 era gia' in uso con la
+  versione precedente dei popup, che altrimenti sarebbe rimasta in cache.
+
 ## 5.2 - Firma cache vede le modifiche al registro eventi; popup strumento con asse Y e link fonte
 
 Bug reale segnalato dall'utente (2026-10-07): dopo aver modificato

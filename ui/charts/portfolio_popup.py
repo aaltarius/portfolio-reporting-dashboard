@@ -574,14 +574,18 @@ function sparkline(data,plPositive,pmc){
   var vals=data.map(function(p){return p.v;});
   var mn=Math.min.apply(null,vals),mx=Math.max.apply(null,vals);var dMn=mn,dMx=mx;if(pmc!=null&&!isNaN(pmc)){mn=Math.min(mn,pmc);mx=Math.max(mx,pmc);}var rng=mx-mn||0.001;var toY=function(v){return H-pad-((v-mn)/rng*(H-pad*2));};
   var yAx=document.getElementById('m-spark-y');
+  var hasPmc=(pmc!=null&&!isNaN(pmc));var pmcTop=hasPmc?Math.min(94,Math.max(6,toY(pmc)/H*100)):null;
   [[dMx,'max'],[dMn,'min']].forEach(function(e){
     var ty=toY(e[0]);
     var gl=document.createElementNS('http://www.w3.org/2000/svg','line');
     gl.setAttribute('x1',pad);gl.setAttribute('x2',W-pad);gl.setAttribute('y1',ty);gl.setAttribute('y2',ty);
     gl.setAttribute('stroke','#d1d5db');gl.setAttribute('stroke-width','1');gl.setAttribute('stroke-dasharray','2 3');svg.appendChild(gl);
+    var top=Math.min(94,Math.max(6,ty/H*100));
+    if(pmcTop!=null&&Math.abs(top-pmcTop)<10){top=e[1]==='max'?pmcTop-10:pmcTop+10;}
     var lb=document.createElement('span');lb.title=e[1]==='max'?'Massimo del periodo':'Minimo del periodo';
-    lb.style.top=Math.min(94,Math.max(6,ty/H*100))+'%';lb.textContent=fe(e[0],2,false);yAx.appendChild(lb);
+    lb.style.top=top+'%';lb.textContent=fe(e[0],2,false);yAx.appendChild(lb);
   });
+  if(hasPmc){var lp=document.createElement('span');lp.title='Prezzo medio di carico';lp.style.top=pmcTop+'%';lp.style.color='#374151';lp.style.fontWeight='800';lp.textContent=fe(pmc,2,false);yAx.appendChild(lp);}
   var pts=[];
   vals.forEach(function(v,i){
     var x=pad+(i/(vals.length-1))*(W-pad*2);
