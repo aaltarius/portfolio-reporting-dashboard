@@ -287,6 +287,12 @@ def _base_market_signature_payload(
         "n_history_dates": len(storico),
         "latest_history_date": latest_history_date,
         "n_eventi": len(registro_eventi),
+        # Contenuto del registro, non solo il conteggio: `operazioni` contiene
+        # solo ACQUISTO/VENDITA, quindi la modifica di un rimborso, di
+        # un'IMPOSTA o di una cedola (n_eventi invariato) non cambiava mai la
+        # firma e KPI/"Posizioni chiuse" restavano congelati finche' l'utente
+        # non svuotava la cache a mano (bug reale, 2026-10-07).
+        "eventi": _normalized_operation_signature_payload(registro_eventi),
         "n_liquidita": len(registro_liquidita),
         "history_span_by_ticker": history_span_by_ticker(storico, all_tickers),
     }

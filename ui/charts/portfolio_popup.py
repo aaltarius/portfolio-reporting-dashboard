@@ -13,6 +13,7 @@ from core.services.sator import latest_sator_decision, load_sator_decisions, res
 from persistence.storage import get_registro_eventi, macro_cat
 from ui.charts.instrument_badges import ISSUER_BADGE_CSS, commission_badge, enrichment_complete_badge, issuer_badge
 from ui.charts.natura_icons import get_nature_visual
+from ui.charts.popup_source import build_source_url
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it
 from ui.streamlit_compat import iframe_height_for_rows, render_html_iframe
 from ui.theme import CATEGORY_COLORS, macro_color
@@ -70,6 +71,7 @@ def _build_ticker_info(df, data):
             "isin": info.get("isin", "n/d"),
             "tipo": info.get("tipo", "n/d"),
             "fonte": info.get("fonte", "n/d"),
+            "source_url": build_source_url(info.get("fonte", "n/d"), info.get("isin", ""), tk),
             "aggiornato": info.get("aggiornato", "n/d"),
             "prezzo": _prezzo,
             "pmc": _pmc,
@@ -505,7 +507,10 @@ a.tk-link:hover{opacity:0.65;}
 .mc-price-val{font-size:2.0rem;font-weight:800;font-variant-numeric:tabular-nums;}
 .mc-price-sub{font-size:0.95rem;color:#6b7280;}
 .mc-spark-label{font-size:0.78rem;text-transform:uppercase;color:#9ca3af;font-weight:700;letter-spacing:.05em;}
-svg.spark{width:100%;height:140px;display:block;border-radius:10px;background:#f9fafb;}
+.spark-wrap{display:flex;align-items:stretch;}
+.spark-y{position:relative;flex:none;width:58px;font:600 10px system-ui;color:#6b7280;}
+.spark-y span{position:absolute;right:5px;transform:translateY(-50%);white-space:nowrap;}
+svg.spark{flex:1;min-width:0;height:140px;display:block;border-radius:10px;background:#f9fafb;}
 .mc-footer{font-size:0.78rem;color:#9ca3af;}
 """
 _MODAL_CSS = _MODAL_CSS.replace("#1E8449", COLORS["success"]).replace("#FF4B4B", COLORS["danger"])
@@ -530,7 +535,7 @@ _MODAL_HTML = """
         <div id="m-delta" class="mc-price-sub"></div>
       </div>
       <div class="mc-spark-label">Andamento prezzo (ultimi 60 giorni disponibili)</div>
-      <svg class="spark" id="m-spark" viewBox="0 0 520 140" preserveAspectRatio="none"></svg>
+      <div class="spark-wrap"><div class="spark-y" id="m-spark-y"></div><svg class="spark" id="m-spark" viewBox="0 0 520 140" preserveAspectRatio="none"></svg></div>
       <div class="mc-footer" id="m-footer"></div>
     </div>
   </div>
@@ -558,7 +563,7 @@ function kpi(label,val,cls){
 }
 function sparkline(data,plPositive,pmc){
   var svg=document.getElementById('m-spark');
-  svg.innerHTML='';
+  svg.innerHTML='';document.getElementById('m-spark-y').innerHTML='';
   var W=520,H=140,pad=6;
   if(!data||data.length<2){
     var t=document.createElementNS('http://www.w3.org/2000/svg','text');
@@ -567,7 +572,16 @@ function sparkline(data,plPositive,pmc){
     t.textContent='Dati storici non disponibili';svg.appendChild(t);return;
   }
   var vals=data.map(function(p){return p.v;});
-  var mn=Math.min.apply(null,vals),mx=Math.max.apply(null,vals);if(pmc!=null&&!isNaN(pmc)){mn=Math.min(mn,pmc);mx=Math.max(mx,pmc);}var rng=mx-mn||0.001;var toY=function(v){return H-pad-((v-mn)/rng*(H-pad*2));};
+  var mn=Math.min.apply(null,vals),mx=Math.max.apply(null,vals);var dMn=mn,dMx=mx;if(pmc!=null&&!isNaN(pmc)){mn=Math.min(mn,pmc);mx=Math.max(mx,pmc);}var rng=mx-mn||0.001;var toY=function(v){return H-pad-((v-mn)/rng*(H-pad*2));};
+  var yAx=document.getElementById('m-spark-y');
+  [[dMx,'max'],[dMn,'min']].forEach(function(e){
+    var ty=toY(e[0]);
+    var gl=document.createElementNS('http://www.w3.org/2000/svg','line');
+    gl.setAttribute('x1',pad);gl.setAttribute('x2',W-pad);gl.setAttribute('y1',ty);gl.setAttribute('y2',ty);
+    gl.setAttribute('stroke','#d1d5db');gl.setAttribute('stroke-width','1');gl.setAttribute('stroke-dasharray','2 3');svg.appendChild(gl);
+    var lb=document.createElement('span');lb.title=e[1]==='max'?'Massimo del periodo':'Minimo del periodo';
+    lb.style.top=Math.min(94,Math.max(6,ty/H*100))+'%';lb.textContent=fe(e[0],2,false);yAx.appendChild(lb);
+  });
   var pts=[];
   vals.forEach(function(v,i){
     var x=pad+(i/(vals.length-1))*(W-pad*2);
@@ -608,7 +622,8 @@ function showModal(tk){
     kpi('P/L €',fe(d.pl_e,2,true),plCls)+
     kpi('P/L %',fp(d.pl_p,2,true),plCls)+
     kpi('Commissioni',fe(d.comm,2,false))+
-    kpi('Fonte / Agg.',d.fonte+' · '+fmtDateIt(d.aggiornato));
+    kpi('Fonte / Agg.',d.fonte+' · '+fmtDateIt(d.aggiornato))+
+    (d.source_url?'<div class="mc-kpi" style="grid-column:1/-1;"><div class="mc-kpi-l">Link fonte</div><div class="mc-kpi-v"><a href="'+d.source_url+'" target="_blank" rel="noopener" style="color:#2563EB;text-decoration:underline;word-break:break-all;font-size:0.82rem;">'+d.source_url+'</a></div></div>':'');
   sparkline(d.spark,d.pl_e>=0,d.pmc);
   document.getElementById('m-footer').textContent='Quotazione aggiornata al '+fmtDateIt(d.aggiornato)+' · Fonte: '+d.fonte;
   document.getElementById('mo').classList.add('on');

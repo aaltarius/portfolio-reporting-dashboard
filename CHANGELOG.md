@@ -1,5 +1,33 @@
 # Changelog
 
+## 5.2 - Firma cache vede le modifiche al registro eventi; popup strumento con asse Y e link fonte
+
+Bug reale segnalato dall'utente (2026-10-07): dopo aver modificato
+l'imposta di un rimborso BTP, "Posizioni chiuse" e i KPI dell'overview non
+si aggiornavano finche' non si svuotava la cache a mano. Causa: la firma
+dati usata per invalidare orchestrazione e pagine
+(`_base_market_signature_payload`, `core/cache_signatures.py`) leggeva
+`operazioni`, che contiene solo ACQUISTO/VENDITA (niente rimborsi, imposte,
+cedole), e di `registro_eventi` contava soltanto quanti eventi c'erano:
+modificare un evento esistente lasciava la firma identica.
+
+- **[Cache] `core/cache_signatures.py`**: la firma include ora il contenuto
+  normalizzato di `registro_eventi` (date, importi, imposte, commissioni).
+  La firma per categoria era gia' corretta.
+- **[Test] `tests/test_portfolio_signature_registro_eventi.py`** (locale):
+  modifica di un rimborso, di un'IMPOSTA generica, firma stabile a dati
+  invariati.
+- **[Versione] `APP_VERSION` 5.1 -> 5.2** (`persistence/storage.py`): fa
+  parte delle chiavi cache; senza bump le figure/pagine gia' salvate con la
+  logica precedente non venivano rigenerate dopo una modifica solo al codice.
+- **[UI] Popup strumento (Portafoglio e Quotazioni)**: asse Y a sinistra
+  del grafico con massimo e minimo del periodo in euro (colonna HTML, non
+  testo SVG: il grafico e' stirato con `preserveAspectRatio="none"`) e due
+  linee di riferimento puntinate, oltre alla linea tratteggiata del PMC.
+- **[UI] Link fonte nel popup Portafoglio**, gia' presente in Quotazioni. La
+  logica di costruzione dell'URL e' ora in `ui/charts/popup_source.py`
+  (`build_source_url`), usata da entrambi i popup.
+
 ## 5.1 - Grafico "P/L per Categoria" (aree impilate) non taglia piu' la cima della pila
 
 Bug segnalato dall'utente (2026-10-07): nel grafico storico ad aree

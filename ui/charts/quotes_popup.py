@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 
 import pandas as pd
 
@@ -14,6 +13,7 @@ from core.services.instrument_quality import enrichment_completeness
 from core.services.sator import resolve_instrument_nature
 from ui.charts.instrument_badges import ISSUER_BADGE_CSS, commission_badge, enrichment_complete_badge, issuer_badge
 from ui.charts.natura_icons import get_nature_visual
+from ui.charts.popup_source import build_source_url
 from ui.formatting import fmt_num_it, fmt_pct_it, hex_to_rgba
 from ui.streamlit_compat import iframe_height_for_rows, iframe_scroll_for_rows, render_html_iframe
 from ui.theme import macro_color
@@ -292,13 +292,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
             pl_p = 0.0
         _isin = info.get("isin", "")
         _fonte_str = fonte or info.get("fonte", "n/d")
-        if "Borsa Italiana" in _fonte_str and _isin:
-            _source_url = f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/dati-completi.html?isin={_isin}&lang=it"
-        elif "Yahoo" in _fonte_str:
-            _yt = (re.search(r'\[(.+?)\]', _fonte_str) or type('', (), {'group': lambda s, n: ticker})()).group(1)
-            _source_url = f"https://finance.yahoo.com/quote/{_yt}"
-        else:
-            _source_url = None
+        _source_url = build_source_url(_fonte_str, _isin, ticker)
 
         # --- enrichment KPI ---
         from core.instrument_enrichment import _categoria as _enr_cat
@@ -481,7 +475,10 @@ a.tk-link:hover{opacity:0.65;}
 .mc-price-val{font-size:2.0rem;font-weight:800;font-variant-numeric:tabular-nums;}
 .mc-price-sub{font-size:0.95rem;color:#6b7280;}
 .mc-spark-label{font-size:0.78rem;text-transform:uppercase;color:#9ca3af;font-weight:700;letter-spacing:.05em;}
-svg.spark{width:100%;height:152px;display:block;border-radius:10px;background:#f9fafb;}
+.spark-wrap{display:flex;align-items:stretch;}
+.spark-y{position:relative;flex:none;width:58px;font:600 10px system-ui;color:#6b7280;}
+.spark-y span{position:absolute;right:5px;transform:translateY(-50%);white-space:nowrap;}
+svg.spark{flex:1;min-width:0;height:152px;display:block;border-radius:10px;background:#f9fafb;}
 .read-table{border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;background:#fff;}
 .read-table table{width:100%;border-collapse:collapse;table-layout:fixed;}
 .read-table th,.read-table td{padding:5px 7px;border-bottom:1px solid #eef0f4;font-size:11px;line-height:1.15;}
@@ -563,7 +560,7 @@ svg.spark{width:100%;height:152px;display:block;border-radius:10px;background:#f
         <div id="qm-delta" class="mc-price-sub"></div>
       </div>
       <div class="mc-spark-label">Ultimi 12 giorni disponibili</div>
-      <svg class="spark" id="qm-spark" viewBox="0 0 620 180" preserveAspectRatio="none"></svg>
+      <div class="spark-wrap"><div class="spark-y" id="qm-spark-y"></div><svg class="spark" id="qm-spark" viewBox="0 0 620 180" preserveAspectRatio="none"></svg></div>
       <div class="read-table">
         <table>
           <thead><tr><th>Giorno</th><th class="num">Apert.</th><th class="num">Chius.</th><th class="num">Range</th><th class="num">Lett.</th><th>Esito</th></tr></thead>
@@ -596,7 +593,7 @@ function buildReadingsTable(readings){
   });
 }
 function sparklineReadings(readings, isPositive, pmc){
-  var svg=document.getElementById('qm-spark'); svg.innerHTML='';
+  var svg=document.getElementById('qm-spark'); svg.innerHTML=''; document.getElementById('qm-spark-y').innerHTML='';
   var W=620,H=180,padX=26,padY=18;
   var usable=(readings||[]).filter(function(r){return r.close!=null&&!isNaN(r.close);});
   if(usable.length<2){var t=document.createElementNS('http://www.w3.org/2000/svg','text'); t.setAttribute('x','50%'); t.setAttribute('y','52%'); t.setAttribute('text-anchor','middle'); t.setAttribute('fill','#cbd5e1'); t.setAttribute('font-size','11'); t.textContent='Storico letture insufficiente'; svg.appendChild(t); return;}
@@ -607,10 +604,19 @@ function sparklineReadings(readings, isPositive, pmc){
     if(p.low!=null) vals.push(parseFloat(p.low));
     if(p.close!=null) vals.push(parseFloat(p.close));
   });
-  var mn=Math.min.apply(null,vals), mx=Math.max.apply(null,vals);
+  var mn=Math.min.apply(null,vals), mx=Math.max.apply(null,vals); var dMn=mn, dMx=mx;
   if(pmc!=null&&!isNaN(pmc)){mn=Math.min(mn,pmc); mx=Math.max(mx,pmc);}
   var rng=(mx-mn)||0.001;
   var toY=function(v){return H-padY-((v-mn)/rng*(H-padY*2));};
+  var yAx=document.getElementById('qm-spark-y');
+  [[dMx,'max'],[dMn,'min']].forEach(function(e){
+    var ty=toY(e[0]);
+    var gl=document.createElementNS('http://www.w3.org/2000/svg','line');
+    gl.setAttribute('x1',padX); gl.setAttribute('x2',W-padX); gl.setAttribute('y1',ty); gl.setAttribute('y2',ty);
+    gl.setAttribute('stroke','#d1d5db'); gl.setAttribute('stroke-width','1'); gl.setAttribute('stroke-dasharray','2 3'); svg.appendChild(gl);
+    var lb=document.createElement('span'); lb.title=e[1]==='max'?'Massimo del periodo':'Minimo del periodo';
+    lb.style.top=Math.min(94,Math.max(6,ty/H*100))+'%'; lb.textContent=fi(e[0],2,false)+' €'; yAx.appendChild(lb);
+  });
   var pts=[]; usable.forEach(function(v,i){var x=padX+(i/(usable.length-1))*(W-padX*2); var y=toY(parseFloat(v.close)); pts.push({x:x,y:y,raw:v});});
   var col=isPositive?'#1E8449':'#FF4B4B';
   var fill=isPositive?'rgba(30,132,73,0.12)':'rgba(255,75,75,0.12)';
