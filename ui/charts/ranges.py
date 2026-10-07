@@ -134,16 +134,54 @@ def trace_visible_y_values_for_x_range(trace, x_range) -> list[float]:
         return []
 
 
+def _stacked_visible_values(traces, x_range) -> list[float]:
+    """Valori Y visibili di un gruppo di tracce impilate (stackgroup).
+
+    Il bordo di ogni area e' la somma cumulata delle tracce fino a quella: il
+    range deve coprire tutti i bordi (anche i parziali, con segni misti), non
+    i valori grezzi delle singole tracce, altrimenti l'area in cima viene
+    tagliata.
+    """
+    import pandas as pd
+
+    start = pd.to_datetime(x_range[0])
+    end = pd.to_datetime(x_range[1])
+    running = None
+    out: list[float] = []
+    for trace in traces:
+        try:
+            x = pd.to_datetime(pd.Index(list(trace.x)), errors="coerce")
+            y = pd.to_numeric(pd.Series(list(trace.y)), errors="coerce").to_numpy()
+        except Exception:
+            continue
+        s = pd.Series(y, index=x)
+        s = s[(s.index >= start) & (s.index <= end)]
+        s = s[~s.index.isna()]
+        s = s.groupby(level=0).last()
+        running = s if running is None else running.add(s, fill_value=0.0)
+        out.extend(float(v) for v in running.dropna())
+    return out
+
+
 def visible_y_ranges_for_x_range(fig, x_range, pad_ratio: float) -> dict[str, list[float]]:
     """Restituisce i range Y dinamici per ogni asse Y della figura."""
     grouped: dict[str, list[float]] = {}
+    stacks: dict[tuple[str, str], list] = {}
     try:
         for trace in fig.data:
+            axis_name = trace_yaxis_layout_name(trace)
+            stackgroup = getattr(trace, "stackgroup", None)
+            if stackgroup:
+                stacks.setdefault((axis_name, str(stackgroup)), []).append(trace)
+                continue
             vals = trace_visible_y_values_for_x_range(trace, x_range)
             if not vals:
                 continue
-            axis_name = trace_yaxis_layout_name(trace)
             grouped.setdefault(axis_name, []).extend(vals)
+        for (axis_name, _), traces in stacks.items():
+            vals = _stacked_visible_values(traces, x_range) if x_range is not None and len(x_range) == 2 else []
+            if vals:
+                grouped.setdefault(axis_name, []).extend(vals)
     except Exception:
         return {}
 

@@ -1,5 +1,25 @@
 # Changelog
 
+## 5.1 - Grafico "P/L per Categoria" (aree impilate) non taglia piu' la cima della pila
+
+Bug segnalato dall'utente (2026-10-07): nel grafico storico ad aree
+impilate "P/L per Categoria" (Portafoglio) le aree in alto risultavano
+troncate. Causa: con `dynamic_y_by_button`/`dynamic_y_to_initial_range`
+attivi, `visible_y_ranges_for_x_range` (`ui/charts/ranges.py`) calcolava il
+range Y dal minimo/massimo di ogni traccia presa da sola, mentre con
+`stackgroup` il bordo superiore dell'area e' la somma cumulata delle
+categorie. Il range si fermava sotto la cima reale della pila (caso
+riprodotto: pila fino a 1290, asse a 894).
+
+- **[Grafici] `ui/charts/ranges.py`**: le tracce con `stackgroup` sono
+  raggruppate per (asse, stackgroup) e il range usa tutte le somme
+  cumulate (anche parziali, con segni misti) sulla finestra X visibile.
+  Le tracce non impilate non cambiano. Vale per qualunque grafico ad aree
+  impilate con range dinamico, non solo questo.
+- **[Test] `tests/test_ranges_stacked_area.py`** (locale, `tests/` e' fuori
+  da git): cima della pila coperta, picco fuori finestra ignorato,
+  tracce non impilate invariate.
+
 ## 5.1 - "Ripara buchi nello storico" non prova piu' Yahoo per BTP/fondi non risolvibili
 
 Bug reale segnalato dall'utente dal log applicativo ("non voglio errori
