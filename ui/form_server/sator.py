@@ -1487,6 +1487,31 @@ function historyExecutionSummary(items){{
   return {{count:stats.length,totalDelta,avgAdherence,skipped,added,skippedTickers,addedTickers,discipline,learningRows}};
 }}
 
+function downloadShoppingList(idx){{
+  const dec=decisions[idx];
+  const lines=(dec&&dec.order_lines)||[];
+  if(!lines.length)return;
+  // Stesso CSV della pagina Pianificazione: separatore ';', decimali con virgola, BOM per Excel.
+  const num=v=>String(parseFloat(v)||0).replace('.',',');
+  const cell=v=>{{
+    const s=String(v==null?'':v);
+    return /[";\\n\\r]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;
+  }};
+  const rows=[['Ticker','ISIN','Nome','Bucket','Quote','Prezzo presunto','Importo']];
+  lines.forEach(l=>rows.push([
+    l.ticker||'',l.isin||'',l.name||'',l.bucket||'',
+    parseInt(l.shares||l.quantita||0,10)||0,
+    num(l.price||l.prezzo||0),num(l.amount||l.importo||0),
+  ]));
+  const csv='\\ufeff'+rows.map(r=>r.map(cell).join(';')).join('\\r\\n')+'\\r\\n';
+  const monthId=String(dec.month_id||(dec.created_at||'').slice(0,16).replace(/[:T]/g,'-')||'foto').replace(/\//g,'-');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{{type:'text/csv;charset=utf-8'}}));
+  a.download='sator_lista_spesa_'+monthId+'.csv';
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}}
+
 function renderHistory(){{
   const cnt=document.getElementById('hist_count');
   const container=document.getElementById('hist_container');
@@ -1607,6 +1632,7 @@ function renderHistory(){{
       ${{note?`<div style="font-size:.74rem;color:var(--slate-400);font-style:italic">«${{note}}»</div>`:''}}
       <div style="margin-left:auto;display:flex;gap:6px;flex-shrink:0">
         <button class="btn-sm" onclick="toggleHistDetail(${{origIdx}})">▼ Dettaglio</button>
+        ${{lines.length?`<button class="btn-sm" onclick="downloadShoppingList(${{origIdx}})">⬇ Lista della spesa</button>`:''}}
         <button class="btn-sm btn-sm-p" onclick="loadDecision(${{origIdx}})" ${{!hasAnalysis?'style="opacity:.6"':''}}>↺ Riparti</button>
         <button class="btn-sm" style="color:var(--red-700);border-color:var(--red-200)" onclick="deleteDecision('${{dec.decision_id}}')">🗑 Elimina</button>
       </div>
