@@ -335,8 +335,85 @@ def _save_to_disk(page_id: str, layer: str, signature: str, value: Any, *, disk_
             with gzip.open(path, "wb") as handle:
                 pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
         _record_manifest_entry(page_id, layer, signature, value, path, disk_codec=codec)
+        prune_page_artifact_disk_cache(page_id=page_id, layer=layer, remove_unindexed=False)
     except Exception as exc:
         logger.warning("Errore salvataggio page artifact %s/%s: %s", page_id, layer, exc)
+
+
+#: Versioni su disco conservate per ogni coppia (pagina, layer): la firma
+#: cambia a ogni modifica dei dati e le vecchie non servono piu', ma teniamo
+#: le ultime poche per non rigenerare se due varianti si alternano.
+PAGE_ARTIFACT_KEEP_PER_LAYER = 3
+_UNINDEXED_MIN_AGE_SECONDS = 3600.0
+
+
+def prune_page_artifact_disk_cache(
+    *,
+    page_id: str | None = None,
+    layer: str | None = None,
+    keep_per_layer: int = PAGE_ARTIFACT_KEEP_PER_LAYER,
+    remove_unindexed: bool = True,
+) -> dict[str, int]:
+    """Elimina le versioni obsolete degli artefatti pagina.
+
+    Per ogni (pagina, layer) conserva le ``keep_per_layer`` voci piu' recenti.
+    Con ``remove_unindexed`` rimuove anche i file su disco non presenti nel
+    manifest (piu' vecchi di un'ora, per non toccare scritture in corso).
+    Chiamata a ogni salvataggio (solo sul layer scritto) e da "Ottimizza cache".
+    """
+
+    keep = max(1, int(keep_per_layer))
+    report = {"removed_stale": 0, "removed_unindexed": 0, "freed_bytes": 0}
+    try:
+        manifest = _read_manifest()
+        entries = dict(manifest.get("entries", {}) or {})
+        groups: dict[tuple[str, str], list[tuple[str, dict[str, Any]]]] = {}
+        for key, entry in entries.items():
+            if not isinstance(entry, dict):
+                continue
+            pid, lyr = str(entry.get("page_id") or ""), str(entry.get("layer") or "")
+            if page_id is not None and pid != page_id:
+                continue
+            if layer is not None and lyr != layer:
+                continue
+            groups.setdefault((pid, lyr), []).append((key, entry))
+
+        changed = False
+        for items in groups.values():
+            items.sort(key=lambda kv: float(kv[1].get("created_at", 0.0) or 0.0), reverse=True)
+            for key, entry in items[keep:]:
+                path = Path(str(entry.get("path") or ""))
+                try:
+                    if path.exists():
+                        report["freed_bytes"] += path.stat().st_size
+                        path.unlink()
+                    entries.pop(key, None)
+                    report["removed_stale"] += 1
+                    changed = True
+                except Exception as exc:
+                    logger.warning("Prune page artifact fallito per %s: %s", key, exc)
+        if changed:
+            manifest["entries"] = entries
+            _write_manifest(manifest)
+
+        if remove_unindexed and PAGE_ARTIFACT_CACHE_DIR.exists():
+            indexed = {str(e.get("file") or "") for e in entries.values() if isinstance(e, dict)}
+            now = time.time()
+            for path in list(PAGE_ARTIFACT_CACHE_DIR.glob("*.pickle*")):
+                if path.name in indexed:
+                    continue
+                try:
+                    stat = path.stat()
+                    if now - stat.st_mtime < _UNINDEXED_MIN_AGE_SECONDS:
+                        continue
+                    path.unlink()
+                    report["removed_unindexed"] += 1
+                    report["freed_bytes"] += stat.st_size
+                except Exception as exc:
+                    logger.warning("Rimozione file non indicizzato %s fallita: %s", path.name, exc)
+    except Exception as exc:
+        logger.warning("Prune page artifacts non eseguito: %s", exc)
+    return report
 
 
 def get_or_build_page_artifact(

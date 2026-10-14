@@ -17,7 +17,7 @@ from core.cache import invalidate_portfolio_cache
 from core.cache_policy import build_cache_artifact_signature, get_cache_artifact_spec
 from core.cache_orchestrator import get_or_build_registered_artifact
 from core.cache_signatures import build_portfolio_data_signature
-from core.page_cache import clear_page_artifact_disk_cache, get_page_artifact_cache_stats
+from core.page_cache import clear_page_artifact_disk_cache, get_page_artifact_cache_stats, prune_page_artifact_disk_cache
 from streamlit.delta_generator import DeltaGenerator
 
 from core.finance import _build_snapshot_from_data, _rebuild_cash_ledger_from_events
@@ -1259,13 +1259,16 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     status_box = st.status("Ottimizzazione cache in corso...", expanded=True)
                     status_box.write("Migrazione legacy, rimozione orfani e applicazione limiti.")
                     report = fcache.maintain_cache(migrate_legacy=True, remove_orphans=True, enforce_limits=True)
+                    page_report = prune_page_artifact_disk_cache()
                     invalidate_portfolio_cache("cache figure ottimizzata")
                     _record_cache_action("optimized")
                     queue_success(
                         f"Cache ottimizzata: migrati {report.get('migrated_legacy_json', 0)} · "
                         f"rimossi pickle {report.get('removed_legacy_pickle', 0)} · "
                         f"orfani {report.get('removed_orphans', 0)} · "
-                        f"policy {report.get('removed_by_policy', 0)}"
+                        f"policy {report.get('removed_by_policy', 0)} · "
+                        f"artefatti pagina obsoleti {page_report['removed_stale'] + page_report['removed_unindexed']} "
+                        f"({page_report['freed_bytes'] / (1024 * 1024):.1f} MB)"
                     )
                     if report.get("errors"):
                         update_status(status_box, label="Cache ottimizzata con avvisi", state="complete")

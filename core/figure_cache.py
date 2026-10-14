@@ -692,11 +692,19 @@ class FigureCache:
                         report["errors"].append(f"pickle {pickle_path.name}: {exc}")
 
             if remove_orphans and manifest_filenames and self.CACHE_DIR.exists():
+                now_ts = time.time()
                 for path in list(self._iter_cache_files()):
                     try:
-                        if path.name not in manifest_filenames and not path.name.endswith(".json.gz"):
-                            path.unlink(missing_ok=True)
-                            report["removed_orphans"] += 1
+                        if path.name in manifest_filenames:
+                            continue
+                        # I .json.gz sono il formato corrente: orfani anche
+                        # loro (firma cambiata), ma si salta chi e' stato
+                        # scritto da meno di un'ora, il manifest puo' essere
+                        # ancora in attesa di flush.
+                        if path.name.endswith(".json.gz") and (now_ts - path.stat().st_mtime) < 3600:
+                            continue
+                        path.unlink(missing_ok=True)
+                        report["removed_orphans"] += 1
                     except Exception as exc:
                         report["errors"].append(f"orphan {path.name}: {exc}")
 
