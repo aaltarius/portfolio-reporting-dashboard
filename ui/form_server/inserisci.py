@@ -187,7 +187,7 @@ function addToCart(){
     const imp=qv('inp_cash');
     if(!dataVal){showErr('Inserisci la data.');return;}
     if(imp<=0){showErr('Inserisci un importo maggiore di zero.');return;}
-    item={tipo:'cash',movimento:mov,data:dataVal,importo:imp,note:$('note_liq').value};
+    item={tipo:'cash',movimento:mov,data:dataVal,importo:imp,note:$('note_liq').value,strumento_collegato:$('sel_strum_cash')?.value||''};
     const segno=mov==='VERSAMENTO'?'+':'-';
     desc=`<b>${mov}</b> &nbsp;·&nbsp; <b>${fmtN(imp,2)} €</b>`;
   }
@@ -249,6 +249,7 @@ function resetInputs(){
   if($('inp_comm'))$('inp_comm').value='0';
   if($('inp_imposte'))$('inp_imposte').value='0';
   if($('note_titolo'))$('note_titolo').value='';
+  if($('sel_strum_cash'))$('sel_strum_cash').value='';
   if($('note_liq'))$('note_liq').value='';
   if($('inp_cash'))$('inp_cash').value='';
   if($('provento_info'))$('provento_info').style.display='none';
@@ -291,6 +292,10 @@ _JS = (
 def _render_form(tickers: list[dict], error: str = "", prefill: dict | None = None) -> str:
     today = date.today().isoformat()
     prefill_ticker = str(prefill.get("ticker") or "") if prefill else ""
+    strum_cash_opts = "\n".join(
+        f'<option value="{escape(t["ticker"])}">{escape(t["label"])}</option>'
+        for t in tickers
+    )
     ticker_opts = "\n".join(
         f'<option value="{escape(t["ticker"])}" '
         f'data-gov="{str(t["is_gov"]).lower()}"'
@@ -426,6 +431,12 @@ def _render_form(tickers: list[dict], error: str = "", prefill: dict | None = No
       </div>
       <label class="lbl">Importo €</label>
       <input type="number" id="inp_cash" step="0.01" min="0" placeholder="0.00">
+      <label class="lbl">Strumento collegato (opzionale)</label>
+      <select id="sel_strum_cash">
+        <option value="">— nessuno —</option>
+        {strum_cash_opts}
+      </select>
+      <div class="hint" style="margin-top:4px">Se il movimento nasce da uno strumento (es. il rientro di un rimborso), collegalo: con la Modalit&agrave; Privacy sparisce insieme allo strumento nascosto.</div>
       <label class="lbl">Note</label>
       <input type="text" id="note_liq" placeholder="opzionale" maxlength="120">
     </div>
@@ -629,14 +640,18 @@ async def post_form(cart_data: str = Form("[]")):
                 if imp_f <= 0:
                     raise ValueError("Importo deve essere maggiore di zero.")
                 netto_cash = imp_f if mov == "VERSAMENTO" else -imp_f
-                events_to_append.append({
+                cash_event = {
                     "data": str(data_obj),
                     "ticker": "",
                     "tipo_evento": mov,
                     "importo_lordo": imp_f,
                     "importo_netto": netto_cash,
                     "note": str(item.get("note", "")),
-                })
+                }
+                strumento_collegato = str(item.get("strumento_collegato", "") or "").strip()
+                if strumento_collegato:
+                    cash_event["strumento_collegato"] = strumento_collegato
+                events_to_append.append(cash_event)
                 summaries.append(f"{mov}: {imp_f:.2f} €")
 
             else:

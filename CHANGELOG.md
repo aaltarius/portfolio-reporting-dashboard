@@ -16,6 +16,10 @@
   versato risultano quindi quelli di un portafoglio senza lo strumento.
   Rimossi il ticker sentinella e `is_privacy_hidden_event`, ora inutili.
   Dati su disco mai toccati.
+- **[Privacy] Campo "Strumento collegato" sui movimenti di cassa**: select
+  opzionale in "Inserisci operazione" (tab Liquidita') e nella modifica di
+  "Liquidita' gestione" (`ui/form_server/inserisci.py`, `gestione.py`); salvato
+  come `strumento_collegato` sull'evento e rispettato dal filtro Privacy.
 
 ## 5.4 - Privacy coerente sul capitale versato; lista della spesa per ogni foto SATOR; pulizia cache su disco
 

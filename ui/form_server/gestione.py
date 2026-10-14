@@ -259,6 +259,7 @@ def _render_eventi_page(
         "aliquota": float(_safe_float(ev.get("aliquota", 0)) * 100),
         "importo_netto": float(_safe_float(ev.get("importo_netto", 0))),
         "note": str(ev.get("note", "") or ""),
+        "strumento_collegato": str(ev.get("strumento_collegato", "") or ""),
     } for ev in eventi], ensure_ascii=False)
 
     ev_opts = "\n".join(
@@ -296,10 +297,19 @@ def _render_eventi_page(
       <div><label class="lbl">Aliquota %</label><input type="number" id="e_aliq" name="aliquota_perc" step="0.5" min="0" max="100" placeholder="{TAX_RATE_OTHER_PCT}"></div>
     </div>"""
 
-    edit_cash = """
+    strum_opts = "\n".join(
+        f'<option value="{escape(str(s.get("ticker", "")))}">{escape(str(s.get("ticker", "")))}</option>'
+        for s in (data.get("strumenti") or []) if s.get("ticker")
+    )
+    edit_cash = f"""
     <div style="margin-top:10px">
       <label class="lbl">Importo €</label>
       <input type="number" id="e_cash" name="importo_lordo" step="0.01" min="0" placeholder="0.00">
+      <label class="lbl" style="margin-top:12px">Strumento collegato (opzionale)</label>
+      <select id="e_strum" name="strumento_collegato">
+        <option value="">— nessuno —</option>
+        {strum_opts}
+      </select>
     </div>"""
 
     tab_edit = f"""
@@ -398,7 +408,7 @@ function loadEv(){{
   }} else if(isProv){{
     s('e_lordo',ev.importo_lordo); s('e_aliq',ev.aliquota);
   }} else {{
-    s('e_cash',ev.importo_lordo);
+    s('e_cash',ev.importo_lordo); s('e_strum',ev.strumento_collegato);
   }}
 
   // delete form
@@ -533,6 +543,7 @@ async def post_liquidita_gestione(
     data_ev: str = Form("", alias="data"),
     note: str = Form(""),
     importo_lordo: str = Form("0"),
+    strumento_collegato: str = Form(""),
 ):
     from persistence.storage import load_data as _ld, load_settings as _ls, apply_privacy_filter, _safe_float
     from urllib.parse import quote as urlquote
@@ -567,7 +578,10 @@ async def post_liquidita_gestione(
     elif azione == "modifica":
         if not event_id:
             return err_page("ID evento mancante.")
-        updates = {"data": data_ev.strip(), "note": note, "importo_lordo": _safe_float(importo_lordo)}
+        updates = {
+            "data": data_ev.strip(), "note": note, "importo_lordo": _safe_float(importo_lordo),
+            "strumento_collegato": strumento_collegato.strip(),
+        }
         if _fs_update_event(d, event_id, updates):
             return RedirectResponse(f"/liquidita_gestione?tab=edit&ok={urlquote('Movimento aggiornato.')}", status_code=303)
         return err_page("Aggiornamento fallito.")
