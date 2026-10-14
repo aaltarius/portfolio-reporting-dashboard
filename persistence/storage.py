@@ -121,7 +121,7 @@ def _migrate_json_to_data_dir():
 # Domain constants
 # ---------------------------------------------------------------------------
 APP_VERSION    = "5.4"
-SCHEMA_VERSION = "3.3"
+SCHEMA_VERSION = "3.4"
 
 TIPI_EVENTO_PORTAFOGLIO = [
     "ACQUISTO", "VENDITA", "RIMBORSO A SCADENZA",
@@ -1305,12 +1305,83 @@ def _backfill_natura_and_tipo(strumenti: list) -> bool:
     return changed
 
 
+def _schema_older_than(payload, version: str) -> bool:
+    def _key(v):
+        try:
+            return tuple(int(x) for x in str(v).split("."))
+        except ValueError:
+            return (0,)
+    current = payload.get("schema_version") if isinstance(payload, dict) else None
+    return _key(current) < _key(version)
+
+
+def _backup_before_schema_migration(version: str) -> None:
+    """Backup completo prima di una migrazione dello schema dati (rispetta la
+    policy backup di settings)."""
+    try:
+        cfg = load_settings().get("backup", {})
+        if cfg.get("enabled") and cfg.get("backup_before_migration", True):
+            create_backup_bundle(tag=f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_pre_schema_{version}")
+    except Exception:
+        logger.warning("Backup pre-migrazione schema %s fallito, la migrazione prosegue", version, exc_info=True)
+
+
+_CASH_MOVEMENT_TYPES = {"VERSAMENTO", "PRELIEVO", "COMMISSIONE", "IMPOSTA"}
+
+
+def _backfill_strumento_collegato(data: dict) -> int:
+    """Migrazione schema 3.4: scrive ``strumento_collegato`` sui movimenti di
+    cassa senza ticker, derivandolo UNA VOLTA dai segnali storici (link al
+    trade, ticker citato nella nota, prelievo pari al capitale liberato di una
+    vendita/rimborso nello stesso giorno). Da qui in avanti il flag e' l'unica
+    fonte per la Modalita' Privacy. Ritorna il numero di movimenti collegati;
+    quelli ambigui restano senza flag."""
+    import re
+    eventi = data.get("registro_eventi") or []
+    tickers = {str(s.get("ticker") or "") for s in (data.get("strumenti") or []) if s.get("ticker")}
+    tickers |= {str(e.get("ticker") or "") for e in eventi if e.get("ticker")}
+    by_id = {str(e.get("event_id")): e for e in eventi if e.get("event_id")}
+    linked = 0
+    for e in eventi:
+        if e.get("ticker") or e.get("strumento_collegato") or str(e.get("tipo_evento") or "") not in _CASH_MOVEMENT_TYPES:
+            continue
+        target = ""
+        trade = by_id.get(str(e.get("linked_trade_event_id") or ""))
+        if trade is not None and trade.get("ticker"):
+            target = str(trade["ticker"])
+        if not target:
+            note = str(e.get("note") or "")
+            hits = [t for t in tickers if re.search(r"(?<![\w.\-])" + re.escape(t) + r"(?![\w.\-])", note)]
+            if len(hits) == 1:
+                target = hits[0]
+        if not target and e.get("tipo_evento") == "PRELIEVO":
+            importo = round(abs(_safe_float(e.get("importo_netto"))), 2)
+            hits = {
+                str(x["ticker"]) for x in eventi
+                if x.get("ticker") and x.get("capitale_liberato")
+                and str(x.get("data")) == str(e.get("data"))
+                and round(abs(_safe_float(x.get("capitale_liberato"))), 2) == importo
+            }
+            if len(hits) == 1:
+                target = next(iter(hits))
+        if target:
+            e["strumento_collegato"] = target
+            linked += 1
+    return linked
+
+
 def load_data():
     from persistence.parquet_utils import load_storico_prezzi_hybrid
 
     _migrate_json_to_data_dir()
     raw = _read_json_file(DATA_FILE, default_data_v33())
+    needs_link_migration = _schema_older_than(raw, "3.4") and bool(raw.get("registro_eventi"))
+    if needs_link_migration:
+        _backup_before_schema_migration("3.4")
     d = _normalize_portfolio_data_payload(raw)
+    if needs_link_migration:
+        n_linked = _backfill_strumento_collegato(d)
+        logger.info("Migrazione schema 3.4: strumento_collegato assegnato a %s movimenti", n_linked)
     base = default_data_v33()
     for k, v in base.items():
         d.setdefault(k, json.loads(json.dumps(v)))
@@ -1669,25 +1740,15 @@ def _data_mtime() -> float:
 
 
 def _is_privacy_related_event(event: dict, hidden: set[str]) -> bool:
-    """True se l'evento appartiene a uno strumento nascosto o ne e' un
-    movimento correlato (da eliminare dalla vista Privacy). Criteri, tutti
-    indipendenti: ticker dell'evento; ``strumento_collegato`` esplicito (cash
-    manuale legato a uno strumento); versamento/prelievo agganciato via
-    ``linked_trade_event_id`` a un trade dello strumento (il registro e'
-    scandito una sola volta da ``apply_privacy_filter``); nota che cita il
-    ticker (versamenti automatici legacy senza link, auto-liquidita'
-    retroattiva)."""
-    import re
-    if str(event.get("ticker") or "") in hidden:
-        return True
-    if str(event.get("strumento_collegato") or "") in hidden:
-        return True
-    note = str(event.get("note") or "")
-    if note:
-        for tk in hidden:
-            if tk and re.search(r"(?<![\w.\-])" + re.escape(tk) + r"(?![\w.\-])", note):
-                return True
-    return False
+    """True se l'evento appartiene a uno strumento nascosto: o e' un evento
+    dello strumento (``ticker``) o e' un movimento correlato con
+    ``strumento_collegato`` (versamento automatico, rientro di un rimborso,
+    cash manuale legato). Il flag e' l'unica fonte: lo scrive la migrazione
+    schema 3.4 per i dati storici e le funzioni di inserimento per i nuovi."""
+    return (
+        str(event.get("ticker") or "") in hidden
+        or str(event.get("strumento_collegato") or "") in hidden
+    )
 
 
 def apply_privacy_filter(data: dict, settings: dict) -> dict:
@@ -1748,37 +1809,13 @@ def apply_privacy_filter(data: dict, settings: dict) -> dict:
         for tk in all_hidden:
             day_prices.pop(tk, None)
 
-    # Registro eventi: fuori lo strumento e ogni movimento correlato (anche i
-    # versamenti collegati a un trade rimosso, a un solo livello).
+    # Registro eventi: fuori lo strumento e ogni movimento col suo flag.
     eventi = list(data.get("registro_eventi") or [])
-    removed_ids = {
+    dropped_ids = {
         str(e.get("event_id")) for e in eventi
         if e.get("event_id") and _is_privacy_related_event(e, all_hidden)
     }
-    # Prelievo che riporta fuori il capitale liberato da una vendita/rimborso
-    # dello strumento nascosto (stessa data, stesso importo): il registro non
-    # lo collega all'evento, ma e' il suo movimento di rientro.
-    liberato = {
-        (str(e.get("data") or ""), round(abs(_safe_float(e.get("capitale_liberato"))), 2))
-        for e in eventi
-        if str(e.get("event_id") or "") in removed_ids and e.get("capitale_liberato")
-    }
-    kept, dropped_ids = [], set(removed_ids)
-    for e in eventi:
-        if (
-            str(e.get("event_id") or "") in removed_ids
-            or str(e.get("linked_trade_event_id") or "") in removed_ids
-            or _is_privacy_related_event(e, all_hidden)
-            or (
-                e.get("tipo_evento") == "PRELIEVO"
-                and (str(e.get("data") or ""), round(abs(_safe_float(e.get("importo_netto"))), 2)) in liberato
-            )
-        ):
-            if e.get("event_id"):
-                dropped_ids.add(str(e["event_id"]))
-        else:
-            kept.append(e)
-    data["registro_eventi"] = kept
+    data["registro_eventi"] = [e for e in eventi if not _is_privacy_related_event(e, all_hidden)]
 
     # Sezioni derivate/duplicate del registro: devono restare coerenti con il
     # registro filtrato, altrimenti lo strumento riaffiora da lettori che non
@@ -1787,7 +1824,6 @@ def apply_privacy_filter(data: dict, settings: dict) -> dict:
     data["registro_liquidita"] = [
         r for r in (data.get("registro_liquidita") or [])
         if str(r.get("event_id") or "") not in dropped_ids
-        and not _is_privacy_related_event(r, all_hidden)
     ]
     for key in ("operazioni", "proventi"):
         data[key] = [

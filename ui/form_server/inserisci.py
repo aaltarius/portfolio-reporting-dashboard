@@ -596,6 +596,7 @@ async def post_form(cart_data: str = Form("[]")):
                         "importo_lordo": imp_f + comm_f + tax_f,
                         "importo_netto": imp_f + comm_f + tax_f,
                         "linked_trade_event_id": trade_event_id,
+                        "strumento_collegato": ticker,
                         "note": f"Versamento automatico per acquisto {ticker}",
                     })
                 events_to_append.append({

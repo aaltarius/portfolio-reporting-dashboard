@@ -2,6 +2,15 @@
 
 ## Non rilasciato
 
+- **[Schema 3.4] Il flag `strumento_collegato` e' l'unica fonte della Privacy**:
+  `SCHEMA_VERSION` 3.3 -> 3.4. Al primo caricamento di dati pre-3.4
+  `load_data` crea un backup (`*_pre_schema_3.4`) e `_backfill_strumento_collegato`
+  scrive una volta il flag su tutti i movimenti di cassa senza ticker,
+  derivandolo da link al trade, ticker nella nota o prelievo pari al capitale
+  liberato nello stesso giorno (sui dati reali: 173 movimenti, 0 ambigui). Il
+  Versamento automatico di "Inserisci operazione" lo imposta in automatico.
+  `apply_privacy_filter` ora legge solo `ticker` e `strumento_collegato`: le
+  regole di ripiego (nota, data+importo) sono state tolte dal filtro.
 - **[Privacy] Strumento nascosto = strumento mai esistito**: il filtro
   (`persistence/storage.py::apply_privacy_filter`) lasciava nel registro gli
   eventi dello strumento (ticker "—") e i movimenti correlati perche' la
