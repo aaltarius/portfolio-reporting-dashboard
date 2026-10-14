@@ -1,5 +1,22 @@
 # Changelog
 
+## Non rilasciato
+
+- **[Privacy] Strumento nascosto = strumento mai esistito**: il filtro
+  (`persistence/storage.py::apply_privacy_filter`) lasciava nel registro gli
+  eventi dello strumento (ticker "—") e i movimenti correlati perche' la
+  liquidita' li contasse, e non toccava per niente `operazioni`, `proventi`,
+  `registro_liquidita`, `instrument_master` e le cache di posizioni/storico,
+  da cui i BTP riaffioravano. Ora elimina dalla vista: gli eventi dello
+  strumento; i versamenti collegati (`linked_trade_event_id`); i versamenti
+  legacy e l'auto-liquidita' retroattiva che citano il ticker nella nota; i
+  movimenti con `strumento_collegato` esplicito (nuovo campo opzionale
+  dell'evento); il prelievo di rientro con stessa data e stesso importo del
+  `capitale_liberato` di una vendita/rimborso nascosto. Liquidita' e capitale
+  versato risultano quindi quelli di un portafoglio senza lo strumento.
+  Rimossi il ticker sentinella e `is_privacy_hidden_event`, ora inutili.
+  Dati su disco mai toccati.
+
 ## 5.4 - Privacy coerente sul capitale versato; lista della spesa per ogni foto SATOR; pulizia cache su disco
 
 - **[Privacy] Capitale versato/rientrato non rivelano piu' gli strumenti

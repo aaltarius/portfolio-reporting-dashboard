@@ -987,6 +987,11 @@ def _normalize_event_record(ev):
     # aggiornare il versamento gemello (bug reale, 2026-08-20).
     if ev.get("linked_trade_event_id"):
         out["linked_trade_event_id"] = str(ev["linked_trade_event_id"])
+    # Strumento a cui e' legato un movimento di cassa manuale (es. il prelievo
+    # che riporta fuori il rimborso di un BTP): la Modalita' Privacy elimina
+    # questi eventi insieme allo strumento nascosto.
+    if ev.get("strumento_collegato"):
+        out["strumento_collegato"] = str(ev["strumento_collegato"])
     if out["importo_netto"] in (None, ""):
         if tipo in {"ACQUISTO", "COMMISSIONE", "IMPOSTA", "PRELIEVO"}:
             if tipo == "ACQUISTO":
@@ -1505,7 +1510,7 @@ def save_data(data, *, include_storico: bool = True):
     # core/dashboard_datasets.py, aggiunto in questa stessa sessione) non ha
     # violato il contratto passando `ctx.data` privacy-filtrato: strumenti
     # nascosti cancellati per sempre da disco, ticker reali degli eventi
-    # collegati sovrascritti con PRIVACY_HIDDEN_TICKER_SENTINEL. Rifiutato
+    # collegati eliminati dal registro. Rifiutato
     # qui, al punto di massima leva, invece di rincorrere ogni futuro punto
     # di chiamata che potrebbe ripetere lo stesso errore - nessuna riga viene
     # scritta, il chiamante puo' riprovare al prossimo salvataggio con dati
@@ -1663,7 +1668,26 @@ def _data_mtime() -> float:
         return 0.0
 
 
-from core.config import PRIVACY_AUTO_DEPOSIT_NOTE, PRIVACY_HIDDEN_TICKER_SENTINEL  # noqa: E402  (fonte unica)
+def _is_privacy_related_event(event: dict, hidden: set[str]) -> bool:
+    """True se l'evento appartiene a uno strumento nascosto o ne e' un
+    movimento correlato (da eliminare dalla vista Privacy). Criteri, tutti
+    indipendenti: ticker dell'evento; ``strumento_collegato`` esplicito (cash
+    manuale legato a uno strumento); versamento/prelievo agganciato via
+    ``linked_trade_event_id`` a un trade dello strumento (il registro e'
+    scandito una sola volta da ``apply_privacy_filter``); nota che cita il
+    ticker (versamenti automatici legacy senza link, auto-liquidita'
+    retroattiva)."""
+    import re
+    if str(event.get("ticker") or "") in hidden:
+        return True
+    if str(event.get("strumento_collegato") or "") in hidden:
+        return True
+    note = str(event.get("note") or "")
+    if note:
+        for tk in hidden:
+            if tk and re.search(r"(?<![\w.\-])" + re.escape(tk) + r"(?![\w.\-])", note):
+                return True
+    return False
 
 
 def apply_privacy_filter(data: dict, settings: dict) -> dict:
@@ -1676,17 +1700,16 @@ def apply_privacy_filter(data: dict, settings: dict) -> dict:
     Quotazioni (auto-fallback benchmark in core/dashboard_datasets.py)
     violava gia' questo contratto passando la copia filtrata a save_data(),
     cancellando permanentemente gli strumenti nascosti da disco e
-    riscrivendo il ticker reale dei loro eventi con
-    PRIVACY_HIDDEN_TICKER_SENTINEL - prima solo documentato, ora anche
+    eliminando anche i loro eventi dal registro
+    - prima solo documentato, ora anche
     impedito attivamente al punto di massima leva invece di rincorrere
     ogni possibile punto di chiamata che potrebbe violarlo).
 
-    Rimuove lo strumento nascosto da ``strumenti`` e ``storico_prezzi``. Gli
-    eventi collegati (ACQUISTO/VENDITA/CEDOLA/DIVIDENDO/...) restano nel
-    registro con il ticker sostituito da PRIVACY_HIDDEN_TICKER_SENTINEL:
-    servono per calcolare correttamente la liquidita' totale (che somma i
-    flussi di cassa di tutti gli eventi), ma senza rivelare a quale strumento
-    si riferiscono nelle viste che elencano gli eventi per ticker/nome.
+    Rimuove lo strumento nascosto da ``strumenti`` e ``storico_prezzi`` e
+    ELIMINA dal registro tutti i suoi eventi e ogni movimento correlato
+    (vedi ``_is_privacy_related_event``): la vista filtrata deve essere
+    identica a quella di un portafoglio in cui lo strumento non e' mai
+    esistito, liquidita' compresa. Nessun movimento puo' restare scollegato.
     """
     import copy
     pm = (settings or {}).get("privacy_mode", {}) or {}
@@ -1712,6 +1735,11 @@ def apply_privacy_filter(data: dict, settings: dict) -> dict:
     # dello stato caricato.
     data["_privacy_filtered"] = True
     data.pop("_loaded_snapshot", None)
+    hidden_isins = {
+        str(s.get("isin") or "")
+        for s in (data.get("strumenti") or [])
+        if str(s.get("ticker") or "") in all_hidden and s.get("isin")
+    }
     data["strumenti"] = [
         s for s in (data.get("strumenti") or [])
         if str(s.get("ticker") or "") not in all_hidden
@@ -1719,30 +1747,63 @@ def apply_privacy_filter(data: dict, settings: dict) -> dict:
     for day_prices in (data.get("storico_prezzi") or {}).values():
         for tk in all_hidden:
             day_prices.pop(tk, None)
-    hidden_trade_ids = {
-        str(e.get("event_id"))
-        for e in (data.get("registro_eventi") or [])
-        if e.get("event_id") and str(e.get("ticker") or "") in all_hidden
+
+    # Registro eventi: fuori lo strumento e ogni movimento correlato (anche i
+    # versamenti collegati a un trade rimosso, a un solo livello).
+    eventi = list(data.get("registro_eventi") or [])
+    removed_ids = {
+        str(e.get("event_id")) for e in eventi
+        if e.get("event_id") and _is_privacy_related_event(e, all_hidden)
     }
-    for e in (data.get("registro_eventi") or []):
-        if str(e.get("ticker") or "") in all_hidden:
-            e["ticker"] = PRIVACY_HIDDEN_TICKER_SENTINEL
-        elif (
-            e.get("tipo_evento") == "VERSAMENTO"
-            and str(e.get("linked_trade_event_id") or "") in hidden_trade_ids
+    # Prelievo che riporta fuori il capitale liberato da una vendita/rimborso
+    # dello strumento nascosto (stessa data, stesso importo): il registro non
+    # lo collega all'evento, ma e' il suo movimento di rientro.
+    liberato = {
+        (str(e.get("data") or ""), round(abs(_safe_float(e.get("capitale_liberato"))), 2))
+        for e in eventi
+        if str(e.get("event_id") or "") in removed_ids and e.get("capitale_liberato")
+    }
+    kept, dropped_ids = [], set(removed_ids)
+    for e in eventi:
+        if (
+            str(e.get("event_id") or "") in removed_ids
+            or str(e.get("linked_trade_event_id") or "") in removed_ids
+            or _is_privacy_related_event(e, all_hidden)
+            or (
+                e.get("tipo_evento") == "PRELIEVO"
+                and (str(e.get("data") or ""), round(abs(_safe_float(e.get("importo_netto"))), 2)) in liberato
+            )
         ):
-            # Versamento automatico gemello di un trade nascosto: marcato cosi'
-            # da essere escluso dal capitale versato (resta nella liquidita').
-            e["note"] = PRIVACY_AUTO_DEPOSIT_NOTE
-        # Il ticker nascosto puo' comparire anche nella nota di un evento non
-        # suo — es. il versamento automatico generato da "Inserisci operazione"
-        # scrive "Versamento automatico per acquisto <ticker>" su un evento
-        # VERSAMENTO (ticker="", quindi non toccato dal ciclo sopra).
-        note = e.get("note")
-        if note:
-            note_str = str(note)
-            for tk in all_hidden:
-                if tk and tk in note_str:
-                    note_str = note_str.replace(tk, PRIVACY_HIDDEN_TICKER_SENTINEL)
-            e["note"] = note_str
+            if e.get("event_id"):
+                dropped_ids.add(str(e["event_id"]))
+        else:
+            kept.append(e)
+    data["registro_eventi"] = kept
+
+    # Sezioni derivate/duplicate del registro: devono restare coerenti con il
+    # registro filtrato, altrimenti lo strumento riaffiora da lettori che non
+    # passano dal registro eventi (operazioni, proventi, registro_liquidita,
+    # instrument_master, cache di posizioni/storico).
+    data["registro_liquidita"] = [
+        r for r in (data.get("registro_liquidita") or [])
+        if str(r.get("event_id") or "") not in dropped_ids
+        and not _is_privacy_related_event(r, all_hidden)
+    ]
+    for key in ("operazioni", "proventi"):
+        data[key] = [
+            r for r in (data.get(key) or [])
+            if not _is_privacy_related_event(r, all_hidden)
+        ]
+    master = data.get("instrument_master")
+    if isinstance(master, dict):
+        data["instrument_master"] = {
+            tk: v for tk, v in master.items() if str(tk) not in all_hidden
+        }
+    lookup = data.get("cache_lookup_strumenti")
+    if isinstance(lookup, dict) and hidden_isins:
+        data["cache_lookup_strumenti"] = {
+            k: v for k, v in lookup.items() if str(k) not in hidden_isins
+        }
+    data["cache_posizioni"] = {}
+    data["cache_storico_portafoglio"] = {}
     return data

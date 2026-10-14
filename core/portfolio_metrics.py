@@ -7,7 +7,6 @@ import math
 
 import pandas as pd
 
-from core.config import is_privacy_hidden_event
 from core.constants import QTY_ZERO_EPS
 from core.domain.positions import discharge_lot
 
@@ -165,9 +164,7 @@ def calcola_capitale_rientrato(
 def calcola_flussi_capitale(
     eventi_portafoglio: list[dict[str, Any]] | None,
 ) -> dict[str, float]:
-    eventi_portafoglio = [
-        e for e in (eventi_portafoglio or []) if not is_privacy_hidden_event(e)
-    ]
+    eventi_portafoglio = list(eventi_portafoglio or [])
     cap_investito = 0.0
     versamenti_netti = 0.0
     for evento in eventi_portafoglio:
