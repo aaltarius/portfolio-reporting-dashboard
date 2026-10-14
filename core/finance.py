@@ -40,6 +40,7 @@ from persistence.storage import (
 )
 from core.validation import validate_evento_portafoglio
 from core.benchmark_registry import resolve_instrument_benchmark
+from core.config import is_privacy_hidden_event
 from core.constants import QTY_ZERO_EPS
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -371,7 +372,9 @@ def _build_portfolio_history_core(sto: dict, eventi: list) -> tuple[list[dict], 
         while idx < len(eventi_ordinati) and str(eventi_ordinati[idx].get("data", "")) <= d:
             ev = eventi_ordinati[idx]
             _tipo = ev.get("tipo_evento")
-            if _tipo == "VERSAMENTO":
+            if is_privacy_hidden_event(ev):
+                pass
+            elif _tipo == "VERSAMENTO":
                 _imp = _safe_float(ev.get("importo_netto", 0)) or _safe_float(ev.get("importo_lordo", 0))
                 capital_versato += abs(_imp)
             elif _tipo == "PRELIEVO":
@@ -470,7 +473,9 @@ def _build_synthetic_today_row(
     while idx < len(eventi_ordinati):
         ev = eventi_ordinati[idx]
         _tipo = ev.get("tipo_evento")
-        if _tipo == "VERSAMENTO":
+        if is_privacy_hidden_event(ev):
+            pass
+        elif _tipo == "VERSAMENTO":
             _imp = _safe_float(ev.get("importo_netto", 0)) or _safe_float(ev.get("importo_lordo", 0))
             capital_versato += abs(_imp)
         elif _tipo == "PRELIEVO":

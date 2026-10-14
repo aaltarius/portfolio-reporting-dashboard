@@ -23,6 +23,23 @@ liquidita'), ma che non coincide mai con un ticker reale. Vive qui (non in
 persistence/storage.py) perche' sia core/asset_categories.py sia
 persistence/storage.py devono poterlo importare senza creare un ciclo."""
 
+PRIVACY_AUTO_DEPOSIT_NOTE = f"Versamento automatico per acquisto {PRIVACY_HIDDEN_TICKER_SENTINEL}"
+"""Nota assegnata dal filtro Privacy al Versamento automatico che finanzia
+l'acquisto di uno strumento nascosto."""
+
+
+def is_privacy_hidden_event(event: dict) -> bool:
+    """True per gli eventi che il filtro Privacy ha reso anonimi: i flussi
+    dello strumento nascosto e il Versamento automatico che li finanzia. Restano
+    nel registro per la liquidita', ma devono essere esclusi dai calcoli di
+    capitale versato/rientrato, che altrimenti rivelano lo strumento nascosto."""
+    if str(event.get("ticker") or "") == PRIVACY_HIDDEN_TICKER_SENTINEL:
+        return True
+    return (
+        event.get("tipo_evento") == "VERSAMENTO"
+        and str(event.get("note") or "").startswith(PRIVACY_AUTO_DEPOSIT_NOTE)
+    )
+
 COLORS: dict[str, str] = {
     "success": "#1E8449",
     "danger": "#FF4B4B",

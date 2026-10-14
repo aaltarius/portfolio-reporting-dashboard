@@ -119,7 +119,7 @@ def _migrate_json_to_data_dir():
 # ---------------------------------------------------------------------------
 # Domain constants
 # ---------------------------------------------------------------------------
-APP_VERSION    = "5.3"
+APP_VERSION    = "5.4"
 SCHEMA_VERSION = "3.3"
 
 TIPI_EVENTO_PORTAFOGLIO = [
@@ -1662,7 +1662,7 @@ def _data_mtime() -> float:
         return 0.0
 
 
-from core.config import PRIVACY_HIDDEN_TICKER_SENTINEL  # noqa: E402  (fonte unica)
+from core.config import PRIVACY_AUTO_DEPOSIT_NOTE, PRIVACY_HIDDEN_TICKER_SENTINEL  # noqa: E402  (fonte unica)
 
 
 def apply_privacy_filter(data: dict, settings: dict) -> dict:
@@ -1718,9 +1718,21 @@ def apply_privacy_filter(data: dict, settings: dict) -> dict:
     for day_prices in (data.get("storico_prezzi") or {}).values():
         for tk in all_hidden:
             day_prices.pop(tk, None)
+    hidden_trade_ids = {
+        str(e.get("event_id"))
+        for e in (data.get("registro_eventi") or [])
+        if e.get("event_id") and str(e.get("ticker") or "") in all_hidden
+    }
     for e in (data.get("registro_eventi") or []):
         if str(e.get("ticker") or "") in all_hidden:
             e["ticker"] = PRIVACY_HIDDEN_TICKER_SENTINEL
+        elif (
+            e.get("tipo_evento") == "VERSAMENTO"
+            and str(e.get("linked_trade_event_id") or "") in hidden_trade_ids
+        ):
+            # Versamento automatico gemello di un trade nascosto: marcato cosi'
+            # da essere escluso dal capitale versato (resta nella liquidita').
+            e["note"] = PRIVACY_AUTO_DEPOSIT_NOTE
         # Il ticker nascosto puo' comparire anche nella nota di un evento non
         # suo — es. il versamento automatico generato da "Inserisci operazione"
         # scrive "Versamento automatico per acquisto <ticker>" su un evento

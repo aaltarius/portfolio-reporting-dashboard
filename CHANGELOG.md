@@ -1,5 +1,36 @@
 # Changelog
 
+## 5.4 - Privacy coerente sul capitale versato; lista della spesa per ogni foto SATOR; pulizia cache su disco
+
+- **[Privacy] Capitale versato/rientrato non rivelano piu' gli strumenti
+  nascosti**: `apply_privacy_filter` lascia nel registro gli eventi dello
+  strumento nascosto (servono alla liquidita'), ma "Capitale Versato
+  Storico", il capitale rientrato e la curva storica del capitale li
+  contavano ancora, quindi non quadravano con il "Residuo" (gia' filtrato).
+  `core/config.py::is_privacy_hidden_event` riconosce questi eventi (ticker
+  sentinella e Versamento automatico gemello, collegato via
+  `linked_trade_event_id`) e `calcola_flussi_capitale` (`core/portfolio_metrics.py`)
+  e i due accumulatori `capital_versato` di `core/finance.py` li escludono.
+  La liquidita' resta invariata. Non toccato l'XIRR di portafoglio (il valore
+  finale include tutta la liquidita').
+- **[SATOR] Pulsante "Lista della spesa" su ogni foto dello storico**
+  (`ui/form_server/sator.py`, `downloadShoppingList`): stesso CSV della
+  pagina Pianificazione (Ticker, ISIN, Nome, Bucket, Quote, Prezzo presunto,
+  Importo; `;`, decimali con virgola, BOM).
+- **[Cache] `data/cache` cresceva senza limite** (circa 300 MB): le versioni
+  di `page_artifacts` non venivano mai rimosse (una per ogni cambio di firma)
+  e `FigureCache.maintain_cache` saltava di proposito gli orfani `.json.gz`,
+  il formato in uso (10.226 file orfani su 12.188).
+  `core/page_cache.py::prune_page_artifact_disk_cache` tiene le 3 versioni
+  piu' recenti per (pagina, layer), rimuove i file fuori manifest piu' vecchi
+  di un'ora e gira a ogni salvataggio; "Ottimizza cache" in Gestione dati la
+  richiama e mostra i MB liberati. `maintain_cache` elimina ora anche gli
+  orfani `.json.gz` (escludendo quelli scritti da meno di un'ora, manifest con
+  flush differito). Dopo la pulizia `data/` passa da circa 300 a 75 MB.
+- **[Versione] `APP_VERSION` 5.3 -> 5.4**: cambia il calcolo dei KPI con
+  privacy attiva, le figure/pagine cacheate con la logica precedente vanno
+  rigenerate.
+
 ## 5.3 - Popup strumento: valore del PMC sull'asse Y
 
 - **[UI] Popup Portafoglio e Quotazioni**: l'asse Y a sinistra del grafico
