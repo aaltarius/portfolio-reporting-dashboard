@@ -751,6 +751,25 @@ register_cache_artifact(
 
 register_cache_artifact(
     CacheArtifactSpec(
+        artifact_id="sator.frontier_cache",
+        page_id="shared",
+        layer="frontier",
+        level="L3",
+        owner="core.sator_cache.get_cached_sator_frontier",
+        storage="page_artifact",
+        version="sator-frontier-cache-v1",
+        dependencies=("portfolio_data_signature", "sator_settings", "frontier_horizon", "frontier_slider", "exclude_tickers"),
+        clear_group="sator",
+        stale_policy="rebuild_on_data_or_sator_settings_or_horizon_or_slider_or_exclude_change",
+        log_page="Pianificazione",
+        description="Cache della frontiera rischio/rendimento SATOR (build_sator_frontier): la nuvola e' una simulazione Monte Carlo senza seed, quindi prima veniva ricalcolata (0,4 s) e cambiava aspetto ad ogni rerun; ora e' stabile finche' dati, impostazioni SATOR, orizzonte o slider non cambiano.",
+        prebuild=False,
+        status="registered_provider",
+    )
+)
+
+register_cache_artifact(
+    CacheArtifactSpec(
         artifact_id="market_data.lookup_cache",
         page_id="mercati",
         layer="market_lookup",

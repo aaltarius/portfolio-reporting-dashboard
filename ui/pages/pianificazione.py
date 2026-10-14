@@ -26,11 +26,10 @@ from core.services.sator import (
 )
 from core.cache_signatures import build_portfolio_data_signature
 from core.domain.tax import stima_imposta_vendita
-from core.sator_cache import get_cached_rebalancing_plan, get_cached_sator_analysis
+from core.sator_cache import get_cached_rebalancing_plan, get_cached_sator_analysis, get_cached_sator_frontier
 from core.services.instrument_clustering import build_instrument_map
 from core.services.rebalancing import build_full_instrument_view, build_reinforcement_candidates
 from core.services.sator_explain import build_sator_explanations
-from core.services.sator_frontier import build_sator_frontier
 from persistence.storage import APP_VERSION, SCHEMA_VERSION, load_sator_decisions, load_settings, save_settings
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it
 from ui.i18n import t
@@ -1591,10 +1590,10 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
         )
     with profile_step("Pianificazione/SATOR", "frontier"):
         try:
-            frontier_result = build_sator_frontier(
+            frontier_result = get_cached_sator_frontier(
                 data, settings, precomputed_result=sator_result,
                 lookback_months=_horizon_options[_horizon_label], manual_slider_pct=_manual_pct / 100.0,
-                exclude_tickers=exclude_tickers,
+                exclude_tickers=exclude_tickers, data_sig=data_sig,
             ) if sator_result is not None else None
         except Exception:
             frontier_result = None

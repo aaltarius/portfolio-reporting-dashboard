@@ -30,6 +30,7 @@ from core.cache_orchestrator import get_or_build_registered_artifact
 from core.cache_policy import build_cache_artifact_signature
 from core.services.rebalancing import build_rebalancing_plan
 from core.services.sator import run_sator_analysis
+from core.services.sator_frontier import build_sator_frontier
 
 
 def _sator_settings_slice(settings: dict[str, Any] | None) -> dict[str, Any]:
@@ -105,6 +106,45 @@ def get_cached_rebalancing_plan(
             state_df,
             current_mix,
             portfolio_value,
+            exclude_tickers=exclude_tickers,
+        ),
+    )
+    return artifact.value
+
+
+def get_cached_sator_frontier(
+    data: dict[str, Any],
+    settings: dict[str, Any],
+    *,
+    precomputed_result: dict[str, Any],
+    lookback_months: int,
+    manual_slider_pct: float,
+    exclude_tickers: frozenset[str] = frozenset(),
+    data_sig: str = "",
+) -> Any:
+    """Wrapper cacheato di `build_sator_frontier`. `precomputed_result` non
+    entra nella firma: deriva da `data_sig` + `settings["sator"]` (stessa
+    firma di `get_cached_sator_analysis` col budget di default)."""
+
+    signature = build_cache_artifact_signature(
+        "sator.frontier_cache",
+        inputs={
+            "data_sig": str(data_sig or ""),
+            "sator_settings": _sator_settings_slice(settings),
+            "lookback_months": int(lookback_months),
+            "manual_slider_pct": round(float(manual_slider_pct), 4),
+            "exclude_tickers": tuple(sorted(str(t) for t in (exclude_tickers or ()))),
+        },
+    )
+    artifact = get_or_build_registered_artifact(
+        artifact_id="sator.frontier_cache",
+        signature=signature,
+        builder=lambda: build_sator_frontier(
+            data,
+            settings,
+            precomputed_result=precomputed_result,
+            lookback_months=lookback_months,
+            manual_slider_pct=manual_slider_pct,
             exclude_tickers=exclude_tickers,
         ),
     )
