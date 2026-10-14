@@ -16,6 +16,7 @@ from typing import Any, Iterator
 
 import streamlit as st
 
+from core.volume_policy import RENDER_PROFILE_HISTORY_MAX_BYTES, RENDER_PROFILE_HISTORY_MAX_RUNS
 from persistence.storage import DATA_DIR
 
 _RENDER_PROFILE_KEY = "_portfolio_render_profile_events"
@@ -24,7 +25,7 @@ _RENDER_PROFILE_STACK_KEY = "_portfolio_render_profile_stack"
 _RENDER_PROFILE_COUNTER_KEY = "_portfolio_render_profile_event_counter"
 _RENDER_PROFILE_HISTORY_FILE = Path(DATA_DIR) / "logs" / "render_profile_history.jsonl"
 _PRE_RENDER_EVENTS_FILE = Path(DATA_DIR) / "logs" / "pre_render_events.json"
-_RENDER_PROFILE_HISTORY_MAX_RUNS = 120
+_RENDER_PROFILE_HISTORY_MAX_RUNS = RENDER_PROFILE_HISTORY_MAX_RUNS
 
 
 def _build_render_event(
@@ -595,6 +596,9 @@ def append_render_profile_run(
         history_lines.append(json.dumps(payload, ensure_ascii=False, default=str))
         if len(history_lines) > _RENDER_PROFILE_HISTORY_MAX_RUNS:
             history_lines = history_lines[-_RENDER_PROFILE_HISTORY_MAX_RUNS:]
+        # Tetto anche sui byte: una singola run puo' pesare >100 KB.
+        while len(history_lines) > 1 and sum(len(line) + 1 for line in history_lines) > RENDER_PROFILE_HISTORY_MAX_BYTES:
+            history_lines.pop(0)
         _RENDER_PROFILE_HISTORY_FILE.write_text("\n".join(history_lines) + "\n", encoding="utf-8")
     except Exception:
         pass

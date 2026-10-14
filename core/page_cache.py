@@ -23,6 +23,8 @@ logger = logging.getLogger("portafoglio.core.page_cache")
 
 
 CACHE_SCHEMA_VERSION = "page-cache-v1"
+from core.volume_policy import PAGE_ARTIFACT_KEEP_PER_LAYER
+
 PAGE_ARTIFACT_CACHE_DIR = Path(DATA_DIR) / "cache" / "page_artifacts"
 PAGE_ARTIFACT_MANIFEST_FILE = Path(DATA_DIR) / "cache" / "page_artifacts_manifest.json"
 _PROCESS_CACHE: dict[tuple[str, str, str], Any] = {}
@@ -343,7 +345,6 @@ def _save_to_disk(page_id: str, layer: str, signature: str, value: Any, *, disk_
 #: Versioni su disco conservate per ogni coppia (pagina, layer): la firma
 #: cambia a ogni modifica dei dati e le vecchie non servono piu', ma teniamo
 #: le ultime poche per non rigenerare se due varianti si alternano.
-PAGE_ARTIFACT_KEEP_PER_LAYER = 3
 _UNINDEXED_MIN_AGE_SECONDS = 3600.0
 
 

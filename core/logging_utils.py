@@ -9,10 +9,10 @@ from collections import deque
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from core.volume_policy import LOG_BACKUP_COUNT, LOG_MAX_BYTES
+
 
 DEFAULT_LOGGER_NAME = "portafoglio"
-LOG_MAX_BYTES = 5 * 1024 * 1024
-LOG_BACKUP_COUNT = 3
 LOG_LEVEL_MAP = {
     "DEBUG": logging.DEBUG,
     "INFO": logging.INFO,

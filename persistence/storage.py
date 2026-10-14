@@ -7,6 +7,7 @@ per evitare import circolari.
 import logging
 import math
 import json, os, shutil, hashlib
+from core.volume_policy import BACKUP_KEEP_LAST_N, FIGURE_CACHE_CLEANUP_DAYS, FIGURE_CACHE_MAX_MB
 from datetime import datetime, date
 import pandas as pd
 import numpy as np
@@ -373,15 +374,15 @@ def default_settings():
             # _merge_concurrent_writes). Allineato al comportamento
             # documentato e atteso.
             "backup_before_save": True,
-            "keep_last_n": 20,
+            "keep_last_n": BACKUP_KEEP_LAST_N,
             "folder": "backups"
         },
         "ui_figure_cache": {
             "enabled": True,                    # Enable/disable figure caching
             "strategy": "hybrid",               # "disabled", "session_only", "disk_only", "hybrid"
             "use_gzip": False,                  # Compress JSON on disk
-            "max_cache_size_mb": 500,           # Max disk cache size (soft limit)
-            "auto_cleanup_days": 30,            # Auto-remove figures older than N days
+            "max_cache_size_mb": FIGURE_CACHE_MAX_MB,           # Max disk cache size (soft limit)
+            "auto_cleanup_days": FIGURE_CACHE_CLEANUP_DAYS,            # Auto-remove figures older than N days
         },
         "ui_pre_render": {
             "enabled": True,
@@ -661,7 +662,7 @@ def _normalize_settings_payload(settings):
     category_view["selected_categories"] = normalize_category_selection(
         category_view.get("selected_categories", defaults["category_view"]["selected_categories"])
     )
-    backup["keep_last_n"] = int(backup.get("keep_last_n", 20))
+    backup["keep_last_n"] = int(backup.get("keep_last_n", BACKUP_KEEP_LAST_N))
     merged["quote_log_retention"] = int(merged.get("quote_log_retention", 20))
 
     # Nested -> legacy flat mirrors
@@ -1131,7 +1132,7 @@ def _prune_backups(keep_last_n=None):
     if not os.path.isdir(BACKUP_DIR):
         return 0
     if keep_last_n is None:
-        keep_last_n = int(load_settings().get("backup", {}).get("keep_last_n", 20) or 20)
+        keep_last_n = int(load_settings().get("backup", {}).get("keep_last_n", BACKUP_KEEP_LAST_N) or BACKUP_KEEP_LAST_N)
     keep_last_n = max(int(keep_last_n), 0)
 
     entries = [
@@ -1172,7 +1173,7 @@ def create_backup_bundle(tag=None):
             "backup_created",
             {"folder": folder, "file_count": len(copied), "tag": tag or stamp},
         )
-    _prune_backups(settings.get("backup", {}).get("keep_last_n", 20))
+    _prune_backups(settings.get("backup", {}).get("keep_last_n", BACKUP_KEEP_LAST_N))
     return folder, copied
 
 

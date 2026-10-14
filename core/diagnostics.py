@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from core.volume_policy import FIGURE_CACHE_MAX_MB
+
 import pandas as pd
 
 
@@ -87,7 +89,7 @@ def build_cache_health_rows(
     enabled = bool(cache_settings.get("enabled", True))
     strategy = str(cache_settings.get("strategy", "hybrid"))
     total_size_mb = _safe_float(figure_stats.get("total_size_mb"))
-    limit_mb = _safe_float(cache_settings.get("max_cache_size_mb"), 500.0)
+    limit_mb = _safe_float(cache_settings.get("max_cache_size_mb"), float(FIGURE_CACHE_MAX_MB))
     usage = (total_size_mb / limit_mb * 100.0) if limit_mb > 0 else 0.0
     num_files = _safe_int(figure_stats.get("num_files"))
     legacy_files = _safe_int(figure_stats.get("legacy_double_json_files")) + _safe_int(figure_stats.get("pickle_files"))
@@ -254,7 +256,7 @@ def build_diagnostic_recommendations(
     suggestions: list[str] = []
 
     total_size_mb = _safe_float(figure_stats.get("total_size_mb"))
-    limit_mb = _safe_float(cache_settings.get("max_cache_size_mb"), 500.0)
+    limit_mb = _safe_float(cache_settings.get("max_cache_size_mb"), float(FIGURE_CACHE_MAX_MB))
     if limit_mb > 0 and total_size_mb / limit_mb >= 0.8:
         suggestions.append("La cache figure e' vicina al limite configurato: valuta Ottimizza cache o aumenta il limite MB.")
 

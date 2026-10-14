@@ -27,6 +27,14 @@
   richiama e mostra i MB liberati. `maintain_cache` elimina ora anche gli
   orfani `.json.gz` (escludendo quelli scritti da meno di un'ora, manifest con
   flush differito). Dopo la pulizia `data/` passa da circa 300 a 75 MB.
+- **[Volumi] Politica unica di retention** (`core/volume_policy.py`): backup
+  20 -> 10; log applicativo 5 MB x 4 file -> 2 MB x 3; storico profiler
+  (`render_profile_history.jsonl`, 14,5 MB perche' ogni run pesa ~130 KB)
+  limitato a 20 run e 3 MB; cache figure 500 MB / 30 gg -> 100 MB / 14 gg;
+  `page_artifacts` invariato (3 versioni per pagina e layer). Settings
+  default, UI Gestione dati e fallback del codice leggono tutti dal modulo.
+  Pulizia una tantum: 10 backup piu' vecchi e `portafoglio.log.3` rimossi
+  (`backups/` da 94 a 39 MB, `data/logs` da 34 a 17 MB).
 - **[Versione] `APP_VERSION` 5.3 -> 5.4**: cambia il calcolo dei KPI con
   privacy attiva, le figure/pagine cacheate con la logica precedente vanno
   rigenerate.

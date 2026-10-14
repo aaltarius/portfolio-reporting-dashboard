@@ -14,6 +14,7 @@ import streamlit as st
 
 from core.asset_categories import ASSET_CATEGORY_REGISTRY, infer_category_code
 from core.cache import invalidate_portfolio_cache
+from core.volume_policy import BACKUP_KEEP_LAST_N, FIGURE_CACHE_CLEANUP_DAYS, FIGURE_CACHE_MAX_MB
 from core.cache_policy import build_cache_artifact_signature, get_cache_artifact_spec
 from core.cache_orchestrator import get_or_build_registered_artifact
 from core.cache_signatures import build_portfolio_data_signature
@@ -1109,7 +1110,7 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 "Numero massimo backup",
                 min_value=1,
                 max_value=200,
-                value=int(backup_cfg.get("keep_last_n", 20)),
+                value=int(backup_cfg.get("keep_last_n", BACKUP_KEEP_LAST_N)),
                 step=1,
                 key="datahub_policy_backup_keep",
                 help="Numero di backup da mantenere nelle politiche automatiche di conservazione.",
@@ -1233,8 +1234,8 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
 
             strategy = str(cache_settings.get("strategy", "hybrid"))
             enabled = bool(cache_settings.get("enabled", True))
-            cleanup_days = int(cache_settings.get("auto_cleanup_days", 30) or 30)
-            max_cache_size_mb = float(cache_settings.get("max_cache_size_mb", 500) or 500)
+            cleanup_days = int(cache_settings.get("auto_cleanup_days", FIGURE_CACHE_CLEANUP_DAYS) or FIGURE_CACHE_CLEANUP_DAYS)
+            max_cache_size_mb = float(cache_settings.get("max_cache_size_mb", FIGURE_CACHE_MAX_MB) or FIGURE_CACHE_MAX_MB)
 
             c1, c2, c3, c4 = st.columns(4, gap="small")
             with c1:
@@ -1382,8 +1383,8 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     "Hybrid usa prima la memoria di sessione e poi il disco: riduce i tempi nei rerun e conserva i grafici tra un avvio e l'altro."
                 )
                 cc3, cc4 = st.columns(2)
-                auto_cleanup_days = cc3.number_input("Rimuovi oltre N giorni", min_value=1, max_value=365, value=int(current_cache.get("auto_cleanup_days", 30) or 30), step=1, key="datahub_cache_cleanup_days")
-                max_size_cfg = cc4.number_input("Dimensione massima MB", min_value=10.0, max_value=5000.0, value=float(current_cache.get("max_cache_size_mb", 500) or 500), step=10.0, key="datahub_cache_max_mb")
+                auto_cleanup_days = cc3.number_input("Rimuovi oltre N giorni", min_value=1, max_value=365, value=int(current_cache.get("auto_cleanup_days", FIGURE_CACHE_CLEANUP_DAYS) or FIGURE_CACHE_CLEANUP_DAYS), step=1, key="datahub_cache_cleanup_days")
+                max_size_cfg = cc4.number_input("Dimensione massima MB", min_value=10.0, max_value=5000.0, value=float(current_cache.get("max_cache_size_mb", FIGURE_CACHE_MAX_MB) or FIGURE_CACHE_MAX_MB), step=10.0, key="datahub_cache_max_mb")
                 if st.button("💾 Salva regole cache", width="stretch", type="primary", key="datahub_save_cache_rules"):
                     current_settings["ui_figure_cache"] = {
                         **current_settings.get("ui_figure_cache", {}),

@@ -1,4 +1,5 @@
 import logging
+from core.volume_policy import FIGURE_CACHE_CLEANUP_DAYS, FIGURE_CACHE_MAX_MB
 import json
 import gzip
 import pickle
@@ -98,8 +99,8 @@ class FigureCache:
             cache_cfg = get_figure_cache_settings(load_settings() or {})
         except Exception:
             cache_cfg = {}
-        cleanup_days = int(cache_cfg.get("auto_cleanup_days", 30) or 30)
-        max_size_mb = float(cache_cfg.get("max_cache_size_mb", 500) or 500)
+        cleanup_days = int(cache_cfg.get("auto_cleanup_days", FIGURE_CACHE_CLEANUP_DAYS) or FIGURE_CACHE_CLEANUP_DAYS)
+        max_size_mb = float(cache_cfg.get("max_cache_size_mb", FIGURE_CACHE_MAX_MB) or FIGURE_CACHE_MAX_MB)
         return cleanup_days, max_size_mb
 
     def _auto_cleanup(self) -> None:
