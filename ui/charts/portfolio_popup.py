@@ -15,7 +15,7 @@ from ui.charts.instrument_badges import ISSUER_BADGE_CSS, commission_badge, enri
 from ui.charts.natura_icons import get_nature_visual
 from ui.charts.popup_source import build_source_url
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it
-from ui.streamlit_compat import iframe_height_for_rows, render_html_iframe
+from ui.streamlit_compat import render_html_iframe
 from ui.theme import CATEGORY_COLORS, macro_color
 
 # Finestra di visibilita' del badge "N" (acquisto recente): decisione
@@ -894,10 +894,10 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
         f'<td></td></tr></tfoot>'
     )
     ticker_json = json.dumps(ticker_info, ensure_ascii=False)
-    n_rows = len(df)
-    iframe_h = iframe_height_for_rows(
-        n_rows, row_height=35, header_height=48, padding=50, min_height=160, max_height=1100, content_until_rows=18
-    )
+    # Altezza sempre "content": lo script interno misura la tabella reale (badge,
+    # footer TOTALE inclusi). Un'altezza fissa stimata per riga troncava l'ultima
+    # riga e il totale appena si superava la soglia di righe o il tetto.
+    iframe_h = "content"
     html_content = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
 *{{box-sizing:border-box;margin:0;padding:0;}}
@@ -1160,10 +1160,10 @@ def render_weekly_pl_table(result, da, data):
     )
 
     ticker_json = json.dumps(ticker_info, ensure_ascii=False)
-    n_rows = len(rows)
-    iframe_h = iframe_height_for_rows(
-        n_rows, row_height=35, header_height=48, padding=50, min_height=160, max_height=1100, content_until_rows=18
-    )
+    # Altezza sempre "content": lo script interno misura la tabella reale (badge,
+    # footer TOTALE inclusi). Un'altezza fissa stimata per riga troncava l'ultima
+    # riga e il totale appena si superava la soglia di righe o il tetto.
+    iframe_h = "content"
     html_content = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
 *{{box-sizing:border-box;margin:0;padding:0;}}

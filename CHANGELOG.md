@@ -2,6 +2,15 @@
 
 ## Non rilasciato
 
+- **[Portafoglio] Tabelle HTML troncate oltre 18 strumenti**: le tabelle
+  "Andamento dell'ultima settimana" (`render_weekly_pl_table`) e Controvalore
+  (`ui/charts/portfolio_popup.py`) usavano un'altezza iframe fissa oltre 18
+  righe (`righe x 35 + 98`, tetto 1100 px), che non contava il footer TOTALE ne'
+  i badge: con 19 righe l'iframe misurava 763 px contro 828 necessari e
+  spariva l'ultima riga insieme al totale. Ora l'altezza e' sempre `"content"`,
+  guidata dalla misura reale che lo script interno gia' invia. Verificato in
+  Chrome headless sull'app reale (prima 763 px, dopo 829 px). Serve riavviare
+  il processo Streamlit per caricare il fix.
 - **[Schema 3.4] Il flag `strumento_collegato` e' l'unica fonte della Privacy**:
   `SCHEMA_VERSION` 3.3 -> 3.4. Al primo caricamento di dati pre-3.4
   `load_data` crea un backup (`*_pre_schema_3.4`) e `_backfill_strumento_collegato`
