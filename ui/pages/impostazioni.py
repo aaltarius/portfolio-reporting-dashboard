@@ -651,24 +651,25 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 if not isinstance(instrument_analysis_auto_refresh_settings, dict):
                     instrument_analysis_auto_refresh_settings = {}
                 st.caption(
-                    "Scarica in background identità ufficiale, benchmark e Core/Difensivo/Satellite per gli strumenti "
-                    "non ancora coperti dalla cache, senza forzare rerun. Quotazioni/Cruscotti/SATOR mostrano subito "
-                    "i nuovi dati appena la cache si aggiorna."
+                    "Rinnova in background identità ufficiale, benchmark e Core/Difensivo/Satellite degli strumenti "
+                    "prima che la cache scada: pochi strumenti per volta, con una pausa tra una richiesta e l'altra, "
+                    "senza forzare rerun. Le pagine non aspettano mai la rete: se un dato è scaduto usano quello "
+                    "precedente finché non viene rinnovato."
                 )
                 iar1, iar2 = st.columns(2)
                 instrument_analysis_auto_refresh_enabled = iar1.checkbox(
                     "Aggiorna profili strumenti in background",
-                    value=bool(instrument_analysis_auto_refresh_settings.get("enabled", False)),
+                    value=bool(instrument_analysis_auto_refresh_settings.get("enabled", True)),
                     help="Avvia un thread leggero che colma la cache InstrumentAnalysis a intervalli regolari, per gli strumenti non ancora coperti.",
                 )
                 instrument_analysis_auto_refresh_minutes = iar2.number_input(
                     "Ogni (min)",
                     min_value=15,
                     max_value=1440,
-                    value=max(15, min(1440, int(instrument_analysis_auto_refresh_settings.get("interval_minutes", 60) or 60))),
+                    value=max(15, min(1440, int(instrument_analysis_auto_refresh_settings.get("interval_minutes", 15) or 15))),
                     step=15,
                     disabled=not instrument_analysis_auto_refresh_enabled,
-                    help="Intervallo tra un ciclo e il successivo.",
+                    help="Intervallo tra un ciclo e il successivo (ogni ciclo rinnova al massimo pochi strumenti).",
                 )
 
             submitted_settings = st.form_submit_button("💾 Salva impostazioni", width="stretch", type="primary")

@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import threading
 import time
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -106,25 +108,67 @@ def save_resolution_cache(cache: dict[str, Any]) -> None:
         _resolution_cache_state["data"] = cache
 
 
+#: Le entry non scadono tutte a 14 giorni esatti: ognuna riceve un TTL tra il
+#: 70% e il 100% del default, cosi' le scadenze si distribuiscono su ~4 giorni
+#: invece di cadere insieme (log reale 2026-10-19: 29 entry create nello
+#: stesso ciclo, scadute insieme, 213s di render bloccato a rifarle).
+_TTL_JITTER_MIN_FRACTION = 0.7
+
+
+def _jitter_fraction_for_key(key: str) -> float:
+    """Frazione deterministica in [MIN, 1.0] derivata dalla chiave: serve alle
+    entry legacy senza `ttl_days`, che altrimenti scadrebbero tutte insieme."""
+    frac = (zlib.crc32(key.encode("utf-8")) & 0xFFFFFFFF) / 0xFFFFFFFF
+    return _TTL_JITTER_MIN_FRACTION + (1.0 - _TTL_JITTER_MIN_FRACTION) * frac
+
+
+def entry_ttl_days(entry: dict[str, Any], key: str, default_ttl_days: float) -> float:
+    """TTL effettivo = TTL del chiamante x fattore di sfalsamento dell'entry
+    (salvato alla scrittura, o derivato dalla chiave per le entry legacy)."""
+    factor = entry.get("ttl_factor")
+    if not (isinstance(factor, (int, float)) and _TTL_JITTER_MIN_FRACTION <= factor <= 1.0):
+        factor = _jitter_fraction_for_key(key)
+    return default_ttl_days * float(factor)
+
+
 def put_cached_resolution(cache: dict[str, Any], key: str, payload: dict[str, Any]) -> None:
     entry = dict(payload)
     entry["cached_at"] = time.time()
     entry["algorithm_version"] = ALGORITHM_VERSION
+    entry["ttl_factor"] = random.uniform(_TTL_JITTER_MIN_FRACTION, 1.0)
     cache[key] = entry
 
 
-def get_cached_resolution(cache: dict[str, Any], key: str, ttl_days: float) -> dict[str, Any] | None:
+def resolution_remaining_days(cache: dict[str, Any], key: str, ttl_days: float) -> float | None:
+    """Giorni residui di validita' (negativi se scaduta). None se l'entry non
+    esiste o ha una versione d'algoritmo diversa (va ricalcolata, non servita)."""
     entry = cache.get(key)
-    if not isinstance(entry, dict):
-        return None
-    if entry.get("algorithm_version") != ALGORITHM_VERSION:
+    if not isinstance(entry, dict) or entry.get("algorithm_version") != ALGORITHM_VERSION:
         return None
     cached_at = entry.get("cached_at")
     if not isinstance(cached_at, (int, float)):
         return None
-    if (time.time() - cached_at) > (ttl_days * 86400):
+    return entry_ttl_days(entry, key, ttl_days) - (time.time() - cached_at) / 86400.0
+
+
+def get_cached_resolution(cache: dict[str, Any], key: str, ttl_days: float) -> dict[str, Any] | None:
+    remaining = resolution_remaining_days(cache, key, ttl_days)
+    if remaining is None or remaining < 0:
         return None
-    return entry
+    return cache[key]
+
+
+def get_stale_resolution(
+    cache: dict[str, Any], key: str, ttl_days: float, max_stale_days: float,
+) -> dict[str, Any] | None:
+    """Entry scaduta ma ancora entro `max_stale_days` dalla creazione: meglio
+    un dato vecchio subito che rete bloccante nel render (regola non
+    negoziabile 1). Il rinnovo lo fa il worker in background."""
+    remaining = resolution_remaining_days(cache, key, ttl_days)
+    if remaining is None:
+        return None
+    age_days = (time.time() - float(cache[key]["cached_at"])) / 86400.0
+    return cache[key] if age_days <= max_stale_days else None
 
 
 def load_series_cache() -> dict[str, Any]:

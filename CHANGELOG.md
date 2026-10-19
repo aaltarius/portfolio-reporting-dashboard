@@ -2,6 +2,29 @@
 
 ## Non rilasciato
 
+- **[InstrumentAnalysis] Render da 213s per scadenze simultanee della cache**:
+  nel log del 2026-10-19 il primo render della pagina Quotazioni ne richiese
+  207 su 213: 29 voci di `cache/instrument_analysis/resolution.json`, create
+  nello stesso ciclo, scaddero insieme (TTL 14 giorni) e `analyze()` le
+  rifece una dopo l'altra con rete (Yahoo, OpenFIGI, Borsa Italiana) dentro
+  il render. Tre interventi: (1) **scadenze sfalsate**: ogni voce nuova salva
+  `ttl_factor` (0,7-1,0) da applicare al TTL, le voci legacy ne derivano uno
+  fisso dalla chiave; (2) **rinnovo anticipato**: lo scheduler
+  `instrument_analysis_auto_refresh` e' ora acceso di default, rinnova le voci
+  con meno di `renew_ahead_days` (3) giorni residui o mancanti, le piu'
+  urgenti prima, al massimo `max_instruments_per_cycle` (3) per ciclo con
+  `pause_seconds` (45) tra una e l'altra, ciclo ogni 15 min, si ferma al primo
+  errore, salta gli strumenti chiusi (`active_fetch_tickers`); (3) **voci
+  "stale" nel render**: `analyze()` serve una voce scaduta da meno di 60 giorni
+  (`peek_cached(allow_stale=True)`) senza rete, il worker la rinnova con
+  `resolve_instrument_benchmark(..., force_refresh=True)`. Impostazioni
+  aggiornate di conseguenza.
+- **[InstrumentAnalysis] Nessun fetch Yahoo dello storico per i BTP**:
+  `resolve_yahoo_identity` restituisce per gli ISIN `IT...` il simbolo interno
+  `BTP-xxxx`, che `analyze()` scaricava da Yahoo (2 tentativi, "No data found"
+  nel log) a ogni risoluzione. Ora `_instrument_series_via_network` salta il
+  fetch per gli ISIN italiani, senza segnare "rete fallita". Verificato sul
+  BTP reale: 0 chiamate yfinance, stesso benchmark (`EDMA.MU`).
 - **[Portafoglio] Tabelle HTML troncate oltre 18 strumenti**: le tabelle
   "Andamento dell'ultima settimana" (`render_weekly_pl_table`) e Controvalore
   (`ui/charts/portfolio_popup.py`) usavano un'altezza iframe fissa oltre 18

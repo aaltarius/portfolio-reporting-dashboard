@@ -1,5 +1,13 @@
 """Aggiornamento silenzioso della cache InstrumentAnalysis.
 
+Rinnovo ANTICIPATO e a piccoli passi (2026-10-19, dopo un render da 213s per
+29 entry scadute insieme): acceso di default, rinnova le entry a cui restano
+meno di `renew_ahead_days` giorni (le piu' urgenti prima), poche per ciclo,
+con una pausa tra una richiesta e l'altra, e si ferma al primo errore invece
+di insistere sulla rete. Insieme alle scadenze sfalsate e alle entry "stale"
+servite dal render (vedi core/instrument_analysis/cache.py) l'utente non
+dovrebbe piu' aspettare la rete durante il disegno delle pagine.
+
 Stesso pattern di core/infrastructure/market_auto_refresh.py: aggiorna la
 cache su disco in background (thread daemon separato), lasciando alla UI
 il normale ciclo di rerun per rileggerla — mai una chiamata di rete dal
@@ -26,8 +34,10 @@ from pathlib import Path
 from typing import Any
 
 from core.benchmark_registry import resolve_instrument_benchmark
+from core.domain.instrument_status import active_fetch_tickers
 from core.infrastructure.market_auto_refresh import should_refresh_market_auto
-from core.instrument_analysis.service import InstrumentAnalysisService
+from core.instrument_analysis import cache as ia_cache
+from core.instrument_analysis.service import _RESOLUTION_TTL_DAYS
 from persistence.storage import BENCHMARK_CACHE_FILE, load_data, load_settings
 
 logger = logging.getLogger("portafoglio.core.infrastructure.instrument_analysis_auto_refresh")
@@ -46,23 +56,36 @@ def _coerce_int(value: Any, *, default: int, min_value: int, max_value: int) -> 
     return max(min_value, min(max_value, parsed))
 
 
+def _coerce_float(value: Any, *, default: float, min_value: float, max_value: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        parsed = default
+    return max(min_value, min(max_value, parsed))
+
+
 def normalize_instrument_analysis_auto_refresh_settings(settings: dict[str, Any] | None) -> dict[str, Any]:
     raw_settings = settings if isinstance(settings, dict) else {}
     raw = raw_settings.get("instrument_analysis_auto_refresh", {})
     cfg = raw if isinstance(raw, dict) else {}
     return {
-        "enabled": bool(cfg.get("enabled", False)),
-        # Piu' lento del Mercati (30 min di default): qui non serve un dato
-        # "vivo", solo colmare la cache nel tempo.
+        "enabled": bool(cfg.get("enabled", True)),
         "interval_minutes": _coerce_int(
-            cfg.get("interval_minutes", 60), default=60, min_value=15, max_value=1440,
+            cfg.get("interval_minutes", 15), default=15, min_value=5, max_value=1440,
         ),
-        # Cap di sicurezza per ciclo: analyze() puo' costare fino a 8s per
-        # strumento (regola non negoziabile 0), un universo grande non deve
-        # bloccare un singolo ciclo per minuti - il resto lo prende il
-        # ciclo successivo.
+        # Poche per ciclo: analyze() puo' costare fino a ~10s per strumento;
+        # il resto lo prende il ciclo successivo, nessuna raffica di rete.
         "max_instruments_per_cycle": _coerce_int(
-            cfg.get("max_instruments_per_cycle", 20), default=20, min_value=1, max_value=100,
+            cfg.get("max_instruments_per_cycle", 3), default=3, min_value=1, max_value=100,
+        ),
+        # Pausa tra una risoluzione e la successiva dentro lo stesso ciclo.
+        "pause_seconds": _coerce_int(
+            cfg.get("pause_seconds", 45), default=45, min_value=0, max_value=600,
+        ),
+        # Quanto prima della scadenza si rinnova: la entry viene sostituita
+        # prima che il render la trovi scaduta.
+        "renew_ahead_days": _coerce_float(
+            cfg.get("renew_ahead_days", 3.0), default=3.0, min_value=0.0, max_value=14.0,
         ),
     }
 
@@ -110,27 +133,44 @@ def _refresh_once(settings: dict[str, Any] | None = None) -> dict[str, Any]:
 
     data = load_data()
     master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
-    service = InstrumentAnalysisService()
+    cache = ia_cache.load_resolution_cache()
+    active = active_fetch_tickers(data)
+    ahead = float(cfg["renew_ahead_days"])
 
     report: dict[str, Any] = {"checked": 0, "refreshed": 0, "failed": [], "skipped_cap": 0}
-    cap = int(cfg["max_instruments_per_cycle"])
+    due: list[tuple[float, dict[str, Any], str]] = []
     for item in data.get("strumenti", []) or []:
         ticker = str(item.get("ticker") or "").strip().upper()
-        if not ticker:
+        # Chiusi/terminali esclusi (classe di bug ricorrente, vedi CLAUDE.md).
+        if not ticker or ticker not in active:
             continue
         isin = str(item.get("isin") or "").strip().upper()
         report["checked"] += 1
-        if service.peek_cached(ticker=ticker, isin=isin) is not None:
-            continue
-        if report["refreshed"] >= cap:
-            report["skipped_cap"] += 1
-            continue
+        remaining = ia_cache.resolution_remaining_days(
+            cache, ia_cache.resolution_cache_key(ticker, isin), _RESOLUTION_TTL_DAYS,
+        )
+        # Mancante (None) = piu' urgente di tutto; poi le piu' scadute/vicine.
+        if remaining is None:
+            due.append((float("-inf"), item, ticker))
+        elif remaining < ahead:
+            due.append((remaining, item, ticker))
+    due.sort(key=lambda row: row[0])
+
+    batch = due[: int(cfg["max_instruments_per_cycle"])]
+    report["skipped_cap"] = len(due) - len(batch)
+    pause = int(cfg["pause_seconds"])
+    for index, (_remaining, item, ticker) in enumerate(batch):
+        if index > 0 and pause > 0:
+            time.sleep(pause)
         try:
-            resolve_instrument_benchmark(item, master_entry=master.get(ticker))
+            resolve_instrument_benchmark(item, master_entry=master.get(ticker), force_refresh=True)
             report["refreshed"] += 1
         except Exception as exc:
+            # Rete probabilmente giu': ci si ferma, il ciclo dopo riprova.
             logger.warning("Refresh InstrumentAnalysis fallito per %s: %s", ticker, exc, exc_info=True)
             report["failed"].append(ticker)
+            report["skipped_cap"] += len(batch) - index - 1
+            break
 
     state.update({
         "enabled": True,

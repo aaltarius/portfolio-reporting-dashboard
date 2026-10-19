@@ -120,6 +120,7 @@ def resolve_instrument_benchmark(
     category: str | None = None,
     master_entry: dict[str, Any] | None = None,
     prefer_master: bool = True,
+    force_refresh: bool = False,
 ) -> BenchmarkAssignment:
     """Restituisce il benchmark operativo per uno strumento.
 
@@ -145,8 +146,12 @@ def resolve_instrument_benchmark(
             if mt or ml:
                 return BenchmarkAssignment(mt, ml or mt or "Benchmark concettuale", "anagrafica", "Alta")
 
+    # force_refresh solo dal worker in background: salta anche le entry
+    # "stale" che il render serve al posto della rete. Passato solo se vero,
+    # per non rompere i servizi finti dei test che non lo accettano.
+    extra = {"force_refresh": True} if force_refresh else {}
     analysis = _service().analyze(
-        ticker=tk, isin=isincode, duration_years=_duration_years(inst, master),
+        ticker=tk, isin=isincode, duration_years=_duration_years(inst, master), **extra,
     )
     b = analysis.benchmark
 

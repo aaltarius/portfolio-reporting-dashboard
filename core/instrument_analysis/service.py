@@ -27,6 +27,11 @@ from core.market_data import get_yahoo_price_history_full
 
 _RESOLUTION_TTL_DAYS = 14.0
 
+#: Oltre questa eta' una entry scaduta non viene piu' servita al posto della
+#: rete: meglio un dato vecchio di qualche settimana che un render bloccato,
+#: ma non un profilo di mesi fa (stesso ordine di grandezza di 4 TTL).
+_RESOLUTION_MAX_STALE_DAYS = 60.0
+
 #: Grade di benchmark che NON contengono segnale utile: se la risoluzione si
 #: ferma qui e il profilo e' rimasto "ALTRO", non c'e' nulla da mettere in
 #: cache (vedi `_is_result_worth_caching`).
@@ -360,7 +365,10 @@ class InstrumentAnalysisService:
         cache_key = ia_cache.resolution_cache_key(tk, isincode)
 
         if not force_refresh:
-            peeked = self.peek_cached(ticker=tk, isin=isincode)
+            # allow_stale: nel render mai rete bloccante per una entry solo
+            # scaduta (regola non negoziabile 1) - la rinnova il worker
+            # in background (instrument_analysis_auto_refresh).
+            peeked = self.peek_cached(ticker=tk, isin=isincode, allow_stale=True)
             if peeked is not None:
                 peeked.elapsed_ms = int(round((time.perf_counter() - started) * 1000.0))
                 return peeked
@@ -428,6 +436,12 @@ class InstrumentAnalysisService:
         own_history_fetch_state = {"failed": False}
 
         def _instrument_series_via_network() -> dict[str, float]:
+            # I BTP non sono mai su Yahoo: "BTP-3690" e' un simbolo interno,
+            # il prezzo viene sempre da Borsa Italiana (stessa regola di
+            # `resolve_history_fetch_ticker`). Nessun fetch e nessun "rete
+            # fallita": l'assenza di storico qui e' strutturale, non un blackout.
+            if isincode.startswith("IT"):
+                return {}
             history = _fetch_own_history_with_retry(history_ticker)
             if not history:
                 own_history_fetch_state["failed"] = True
@@ -468,18 +482,26 @@ class InstrumentAnalysisService:
 
         return analysis
 
-    def peek_cached(self, *, ticker: str = "", isin: str = "") -> InstrumentAnalysis | None:
+    def peek_cached(
+        self, *, ticker: str = "", isin: str = "", allow_stale: bool = False,
+    ) -> InstrumentAnalysis | None:
         """Legge SOLO la cache disco gia' popolata, zero fetch di rete: per i
         chiamanti che girano in cicli stretti su tutto l'universo strumenti
         (SATOR, Fase C) e non possono permettersi ne' rete ne' un rerun a
         sorpresa (regola non negoziabile 1). Ritorna None se la cache non ha
-        ancora l'istrumento o l'entry e' scaduta (stesso TTL di analyze())."""
+        ancora l'istrumento o l'entry e' scaduta (stesso TTL di analyze()). Con
+        `allow_stale` una entry scaduta da meno di `_RESOLUTION_MAX_STALE_DAYS`
+        viene comunque restituita."""
         tk = str(ticker or "").strip().upper()
         isincode = str(isin or "").strip().upper()
 
         cache = ia_cache.load_resolution_cache()
         cache_key = ia_cache.resolution_cache_key(tk, isincode)
         cached = ia_cache.get_cached_resolution(cache, cache_key, ttl_days=_RESOLUTION_TTL_DAYS)
+        if cached is None and allow_stale:
+            cached = ia_cache.get_stale_resolution(
+                cache, cache_key, ttl_days=_RESOLUTION_TTL_DAYS, max_stale_days=_RESOLUTION_MAX_STALE_DAYS,
+            )
         if cached is None:
             return None
         profile = _profile_from_cache(cached.get("profile") or {})
