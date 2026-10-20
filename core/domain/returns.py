@@ -208,6 +208,13 @@ def _build_summary_return_curve(dfh: pd.DataFrame | None) -> pd.DataFrame:
     return curve[["date_dt", "indice", "ret", "value", "capital", "external_flow"]]
 
 
+def build_portfolio_return_curve(dfh: pd.DataFrame | None) -> pd.DataFrame:
+    """Curva TWR del portafoglio (colonne date_dt, indice, ret, ...) da uno
+    storico con 'Valore' e 'Capitale': i versamenti/prelievi non contano
+    come rendimento. Nome pubblico di `_build_summary_return_curve`."""
+    return _build_summary_return_curve(dfh)
+
+
 def simple_period_return(first: float, last: float) -> float | None:
     """Rendimento semplice (last/first - 1) fra due valori di un indice/NAV.
 

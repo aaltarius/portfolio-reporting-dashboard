@@ -24,6 +24,7 @@ from core.render_profiler import profile_step
 from core.settings_profiles import (
     get_effective_market_ticker_tape_enabled,
     get_effective_portfolio_insights_enabled,
+    get_effective_portfolio_termometro_enabled,
     resolve_figure_cache_strategy,
 )
 
@@ -32,6 +33,7 @@ from core.services import (
     build_weekly_pl_table,
 )
 from core.services.portfolio_insights import build_maturity_only_insights, build_portfolio_insights
+from core.services.portfolio_pulse import build_portfolio_pulse
 from persistence.storage import SATOR_DECISIONS_FILE, macro_cat
 from core.finance import build_proventi_summary
 from ui.formatting import fmt_eur_it, fmt_pct_it, fmt_num_it, fmtds
@@ -58,6 +60,7 @@ from ui.charts.portfolio_popup import render_portfolio_table_with_popup, render_
 from ui.charts.tables import color_pl, style_macro_cols
 from ui.insights import render_portfolio_insights
 from ui.market_tape import render_market_ticker_tape
+from ui.termometro import render_portfolio_termometro
 from ui.page_chrome import render_page_intro as render_page_intro_shared
 from ui.charts.settings import apply_settings
 
@@ -872,6 +875,8 @@ def _build_positions_table_payload(
     include_insights: bool,
     portfolio_alerts: list[dict[str, Any]] | None = None,
     maturity_alerts: list[dict[str, Any]] | None = None,
+    include_pulse: bool = False,
+    price_frame: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     """Payload cacheabile della sezione Controvalore del Portafoglio."""
 
@@ -896,12 +901,22 @@ def _build_positions_table_payload(
                     portfolio_alerts=portfolio_alerts,
                     maturity_alerts=maturity_alerts,
                 )
+    pulse = None
+    if include_pulse:
+        with profile_step("Portafoglio", "build termometro portafoglio"):
+            pulse = build_portfolio_pulse(
+                dfh_top,
+                data,
+                categories=list(get_selected_category_codes(settings)),
+                price_frame=price_frame,
+            )
     return {
         "da": table_df,
         "direction_map": direction_map,
         "daily_report": daily_report,
         "insights": insights,
         "maturity_insights": maturity_insights,
+        "pulse": pulse,
     }
 
 
@@ -1430,6 +1445,10 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                         "data_sig": data_sig,
                         "rows": len(da),
                         "history_rows": len(dfh_top) if isinstance(dfh_top, pd.DataFrame) else 0,
+                        "termometro": [
+                            get_effective_portfolio_termometro_enabled(settings),
+                            list(get_selected_category_codes(settings)),
+                        ],
                         "settings": _portfolio_table_settings_payload(settings),
                         "sator_decisions": _file_fingerprint(SATOR_DECISIONS_FILE),
                         "portfolio_alerts": [
@@ -1457,6 +1476,8 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                             data,
                             settings,
                             include_insights=get_effective_portfolio_insights_enabled(settings),
+                            include_pulse=get_effective_portfolio_termometro_enabled(settings),
+                            price_frame=getattr(ctx, "_dh_flow_shared", None),
                             portfolio_alerts=_ctx_portfolio_alerts,
                             maturity_alerts=_ctx_maturity_alerts,
                         ),
@@ -1469,6 +1490,10 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 _portfolio_daily_report = _positions_payload.get("daily_report")
                 _portfolio_insights = list(_positions_payload.get("insights") or [])
                 _portfolio_maturity_insights = list(_positions_payload.get("maturity_insights") or [])
+                _portfolio_pulse = _positions_payload.get("pulse")
+                if get_effective_portfolio_termometro_enabled(settings) and _portfolio_pulse:
+                    with profile_step("Portafoglio", "render termometro portafoglio"):
+                        render_portfolio_termometro(_portfolio_pulse)
                 if get_effective_portfolio_insights_enabled(settings) and _portfolio_insights:
                     with profile_step("Portafoglio", "render portfolio insights", count=len(_portfolio_insights)):
                         render_portfolio_insights(_portfolio_insights, theme)

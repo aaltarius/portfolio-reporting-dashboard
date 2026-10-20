@@ -131,6 +131,7 @@ def get_runtime_ui_settings(settings: dict[str, Any] | None) -> dict[str, Any]:
         "font_scale": str(ui_preferences.get("font_scale", "Grande") or "Grande"),
         "show_portfolio_insights": bool(ui_preferences.get("show_portfolio_insights", True)),
         "show_market_ticker_tape": bool(ui_preferences.get("show_market_ticker_tape", True)),
+        "show_portfolio_termometro": bool(ui_preferences.get("show_portfolio_termometro", True)),
         "figure_cache_enabled": bool(figure_cache.get("enabled", True)),
         "figure_cache_strategy": _normalize_cache_strategy(figure_cache.get("strategy", CACHE_STRATEGY_HYBRID)),
         "pre_render_enabled": bool(pre_render.get("enabled", True)),
@@ -196,6 +197,10 @@ def get_effective_show_explanations(settings: dict[str, Any] | None) -> bool:
 
 def get_effective_portfolio_insights_enabled(settings: dict[str, Any] | None) -> bool:
     return bool(get_ui_preferences(settings).get("show_portfolio_insights", True))
+
+
+def get_effective_portfolio_termometro_enabled(settings: dict[str, Any] | None) -> bool:
+    return bool(get_ui_preferences(settings).get("show_portfolio_termometro", True))
 
 
 def get_effective_market_ticker_tape_enabled(settings: dict[str, Any] | None) -> bool:

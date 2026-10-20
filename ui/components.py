@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 from core.asset_categories import get_selected_category_codes
 from core.render_profiler import profile_step
+from core.section_visibility import is_section_visible
 from persistence.storage import macro_cat
 from ui.formatting import (
     fmt_eur_it, fmt_num_it, fmt_pct_it, fmt_qty_it, hex_to_rgba,
@@ -593,30 +594,4 @@ def wrap_radar_label(label: Any) -> str:
 
 def should_render_section(page_name: str, section_name: str, settings: dict) -> bool:
     """Check if section should be rendered based on visibility settings."""
-    visibility = settings.get("appearance", {}).get("custom_visibility", {})
-    page_visibility = visibility.get(page_name, {})
-
-    # If custom_visibility has explicit setting, use it
-    if section_name in page_visibility:
-        return bool(page_visibility[section_name])
-
-    # Otherwise, check visibility_mode preset
-    mode = settings.get("appearance", {}).get("visibility_mode", "Standard")
-    essenziale_sections = {
-        "Portafoglio": ["Andamento ultima giornata", "Sintesi allocazione", "Controvalore del Portafoglio"],
-        "Quotazioni": ["Storico Prezzi", "Diagnostica"],
-        "Operazioni": ["Centro Operativo", "Registro operazioni"],
-        "Cruscotti": ["Dashboard principale"],
-        "Summary": ["Identità report", "Genera report"],
-        "Confronto": ["Confronto"],
-        "Pianificazione": ["Scenari futuri"],
-        "Gestione Dati": ["Sistema e Backup"],
-    }
-    completo_excludes = set()  # Everything shown in completo
-
-    if mode == "Essenziale":
-        return section_name in essenziale_sections.get(page_name, [])
-    elif mode == "Completo":
-        return section_name not in completo_excludes
-    else:  # Standard
-        return True  # All sections in Standard
+    return is_section_visible(page_name, section_name, settings)

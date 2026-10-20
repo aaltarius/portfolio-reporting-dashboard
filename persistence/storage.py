@@ -322,6 +322,7 @@ def default_settings():
             "show_explanations": True,
             "show_portfolio_insights": True,
             "show_market_ticker_tape": True,
+            "show_portfolio_termometro": True,
             "summary_detail_level": "Completa",
             "accent_variant": "Default",
             "font_scale": "Grande",
@@ -570,6 +571,9 @@ def _normalize_settings_payload(settings):
     ui_preferences["show_market_ticker_tape"] = bool(
         _prefer_nested_value("ui_preferences", "show_market_ticker_tape", "ui_show_market_ticker_tape", ui_preferences.get("show_market_ticker_tape", True))
     )
+    ui_preferences["show_portfolio_termometro"] = bool(
+        _prefer_nested_value("ui_preferences", "show_portfolio_termometro", "ui_show_portfolio_termometro", ui_preferences.get("show_portfolio_termometro", True))
+    )
     ui_preferences["summary_detail_level"] = str(
         _prefer_nested_value("ui_preferences", "summary_detail_level", "ui_summary_detail_level", ui_preferences.get("summary_detail_level", "Completa"))
     )
@@ -676,6 +680,7 @@ def _normalize_settings_payload(settings):
     merged["ui_show_explanations"] = ui_preferences["show_explanations"]
     merged["ui_show_portfolio_insights"] = ui_preferences["show_portfolio_insights"]
     merged["ui_show_market_ticker_tape"] = ui_preferences["show_market_ticker_tape"]
+    merged["ui_show_portfolio_termometro"] = ui_preferences["show_portfolio_termometro"]
     merged["ui_summary_detail_level"] = ui_preferences["summary_detail_level"]
     merged["ui_accent_variant"] = ui_preferences["accent_variant"]
     merged["ui_font_scale"] = ui_preferences["font_scale"]

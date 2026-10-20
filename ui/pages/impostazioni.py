@@ -74,6 +74,7 @@ from ui.theme import get_theme_context
 from ui.notifications import queue_info, queue_success
 from ui.i18n import t
 from ui.page_chrome import render_page_intro as render_page_intro_shared, render_section_line as render_section_line_shared
+from core.section_visibility import PAGE_SECTIONS, build_custom_visibility, is_section_visible
 from ui.components import (
     legend_block, back_to_top,
     render_styled_table,
@@ -400,6 +401,12 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     key="appearance_show_portfolio_insights",
                 )
 
+                ui_show_portfolio_termometro = st.checkbox("Portafoglio: mostra Termometro",
+                    value=bool(ui_preferences.get("show_portfolio_termometro", True)),
+                    help="Mostra sopra la tabella del Portafoglio una lettura rapida dell'andamento: variazione su oggi, 5 giorni, 1 mese e da inizio anno, distanza dal picco, tessere per categoria e ampiezza (quanti strumenti salgono o scendono). Calcolata dai dati gia' in memoria, senza rete.",
+                    key="appearance_show_portfolio_termometro",
+                )
+
                 ui_show_market_ticker_tape = st.checkbox("Portafoglio: mostra striscia mercati",
                     value=bool(ui_preferences.get("show_market_ticker_tape", True)),
                     help="Mostra sotto il titolo della tabella una striscia informativa con mercati/proxy aperti o chiusi e ultima variazione disponibile in cache. Non scarica nuovi dati.",
@@ -444,6 +451,24 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     horizontal=True,
                     key="appearance_visibility_mode",
                 )
+
+                with st.expander("Sezioni per pagina (ON/OFF)", expanded=False):
+                    st.caption(
+                        "Accendi o spegni le singole sezioni di ogni pagina. Una sezione che non tocchi segue il "
+                        "preset scelto qui sopra; solo le differenze dal preset vengono salvate. "
+                        "Oggi sono configurabili le sezioni della pagina Portafoglio."
+                    )
+                    section_choices: dict[tuple[str, str], bool] = {}
+                    section_initial: dict[tuple[str, str], bool] = {}
+                    for _page_name, _section_names in PAGE_SECTIONS.items():
+                        st.markdown(f"**{_page_name}**")
+                        for _section_name in _section_names:
+                            section_initial[(_page_name, _section_name)] = is_section_visible(_page_name, _section_name, settings)
+                            section_choices[(_page_name, _section_name)] = st.checkbox(
+                                _section_name,
+                                value=section_initial[(_page_name, _section_name)],
+                                key=f"section_visibility::{_page_name}::{_section_name}",
+                            )
 
                 st.markdown("**Categorie visibili**")
                 category_options = [code for code in ASSET_CATEGORY_REGISTRY.keys() if code != "ALTRO"]
@@ -730,6 +755,7 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     "show_explanations": ui_show_explanations,
                     "show_portfolio_insights": ui_show_portfolio_insights,
                     "show_market_ticker_tape": ui_show_market_ticker_tape,
+                    "show_portfolio_termometro": ui_show_portfolio_termometro,
                     "quotazioni_full_resolution": ui_quotazioni_full_resolution,
                     "accent_variant": ui_accent_variant,
                     "font_scale": str(runtime_ui_settings.get("font_scale", "Grande")),
@@ -779,6 +805,13 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                         "family": ui_font_family,
                     },
                     "visibility_mode": ui_visibility_mode,
+                    # Solo le caselle toccate in questo salvataggio: le altre seguono
+                    # il preset (anche se appena cambiato) o il loro override gia' salvato.
+                    "custom_visibility": build_custom_visibility(
+                        {key: value for key, value in section_choices.items() if value != section_initial[key]},
+                        ui_visibility_mode,
+                        settings.get("appearance", {}).get("custom_visibility"),
+                    ),
                 }
                 settings_changed = save_settings(settings)
                 logger.info(

@@ -2,6 +2,31 @@
 
 ## Non rilasciato
 
+- **[Portafoglio] Termometro del portafoglio**: nuova sezione sopra la tabella
+  (dove stava il Radar decisionale) con una lettura "a colpo d'occhio":
+  variazione su Oggi / 5 giorni / 1 mese / Da inizio anno, distanza dal picco,
+  una tessera per categoria (% a 5 giorni e peso in EUR) e la riga di ampiezza
+  (strumenti in calo, peggiore e migliore). Calcolo in
+  `core/services/portfolio_pulse.py`, nessuna formula nuova: la % del
+  portafoglio viene dalla curva TWR (`build_portfolio_return_curve`, neutra
+  rispetto a versamenti e prelievi), gli EUR degli orizzonti dalla variazione
+  della colonna "P/L" (include cedole e realizzi, coerente con la %), gli EUR
+  per categoria e l'ampiezza dalle variazioni `PL_<ticker>` (solo mercato). Il
+  payload entra nell'artefatto `portafoglio.positions_table` (firma estesa con
+  interruttore e categorie). Disegno in `ui/termometro.py`, stili `.ptf-pulse-*`
+  in `ui/styles.py`. Interruttore `show_portfolio_termometro` (default acceso).
+- **[Impostazioni] Radar spento, sezioni ON/OFF per pagina**: nella
+  configurazione dell'utente `show_portfolio_insights` e' stato messo a falso
+  (il codice del Radar non cambia). Nuovo blocco "Sezioni per pagina (ON/OFF)"
+  in Impostazioni > Aspetto: una casella per sezione, salvata in
+  `appearance.custom_visibility` solo se diversa dal preset (e solo se
+  modificata in quel salvataggio, cosi' cambiare preset funziona). Registro e
+  logica in `core/section_visibility.py` (`PAGE_SECTIONS`, `is_section_visible`,
+  `build_custom_visibility`); `ui.components.should_render_section` delega li'.
+  Oggi sono elencate le 8 sezioni della pagina Portafoglio: per le altre pagine
+  vanno prima avvolte nel codice con `should_render_section` e poi aggiunte a
+  `PAGE_SECTIONS`.
+
 - **[InstrumentAnalysis] Render da 213s per scadenze simultanee della cache**:
   nel log del 2026-10-19 il primo render della pagina Quotazioni ne richiese
   207 su 213: 29 voci di `cache/instrument_analysis/resolution.json`, create
