@@ -733,6 +733,43 @@ def build_portfolio_data_signature(
     )
 
 
+def build_prices_scope_signature(data: dict[str, Any] | None, tickers: Any) -> str:
+    """Firma dei soli prezzi storici dei ticker indicati.
+
+    Cambia se, e solo se, cambia un punto valido (data, prezzo a 6 decimali)
+    di uno di quei ticker. Non dipende dall'ordine dei ticker, da duplicati,
+    dagli altri ticker, dalle operazioni né da metadati operativi come
+    `last_quotes_update`.
+    """
+    payload = data if isinstance(data, dict) else {}
+    storico = payload.get("storico_prezzi", {})
+    storico = storico if isinstance(storico, dict) else {}
+    scope = sorted({str(t).strip() for t in (tickers or ()) if str(t).strip()})
+    digests = history_content_digest_by_ticker(storico, scope)
+    return _safe_hash({"scope": scope, "digests": {t: digests.get(t, "") for t in scope}})
+
+
+def build_operations_signature(
+    data: dict[str, Any] | None,
+    *,
+    app_version: str,
+    schema_version: str,
+) -> str:
+    """Firma per figure che dipendono solo da operazioni ed eventi, mai dai prezzi."""
+    payload = data if isinstance(data, dict) else {}
+    operazioni = payload.get("operazioni", [])
+    eventi = payload.get("registro_eventi", [])
+    operazioni = operazioni if isinstance(operazioni, list) else []
+    eventi = eventi if isinstance(eventi, list) else []
+    material = {
+        "operations": _normalized_operation_signature_payload(operazioni),
+        "events": _normalized_operation_signature_payload(eventi),
+        "app_version": str(app_version),
+        "schema_version": str(schema_version),
+    }
+    return _safe_hash(material)
+
+
 def build_portfolio_signature_components(
     data: dict[str, Any] | None,
     *,
