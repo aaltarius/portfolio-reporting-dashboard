@@ -72,6 +72,31 @@ def load_resolution_cache() -> dict[str, Any]:
     return IndexStore().preference('analysis_resolution_cache',{}) or {}
 
 
+# Snapshot di sola lettura della cache di risoluzione, per percorso dell'archivio.
+_SNAPSHOT_MEMO: dict[str, tuple[tuple, dict[str, Any]]] = {}
+
+
+def load_resolution_cache_snapshot() -> dict[str, Any]:
+    """Cache di risoluzione condivisa e SOLA LETTURA, riletta solo se il database cambia.
+
+    `peek_cached` la chiede per ogni strumento e per ogni chiamante di SATOR
+    (centinaia di volte per run): prima ogni chiamata apriva una connessione
+    SQLite e rifaceva il parse di ~200 KB di JSON. L'oggetto restituito e'
+    condiviso: chi deve modificarlo usa `load_resolution_cache()`, che
+    restituisce una copia indipendente.
+    """
+    from core.verified_benchmarks import IndexStore
+    store=IndexStore()
+    key=str(store.path)
+    stat=store.stat_key()
+    memo=_SNAPSHOT_MEMO.get(key)
+    if memo is not None and memo[0]==stat:
+        return memo[1]
+    payload=store.preference('analysis_resolution_cache',{}) or {}
+    _SNAPSHOT_MEMO[key]=(store.stat_key(),payload)
+    return payload
+
+
 def save_resolution_cache(cache:dict[str,Any])->None:
     from core.verified_benchmarks import IndexStore
     IndexStore().save_preference('analysis_resolution_cache',cache)

@@ -430,7 +430,8 @@ class InstrumentAnalysisService:
         tk = str(ticker or "").strip().upper()
         isincode = str(isin or "").strip().upper()
 
-        cache = ia_cache.load_resolution_cache()
+        # Snapshot condiviso in sola lettura: questo metodo non modifica la cache.
+        cache = ia_cache.load_resolution_cache_snapshot()
         cache_key = ia_cache.resolution_cache_key(tk, isincode)
         cached = ia_cache.get_cached_resolution(cache, cache_key, ttl_days=_RESOLUTION_TTL_DAYS)
         if cached is None and allow_stale:

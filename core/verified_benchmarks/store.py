@@ -325,6 +325,15 @@ class IndexStore:
                 'etf_proxies':sum(s.asset_kind=='etf_proxy' for s in specs.values()),
                 'prices':count}
 
+    def stat_key(self) -> tuple:
+        """(mtime, dimensione) di database e journal WAL: cambia a ogni scrittura.
+
+        Serve solo come chiave per memoizzare letture; non e' un'impronta del
+        contenuto (per quella vedi revision_token).
+        """
+        wal=Path(str(self.path)+'-wal')
+        return tuple((p.stat().st_mtime_ns,p.stat().st_size) if p.exists() else None for p in (self.path,wal))
+
     def revision_token(self) -> str:
         """Impronta del CONTENUTO che incide sui benchmark, stabile tra processi.
 
@@ -336,8 +345,7 @@ class IndexStore:
         Il risultato e' memorizzato per (mtime, dimensione): la stat serve solo da
         chiave del memo, non entra nel token.
         """
-        wal=Path(str(self.path)+'-wal')
-        stat_key=tuple((p.stat().st_mtime_ns,p.stat().st_size) if p.exists() else None for p in (self.path,wal))
+        stat_key=self.stat_key()
         memo_key=str(self.path)
         with _lock:
             memo=_REVISION_MEMO.get(memo_key)
