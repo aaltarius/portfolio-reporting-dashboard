@@ -17,6 +17,7 @@ import logging
 import math
 import os
 import re
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -506,6 +507,9 @@ def build_category_data_signature(
     )
 
 
+_BENCHMARK_HASH_MEMO: dict[tuple, str] = {}
+
+
 def _ticker_benchmark_data_hash(
     payload: dict[str, Any],
     ticker_str: str,
@@ -545,14 +549,28 @@ def _ticker_benchmark_data_hash(
     try:
         from core.verified_benchmarks import IndexStore,stored_history
         store=IndexStore()
+        revision=store.revision_token()
+        # Piu' strumenti condividono lo stesso benchmark: la serie si carica e si
+        # impronta una volta per (benchmark, revisione dell'archivio, giorno). Il
+        # giorno entra perche' stored_history scarta le serie non piu' correnti.
+        memo_key=(bench_ticker,bench_assignment.label,bench_assignment.operational_kind,
+                  bench_assignment.relation_grade,tuple(bench_assignment.components),
+                  revision,date.today().isoformat())
+        cached=_BENCHMARK_HASH_MEMO.get(memo_key)
+        if cached is not None:
+            return cached
         bd=stored_history(payload,bench_ticker,store=store)
         material={"ticker":bench_ticker,"label":bench_assignment.label,
                   "type":bench_assignment.operational_kind,
                   "grade":bench_assignment.relation_grade,
                   "components":list(bench_assignment.components),
-                  "revision":store.revision_token(),
+                  "revision":revision,
                   "series":bd}
-        return _safe_hash(material) if bd else 'n/d'
+        result=_safe_hash(material) if bd else 'n/d'
+        if len(_BENCHMARK_HASH_MEMO)>=256:
+            _BENCHMARK_HASH_MEMO.clear()
+        _BENCHMARK_HASH_MEMO[memo_key]=result
+        return result
     except Exception:
         return 'n/d'
 
