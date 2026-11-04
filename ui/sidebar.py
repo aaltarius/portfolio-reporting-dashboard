@@ -697,7 +697,7 @@ def render_sidebar(data: dict) -> None:
             if effective_data_change:
                 data["last_quotes_update"] = ts_full
                 data["cache_lookup_strumenti"] = {**data.get("cache_lookup_strumenti", {}), **get_isin_ticker_cache()}
-                save_data(data)
+                save_data(data, automatic=True)
             pg.empty()
             quotes_log = load_quotes_log()
             quotes_log["last_refresh"] = ts_full

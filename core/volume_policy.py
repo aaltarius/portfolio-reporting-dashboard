@@ -13,6 +13,10 @@ page_artifacts ~15 MB.
 # Backup: cartelle timestamp in `backups/` (~4,7 MB l'una), potate da
 # `persistence.storage._prune_backups` a ogni save.
 BACKUP_KEEP_LAST_N = 10
+# Salvataggi automatici (aggiornamento quotazioni): al massimo un bundle di backup
+# ogni 30 minuti. I salvataggi manuali (operazioni, strumenti, impostazioni) fanno
+# sempre il backup. Ogni bundle pesa ~30 MB e costa ~0,3 s.
+BACKUP_AUTO_MIN_INTERVAL_MINUTES = 30
 
 # Log applicativo: RotatingFileHandler, tetto = MAX_BYTES * (1 + BACKUP_COUNT).
 LOG_MAX_BYTES = 2 * 1024 * 1024

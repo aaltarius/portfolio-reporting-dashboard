@@ -6,8 +6,8 @@ per evitare import circolari.
 """
 import logging
 import math
-import json, os, shutil, hashlib
-from core.volume_policy import BACKUP_KEEP_LAST_N, FIGURE_CACHE_CLEANUP_DAYS, FIGURE_CACHE_MAX_MB
+import json, os, shutil, hashlib, time
+from core.volume_policy import BACKUP_AUTO_MIN_INTERVAL_MINUTES, BACKUP_KEEP_LAST_N, FIGURE_CACHE_CLEANUP_DAYS, FIGURE_CACHE_MAX_MB
 from datetime import datetime, date
 import pandas as pd
 import numpy as np
@@ -1659,7 +1659,33 @@ def _merge_concurrent_writes(data: dict) -> tuple[list, list, dict]:
     return merged_strumenti, merged_eventi, merged_master
 
 
-def save_data(data, *, include_storico: bool = True):
+def _should_backup_before_save(settings, *, automatic: bool) -> bool:
+    """Decide se creare il bundle di backup prima di un salvataggio.
+
+    I salvataggi manuali fanno sempre il backup (se abilitato). Quelli automatici
+    (aggiornamento quotazioni) lo fanno solo se l'ultimo bundle e' piu' vecchio di
+    BACKUP_AUTO_MIN_INTERVAL_MINUTES: ogni bundle pesa ~30 MB e costa ~0,3 s.
+    """
+    cfg = (settings or {}).get("backup", {}) if isinstance(settings, dict) else {}
+    if not (cfg.get("enabled") and cfg.get("backup_before_save")):
+        return False
+    if not automatic:
+        return True
+    try:
+        folders = [
+            os.path.join(BACKUP_DIR, name)
+            for name in os.listdir(BACKUP_DIR)
+            if os.path.isdir(os.path.join(BACKUP_DIR, name))
+        ]
+    except OSError:
+        return True
+    if not folders:
+        return True
+    newest = max(os.path.getmtime(p) for p in folders)
+    return (time.time() - newest) >= BACKUP_AUTO_MIN_INTERVAL_MINUTES * 60
+
+
+def save_data(data, *, include_storico: bool = True, automatic: bool = False):
     from persistence.parquet_utils import save_storico_prezzi_hybrid
 
     # Bug reale trovato da /code-review ultra (2026-09-08): un dict passato
@@ -1683,7 +1709,7 @@ def save_data(data, *, include_storico: bool = True):
         return
 
     settings = load_settings()
-    if settings.get("backup", {}).get("enabled") and settings.get("backup", {}).get("backup_before_save"):
+    if _should_backup_before_save(settings, automatic=automatic):
         create_backup_bundle()
 
     # Extract storico_prezzi for separate hybrid JSON-Parquet storage
