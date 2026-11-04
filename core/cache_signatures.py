@@ -836,6 +836,9 @@ def charts_settings_signature(charts_settings_file_path: str | Path) -> str:
         return _safe_hash({"error_type": type(e).__name__, "file": file_path.name})
 
 
+_DERIVED_NUMERIC_EXTRA_PARAMS = frozenset({"tv", "y_range", "total_value"})
+
+
 def figure_signature(
     chart_id: str,
     data_sig: str,
@@ -885,6 +888,15 @@ def figure_signature(
             # These counts are already represented by data_sig and only create
             # redundant figure variants on disk.
             if key_str in {"items", "count"}:
+                continue
+
+            # Valori DERIVATI dai dati (controvalore totale, range assi): il
+            # contenuto che li determina e' gia' nella firma dati, quindi non
+            # devono comparire nella chiave. Se ci sono, ogni variazione di un
+            # prezzo crea una nuova variante su disco che non verra' piu' riusata.
+            # Chi aggiunge una figura il cui contenuto dipende da questi valori
+            # deve includere nella firma dati l'ambito da cui derivano.
+            if key_str in _DERIVED_NUMERIC_EXTRA_PARAMS:
                 continue
 
             # Order does not matter for these comparison charts.
