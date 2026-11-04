@@ -244,7 +244,12 @@ def record_render_event(
                 parent_event_id = parent_from_stack
             if depth is None:
                 depth = depth_from_stack
-        events = get_render_profile_events()
+        # Solo gli eventi del render corrente: la fusione con gli eventi
+        # persistiti (lettura da disco + deduplica) avviene in
+        # get_render_profile_events() quando si compone il report, non a
+        # ogni evento registrato (era circa 0,9 s sull'avvio a freddo).
+        current = st.session_state.get(_RENDER_PROFILE_KEY, [])
+        events = list(current) if isinstance(current, list) else []
         events.append(
             _build_render_event(
                 page,

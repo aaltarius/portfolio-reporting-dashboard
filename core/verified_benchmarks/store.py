@@ -19,6 +19,10 @@ from .catalog import IndexSpec
 
 _DEFAULT_DB = Path(DATA_DIR)/'indices'/'benchmarks.sqlite3'
 _lock = threading.RLock()
+# Percorsi dell'archivio gia' inizializzati in questo processo: schema e journal
+# mode WAL (persistente nel file) si impostano una sola volta, non a ogni
+# istanza o a ogni lettura (circa 5 s sull'avvio a freddo, misura 2026-11-04).
+_READY_PATHS: set[str] = set()
 _KIND = {'ETF_ADJ_CLOSE': 'etf_proxy', 'ETF_ADJ_C': 'etf_proxy', 'BLEND': 'composite'}
 
 def db_path() -> Path:
@@ -28,13 +32,15 @@ class IndexStore:
     def __init__(self,path: str | Path | None = None):
         self.path=Path(path) if path is not None else db_path()
         self.path.parent.mkdir(parents=True,exist_ok=True)
-        self._ensure()
+        key=str(self.path.resolve())
+        if key not in _READY_PATHS or not self.path.exists():
+            self._ensure()
+            _READY_PATHS.add(key)
 
     @contextmanager
     def _connect(self):
         con=sqlite3.connect(str(self.path),timeout=25)
         try:
-            con.execute('PRAGMA journal_mode=WAL')
             con.execute('PRAGMA busy_timeout=25000')
             yield con
             con.commit()
@@ -46,6 +52,7 @@ class IndexStore:
 
     def _ensure(self):
         with _lock,self._connect() as c:
+            c.execute('PRAGMA journal_mode=WAL')
             c.executescript('''
             CREATE TABLE IF NOT EXISTS index_series(
                 series_id TEXT PRIMARY KEY, name TEXT NOT NULL,
