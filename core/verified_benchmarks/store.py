@@ -23,6 +23,9 @@ _lock = threading.RLock()
 # mode WAL (persistente nel file) si impostano una sola volta, non a ogni
 # istanza o a ogni lettura (circa 5 s sull'avvio a freddo, misura 2026-11-04).
 _READY_PATHS: set[str] = set()
+# Scritture di sola manutenzione/derivate: non cambiano i dati su cui i benchmark si basano.
+_REVISION_IGNORED_PREFERENCES=('instrument_analysis_auto_refresh_state','benchmark_last_refresh','analysis_resolution_cache','analysis_series_cache')
+_REVISION_MEMO: dict[str,tuple[tuple,str]] = {}
 _KIND = {'ETF_ADJ_CLOSE': 'etf_proxy', 'ETF_ADJ_C': 'etf_proxy', 'BLEND': 'composite'}
 
 def db_path() -> Path:
@@ -323,6 +326,39 @@ class IndexStore:
                 'prices':count}
 
     def revision_token(self) -> str:
-        # Il journal SQLite WAL contiene le scritture non ancora checkpointate.
-        return '|'.join(str((p.stat().st_mtime_ns,p.stat().st_size)) if p.exists() else 'missing'
-                        for p in (self.path,Path(str(self.path)+'-wal')))
+        """Impronta del CONTENUTO che incide sui benchmark, stabile tra processi.
+
+        Prima era (mtime, dimensione) del file e del journal WAL: cambiava a ogni
+        scrittura anche di sola manutenzione (stato dell'aggiornamento automatico,
+        cache di analisi) e a ogni checkpoint, quindi invalidava la firma globale
+        dei dati e tutte le figure a ogni avvio. Ora dipende solo da serie, prezzi,
+        cambi, riferimenti, override, assegnazioni e preferenze scelte dall'utente.
+        Il risultato e' memorizzato per (mtime, dimensione): la stat serve solo da
+        chiave del memo, non entra nel token.
+        """
+        wal=Path(str(self.path)+'-wal')
+        stat_key=tuple((p.stat().st_mtime_ns,p.stat().st_size) if p.exists() else None for p in (self.path,wal))
+        memo_key=str(self.path)
+        with _lock:
+            memo=_REVISION_MEMO.get(memo_key)
+            if memo is not None and memo[0]==stat_key:
+                return memo[1]
+        if stat_key[0] is None:
+            return 'missing'
+        ignored=tuple(_REVISION_IGNORED_PREFERENCES)
+        marks=','.join('?' for _ in ignored)
+        with self._connect() as c:
+            parts=[
+                c.execute('SELECT COUNT(*),TOTAL(level),MAX(imported_at) FROM index_prices').fetchone(),
+                c.execute('SELECT series_id,name,provider,currency,return_type,family FROM index_series ORDER BY series_id').fetchall(),
+                c.execute('SELECT COUNT(*),TOTAL(rate) FROM fx_rates').fetchone(),
+                c.execute('SELECT COUNT(*),TOTAL(level) FROM market_reference_prices').fetchone(),
+                c.execute(f'SELECT key,payload FROM benchmark_preferences WHERE key NOT IN ({marks}) ORDER BY key',ignored).fetchall(),
+                c.execute('SELECT instrument_id,official_reference,source FROM instrument_reference ORDER BY instrument_id').fetchall(),
+                c.execute('SELECT instrument_id,code,label FROM instrument_override ORDER BY instrument_id').fetchall(),
+                c.execute('SELECT instrument_id,assignment_json FROM assignment_snapshot ORDER BY instrument_id').fetchall(),
+            ]
+        token=hashlib.sha256(json.dumps(parts,sort_keys=True,default=str).encode('utf-8')).hexdigest()[:16]
+        with _lock:
+            _REVISION_MEMO[memo_key]=(stat_key,token)
+        return token
