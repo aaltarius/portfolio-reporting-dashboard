@@ -1,0 +1,505 @@
+from __future__ import annotations
+
+from typing import Any
+
+import pandas as pd
+import plotly.graph_objects as go
+
+from core.config import COLORS
+from ui.charts.extrema import add_extrema_markers
+from ui.charts.runtime import empty_chart, finalize_chart
+from ui.charts.settings import apply_settings
+from ui.components import wrap_radar_label
+from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it, hex_to_rgba
+from ui.theme import P, instrument_color, macro_color
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Builders spostati da ui/charts/andamento.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_portfolio_value_time_chart(dfh, dfmt, theme):
+	"""Build standalone portfolio value chart.
+
+	chart_id: andamento_portfolio_value
+	chiamato da: ui/pages/andamento.py e ui/prewarm_bundle.py
+	"""
+	if dfh is None or dfh.empty:
+		return empty_chart("andamento_portfolio_value")
+	fig = go.Figure()
+	fig.add_trace(
+		go.Scatter(
+			x=dfh["Data"],
+			y=dfh["Valore"],
+			name="Valore di Mercato",
+			line=dict(color=theme.color_blue, width=2.5),
+			fill="tozeroy",
+			fillcolor=hex_to_rgba(theme.color_blue, 0.08),
+		)
+	)
+	fig.add_trace(
+		go.Scatter(
+			x=dfh["Data"],
+			y=dfh["Costo"],
+			name="Costo Contabile",
+			line=dict(color=theme.color_orange, width=2, dash="dash"),
+		)
+	)
+	fig.add_trace(
+		go.Scatter(
+			x=dfh["Data"],
+			y=dfh["Capitale"],
+			name="Capitale Versato",
+			line=dict(color=theme.color_gray, width=1.5, dash="dashdot"),
+		)
+	)
+	return finalize_chart(fig, "andamento_portfolio_value", hovermode="x unified", uirevision="andamento-value")
+
+
+def build_percentage_return_time_chart(dfh, pct_cap, pct_cost, pl_color, pl_total, dfmt, theme):
+	"""Build percentage return chart for Andamento.
+
+	chart_id: andamento_percentage_return
+	chiamato da: ui/pages/andamento.py e ui/prewarm_bundle.py
+	"""
+	if dfh is None or dfh.empty:
+		return empty_chart("andamento_percentage_return")
+	pct_cap = list(pct_cap or [])
+	pct_cost = list(pct_cost or [])
+	if dfh is not None and not dfh.empty:
+		try:
+			last_capitale = float(pd.to_numeric(dfh["Capitale"], errors="coerce").iloc[-1] or 0.0)
+		except Exception:
+			last_capitale = 0.0
+		try:
+			last_costo = float(pd.to_numeric(dfh["Costo"], errors="coerce").iloc[-1] or 0.0)
+		except Exception:
+			last_costo = 0.0
+		try:
+			valore_aperto_col = dfh["ValoreAperto"] if "ValoreAperto" in dfh.columns else dfh["Valore"]
+			last_pl_aperto = float(pd.to_numeric(valore_aperto_col, errors="coerce").iloc[-1] or 0.0) - last_costo
+		except Exception:
+			last_pl_aperto = 0.0
+		if pct_cap and last_capitale:
+			pct_cap[-1] = (float(pl_total or 0.0) / last_capitale) * 100.0
+		if pct_cost and last_costo:
+			# Non usare pl_total qui: include liquidita' e guadagni realizzati
+			# da vendite passate, non comparabili con "Costo" (solo posizioni
+			# ancora aperte) - vedi build_percentage_return_series.
+			pct_cost[-1] = (last_pl_aperto / last_costo) * 100.0
+	fig = go.Figure()
+	fig.add_trace(
+		go.Scatter(
+			x=dfh["Data"],
+			y=pct_cap,
+			name="Rend. su Capitale %",
+			line=dict(color=pl_color, width=2.5),
+			fill="tozeroy",
+			fillcolor=hex_to_rgba(theme.color_green, 0.08) if pl_total >= 0 else hex_to_rgba(theme.color_red, 0.08),
+		)
+	)
+	fig.add_trace(
+		go.Scatter(
+			x=dfh["Data"],
+			y=pct_cost,
+			name="Rend. su Costo %",
+			line=dict(color=theme.color_orange, width=1.8, dash="dash"),
+		)
+	)
+	fig.add_hline(y=0, line_dash="dot", line_color=hex_to_rgba(COLORS["gray"], 0.55), opacity=0.8)
+	return finalize_chart(fig, "andamento_percentage_return", hovermode="x unified", uirevision="rend-capitale")
+
+
+def build_pl_decomposition_time_chart(dfh, pl_cols, viz_mode, dfmt, theme):
+	"""Build P/L contribution by instrument for Andamento.
+
+	chart_id runtime: andamento_pl_decomp_stacked oppure andamento_pl_decomp_grouped
+	chiamato da: ui/pages/andamento.py; stacked anche da ui/prewarm_bundle.py
+	"""
+	_ = dfmt
+	if dfh is None or dfh.empty:
+		chart_id = "andamento_pl_decomp_stacked" if viz_mode == "Stacked" else "andamento_pl_decomp_grouped"
+		return empty_chart(chart_id)
+	fig = go.Figure()
+	for col in pl_cols:
+		tk = col[3:]
+		stackgroup = "pl" if viz_mode == "Stacked" else None
+		fig.add_trace(
+			go.Scatter(
+				x=dfh["Data"],
+				y=dfh[col].fillna(0),
+				name=tk,
+				mode="lines",
+				stackgroup=stackgroup,
+				line=dict(width=0.7, color=instrument_color(tk)),
+				fillcolor=instrument_color(tk),
+			)
+		)
+	chart_id = "andamento_pl_decomp_stacked" if viz_mode == "Stacked" else "andamento_pl_decomp_grouped"
+	if viz_mode == "Stacked" and pl_cols:
+		# Il marker deve riflettere il totale che lo stack mostra davvero (somma
+		# riga per riga delle sole componenti visualizzate), non l'aggregato
+		# "P/L" del portafoglio: quest'ultimo include anche liquidita' e
+		# guadagni realizzati da vendite passate, non rappresentati nello
+		# stack, e produrrebbe un massimo/minimo che il grafico non raggiunge
+		# mai visivamente.
+		stack_total = dfh[pl_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0).sum(axis=1)
+		if not stack_total.dropna().empty:
+			add_extrema_markers(
+				fig,
+				chart_id,
+				dfh["Data"],
+				stack_total,
+				theme=theme,
+				value_formatter=lambda v: fmt_eur_it(v, 2),
+			)
+	elif "P/L" in dfh.columns and (not dfh["P/L"].dropna().empty):
+		add_extrema_markers(
+			fig,
+			chart_id,
+			dfh["Data"],
+			pd.to_numeric(dfh["P/L"], errors="coerce"),
+			theme=theme,
+			value_formatter=lambda v: fmt_eur_it(v, 2),
+		)
+	return finalize_chart(
+		fig,
+		chart_id,
+		hovermode="x unified",
+		uirevision="stacked-pl",
+		layout_updates={"barmode": "stack" if viz_mode == "Stacked" else "group"},
+	)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Builders spostati da ui/charts/analisi.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_target_gap_chart(macro_target_df):
+	"""Build target allocation gap chart for Analisi.
+
+	chart_id: analisi_target_gap
+	chiamato da: ui/dashboard_bundles.py (get_analitica_bundle)
+	"""
+	if macro_target_df is None or macro_target_df.empty:
+		return empty_chart("analisi_target_gap")
+	fig = go.Figure()
+	peso_attuale = pd.to_numeric(macro_target_df["Peso attuale"], errors="coerce").fillna(0.0)
+	fig.add_trace(
+		go.Bar(
+			y=macro_target_df["Categoria"],
+			x=peso_attuale,
+			orientation="h",
+			name="Peso attuale",
+			marker_color=[hex_to_rgba(macro_color(c), 0.45) for c in macro_target_df["Categoria"]],
+			text=[fmt_pct_it(v, 1) for v in peso_attuale],
+			textposition="outside",
+			textfont=dict(size=10),
+			cliponaxis=False,
+			hovertemplate="%{y}<br>Peso attuale: %{x:.1%}<extra></extra>",
+		)
+	)
+	fig.add_trace(
+		go.Scatter(
+			y=macro_target_df["Categoria"],
+			x=macro_target_df["Peso target"],
+			name="Peso target",
+			mode="markers",
+			marker=dict(symbol="diamond-wide", size=12, color=P["orange"]),
+			hovertemplate="%{y}<br>Peso target: %{x:.1%}<extra></extra>",
+		)
+	)
+	fig.update_layout(barmode="overlay")
+	return apply_settings(fig, "analisi_target_gap")
+
+
+def build_risk_contribution_chart(risk_df):
+	"""Build risk contribution chart for Analisi.
+
+	chart_id: analisi_risk_contribution2
+	chiamato da: ui/pages/analisi.py
+	"""
+	if risk_df is None or risk_df.empty:
+		return empty_chart("analisi_risk_contribution2")
+	fig = go.Figure()
+	fig.add_trace(
+		go.Bar(
+			y=risk_df["Etichetta"],
+			x=risk_df["Peso %"],
+			orientation="h",
+			name="Peso di mercato",
+			marker_color=[hex_to_rgba(macro_color(c), 0.4) for c in risk_df["Categoria"]],
+			text=[fmt_pct_it(v, 1) for v in risk_df["Peso %"]],
+			textposition="outside",
+		)
+	)
+	fig.add_trace(
+		go.Bar(
+			y=risk_df["Etichetta"],
+			x=risk_df["Contributo rischio %"],
+			orientation="h",
+			name="Contributo al rischio",
+			marker_color=[macro_color(c) for c in risk_df["Categoria"]],
+			text=[fmt_pct_it(v, 1) for v in risk_df["Contributo rischio %"]],
+			textposition="inside",
+		)
+	)
+	fig.update_layout(barmode="group")
+	return apply_settings(fig, "analisi_risk_contribution2")
+
+
+def build_performance_attribution(da_frame, dfh):
+	"""Waterfall chart: contributo P/L di ogni strumento al totale.
+
+	chart_id: analisi_performance_attribution
+	chiamato da: ui/pages/analisi.py
+	"""
+	_ = dfh
+	if da_frame is None or da_frame.empty:
+		fig = go.Figure()
+		fig.add_trace(go.Waterfall(y=[0]))
+		return apply_settings(fig, "analisi_performance_attribution")
+	df = da_frame[["Ticker", "Strumento", "P/L €", "Tipo"]].copy()
+	df = df.sort_values("P/L €", ascending=False)
+	total = float(df["P/L €"].sum())
+	fig = go.Figure(
+		go.Waterfall(
+			x=df["Ticker"].tolist() + ["TOTALE"],
+			y=df["P/L €"].tolist() + [total],
+			measure=["relative"] * len(df) + ["total"],
+			connector=dict(line=dict(color="rgba(100,100,100,0.3)", width=1)),
+			increasing=dict(marker_color=P["green"]),
+			decreasing=dict(marker_color=P["red"]),
+			totals=dict(marker_color=P["blue"]),
+			text=[fmt_eur_it(v, 0, signed=True) for v in df["P/L €"].tolist() + [total]],
+			textposition="outside",
+			hovertemplate="%{x}<br>P/L: %{y:,.0f}€<extra></extra>",
+		)
+	)
+	fig.update_layout(hovermode="x unified")
+	fig = apply_settings(fig, "analisi_performance_attribution")
+	# Con molti strumenti i ticker (es. "<strumento>") si sovrappongono: oltre
+	# 8 barre le etichette vanno inclinate, oltre 14 verticali. Va applicato DOPO
+	# apply_settings, che per questo grafico fissa x_tickangle=0; automargin fa
+	# adattare il margine cosi' l'etichetta lunga non viene tagliata.
+	n_bars = len(df) + 1
+	tick_angle = 0 if n_bars <= 8 else (-45 if n_bars <= 14 else -90)
+	if tick_angle:
+		fig.update_xaxes(tickangle=tick_angle, automargin=True)
+	return fig
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Builders spostati da ui/charts/home.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_radar_figure(labels, portfolio_values, comparison_values, comparison_name, theme, chart_id):
+	"""Shared radar builder for Home.
+
+	chart_id runtime: home_radar_allocation oppure home_radar_quality
+	chiamato da: build_asset_allocation_radar / build_quality_profile_radar
+	"""
+	theta = [wrap_radar_label(label) for label in labels]
+	theta_closed = theta + [theta[0]]
+	portfolio_closed = list(portfolio_values) + [portfolio_values[0]]
+	comparison_closed = list(comparison_values) + [comparison_values[0]]
+	data_max = max([float(v or 0.0) for v in portfolio_values + comparison_values] or [1.0])
+	if chart_id == "home_radar_allocation":
+		radial_max = min(100.0, max(20.0, data_max + 5.0))
+		radial_dtick = 5 if radial_max <= 50 else 10
+		ticksuffix = "%"
+	else:
+		radial_max = min(10.0, max(6.0, data_max + 0.8))
+		radial_dtick = 1
+		ticksuffix = None
+
+	fig = go.Figure()
+	fig.add_trace(
+		go.Scatterpolar(
+			r=portfolio_closed,
+			theta=theta_closed,
+			mode="lines",
+			name="Portafoglio attuale",
+			line=dict(color=theme.color_blue, width=3),
+			fill="toself",
+			fillcolor=hex_to_rgba(theme.color_blue, 0.16),
+			hovertemplate="%{theta}<br>Portafoglio attuale: %{r:.1f}<extra></extra>",
+		)
+	)
+	fig.add_trace(
+		go.Scatterpolar(
+			r=comparison_closed,
+			theta=theta_closed,
+			mode="lines",
+			name=comparison_name,
+			line=dict(color="rgba(107,114,128,0.95)", width=2.2, dash="dash"),
+			hovertemplate=f"%{{theta}}<br>{comparison_name}: %{{r:.1f}}<extra></extra>",
+		)
+	)
+	fig = apply_settings(fig, chart_id)
+	radialaxis_cfg = dict(range=[0, radial_max], dtick=radial_dtick)
+	if ticksuffix:
+		radialaxis_cfg["ticksuffix"] = ticksuffix
+	fig.update_layout(polar=dict(radialaxis=radialaxis_cfg))
+	return fig
+
+
+def build_asset_allocation_radar(radar_payload: dict[str, Any], theme):
+	"""Radar quantitativo basato sull'allocazione reale del portafoglio.
+
+	chart_id: home_radar_allocation
+	chiamato da: ui/pages/home.py
+	"""
+	block = radar_payload.get("quantitative", {}) if isinstance(radar_payload, dict) else {}
+	return _build_radar_figure(
+		block.get("labels", []),
+		block.get("portfolio", []),
+		block.get("comparison", []),
+		str(block.get("comparison_name") or "Benchmark moderato"),
+		theme,
+		"home_radar_allocation",
+	)
+
+
+def build_quality_profile_radar(radar_payload: dict[str, Any], theme):
+	"""Radar qualitativo 0-10 basato sul profilo reale del portafoglio.
+
+	chart_id: home_radar_quality
+	chiamato da: ui/pages/home.py
+	"""
+	block = radar_payload.get("qualitative", {}) if isinstance(radar_payload, dict) else {}
+	return _build_radar_figure(
+		block.get("labels", []),
+		block.get("portfolio", []),
+		block.get("comparison", []),
+		str(block.get("comparison_name") or "Profilo target"),
+		theme,
+		"home_radar_quality",
+	)
+
+
+def build_portfolio_simulation_chart(result, theme):
+	"""Build Monte Carlo fan chart for Analitica.
+
+	chart_id: analisi_monte_carlo
+	chiamato da: ui/dashboard_bundles.py (_build_analitica_bundle)
+	"""
+	if result is None or not result.available:
+		fig = go.Figure()
+		fig.add_annotation(
+			text=getattr(result, "reason", None) or "Dati insufficienti per la simulazione.",
+			xref="paper", yref="paper",
+			x=0.5, y=0.5,
+			showarrow=False,
+			font=dict(size=12),
+		)
+		return apply_settings(fig, "analisi_monte_carlo")
+
+	fan = result.fan_percentiles
+	band_color = getattr(theme, "color_blue", "#1f5eff")
+	muted = COLORS.get("gray", "#6b7280")
+	# Bug reale segnalato dall'utente (2026-09-09): il motore simula un passo
+	# per ogni giorno DI TRADING (methodologia corretta per il bootstrap, non
+	# va toccata), ma l'asse mostrava quel conteggio grezzo (126/252/378 per
+	# 6/12/18 mesi, a 21 giorni di trading/mese) sotto etichette "N mesi" -
+	# l'utente si aspettava i giorni DI CALENDARIO convenzionali (180/360/540,
+	# 30 giorni/mese), non il conteggio interno della simulazione. Qui si
+	# riscala solo la VISUALIZZAZIONE (asse, hover, posizione delle linee di
+	# riferimento) nell'equivalente calendario 30/21 - i dati e il numero di
+	# passi simulati restano quelli calcolati in core/services/portfolio_simulation.py.
+	_CALENDAR_DAYS_PER_MONTH = 30
+	_TRADING_DAYS_PER_MONTH = 21
+	_DAY_SCALE = _CALENDAR_DAYS_PER_MONTH / _TRADING_DAYS_PER_MONTH
+	x = fan["trading_day"] * _DAY_SCALE
+	hover_pct = "Giorno %{x:.0f}: %{y:,.0f} €<extra></extra>"
+	fig = go.Figure()
+
+	# Bande annidate 5-95/10-90/25-75/40-60, opacita' crescente verso il
+	# centro: un vero effetto sfumato (fan chart), non due bande piatte.
+	# Solo le due piu' esterne compaiono in legenda - le intermedie
+	# rinforzano il gradiente senza affollare la legenda (label selettive).
+	_band_layers = (
+		("p95", "p5", 0.07, "Intervallo 5°-95° percentile", True),
+		("p90", "p10", 0.12, None, False),
+		("p75", "p25", 0.20, "Intervallo 25°-75° percentile", True),
+		("p60", "p40", 0.34, None, False),
+	)
+	band_edge = dict(width=1, dash="dot", color=hex_to_rgba(band_color, 0.45))
+	for upper_col, lower_col, opacity, band_name, show_in_legend in _band_layers:
+		fig.add_trace(go.Scatter(
+			x=x, y=fan[upper_col], mode="lines",
+			line=band_edge, showlegend=False, hoverinfo="skip",
+		))
+		fig.add_trace(go.Scatter(
+			x=x, y=fan[lower_col], mode="lines",
+			line=band_edge, fill="tonexty", fillcolor=hex_to_rgba(band_color, opacity),
+			name=band_name or "", showlegend=show_in_legend,
+			hovertemplate=hover_pct,
+		))
+
+	fig.add_trace(go.Scatter(
+		x=x, y=fan["p50"], mode="lines",
+		line=dict(width=2.4, color=band_color),
+		name="Mediana scenari simulati",
+		hovertemplate=hover_pct,
+	))
+
+	# Punto di partenza ("oggi") ed etichetta di valore sulla mediana finale:
+	# le linee prendono valore all'estremo (marks-and-anatomy), non un
+	# numero su ogni punto.
+	#
+	# Bug reale segnalato dall'utente (avvocato-del-diavolo, 2026-09-08):
+	# initial_value/fan["p50"].iloc[0] e' il controvalore dei soli strumenti
+	# INCLUSI nella simulazione (esclude strumenti nuovi/quotazioni
+	# frammentate, vedi build_portfolio_simulation) - su un'esclusione
+	# consistente l'etichetta "Oggi: 8.000 EUR" con un portafoglio
+	# da 10.000 EUR si legge come un errore di dati, non come il limite
+	# dichiarato della simulazione. Se esistono esclusioni, l'etichetta lo
+	# dice esplicitamente invece di mostrare solo "Oggi".
+	has_exclusions = bool(getattr(result, "excluded_tickers", ()) or getattr(result, "excluded_fragmented_tickers", ()))
+	today_label = (
+		f"Oggi (solo simulati): {fmt_eur_it(fan['p50'].iloc[0], 0)}"
+		if has_exclusions else f"Oggi: {fmt_eur_it(fan['p50'].iloc[0], 0)}"
+	)
+	fig.add_trace(go.Scatter(
+		x=[x.iloc[0]], y=[fan["p50"].iloc[0]], mode="markers+text",
+		marker=dict(size=8, color=band_color, line=dict(color="white", width=1.5)),
+		text=[today_label], textposition="middle left",
+		textfont=dict(size=10, color=band_color), showlegend=False, hoverinfo="skip",
+		cliponaxis=False,
+	))
+	fig.add_trace(go.Scatter(
+		x=[x.iloc[-1]], y=[fan["p50"].iloc[-1]], mode="markers+text",
+		marker=dict(size=8, color=band_color, line=dict(color="white", width=1.5)),
+		text=[fmt_eur_it(fan["p50"].iloc[-1], 0)], textposition="middle right",
+		textfont=dict(size=10, color=band_color), showlegend=False, hoverinfo="skip",
+		cliponaxis=False,
+	))
+
+	# Righe verticali di riferimento sugli orizzonti (6/12/18 mesi): 24 mesi
+	# coincide col bordo destro del grafico, gia' segnato dall'etichetta di
+	# valore finale, quindi non serve ripeterlo. 18 mesi (378 giorni) e' solo
+	# un riferimento visivo sul grafico, non un nuovo orizzonte calcolato
+	# nella tabella sotto (quella resta 6/12/24, come da metodologia).
+	last_day = int(round(x.iloc[-1]))
+	reference_points = sorted({(h.trading_days, h.label) for h in result.horizons} | {(378, "18 mesi")})
+	tick_days = [0]
+	for trading_days, label in reference_points:
+		calendar_days = int(round(trading_days * _DAY_SCALE))
+		if calendar_days >= last_day:
+			continue
+		fig.add_vline(
+			x=calendar_days, line_dash="dot", line_width=1,
+			line_color=hex_to_rgba(muted, 0.55),
+			annotation_text=label, annotation_position="top",
+			annotation_font=dict(size=10, color=muted),
+			annotation_yshift=-18,
+		)
+		tick_days.append(calendar_days)
+	tick_days.append(last_day)
+	# I tick dell'asse coincidono sempre esattamente con le linee di
+	# riferimento (stesso principio del fix precedente, ora sui giorni di
+	# calendario invece che sui giorni di trading grezzi).
+	fig.update_xaxes(tickmode="array", tickvals=tick_days, ticktext=[str(d) for d in tick_days])
+
+	return apply_settings(fig, "analisi_monte_carlo")

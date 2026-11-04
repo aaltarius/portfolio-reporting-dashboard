@@ -1,0 +1,1904 @@
+"""
+persistence/storage.py — I/O JSON, load/save, backup, costanti di dominio.
+Nessuna dipendenza da streamlit o da altri moduli del progetto.
+Contiene anche le funzioni di modello dati necessarie a load_data/save_data
+per evitare import circolari.
+"""
+import logging
+import math
+import json, os, shutil, hashlib
+from core.volume_policy import BACKUP_KEEP_LAST_N, FIGURE_CACHE_CLEANUP_DAYS, FIGURE_CACHE_MAX_MB
+from datetime import datetime, date
+import pandas as pd
+import numpy as np
+from core.asset_categories import (
+    ACTIVE_CATEGORY_CODES,
+    DEFAULT_VISIBLE_CATEGORY_CODES,
+    category_name,
+    infer_category_code,
+    normalize_category_code,
+    normalize_category_selection,
+)
+
+logger = logging.getLogger("portafoglio.persistence.storage")
+
+AUDIT_EVENT_CATALOG = {
+    "settings_saved": {"label": "Impostazioni salvate", "category": "Configurazione"},
+    "backup_created": {"label": "Backup creato", "category": "Backup"},
+    "backup_restored": {"label": "Backup ripristinato", "category": "Backup"},
+    "backup_deleted": {"label": "Backup eliminato", "category": "Backup"},
+    "snapshot_created": {"label": "Snapshot creato", "category": "Snapshot"},
+    "sator_decision_saved": {"label": "Decisione SATOR salvata", "category": "Pianificazione"},
+    "quotes_imported": {"label": "Quotazioni importate", "category": "Quotazioni"},
+    "quotes_reset": {"label": "Quotazioni resettate", "category": "Quotazioni"},
+    "newsletter_preview_generated": {"label": "Anteprima newsletter generata", "category": "Newsletter"},
+}
+
+# ---------------------------------------------------------------------------
+# Path constants
+# ---------------------------------------------------------------------------
+BASE_DIR             = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR             = os.path.join(BASE_DIR, "data")
+PRICES_DIR           = os.path.join(DATA_DIR, "prices")
+DATA_FILE            = os.path.join(DATA_DIR, "portfolio", "portafoglio_data.json")
+SETTINGS_FILE        = os.path.join(DATA_DIR, "config", "portafoglio_settings.json")
+QUOTES_LOG_FILE      = os.path.join(DATA_DIR, "cache", "portafoglio_quotes_log.json")
+SNAPSHOTS_FILE       = os.path.join(DATA_DIR, "portfolio", "portafoglio_snapshots.json")
+SATOR_DECISIONS_FILE = os.path.join(DATA_DIR, "portfolio", "portafoglio_sator_decisions.json")
+BENCHMARK_CACHE_FILE = os.path.join(DATA_DIR, "cache", "portafoglio_benchmark_cache.json")  # solo MIGRAZIONE, non runtime
+MARKET_LIVE_FILE = os.path.join(DATA_DIR, "cache", "market_live_data.json")
+META_FILE            = os.path.join(DATA_DIR, "config", "portafoglio_meta.json")
+STORICO_PREZZI_FILE  = os.path.join(PRICES_DIR, "portafoglio_storico_prezzi.json")
+BACKUP_DIR           = os.path.join(BASE_DIR, "backups")
+
+# ---------------------------------------------------------------------------
+# Migrazione automatica file JSON → sottocartella data/
+# ---------------------------------------------------------------------------
+_OLD_FILES = [
+    ("portafoglio_data.json",            DATA_FILE),
+    ("portafoglio_settings.json",        SETTINGS_FILE),
+    ("portafoglio_quotes_log.json",      QUOTES_LOG_FILE),
+    ("portafoglio_snapshots.json",       SNAPSHOTS_FILE),
+    ("portafoglio_sator_decisions.json", SATOR_DECISIONS_FILE),
+    # Archivio benchmark JSON non viene più importato automaticamente: solo migrazione esplicita.
+    ("portafoglio_meta.json",            META_FILE),
+]
+
+def _backup_settings_before_migration_enabled() -> bool:
+    """Legge la policy di backup dal settings ancora in BASE_DIR (non migrato).
+
+    Non si può usare load_settings() qui: al primo avvio dopo l'upgrade,
+    SETTINGS_FILE (nuovo path) non esiste ancora, quindi restituirebbe sempre
+    i default invece della preferenza realmente configurata dall'utente.
+    """
+    old_settings_path = os.path.join(BASE_DIR, "portafoglio_settings.json")
+    try:
+        if os.path.exists(old_settings_path):
+            with open(old_settings_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            backup_cfg = raw.get("backup", {}) if isinstance(raw, dict) else {}
+            return bool(backup_cfg.get("enabled", True)) and bool(backup_cfg.get("backup_before_migration", True))
+    except Exception:
+        logger.warning("Lettura policy backup pre-migrazione fallita, uso default", exc_info=True)
+    return True
+
+
+def _migrate_json_to_data_dir():
+    """Sposta i file JSON da BASE_DIR a DATA_DIR se non sono già lì."""
+    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(os.path.join(DATA_DIR, "config"), exist_ok=True)
+    os.makedirs(os.path.join(DATA_DIR, "portfolio"), exist_ok=True)
+    os.makedirs(os.path.join(DATA_DIR, "cache"), exist_ok=True)
+    os.makedirs(PRICES_DIR, exist_ok=True)
+
+    to_migrate = [
+        (fname, new_path) for fname, new_path in _OLD_FILES
+        if os.path.exists(os.path.join(BASE_DIR, fname)) and not os.path.exists(new_path)
+    ]
+    if to_migrate and _backup_settings_before_migration_enabled():
+        try:
+            stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            pre_migration_dir = os.path.join(BACKUP_DIR, f"{stamp}_pre_migration")
+            _ensure_dir(pre_migration_dir)
+            for fname, _new_path in to_migrate:
+                shutil.copy2(os.path.join(BASE_DIR, fname), os.path.join(pre_migration_dir, fname))
+            logger.info("Backup pre-migrazione creato: folder=%s files=%s", pre_migration_dir, len(to_migrate))
+            _prune_backups()
+        except Exception:
+            logger.warning("Backup pre-migrazione fallito, la migrazione prosegue comunque", exc_info=True)
+
+    for fname, new_path in _OLD_FILES:
+        old_path = os.path.join(BASE_DIR, fname)
+        if os.path.exists(old_path) and not os.path.exists(new_path):
+            try:
+                os.makedirs(os.path.dirname(new_path), exist_ok=True)
+                shutil.move(old_path, new_path)
+                logger.info("Migrazione file completata: %s -> %s", old_path, new_path)
+            except Exception:
+                logger.warning("Migrazione file fallita: %s -> %s", old_path, new_path, exc_info=True)
+                pass
+
+# ---------------------------------------------------------------------------
+# Domain constants
+# ---------------------------------------------------------------------------
+APP_VERSION    = "5.6"
+SCHEMA_VERSION = "3.4"
+
+TIPI_EVENTO_PORTAFOGLIO = [
+    "ACQUISTO", "VENDITA", "RIMBORSO A SCADENZA",
+    "CEDOLA", "DIVIDENDO", "VERSAMENTO", "PRELIEVO", "COMMISSIONE", "IMPOSTA",
+]
+EVENTI_CON_STRUMENTO = {"ACQUISTO", "VENDITA", "RIMBORSO A SCADENZA", "CEDOLA", "DIVIDENDO"}
+EVENTI_CON_QUANTITA  = {"ACQUISTO", "VENDITA", "RIMBORSO A SCADENZA"}
+EVENTI_CON_PREZZO    = {"ACQUISTO", "VENDITA", "RIMBORSO A SCADENZA"}
+EVENTI_CON_IMPORTO   = {"CEDOLA", "DIVIDENDO", "VERSAMENTO", "PRELIEVO", "COMMISSIONE", "IMPOSTA"}
+
+
+# ---------------------------------------------------------------------------
+# Categorizzazione strumenti (macro_cat) — unica fonte di verità
+# ---------------------------------------------------------------------------
+def _normalize_macro_label(value):
+    return infer_category_code(value, default="ALTRO")
+
+def macro_cat(tipo):
+    return _normalize_macro_label(tipo)
+
+# ---------------------------------------------------------------------------
+# I/O primitivi
+# ---------------------------------------------------------------------------
+def _ensure_dir(path):
+    os.makedirs(path, exist_ok=True)
+
+
+def _read_json_file(path, default):
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        logger.warning("Lettura JSON fallita, uso default: path=%s", path, exc_info=True)
+    return json.loads(json.dumps(default))
+
+
+def _write_json_file(path, payload):
+    # Scrittura atomica: scrivi su tmp nella stessa dir, poi rinomina.
+    # Evita file vuoti se il processo viene interrotto a metà write.
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False, default=str)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _deep_clone(value):
+    return json.loads(json.dumps(value))
+
+
+def _deep_merge_defaults(defaults, payload):
+    """Merge ricorsivo che preserva i valori esistenti e aggiunge i default mancanti."""
+    if isinstance(defaults, dict) and isinstance(payload, dict):
+        merged = {}
+        keys = set(defaults.keys()) | set(payload.keys())
+        for key in keys:
+            if key in defaults and key in payload:
+                merged[key] = _deep_merge_defaults(defaults[key], payload[key])
+            elif key in payload:
+                merged[key] = _deep_clone(payload[key])
+            else:
+                merged[key] = _deep_clone(defaults[key])
+        return merged
+    return _deep_clone(payload if payload is not None else defaults)
+
+
+def _safe_float(value, default=0.0):
+    try:
+        if value is None or value == "":
+            return float(default)
+        result = float(value)
+        if math.isnan(result):
+            return float(default)
+        if not math.isfinite(result):
+            logger.warning("_safe_float: valore non finito, uso default=%s: value=%r", default, value)
+            return float(default)
+        return result
+    except Exception:
+        logger.warning("_safe_float: valore non convertibile in float, uso default=%s: value=%r", default, value)
+        return float(default)
+
+
+def _safe_date_str(value):
+    if isinstance(value, str) and len(value) >= 10:
+        return value[:10]
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d")
+    return str(value)
+
+# ---------------------------------------------------------------------------
+# Strutture default
+# ---------------------------------------------------------------------------
+def default_data_v33():
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "portfolio_id": "main",
+        "strumenti": [],
+        "operazioni": [],
+        "storico_prezzi": {},
+        "proventi": [],
+        "last_quotes_update": None,
+        "instrument_master": {},
+        "registro_eventi": [],
+        "registro_liquidita": [],
+        "cache_posizioni": {},
+        "cache_storico_portafoglio": {},
+        "cache_lookup_strumenti": {},
+    }
+
+
+_PROFILE_TO_PORTFOLIO_OBJECTIVE = {
+    "Prudente": {"core": 0.50, "difensivo": 0.40, "satellite": 0.10},
+    "Equilibrato": {"core": 0.55, "difensivo": 0.25, "satellite": 0.20},
+    "Dinamico": {"core": 0.50, "difensivo": 0.15, "satellite": 0.35},
+    "Neutro": {"core": 0.55, "difensivo": 0.25, "satellite": 0.20},
+}
+
+
+def default_settings():
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "portfolio_benchmark_default": "Blend automatico",
+        "risk_traffic_light_thresholds": {"green_max": 1.0, "yellow_max": 1.2},
+        "analysis_lookback_days": 365,
+        "include_proventi_in_total_return": True,
+        "classification_mode": "hybrid",
+        "quote_log_retention": 20,
+        "comparison_export_format_default": "csv",
+        "portfolio_objective": {"core": 0.55, "difensivo": 0.25, "satellite": 0.20},
+        "category_view": {
+            "selected_categories": list(DEFAULT_VISIBLE_CATEGORY_CODES),
+        },
+        "ui_show_explanations": True,
+        "ui_show_portfolio_insights": True,
+        "ui_summary_detail_level": "Completa",
+        "ui_accent_variant": "Default",
+        "ui_log_level": "INFO",
+        "ui_summary_include_methodology": True,
+        "ui_summary_include_holdings_table": True,
+        "ui_summary_include_benchmark": True,
+        "ui_summary_layout": "GIPS Completo",
+        "ui_debug_render_monitor": False,
+        "ui_show_page_mode_controls": True,
+        "operativo_mode": "sidebar",
+        "sator_mode": "sidebar",
+        "export_pp_mode": "sidebar",
+        "privacy_mode": {
+            "enabled": False,
+            "hidden_tickers": [],
+            "hidden_categories": [],
+        },
+        "portfolio_profile": {
+            "portfolio_id": "main",
+            "portfolio_name": "Portafoglio Principale",
+            "description": "",
+            "base_currency": "EUR",
+            "reporting_currency": "EUR",
+        },
+        "reporting_export": {
+            "default_format": "csv",
+            "decimal_places": 2,
+            "include_history": True,
+            "include_methodology": True,
+            "include_holdings_table": True,
+            "include_benchmark": True,
+        },
+        "calculations_metrics": {
+            "analysis_lookback_days": 365,
+            "include_proventi_in_total_return": True,
+            "classification_mode": "hybrid",
+            "risk_traffic_light_thresholds": {"green_max": 1.0, "yellow_max": 1.2},
+            "rolling_window_days": 90,
+            "inflation_rate": 0.0,
+            "performance_fee_rate": 0.0,
+        },
+        "benchmarking": {
+            "default_portfolio_benchmark": "Blend automatico",
+            "custom_enabled": False,
+            "custom_name": "",
+            "custom_components": [],
+        },
+        "alerts": {
+            "enabled": False,
+            "risk_weight_monitoring": True,
+            "loss_threshold_pct": None,
+            "concentration_threshold_pct": None,
+            "drawdown_threshold_pct": None,
+            "volatility_threshold_pct": None,
+        },
+        "ui_preferences": {
+            "show_explanations": True,
+            "show_portfolio_insights": True,
+            "show_market_ticker_tape": True,
+            "show_portfolio_termometro": True,
+            "summary_detail_level": "Completa",
+            "accent_variant": "Default",
+            "font_scale": "Grande",
+            "summary_layout": "GIPS Completo",
+            "summary_show_commentary": True,
+            "summary_show_advanced_metrics": True,
+            "debug_render_monitor": False,
+            "debug_render_progress": False,
+            "debug_render_log": False,
+            "debug_render_scope": "current_page",
+            "show_page_mode_controls": True,
+            "page_mode": "completa",
+            "quotazioni_full_resolution": False,
+        },
+        "auditing": {
+            "enabled": True,
+            "track_settings_history": True,
+            "track_import_export": True,
+        },
+        "newsletter": {
+            "enabled": False,
+            "delivery_mode": "manuale",
+            "detail_level": "Completa",
+            "include_summary": True,
+            "include_alerts": True,
+            "include_top_holdings": True,
+            "include_macro_allocation": True,
+            "include_benchmark_context": True,
+            "include_commentary": True,
+            "max_holdings": 5,
+            "subject_prefix": "Daily Brief",
+            "send_time_local": "18:00",
+        },
+        "i18n": {
+            "language": "it",
+            "locale": "it-IT",
+            "date_format": "DD/MM/YYYY",
+            "number_format": "it-IT",
+        },
+        "backup": {
+            "enabled": True,
+            "backup_before_migration": True,
+            # Bug reale trovato in review avvocato-del-diavolo (2026-09-08):
+            # il default qui era False, in aperta contraddizione con
+            # CLAUDE.md ("lo sono di default, 20 backup conservati") - per
+            # qualunque installazione che non avesse mai toccato questo
+            # campo esplicitamente, save_data() non creava MAI un backup
+            # prima di scrivere, proprio la rete di sicurezza che avrebbe
+            # attutito il danno di un save concorrente (vedi
+            # _merge_concurrent_writes). Allineato al comportamento
+            # documentato e atteso.
+            "backup_before_save": True,
+            "keep_last_n": BACKUP_KEEP_LAST_N,
+            "folder": "backups"
+        },
+        "ui_figure_cache": {
+            "enabled": True,                    # Enable/disable figure caching
+            "strategy": "hybrid",               # "disabled", "session_only", "disk_only", "hybrid"
+            "use_gzip": False,                  # Compress JSON on disk
+            "max_cache_size_mb": FIGURE_CACHE_MAX_MB,           # Max disk cache size (soft limit)
+            "auto_cleanup_days": FIGURE_CACHE_CLEANUP_DAYS,            # Auto-remove figures older than N days
+        },
+        "ui_pre_render": {
+            "enabled": True,
+            "initial_complete": True,
+            "background_enabled": True,
+            "cooldown_seconds": 1800,
+            "scope": "core_charts_v1",
+        },
+        "market_auto_refresh": {
+            "enabled": False,
+            "live_interval_minutes": 30,
+            "history_enabled": True,
+            "history_interval_minutes": 240,
+            "only_when_markets_open": True,
+        },
+        "sator": {
+            "enabled": True,
+            "budget_preset": 900.0,
+            "default_budget": 900.0,
+            "include_watchlist": True,
+            "include_portfolio": True,
+            "allow_new_entries": True,
+            "max_lines_per_scenario": 4,
+            "max_new_entries": 2,
+            "max_satellite_share": 0.40,
+            "score_weights": {
+                "strategic_fit": 0.30,
+                "tactical_momentum": 0.25,
+                "risk_efficiency": 0.20,
+                "diversification_benefit": 0.15,
+                "cost_efficiency": 0.10,
+            },
+            "scenario_mix": {
+                "strategico": {"core": 0.72, "defensive": 0.20, "satellite": 0.08},
+                "bilanciato": {"core": 0.58, "defensive": 0.25, "satellite": 0.17},
+                "difensivo": {"core": 0.25, "defensive": 0.62, "satellite": 0.13},
+                "opportunistico": {"core": 0.38, "defensive": 0.18, "satellite": 0.44},
+                "nuovi_ingressi": {"core": 0.44, "defensive": 0.24, "satellite": 0.32},
+            },
+        },
+        "appearance": {
+            "color_palette": "Default",
+            "typography": {
+                "titles": "1.4rem",
+                "subtitles": "1.1rem",
+                "body": "0.95rem",
+                "caption": "0.85rem"
+            },
+            "visibility_mode": "Standard",
+            "custom_visibility": {}
+        }
+    }
+
+
+def _normalize_settings_payload(settings):
+    """Normalizza il payload settings e mantiene compatibilità tra chiavi flat e sezioni annidate."""
+    defaults = default_settings()
+    raw_settings = settings if isinstance(settings, dict) else {}
+
+    def _prefer_nested_value(
+        section_name: str,
+        nested_key: str,
+        flat_key: str,
+        fallback: Any,
+    ) -> Any:
+        section_payload = raw_settings.get(section_name, {})
+        if isinstance(section_payload, dict) and nested_key in section_payload:
+            return section_payload.get(nested_key, fallback)
+        return raw_settings.get(flat_key, fallback)
+
+    # Retrocompatibilità: converti il vecchio bool ui_show_page_mode_controls al nuovo ui_page_mode
+    if "ui_page_mode" not in raw_settings and "ui_show_page_mode_controls" in raw_settings:
+        old_bool = raw_settings.get("ui_show_page_mode_controls", True)
+        raw_settings["ui_page_mode"] = "completa" if old_bool else "rapida"
+
+    # Assicura che ui_page_mode sia sempre presente
+    if "ui_page_mode" not in raw_settings:
+        raw_settings["ui_page_mode"] = "completa"  # default
+
+    merged = _deep_merge_defaults(defaults, raw_settings)
+
+    portfolio_profile = merged.setdefault("portfolio_profile", {})
+    calculations = merged.setdefault("calculations_metrics", {})
+    benchmarking = merged.setdefault("benchmarking", {})
+    reporting = merged.setdefault("reporting_export", {})
+    alerts = merged.setdefault("alerts", {})
+    ui_preferences = merged.setdefault("ui_preferences", {})
+    category_view = merged.setdefault("category_view", {})
+    backup = merged.setdefault("backup", {})
+    newsletter = merged.setdefault("newsletter", {})
+    market_auto_refresh = merged.setdefault("market_auto_refresh", {})
+
+    portfolio_objective = merged.setdefault("portfolio_objective", {})
+    if "portfolio_objective" not in raw_settings:
+        _seed_label = str(raw_settings.get("target_profile_default") or "")
+        if _seed_label in _PROFILE_TO_PORTFOLIO_OBJECTIVE:
+            portfolio_objective.update(_PROFILE_TO_PORTFOLIO_OBJECTIVE[_seed_label])
+    portfolio_objective["core"] = max(0.0, _safe_float(portfolio_objective.get("core"), defaults["portfolio_objective"]["core"]))
+    portfolio_objective["difensivo"] = max(0.0, _safe_float(portfolio_objective.get("difensivo"), defaults["portfolio_objective"]["difensivo"]))
+    portfolio_objective["satellite"] = max(0.0, _safe_float(portfolio_objective.get("satellite"), defaults["portfolio_objective"]["satellite"]))
+    _obj_total = portfolio_objective["core"] + portfolio_objective["difensivo"] + portfolio_objective["satellite"]
+    if _obj_total > 0:
+        portfolio_objective["core"] /= _obj_total
+        portfolio_objective["difensivo"] /= _obj_total
+        portfolio_objective["satellite"] /= _obj_total
+    else:
+        portfolio_objective.update(defaults["portfolio_objective"])
+    merged["portfolio_objective"] = portfolio_objective
+
+    # Legacy -> nested
+    portfolio_profile["portfolio_id"] = str(merged.get("portfolio_id") or portfolio_profile.get("portfolio_id") or "main")
+    calculations["analysis_lookback_days"] = int(
+        _prefer_nested_value(
+            "calculations_metrics",
+            "analysis_lookback_days",
+            "analysis_lookback_days",
+            calculations.get("analysis_lookback_days", 365),
+        )
+    )
+    calculations["include_proventi_in_total_return"] = bool(
+        _prefer_nested_value(
+            "calculations_metrics",
+            "include_proventi_in_total_return",
+            "include_proventi_in_total_return",
+            calculations.get("include_proventi_in_total_return", True),
+        )
+    )
+    calculations["classification_mode"] = str(
+        _prefer_nested_value(
+            "calculations_metrics",
+            "classification_mode",
+            "classification_mode",
+            calculations.get("classification_mode", "hybrid"),
+        )
+    )
+    calculations["risk_traffic_light_thresholds"] = _deep_merge_defaults(
+        defaults["calculations_metrics"]["risk_traffic_light_thresholds"],
+        _prefer_nested_value(
+            "calculations_metrics",
+            "risk_traffic_light_thresholds",
+            "risk_traffic_light_thresholds",
+            calculations.get("risk_traffic_light_thresholds", {}),
+        ),
+    )
+    benchmarking["default_portfolio_benchmark"] = str(
+        _prefer_nested_value(
+            "benchmarking",
+            "default_portfolio_benchmark",
+            "portfolio_benchmark_default",
+            benchmarking.get("default_portfolio_benchmark", "Blend automatico"),
+        )
+    )
+    if benchmarking["default_portfolio_benchmark"] == "100% BTP Italia":
+        benchmarking["default_portfolio_benchmark"] = "100% GOV"
+    benchmarking["custom_enabled"] = bool(benchmarking.get("custom_enabled", False))
+    benchmarking["custom_name"] = str(benchmarking.get("custom_name", "") or "").strip()
+    raw_custom_components = benchmarking.get("custom_components", [])
+    normalized_components = []
+    if isinstance(raw_custom_components, list):
+        for item in raw_custom_components:
+            if not isinstance(item, dict):
+                continue
+            ticker = str(item.get("ticker", "") or "").strip()
+            try:
+                weight = float(item.get("weight", 0) or 0)
+            except (TypeError, ValueError):
+                weight = 0.0
+            if ticker and weight > 0:
+                normalized_components.append({"ticker": ticker, "weight": weight})
+    benchmarking["custom_components"] = normalized_components
+    reporting["default_format"] = str(
+        _prefer_nested_value(
+            "reporting_export",
+            "default_format",
+            "comparison_export_format_default",
+            reporting.get("default_format", "csv"),
+        )
+    )
+    ui_preferences["show_explanations"] = bool(
+        _prefer_nested_value("ui_preferences", "show_explanations", "ui_show_explanations", ui_preferences.get("show_explanations", True))
+    )
+    ui_preferences["show_portfolio_insights"] = bool(
+        _prefer_nested_value("ui_preferences", "show_portfolio_insights", "ui_show_portfolio_insights", ui_preferences.get("show_portfolio_insights", True))
+    )
+    ui_preferences["show_market_ticker_tape"] = bool(
+        _prefer_nested_value("ui_preferences", "show_market_ticker_tape", "ui_show_market_ticker_tape", ui_preferences.get("show_market_ticker_tape", True))
+    )
+    ui_preferences["show_portfolio_termometro"] = bool(
+        _prefer_nested_value("ui_preferences", "show_portfolio_termometro", "ui_show_portfolio_termometro", ui_preferences.get("show_portfolio_termometro", True))
+    )
+    ui_preferences["summary_detail_level"] = str(
+        _prefer_nested_value("ui_preferences", "summary_detail_level", "ui_summary_detail_level", ui_preferences.get("summary_detail_level", "Completa"))
+    )
+    ui_preferences["accent_variant"] = str(
+        _prefer_nested_value("ui_preferences", "accent_variant", "ui_accent_variant", ui_preferences.get("accent_variant", "Default"))
+    )
+    ui_preferences["font_scale"] = str(
+        _prefer_nested_value("ui_preferences", "font_scale", "ui_font_scale", ui_preferences.get("font_scale", "Grande"))
+    )
+    ui_preferences["log_level"] = str(
+        _prefer_nested_value("ui_preferences", "log_level", "ui_log_level", ui_preferences.get("log_level", "INFO"))
+    ).upper()
+    ui_preferences["debug_render_monitor"] = bool(
+        _prefer_nested_value("ui_preferences", "debug_render_monitor", "ui_debug_render_monitor", ui_preferences.get("debug_render_monitor", False))
+    )
+    ui_preferences["debug_render_progress"] = bool(
+        ui_preferences.get("debug_render_progress", False)
+    )
+    ui_preferences["debug_render_log"] = bool(
+        ui_preferences.get("debug_render_log", False)
+    )
+    ui_preferences["debug_render_scope"] = str(
+        ui_preferences.get("debug_render_scope", "current_page") or "current_page"
+    )
+    ui_preferences["show_page_mode_controls"] = bool(
+        _prefer_nested_value("ui_preferences", "show_page_mode_controls", "ui_show_page_mode_controls", ui_preferences.get("show_page_mode_controls", True))
+    )
+    ui_preferences["page_mode"] = str(
+        _prefer_nested_value("ui_preferences", "page_mode", "ui_page_mode", ui_preferences.get("page_mode", "completa"))
+    )
+    ui_preferences["summary_layout"] = str(
+        _prefer_nested_value("ui_preferences", "summary_layout", "ui_summary_layout", ui_preferences.get("summary_layout", "GIPS Completo"))
+    )
+    ui_preferences["summary_show_commentary"] = bool(
+        _prefer_nested_value("ui_preferences", "summary_show_commentary", "ui_summary_show_commentary", ui_preferences.get("summary_show_commentary", True))
+    )
+    ui_preferences["summary_show_advanced_metrics"] = bool(
+        _prefer_nested_value("ui_preferences", "summary_show_advanced_metrics", "ui_summary_show_advanced_metrics", ui_preferences.get("summary_show_advanced_metrics", True))
+    )
+    reporting["include_methodology"] = bool(
+        _prefer_nested_value("reporting_export", "include_methodology", "ui_summary_include_methodology", reporting.get("include_methodology", True))
+    )
+    reporting["include_holdings_table"] = bool(
+        _prefer_nested_value("reporting_export", "include_holdings_table", "ui_summary_include_holdings_table", reporting.get("include_holdings_table", True))
+    )
+    reporting["include_benchmark"] = bool(
+        _prefer_nested_value("reporting_export", "include_benchmark", "ui_summary_include_benchmark", reporting.get("include_benchmark", True))
+    )
+    alerts["enabled"] = bool(alerts.get("enabled", False))
+    alerts["risk_weight_monitoring"] = bool(alerts.get("risk_weight_monitoring", True))
+    alerts["loss_threshold_pct"] = (
+        float(alerts["loss_threshold_pct"]) if alerts.get("loss_threshold_pct") not in (None, "", False) else None
+    )
+    alerts["concentration_threshold_pct"] = (
+        float(alerts["concentration_threshold_pct"]) if alerts.get("concentration_threshold_pct") not in (None, "", False) else None
+    )
+    alerts["drawdown_threshold_pct"] = (
+        float(alerts["drawdown_threshold_pct"]) if alerts.get("drawdown_threshold_pct") not in (None, "", False) else None
+    )
+    alerts["volatility_threshold_pct"] = (
+        float(alerts["volatility_threshold_pct"]) if alerts.get("volatility_threshold_pct") not in (None, "", False) else None
+    )
+    newsletter["enabled"] = bool(newsletter.get("enabled", False))
+    newsletter["delivery_mode"] = str(newsletter.get("delivery_mode", "manuale") or "manuale")
+    newsletter["detail_level"] = str(newsletter.get("detail_level", "Completa") or "Completa")
+    newsletter["include_summary"] = bool(newsletter.get("include_summary", True))
+    newsletter["include_alerts"] = bool(newsletter.get("include_alerts", True))
+    newsletter["include_top_holdings"] = bool(newsletter.get("include_top_holdings", True))
+    newsletter["include_macro_allocation"] = bool(newsletter.get("include_macro_allocation", True))
+    newsletter["include_benchmark_context"] = bool(newsletter.get("include_benchmark_context", True))
+    newsletter["include_commentary"] = bool(newsletter.get("include_commentary", True))
+    newsletter["max_holdings"] = int(newsletter.get("max_holdings", defaults["newsletter"]["max_holdings"]) or defaults["newsletter"]["max_holdings"])
+    newsletter["subject_prefix"] = str(newsletter.get("subject_prefix", "Daily Brief") or "Daily Brief").strip() or "Daily Brief"
+    newsletter["send_time_local"] = str(newsletter.get("send_time_local", "18:00") or "18:00").strip() or "18:00"
+    market_auto_refresh["enabled"] = bool(market_auto_refresh.get("enabled", defaults["market_auto_refresh"]["enabled"]))
+    market_auto_refresh["live_interval_minutes"] = max(
+        5,
+        min(240, int(_safe_float(market_auto_refresh.get("live_interval_minutes"), defaults["market_auto_refresh"]["live_interval_minutes"]))),
+    )
+    market_auto_refresh["history_enabled"] = bool(
+        market_auto_refresh.get("history_enabled", defaults["market_auto_refresh"]["history_enabled"])
+    )
+    market_auto_refresh["history_interval_minutes"] = max(
+        60,
+        min(1440, int(_safe_float(market_auto_refresh.get("history_interval_minutes"), defaults["market_auto_refresh"]["history_interval_minutes"]))),
+    )
+    market_auto_refresh["only_when_markets_open"] = bool(
+        market_auto_refresh.get("only_when_markets_open", defaults["market_auto_refresh"]["only_when_markets_open"])
+    )
+    category_view["selected_categories"] = normalize_category_selection(
+        category_view.get("selected_categories", defaults["category_view"]["selected_categories"])
+    )
+    backup["keep_last_n"] = int(backup.get("keep_last_n", BACKUP_KEEP_LAST_N))
+    merged["quote_log_retention"] = int(merged.get("quote_log_retention", 20))
+
+    # Nested -> legacy flat mirrors
+    merged["portfolio_id"] = portfolio_profile["portfolio_id"]
+    merged["portfolio_benchmark_default"] = benchmarking["default_portfolio_benchmark"]
+    merged["risk_traffic_light_thresholds"] = _deep_clone(calculations["risk_traffic_light_thresholds"])
+    merged["analysis_lookback_days"] = calculations["analysis_lookback_days"]
+    merged["include_proventi_in_total_return"] = calculations["include_proventi_in_total_return"]
+    merged["classification_mode"] = calculations["classification_mode"]
+    merged["comparison_export_format_default"] = reporting["default_format"]
+    merged["ui_show_explanations"] = ui_preferences["show_explanations"]
+    merged["ui_show_portfolio_insights"] = ui_preferences["show_portfolio_insights"]
+    merged["ui_show_market_ticker_tape"] = ui_preferences["show_market_ticker_tape"]
+    merged["ui_show_portfolio_termometro"] = ui_preferences["show_portfolio_termometro"]
+    merged["ui_summary_detail_level"] = ui_preferences["summary_detail_level"]
+    merged["ui_accent_variant"] = ui_preferences["accent_variant"]
+    merged["ui_font_scale"] = ui_preferences["font_scale"]
+    merged["ui_debug_render_monitor"] = ui_preferences["debug_render_monitor"]
+    merged["ui_show_page_mode_controls"] = ui_preferences["show_page_mode_controls"]
+    merged["ui_page_mode"] = ui_preferences["page_mode"]
+    merged["ui_summary_layout"] = ui_preferences["summary_layout"]
+    merged["ui_summary_show_commentary"] = ui_preferences["summary_show_commentary"]
+    merged["ui_summary_show_advanced_metrics"] = ui_preferences["summary_show_advanced_metrics"]
+    merged["ui_summary_include_methodology"] = reporting["include_methodology"]
+    merged["ui_summary_include_holdings_table"] = reporting["include_holdings_table"]
+    merged["ui_summary_include_benchmark"] = reporting["include_benchmark"]
+    merged["category_view"] = _deep_merge_defaults(defaults["category_view"], category_view)
+    merged["backup"] = _deep_merge_defaults(defaults["backup"], backup)
+    merged["schema_version"] = SCHEMA_VERSION
+
+    # Remove deprecated keys
+    ui_preferences.pop("table_density", None)
+    merged.pop("ui_table_density", None)
+
+    return merged
+
+
+def _normalize_snapshot_payload(payload):
+    base = default_snapshots()
+    raw = payload if isinstance(payload, dict) else {}
+    normalized = {
+        "schema_version": SCHEMA_VERSION,
+        "snapshots": [],
+    }
+    raw_snapshots = raw.get("snapshots", [])
+    if not isinstance(raw_snapshots, list):
+        raw_snapshots = []
+    for snap in raw_snapshots:
+        if not isinstance(snap, dict):
+            continue
+        item = json.loads(json.dumps(snap))
+        raw_weights = item.get("macro_weights", {})
+        norm_weights = {code: 0.0 for code in ACTIVE_CATEGORY_CODES}
+        if isinstance(raw_weights, dict):
+            for raw_key, raw_value in raw_weights.items():
+                norm_key = normalize_category_code(raw_key, default=str(raw_key or "").strip().upper())
+                if norm_key in ACTIVE_CATEGORY_CODES:
+                    try:
+                        norm_weights[norm_key] = float(raw_value or 0.0)
+                    except (TypeError, ValueError):
+                        norm_weights[norm_key] = 0.0
+        item["macro_weights"] = norm_weights
+        holdings = item.get("holdings", [])
+        if isinstance(holdings, list):
+            normalized_holdings = []
+            for holding in holdings:
+                if not isinstance(holding, dict):
+                    continue
+                holding_item = json.loads(json.dumps(holding))
+                if "categoria" in holding_item:
+                    holding_item["categoria"] = normalize_category_code(holding_item.get("categoria"), default=str(holding_item.get("categoria") or ""))
+                normalized_holdings.append(holding_item)
+            item["holdings"] = normalized_holdings
+        normalized["snapshots"].append(item)
+    return _deep_merge_defaults(base, normalized)
+
+
+def _normalize_sator_decisions_payload(payload):
+    base = default_sator_decisions()
+    raw = payload if isinstance(payload, dict) else {}
+    normalized = {"schema_version": SCHEMA_VERSION, "items": []}
+    raw_items = raw.get("items", [])
+    if not isinstance(raw_items, list):
+        raw_items = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        entry = json.loads(json.dumps(item))
+        entry["decision_id"] = str(entry.get("decision_id") or "")
+        entry["created_at"] = str(entry.get("created_at") or "")
+        entry["month_id"] = str(entry.get("month_id") or "")
+        entry["budget"] = _safe_float(entry.get("budget"), 0.0)
+        entry["scenario_key"] = str(entry.get("scenario_key") or "")
+        entry["scenario_label"] = str(entry.get("scenario_label") or "")
+        entry["summary"] = entry.get("summary", {}) if isinstance(entry.get("summary", {}), dict) else {}
+        entry["order_lines"] = entry.get("order_lines", []) if isinstance(entry.get("order_lines", []), list) else []
+        entry["exclusions"] = entry.get("exclusions", []) if isinstance(entry.get("exclusions", []), list) else []
+        entry["alerts"] = entry.get("alerts", []) if isinstance(entry.get("alerts", []), list) else []
+        entry["ranking_head"] = entry.get("ranking_head", []) if isinstance(entry.get("ranking_head", []), list) else []
+        entry["actual_order"] = entry.get("actual_order", []) if isinstance(entry.get("actual_order", []), list) else []
+        entry["note"] = str(entry.get("note") or "")
+        normalized["items"].append(entry)
+    return _deep_merge_defaults(base, normalized)
+
+
+def _normalize_portfolio_data_payload(payload):
+    base = default_data_v33()
+    raw = payload if isinstance(payload, dict) else {}
+    normalized = _deep_merge_defaults(base, raw)
+    normalized["schema_version"] = SCHEMA_VERSION
+    instrument_master = normalized.get("instrument_master", {})
+    if isinstance(instrument_master, dict):
+        for ticker, info in instrument_master.items():
+            if not isinstance(info, dict):
+                continue
+            macro_value = info.get("macro_category") or info.get("categoria") or info.get("tipo")
+            info["macro_category"] = infer_category_code(macro_value, default="ALTRO")
+            if not info.get("asset_class"):
+                info["asset_class"] = category_name(info["macro_category"])
+            instrument_master[ticker] = info
+        normalized["instrument_master"] = instrument_master
+    return normalized
+
+
+def default_quotes_log():
+    return {"schema_version": SCHEMA_VERSION, "last_refresh": None, "items": []}
+
+
+def default_snapshots():
+    return {"schema_version": SCHEMA_VERSION, "snapshots": []}
+
+
+def default_sator_decisions():
+    return {"schema_version": SCHEMA_VERSION, "items": []}
+
+
+def default_benchmark_cache():
+    # Compatibilità solo per client di dati LIVE; storico benchmark MAI JSON.
+    return {"market_live_data": {}}
+
+
+def default_meta():
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "migration": {
+            "migrated_from_legacy": False,
+            "migration_timestamp": None,
+            "source_file": os.path.basename(DATA_FILE),
+            "backup_file": None,
+            "notes": []
+        },
+        "runtime": {
+            "last_start": None,
+            "last_successful_save": None
+        },
+        "audit": {
+            "last_event": None,
+            "events": []
+        }
+    }
+
+
+def _normalize_quotes_log_payload(payload):
+    raw = payload if isinstance(payload, dict) else {}
+    normalized = _deep_merge_defaults(default_quotes_log(), raw)
+    normalized["schema_version"] = SCHEMA_VERSION
+    if not isinstance(normalized.get("items"), list):
+        normalized["items"] = []
+    if "last_refresh" not in normalized:
+        normalized["last_refresh"] = None
+    return normalized
+
+
+def _portable_backup_record(value):
+    """Normalizza riferimenti ad archivi senza conservare radici Windows.
+
+    I backup storici delle versioni precedenti sono solo eventi di audit: la
+    normalizzazione non afferma che tali cartelle esistano nell'installazione
+    corrente. I percorsi reali per ripristinare sono ricavati da BACKUP_DIR.
+    """
+    from pathlib import PureWindowsPath
+    raw = str(value or "").strip()
+    if not raw:
+        return raw, None
+    parts = [part for part in raw.replace("\\", "/").split("/") if part and part != "."]
+    where = next((i for i, part in enumerate(parts) if part.lower() == "backups"), -1)
+    if where < 0 or where + 1 >= len(parts):
+        return raw, None
+    suffix = parts[where + 1:]
+    if any(part == ".." for part in suffix):
+        return raw, None
+    # Conserviamo, per sola diagnosi, la versione storica (non il percorso).
+    original_project = parts[where - 1] if where > 0 else None
+    local_project = os.path.basename(os.path.normpath(BASE_DIR))
+    previous = original_project if original_project and original_project.lower() != local_project.lower() else None
+    return "backups/" + "/".join(suffix), previous
+
+
+def _portable_meta_audit(normalized):
+    audit = normalized.get("audit") or {}
+    for event in audit.get("events") or []:
+        if not isinstance(event, dict):
+            continue
+        details = event.get("details")
+        if not isinstance(details, dict):
+            continue
+        for field in ("folder", "backup"):
+            if field in details and isinstance(details[field], str):
+                value, origin = _portable_backup_record(details[field])
+                details[field] = value
+                if origin:
+                    details.setdefault("historical_project", origin)
+    migration = normalized.get("migration") or {}
+    if isinstance(migration, dict) and isinstance(migration.get("backup_file"), str):
+        migration["backup_file"], origin = _portable_backup_record(migration["backup_file"])
+        if origin:
+            migration.setdefault("historical_project", origin)
+    return normalized
+
+
+def _normalize_meta_payload(payload):
+    raw = payload if isinstance(payload, dict) else {}
+    normalized = _deep_merge_defaults(default_meta(), raw)
+    normalized["schema_version"] = SCHEMA_VERSION
+
+    defaults = default_meta()
+    if not isinstance(normalized.get("migration"), dict):
+        normalized["migration"] = _deep_clone(defaults["migration"])
+    else:
+        normalized["migration"] = _deep_merge_defaults(defaults["migration"], normalized["migration"])
+
+    if not isinstance(normalized.get("runtime"), dict):
+        normalized["runtime"] = _deep_clone(defaults["runtime"])
+    else:
+        normalized["runtime"] = _deep_merge_defaults(defaults["runtime"], normalized["runtime"])
+
+    if not isinstance(normalized.get("audit"), dict):
+        normalized["audit"] = _deep_clone(defaults["audit"])
+    else:
+        normalized["audit"] = _deep_merge_defaults(defaults["audit"], normalized["audit"])
+    if not isinstance(normalized["audit"].get("events"), list):
+        normalized["audit"]["events"] = []
+
+    return _portable_meta_audit(normalized)
+
+
+def _audit_timestamp() -> str:
+    """Timestamp locale uniforme per gli eventi di audit."""
+    return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _summarize_settings_changes(previous: dict, current: dict) -> list[str]:
+    """Restituisce le macro-sezioni settings cambiate tra due payload normalizzati."""
+    tracked_sections = [
+        "portfolio_profile",
+        "calculations_metrics",
+        "benchmarking",
+        "alerts",
+        "sator",
+        "reporting_export",
+        "ui_preferences",
+        "market_auto_refresh",
+        "backup",
+        "auditing",
+        "newsletter",
+        "i18n",
+    ]
+    changed = [
+        section
+        for section in tracked_sections
+        if previous.get(section) != current.get(section)
+    ]
+    return changed
+
+
+def describe_audit_event(entry: dict | None) -> dict[str, str]:
+    """Restituisce etichetta, categoria e sintesi leggibile di un evento audit."""
+    payload = entry if isinstance(entry, dict) else {}
+    event_type = str(payload.get("event_type") or "unknown")
+    details = payload.get("details", {}) if isinstance(payload.get("details", {}), dict) else {}
+    meta = AUDIT_EVENT_CATALOG.get(event_type, {"label": event_type, "category": "Altro"})
+    label = str(meta.get("label", event_type))
+    category = str(meta.get("category", "Altro"))
+
+    if event_type == "settings_saved":
+        changed = details.get("changed_sections", [])
+        changed_text = ", ".join(changed) if isinstance(changed, list) and changed else "nessuna sezione rilevata"
+        summary = f"Sezioni aggiornate: {changed_text}"
+    elif event_type == "backup_created":
+        summary = f"Cartella {details.get('tag') or details.get('folder') or 'n/d'} - file copiati: {details.get('file_count', 'n/d')}"
+    elif event_type == "backup_restored":
+        summary = f"Backup {details.get('backup', 'n/d')} - file ripristinati: {details.get('files_restored', 'n/d')}"
+    elif event_type == "backup_deleted":
+        summary = f"Backup eliminato: {details.get('backup', 'n/d')}"
+    elif event_type == "snapshot_created":
+        summary = str(details.get("label") or "Snapshot manuale registrato")
+    elif event_type == "quotes_imported":
+        summary = f"Data {details.get('date', 'n/d')} - aggiornati: {details.get('updated', 0)} - ignorati: {details.get('skipped', 0)}"
+    elif event_type == "quotes_reset":
+        strumenti = details.get("strumenti", [])
+        strumenti_text = ", ".join(strumenti) if isinstance(strumenti, list) else str(strumenti or "n/d")
+        from_date = details.get("from_date")
+        summary = f"Modalità: {details.get('mode', 'n/d')} - strumenti: {strumenti_text} - modificati: {details.get('changed', 0)}"
+        if from_date:
+            summary += f" - da data: {from_date}"
+    else:
+        summary = json.dumps(details, ensure_ascii=False) if details else ""
+
+    return {"label": label, "category": category, "summary": summary}
+
+
+def append_audit_event(event_type, details=None, status="ok"):
+    """Aggiunge un evento al registro audit nel file meta."""
+    meta = load_meta()
+    audit = meta.setdefault("audit", default_meta()["audit"])
+    events = audit.setdefault("events", [])
+    entry = {
+        "timestamp": _audit_timestamp(),
+        "event_type": str(event_type or "unknown"),
+        "status": str(status or "ok"),
+        "details": details if isinstance(details, dict) else {},
+    }
+    entry["category"] = describe_audit_event(entry).get("category", "Altro")
+    events.append(entry)
+    audit["events"] = events[-100:]
+    audit["last_event"] = entry
+    save_meta(meta)
+    logger.info("Audit event registrato: type=%s status=%s", entry["event_type"], entry["status"])
+
+# ---------------------------------------------------------------------------
+# Funzioni evento — necessarie per migrate_to_v33_if_needed e load_data
+# ---------------------------------------------------------------------------
+def _event_sort_key(evento):
+    return (
+        str(evento.get("data", "")),
+        str(evento.get("event_id", "")),
+        str(evento.get("tipo_evento", "")),
+    )
+
+
+def _new_event_id(data, prefix="evt"):
+    seq = int(data.get("_event_seq", 0) or 0) + 1
+    data["_event_seq"] = seq
+    return f"{prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{seq:05d}"
+
+
+def _normalize_event_record(ev):
+    tipo = str(ev.get("tipo_evento", ev.get("tipo", ""))).strip().upper()
+    out = {
+        "event_id": ev.get("event_id") or ev.get("id") or "",
+        "origine": ev.get("origine", "registro_eventi"),
+        "indice_origine": ev.get("indice_origine"),
+        "data": _safe_date_str(ev.get("data")),
+        "tipo_evento": tipo,
+        "ticker": ev.get("ticker", "") or "",
+        "quantita": _safe_float(ev.get("quantita", ev.get("qty", 0))),
+        "prezzo_unitario": _safe_float(ev.get("prezzo_unitario", ev.get("price", 0))),
+        "importo_lordo": _safe_float(ev.get("importo_lordo", ev.get("gross_amount", 0))),
+        "commissioni": _safe_float(ev.get("commissioni", ev.get("comm", 0))),
+        "imposte": _safe_float(ev.get("imposte", ev.get("tax_amount", 0))),
+        "importo_netto": ev.get("importo_netto", ev.get("net_cash_flow")),
+        "aliquota": _safe_float(ev.get("aliquota", 0)),
+        "note": ev.get("note", ""),
+    }
+    for _split_field in ("capitale_liberato", "plusvalenza_lorda", "plusvalenza_netta"):
+        if _split_field in ev:
+            out[_split_field] = _safe_float(ev.get(_split_field), 0.0)
+    # Riferimento del Versamento automatico al trade che finanzia (vedi
+    # ui/form_server/inserisci.py e ui/form_server/gestione.py): senza questo
+    # collegamento esplicito, modificare il trade non ha modo di ritrovare e
+    # aggiornare il versamento gemello (bug reale, 2026-08-20).
+    if ev.get("linked_trade_event_id"):
+        out["linked_trade_event_id"] = str(ev["linked_trade_event_id"])
+    # Strumento a cui e' legato un movimento di cassa manuale (es. il prelievo
+    # che riporta fuori il rimborso di un BTP): la Modalita' Privacy elimina
+    # questi eventi insieme allo strumento nascosto.
+    if ev.get("strumento_collegato"):
+        out["strumento_collegato"] = str(ev["strumento_collegato"])
+    if out["importo_netto"] in (None, ""):
+        if tipo in {"ACQUISTO", "COMMISSIONE", "IMPOSTA", "PRELIEVO"}:
+            if tipo == "ACQUISTO":
+                out["importo_netto"] = - (out["quantita"] * out["prezzo_unitario"] + out["commissioni"] + out["imposte"])
+            else:
+                out["importo_netto"] = - abs(out["importo_lordo"] or out["commissioni"] or out["imposte"])
+        elif tipo in {"VENDITA", "RIMBORSO A SCADENZA", "CEDOLA", "DIVIDENDO", "VERSAMENTO"}:
+            base = out["importo_lordo"]
+            if tipo in {"VENDITA", "RIMBORSO A SCADENZA"} and base == 0:
+                base = out["quantita"] * out["prezzo_unitario"]
+            out["importo_netto"] = base - out["commissioni"] - out["imposte"]
+        else:
+            out["importo_netto"] = 0.0
+    out["importo_netto"] = _safe_float(out["importo_netto"], 0.0)
+    if not out["event_id"]:
+        out["event_id"] = f"ev_{out['data'].replace('-', '')}_{abs(hash((out['tipo_evento'], out['ticker'], out['quantita'], out['prezzo_unitario'], out['importo_netto']))) % 1000000:06d}"
+    return out
+
+
+def _rebuild_cash_ledger_from_events(eventi):
+    ledger = []
+    for ev in sorted(eventi, key=_event_sort_key):
+        importo = _safe_float(ev.get("importo_netto", 0))
+        if abs(importo) <= 1e-12:
+            continue
+        ledger.append({
+            "cash_id": f"cash_{ev.get('event_id','')}",
+            "data": ev.get("data"),
+            "causale": ev.get("tipo_evento"),
+            "event_id": ev.get("event_id"),
+            "importo": importo,
+            "descrizione": ev.get("note") or f"{ev.get('tipo_evento')} {ev.get('ticker','')}`".replace('`','').strip(),
+        })
+    return ledger
+
+
+def get_registro_eventi(data):
+    eventi = [_normalize_event_record(x) for x in (data.get("registro_eventi", []) or [])]
+    return sorted(eventi, key=_event_sort_key)
+
+
+def get_proventi_normalizzati(data):
+    out = []
+    for ev in get_registro_eventi(data):
+        if ev.get("tipo_evento") in {"CEDOLA", "DIVIDENDO"}:
+            out.append({
+                "data": ev.get("data"),
+                "ticker": ev.get("ticker", ""),
+                "tipo": ev.get("tipo_evento"),
+                "importo_lordo": _safe_float(ev.get("importo_lordo", 0)),
+                "aliquota": _safe_float(ev.get("aliquota", 0)),
+                "importo_netto": _safe_float(ev.get("importo_netto", 0)),
+                "note": ev.get("note", ""),
+            })
+    return out
+
+
+def _serialize_df_for_cache(df):
+    if df is None or df.empty:
+        return []
+    rows = []
+    for rec in df.to_dict("records"):
+        row = {}
+        for k, v in rec.items():
+            if isinstance(v, (pd.Timestamp, datetime, date)):
+                row[k] = str(pd.to_datetime(v).date())
+            elif isinstance(v, (np.floating, np.integer)):
+                row[k] = float(v)
+            else:
+                row[k] = v
+        rows.append(row)
+    return rows
+
+
+def _restore_df_from_cache(rows):
+    df = pd.DataFrame(rows or [])
+    if not df.empty and "Ultimo evento" in df.columns:
+        try:
+            df["Ultimo evento"] = df["Ultimo evento"].astype(str)
+        except Exception:
+            pass
+    return df
+
+
+def _state_signature(data, price_map=None, include_closed=True):
+    """Firma unica per invalidare qualsiasi cache dipendente dallo stato portafoglio.
+    Sostituisce _portfolio_state_signature — unica copia, usata da compute_portfolio_state
+    e build_portfolio_history_df."""
+    eventi = get_registro_eventi(data)
+    price_map = price_map or {}
+    # Includi i prezzi correnti degli strumenti nella firma: senza di questo, dopo un
+    # aggiornamento quotazioni senza nuovi eventi la cache interna non viene invalidata
+    # e restituisce prezzi obsoleti (es. dopo un refresh nel weekend).
+    current_prices = {s.get("ticker", ""): s.get("prezzo") for s in data.get("strumenti", [])}
+    eventi_sig = hashlib.md5(json.dumps(eventi, sort_keys=True, default=str).encode()).hexdigest()
+    merged_prices = {**current_prices, **price_map}
+    prezzi_sig = hashlib.md5(json.dumps(merged_prices, sort_keys=True, default=str).encode()).hexdigest()
+    return f"{eventi_sig}|{prezzi_sig}|{1 if include_closed else 0}"
+
+# Alias per retrocompatibilità con qualsiasi chiamata esistente nel file principale
+_portfolio_state_signature = _state_signature
+
+# ---------------------------------------------------------------------------
+# Instrument master
+# ---------------------------------------------------------------------------
+def _build_instrument_master(strumenti, benchmark_data=None):
+    benchmark_data = benchmark_data or {}
+    out = {}
+    for s in strumenti or []:
+        tk = s.get("ticker", "")
+        if not tk:
+            continue
+        raw_type = s.get("tipo", "")
+        mc = macro_cat(raw_type)
+        out[tk] = {
+            "ticker": tk,
+            "isin": s.get("isin"),
+            "name": s.get("nome", tk),
+            "type_raw": raw_type,
+            "macro_category": mc,
+            "asset_class": category_name(mc),
+            "sub_asset_class": raw_type or mc,
+            "currency": "EUR",
+            "country_area": "Italia" if mc == "GOV" else "Globale",
+            "source_quality": "derived",
+            "manual_overrides": {}
+        }
+    return out
+
+# ---------------------------------------------------------------------------
+# Backup Utility
+# ---------------------------------------------------------------------------
+def _prune_backups(keep_last_n=None):
+    """Elimina le cartelle di backup più vecchie oltre il limite configurato.
+
+    Le cartelle sono nominate con timestamp ``YYYY-MM-DD_HH-MM-SS`` (o un tag
+    esplicito), quindi l'ordine alfabetico decrescente coincide con quello
+    cronologico per il formato standard; per i tag non standard si usa comunque
+    l'mtime della cartella come fallback per l'ordinamento.
+    """
+    if not os.path.isdir(BACKUP_DIR):
+        return 0
+    if keep_last_n is None:
+        keep_last_n = int(load_settings().get("backup", {}).get("keep_last_n", BACKUP_KEEP_LAST_N) or BACKUP_KEEP_LAST_N)
+    keep_last_n = max(int(keep_last_n), 0)
+
+    entries = [
+        os.path.join(BACKUP_DIR, name)
+        for name in os.listdir(BACKUP_DIR)
+        if os.path.isdir(os.path.join(BACKUP_DIR, name))
+    ]
+    entries.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+
+    removed = 0
+    for old_folder in entries[keep_last_n:]:
+        try:
+            shutil.rmtree(old_folder, ignore_errors=True)
+            removed += 1
+        except Exception:
+            logger.warning("Impossibile rimuovere backup obsoleto: %s", old_folder, exc_info=True)
+    if removed:
+        logger.info("Backup retention: rimosse %s cartelle oltre il limite di %s", removed, keep_last_n)
+    return removed
+
+
+def create_backup_bundle(tag=None):
+    _ensure_dir(BACKUP_DIR)
+    stamp = tag or datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    folder = os.path.join(BACKUP_DIR, stamp)
+    _ensure_dir(folder)
+    copied = []
+    for src in [DATA_FILE, SETTINGS_FILE, QUOTES_LOG_FILE, SNAPSHOTS_FILE, MARKET_LIVE_FILE, META_FILE]:
+        if os.path.exists(src):
+            dst = os.path.join(folder, os.path.basename(src))
+            shutil.copy2(src, dst)
+            copied.append(dst)
+    # SQLite in WAL: usare backup API per un file consistente, non shutil.copy2
+    # che copierebbe solo il DB principale ignorando le transazioni nel WAL.
+    from core.verified_benchmarks import IndexStore
+    import sqlite3
+    db_path=IndexStore().path
+    if db_path.exists():
+        target=os.path.join(folder,'benchmarks.sqlite3')
+        with sqlite3.connect(str(db_path)) as source, sqlite3.connect(target) as destination:
+            source.backup(destination)
+        copied.append(target)
+    logger.info("Backup bundle creato: folder=%s files=%s", folder, len(copied))
+    settings = load_settings()
+    auditing_cfg = settings.get("auditing", {})
+    if auditing_cfg.get("enabled") and auditing_cfg.get("track_import_export"):
+        append_audit_event(
+            "backup_created",
+            {"folder": f"backups/{stamp}", "file_count": len(copied), "tag": tag or stamp},
+        )
+    _prune_backups(settings.get("backup", {}).get("keep_last_n", BACKUP_KEEP_LAST_N))
+    return folder, copied
+
+
+# ---------------------------------------------------------------------------
+# Load / Save
+# ---------------------------------------------------------------------------
+def load_settings():
+    """Parametri BENCHMARK esclusivamente in SQLite. JSON solo per altre opzioni."""
+    from core.verified_benchmarks import IndexStore
+    raw=_read_json_file(SETTINGS_FILE,{})
+    core_raw=dict(raw if isinstance(raw,dict) else {})
+    core_raw.pop('benchmarking',None)
+    core_raw.pop('portfolio_benchmark_default',None)
+    normalized=_normalize_settings_payload(core_raw)
+    # Le preferenze non vengono recuperate dal JSON legacy: usare migratore.
+    preferences=IndexStore().preference('portfolio_benchmark_settings')
+    if isinstance(preferences,dict):
+        if isinstance(preferences.get('benchmarking'),dict):
+            normalized['benchmarking']=preferences['benchmarking']
+        if preferences.get('portfolio_benchmark_default'):
+            normalized['portfolio_benchmark_default']=preferences['portfolio_benchmark_default']
+    if raw!=core_raw:
+        # Non riscrivere le opzioni di benchmark del JSON precedente
+        # durante la fase di verifica; il migratore effettua backup esplicito.
+        pass
+    return normalized
+
+
+def save_settings(settings):
+    """Scrive la sola sezione benchmarking in SQLite, mai settings JSON."""
+    from core.verified_benchmarks import IndexStore
+    normalized=_normalize_settings_payload(settings)
+    store=IndexStore()
+    benchmark_prefs={
+        'benchmarking':normalized.get('benchmarking',{}),
+        'portfolio_benchmark_default':normalized.get('portfolio_benchmark_default','Blend automatico'),
+    }
+    old_preferences=store.preference('portfolio_benchmark_settings')
+    if old_preferences!=benchmark_prefs:
+        store.save_preference('portfolio_benchmark_settings',benchmark_prefs)
+    disk=dict(_read_json_file(SETTINGS_FILE,{}))
+    disk.pop('benchmarking',None)
+    disk.pop('portfolio_benchmark_default',None)
+    core=dict(normalized)
+    core.pop('benchmarking',None)
+    core.pop('portfolio_benchmark_default',None)
+    if disk==core:return old_preferences!=benchmark_prefs
+    _write_json_file(SETTINGS_FILE,core)
+    logger.info('Impostazioni salvate: JSON non-benchmark + SQLite benchmark')
+    return True
+
+def load_quotes_log():
+    raw = _read_json_file(QUOTES_LOG_FILE, default_quotes_log())
+    normalized = _normalize_quotes_log_payload(raw)
+    if raw != normalized:
+        _write_json_file(QUOTES_LOG_FILE, normalized)
+    return normalized
+
+
+def save_quotes_log(q):
+    normalized = _normalize_quotes_log_payload(q)
+    _write_json_file(QUOTES_LOG_FILE, normalized)
+    logger.info("Quotes log salvato: path=%s items=%s", QUOTES_LOG_FILE, len(normalized.get("items", [])))
+
+
+def load_snapshots():
+    raw = _read_json_file(SNAPSHOTS_FILE, default_snapshots())
+    normalized = _normalize_snapshot_payload(raw)
+    if raw != normalized:
+        _write_json_file(SNAPSHOTS_FILE, normalized)
+    return normalized
+
+
+def save_snapshots(s):
+    normalized = _normalize_snapshot_payload(s)
+    _write_json_file(SNAPSHOTS_FILE, normalized)
+    logger.info("Snapshots salvati: path=%s count=%s", SNAPSHOTS_FILE, len(normalized.get("snapshots", [])) if isinstance(normalized, dict) else 0)
+
+
+def load_sator_decisions():
+    raw = _read_json_file(SATOR_DECISIONS_FILE, default_sator_decisions())
+    normalized = _normalize_sator_decisions_payload(raw)
+    if raw != normalized:
+        _write_json_file(SATOR_DECISIONS_FILE, normalized)
+    return normalized
+
+
+def save_sator_decisions(payload):
+    normalized = _normalize_sator_decisions_payload(payload)
+    _write_json_file(SATOR_DECISIONS_FILE, normalized)
+    logger.info("Decisioni SATOR salvate: path=%s count=%s", SATOR_DECISIONS_FILE, len(normalized.get("items", [])) if isinstance(normalized, dict) else 0)
+
+
+def remove_sator_decision(decisions: dict, decision_id: str) -> tuple[dict, bool]:
+    """Rimuove dalla struttura decisioni SATOR l'item con il decision_id dato.
+
+    Non scrive su disco: il chiamante deve invocare save_sator_decisions() col
+    risultato. Ritorna (nuova_struttura, True) se un item e' stato rimosso,
+    (struttura con items invariati, False) se il decision_id non esisteva.
+    """
+    items = list((decisions or {}).get("items") or [])
+    remaining = [it for it in items if str((it or {}).get("decision_id")) != str(decision_id)]
+    removed = len(remaining) != len(items)
+    result = dict(decisions or {})
+    result["items"] = remaining
+    return result, removed
+
+
+def load_meta():
+    raw = _read_json_file(META_FILE, default_meta())
+    normalized = _normalize_meta_payload(raw)
+    if raw != normalized:
+        _write_json_file(META_FILE, normalized)
+    return normalized
+
+
+def save_meta(m):
+    _write_json_file(META_FILE, _normalize_meta_payload(m))
+    logger.debug("Meta salvati: path=%s", META_FILE)
+
+
+def _backfill_natura_and_tipo(strumenti: list) -> bool:
+    """Backfill una tantum: calcola 'natura' per gli strumenti che non
+    l'hanno ancora (usando solo dati gia' salvati su disco, nessuna chiamata
+    di rete) e corregge 'tipo' se in aperta contraddizione con
+    benchmark/focus_etf gia' presenti. Non tocca strumenti con 'natura' gia'
+    valorizzato o marcato manuale. Ritorna True se qualcosa e' cambiato."""
+    from core.instrument_classification import classify_natura, suggest_tipo_correction
+
+    changed = False
+    for s in strumenti:
+        natura_source = (s.get("enrichment_source") or {}).get("natura")
+        if "natura" not in s and natura_source != "manuale":
+            s["natura"] = classify_natura(s)
+            changed = True
+        corrected_tipo = suggest_tipo_correction(s)
+        if corrected_tipo and corrected_tipo != s.get("tipo"):
+            s["tipo"] = corrected_tipo
+            changed = True
+    return changed
+
+
+def _schema_older_than(payload, version: str) -> bool:
+    def _key(v):
+        try:
+            return tuple(int(x) for x in str(v).split("."))
+        except ValueError:
+            return (0,)
+    current = payload.get("schema_version") if isinstance(payload, dict) else None
+    return _key(current) < _key(version)
+
+
+def _backup_before_schema_migration(version: str) -> None:
+    """Backup completo prima di una migrazione dello schema dati (rispetta la
+    policy backup di settings)."""
+    try:
+        cfg = load_settings().get("backup", {})
+        if cfg.get("enabled") and cfg.get("backup_before_migration", True):
+            create_backup_bundle(tag=f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_pre_schema_{version}")
+    except Exception:
+        logger.warning("Backup pre-migrazione schema %s fallito, la migrazione prosegue", version, exc_info=True)
+
+
+_CASH_MOVEMENT_TYPES = {"VERSAMENTO", "PRELIEVO", "COMMISSIONE", "IMPOSTA"}
+
+
+def _backfill_strumento_collegato(data: dict) -> int:
+    """Migrazione schema 3.4: scrive ``strumento_collegato`` sui movimenti di
+    cassa senza ticker, derivandolo UNA VOLTA dai segnali storici (link al
+    trade, ticker citato nella nota, prelievo pari al capitale liberato di una
+    vendita/rimborso nello stesso giorno). Da qui in avanti il flag e' l'unica
+    fonte per la Modalita' Privacy. Ritorna il numero di movimenti collegati;
+    quelli ambigui restano senza flag."""
+    import re
+    eventi = data.get("registro_eventi") or []
+    tickers = {str(s.get("ticker") or "") for s in (data.get("strumenti") or []) if s.get("ticker")}
+    tickers |= {str(e.get("ticker") or "") for e in eventi if e.get("ticker")}
+    by_id = {str(e.get("event_id")): e for e in eventi if e.get("event_id")}
+    linked = 0
+    for e in eventi:
+        if e.get("ticker") or e.get("strumento_collegato") or str(e.get("tipo_evento") or "") not in _CASH_MOVEMENT_TYPES:
+            continue
+        target = ""
+        trade = by_id.get(str(e.get("linked_trade_event_id") or ""))
+        if trade is not None and trade.get("ticker"):
+            target = str(trade["ticker"])
+        if not target:
+            note = str(e.get("note") or "")
+            hits = [t for t in tickers if re.search(r"(?<![\w.\-])" + re.escape(t) + r"(?![\w.\-])", note)]
+            if len(hits) == 1:
+                target = hits[0]
+        if not target and e.get("tipo_evento") == "PRELIEVO":
+            importo = round(abs(_safe_float(e.get("importo_netto"))), 2)
+            hits = {
+                str(x["ticker"]) for x in eventi
+                if x.get("ticker") and x.get("capitale_liberato")
+                and str(x.get("data")) == str(e.get("data"))
+                and round(abs(_safe_float(x.get("capitale_liberato"))), 2) == importo
+            }
+            if len(hits) == 1:
+                target = next(iter(hits))
+        if target:
+            e["strumento_collegato"] = target
+            linked += 1
+    return linked
+
+
+def load_data():
+    from persistence.parquet_utils import load_storico_prezzi_hybrid
+
+    _migrate_json_to_data_dir()
+    raw = _read_json_file(DATA_FILE, default_data_v33())
+    needs_link_migration = _schema_older_than(raw, "3.4") and bool(raw.get("registro_eventi"))
+    if needs_link_migration:
+        _backup_before_schema_migration("3.4")
+    d = _normalize_portfolio_data_payload(raw)
+    if needs_link_migration:
+        n_linked = _backfill_strumento_collegato(d)
+        logger.info("Migrazione schema 3.4: strumento_collegato assegnato a %s movimenti", n_linked)
+    base = default_data_v33()
+    for k, v in base.items():
+        d.setdefault(k, json.loads(json.dumps(v)))
+    # NON caricare storici/assegnazioni benchmark da alcun JSON. Migrazione
+    # esplicita con tools.migrate_benchmark_json prima del primo avvio.
+    d.pop("benchmark_data",None)
+    d["market_live_data"] = _read_json_file(MARKET_LIVE_FILE,{}).get('market_live_data',{})
+    # Le proprieta' di arricchimento del SOTTOSTANTE sono dati dello
+    # strumento. Le scelte di benchmark restano sempre e solo in SQLite.
+    d['strumenti'] = _strip_benchmark_instruments(d.get('strumenti',[]))
+    d['instrument_master'] = _strip_benchmark_master(d.get('instrument_master',{}))
+
+    # Load storico_prezzi with hybrid JSON-Parquet support
+    d["storico_prezzi"] = load_storico_prezzi_hybrid(STORICO_PREZZI_FILE)
+
+    d.setdefault("instrument_master", _build_instrument_master(d.get("strumenti", [])))
+    _backfill_natura_and_tipo(d.get("strumenti", []))
+
+    from core.domain.positions import sync_realized_split_fields
+    sync_realized_split_fields(d)
+
+    # Confronta solo i dati destinati al JSON: market_live_data e prezzi
+    # separati NON devono causare una riscrittura ad ogni caricamento.
+    cleaned={k:d.get(k) for k in default_data_v33()}
+    cleaned['instrument_master']=_strip_benchmark_master(cleaned.get('instrument_master',{}))
+    cleaned['strumenti']=_strip_benchmark_instruments(cleaned.get('strumenti',[]))
+    if raw != cleaned:
+        _write_json_file(DATA_FILE, cleaned)
+    logger.debug("Dati caricati: strumenti=%s eventi=%s storico_prezzi=%s", len(d.get("strumenti", [])), len(d.get("registro_eventi", [])), len(d.get("storico_prezzi", {})))
+    # Istantanea "base" per il merge a 3 vie in save_data() (vedi
+    # _merge_concurrent_writes) - MAI scritta su disco: save_data() costruisce
+    # il payload da salvare elencando le chiavi esplicitamente, questa non ci
+    # finisce mai dentro. Chiave privata con underscore, stesso stile di
+    # "_event_seq"/altri campi di bookkeeping interni gia' presenti in data.
+    d["_loaded_snapshot"] = {
+        "strumenti": json.loads(json.dumps(d.get("strumenti", []))),
+        "registro_eventi": json.loads(json.dumps(d.get("registro_eventi", []))),
+        "instrument_master": json.loads(json.dumps(d.get("instrument_master", {}))),
+    }
+    return d
+
+
+def _index_by_key(items, key):
+    """dict {chiave: item} da una lista di dict; ultima vince per chiavi duplicate."""
+    out: dict[str, dict] = {}
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        k = str(item.get(key) or "").strip()
+        if k:
+            out[k] = item
+    return out
+
+
+def _three_way_merge_by_key(base_items, ours_items, theirs_items, key):
+    """Merge a 3 vie (base = istantanea al momento del caricamento, ours =
+    vista del chiamante, theirs = versione attualmente su disco) per una
+    lista di dict identificati da `key`. Stesso principio gia' in uso per
+    benchmark_data (_merged_benchmark_cache_payload), esteso qui a
+    registro_eventi/strumenti/instrument_master.
+
+    Bug reale di perdita dati (2026-09-08, review avvocato-del-diavolo):
+    save_data() scriveva questi campi VERBATIM dalla vista in memoria del
+    chiamante, senza mai confrontarli col disco - il form-server (processo/
+    richiesta indipendente, carica e salva `data` direttamente da disco a
+    ogni submit) e la sessione Streamlit principale (un solo `data`
+    caricato una volta e tenuto in memoria per l'intera sessione, es.
+    durante "Aggiorna Quotazioni") potevano scriversi a vicenda sopra:
+    un'operazione inserita dal form-server mentre la sessione principale
+    aveva gia' in memoria uno snapshot piu' vecchio spariva silenziosamente
+    al successivo save_data() della sessione principale.
+
+    Regola (merge a 3 vie standard, stesso principio di un merge git):
+    un elemento su disco ma assente da base e chiamante e' stato aggiunto
+    da un altro processo dopo il caricamento -> si tiene, mai perso. Un
+    elemento in base e nel chiamante ma assente su disco e' stato
+    cancellato da un altro processo -> si rispetta la cancellazione, a
+    meno che il chiamante lo abbia modificato rispetto alla base (allora
+    vince la modifica, per non perdere lavoro). Simmetrico per un elemento
+    cancellato dal chiamante ma ancora presente altrove.
+
+    Ritorna (lista_unita, n_differenze_da_ours) - il secondo valore serve
+    solo per loggare quando il merge ha davvero cambiato qualcosa rispetto
+    a quello che il chiamante avrebbe scritto da solo.
+    """
+    base_by_key = _index_by_key(base_items, key)
+    ours_by_key = _index_by_key(ours_items, key)
+    theirs_by_key = _index_by_key(theirs_items, key)
+    all_keys = list(dict.fromkeys(list(theirs_by_key.keys()) + list(ours_by_key.keys())))
+
+    merged: dict[str, dict] = {}
+    for k in all_keys:
+        in_base = k in base_by_key
+        in_ours = k in ours_by_key
+        in_theirs = k in theirs_by_key
+        if in_ours and in_theirs:
+            merged[k] = ours_by_key[k] if ours_by_key[k] != base_by_key.get(k) else theirs_by_key[k]
+        elif in_ours and not in_theirs:
+            if in_base and ours_by_key[k] == base_by_key[k]:
+                continue  # cancellato da un altro processo: rispetta la cancellazione
+            merged[k] = ours_by_key[k]
+        elif in_theirs and not in_ours:
+            if in_base:
+                continue  # cancellato dal chiamante: rispetta la cancellazione
+            merged[k] = theirs_by_key[k]  # aggiunto da un altro processo: recuperato
+
+    merged_list = list(merged.values())
+    n_diff = len(set(merged.keys()) ^ set(ours_by_key.keys()))
+    return merged_list, n_diff
+
+
+def _three_way_merge_dict(base_d, ours_d, theirs_d):
+    """Come _three_way_merge_by_key ma per un dict piatto chiave->valore
+    (usato per instrument_master, gia' un dict {ticker: {...}})."""
+    base_d = base_d if isinstance(base_d, dict) else {}
+    ours_d = ours_d if isinstance(ours_d, dict) else {}
+    theirs_d = theirs_d if isinstance(theirs_d, dict) else {}
+    all_keys = list(dict.fromkeys(list(theirs_d.keys()) + list(ours_d.keys())))
+    merged: dict = {}
+    for k in all_keys:
+        in_base, in_ours, in_theirs = k in base_d, k in ours_d, k in theirs_d
+        if in_ours and in_theirs:
+            merged[k] = ours_d[k] if ours_d[k] != base_d.get(k) else theirs_d[k]
+        elif in_ours and not in_theirs:
+            if in_base and ours_d[k] == base_d[k]:
+                continue
+            merged[k] = ours_d[k]
+        elif in_theirs and not in_ours:
+            if in_base:
+                continue
+            merged[k] = theirs_d[k]
+    return merged
+
+
+def _merge_concurrent_writes(data: dict) -> tuple[list, list, dict]:
+    """Merge a 3 vie di strumenti/registro_eventi/instrument_master contro
+    lo stato attuale su disco, usando l'istantanea presa al momento del
+    caricamento (data["_loaded_snapshot"], stampata da load_data()) come
+    base comune. Se `data` non porta un'istantanea (dict costruito a mano,
+    non passato da load_data - es. test/fixture), nessun merge: si
+    restituisce verbatim la vista del chiamante, comportamento identico a
+    prima di questo fix - il merge scatta solo per il percorso realistico
+    load_data() -> mutazione -> save_data()."""
+    snapshot = data.get("_loaded_snapshot")
+    ours_strumenti = data.get("strumenti", []) or []
+    ours_eventi = data.get("registro_eventi", []) or []
+    ours_master = data.get("instrument_master", {}) or {}
+    if not isinstance(snapshot, dict):
+        return ours_strumenti, ours_eventi, ours_master
+
+    # Bug reale trovato da /code-review ultra (2026-09-08): _read_json_file
+    # ritorna silenziosamente {} sia quando DATA_FILE non esiste ancora
+    # (primo salvataggio: legittimo, niente da unire) sia quando esiste ma
+    # la lettura fallisce (IO error transitorio, JSON corrotto, disco pieno
+    # a meta' scrittura di un altro processo) - i due casi sono
+    # indistinguibili dal solo valore di ritorno. Trattare il secondo caso
+    # come "tutto cancellato da un altro processo" cancellava quasi tutto
+    # strumenti/registro_eventi/instrument_master ad ogni lettura fallita -
+    # l'esatto opposto della rete di sicurezza che questo merge doveva
+    # introdurre. Un file che esiste ma non produce un dict con
+    # "schema_version" (la firma che save_data() scrive SEMPRE, vedi sotto)
+    # non e' mai un'autorita' affidabile per il merge: si salta il merge e
+    # si scrive `ours` verbatim, stesso comportamento sicuro del caso
+    # "nessuna istantanea disponibile" sopra.
+    if os.path.exists(DATA_FILE):
+        disk_raw = _read_json_file(DATA_FILE, {})
+        if not isinstance(disk_raw, dict) or "schema_version" not in disk_raw:
+            logger.error(
+                "save_data: DATA_FILE esiste ma non e' leggibile in modo affidabile "
+                "(JSON corrotto o errore IO) - merge saltato, scrittura verbatim per sicurezza."
+            )
+            return ours_strumenti, ours_eventi, ours_master
+    else:
+        disk_raw = {}
+    disk_raw = disk_raw if isinstance(disk_raw, dict) else {}
+    theirs_strumenti = disk_raw.get("strumenti", []) or []
+    theirs_eventi = disk_raw.get("registro_eventi", []) or []
+    theirs_master = disk_raw.get("instrument_master", {}) or {}
+
+    merged_strumenti, strumenti_diff = _three_way_merge_by_key(
+        snapshot.get("strumenti", []), ours_strumenti, theirs_strumenti, "ticker",
+    )
+    merged_eventi, eventi_diff = _three_way_merge_by_key(
+        snapshot.get("registro_eventi", []), ours_eventi, theirs_eventi, "event_id",
+    )
+    merged_master = _three_way_merge_dict(
+        snapshot.get("instrument_master", {}), ours_master, theirs_master,
+    )
+    if strumenti_diff or eventi_diff:
+        logger.warning(
+            "save_data: scrittura concorrente rilevata, uniti %d strumenti e %d eventi "
+            "modificati da un altro processo dal caricamento di questa sessione (nessun dato perso)",
+            strumenti_diff, eventi_diff,
+        )
+    return merged_strumenti, merged_eventi, merged_master
+
+
+def save_data(data, *, include_storico: bool = True):
+    from persistence.parquet_utils import save_storico_prezzi_hybrid
+
+    # Bug reale trovato da /code-review ultra (2026-09-08): un dict passato
+    # da apply_privacy_filter() non deve MAI raggiungere save_data() - il suo
+    # stesso docstring lo dichiara da tempo, ma nessun controllo lo faceva
+    # rispettare finche' un chiamante a valle (auto-fallback benchmark in
+    # core/dashboard_datasets.py, aggiunto in questa stessa sessione) non ha
+    # violato il contratto passando `ctx.data` privacy-filtrato: strumenti
+    # nascosti cancellati per sempre da disco, ticker reali degli eventi
+    # collegati eliminati dal registro. Rifiutato
+    # qui, al punto di massima leva, invece di rincorrere ogni futuro punto
+    # di chiamata che potrebbe ripetere lo stesso errore - nessuna riga viene
+    # scritta, il chiamante puo' riprovare al prossimo salvataggio con dati
+    # non filtrati (nessuno stato viene perso, solo non persistito ora).
+    if data.get("_privacy_filtered"):
+        logger.error(
+            "save_data: rifiutata scrittura di un dict privacy-filtrato (vedi "
+            "apply_privacy_filter) - avrebbe cancellato permanentemente gli "
+            "strumenti nascosti da disco. Nessuna scrittura eseguita."
+        )
+        return
+
+    settings = load_settings()
+    if settings.get("backup", {}).get("enabled") and settings.get("backup", {}).get("backup_before_save"):
+        create_backup_bundle()
+
+    # Extract storico_prezzi for separate hybrid JSON-Parquet storage
+    storico_prezzi = data.get("storico_prezzi", {})
+    if include_storico:
+        save_storico_prezzi_hybrid(storico_prezzi, STORICO_PREZZI_FILE)
+
+    merged_strumenti, merged_eventi, merged_master = _merge_concurrent_writes(data)
+
+    core = {
+        "schema_version": SCHEMA_VERSION,
+        "portfolio_id": data.get("portfolio_id", "main"),
+        "strumenti": _strip_benchmark_instruments(merged_strumenti),
+        "operazioni": data.get("operazioni", []),
+        "storico_prezzi": {},  # Empty reference (loaded separately from Parquet/JSON)
+        "proventi": data.get("proventi", []),
+        "last_quotes_update": data.get("last_quotes_update"),
+        "instrument_master": _strip_benchmark_master(merged_master or _build_instrument_master(merged_strumenti)),
+        "registro_eventi": merged_eventi,
+        "registro_liquidita": data.get("registro_liquidita", []),
+        "cache_posizioni": data.get("cache_posizioni", {}),
+        "cache_storico_portafoglio": data.get("cache_storico_portafoglio", {}),
+        "cache_lookup_strumenti": data.get("cache_lookup_strumenti", {}),
+    }
+    core = _normalize_portfolio_data_payload(core)
+    _write_json_file(DATA_FILE, core)
+    # Le quotazioni live (NON benchmark) hanno un JSON autonomo.
+    _save_market_live(data.get('market_live_data',{}))
+    meta = load_meta()
+    meta.setdefault("runtime", {})["last_successful_save"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    save_meta(meta)
+    logger.info(
+        "Dati salvati: strumenti=%s operazioni=%s proventi=%s storico_date=%s",
+        len(core.get("strumenti", [])),
+        len(core.get("operazioni", [])),
+        len(core.get("proventi", [])),
+        len(storico_prezzi),
+    )
+
+
+def _strip_benchmark_instruments(instruments):
+    """I dati verificabili dell'ETF restano come indice_sottostante.
+
+    Il vecchio campo 'benchmark' era usato impropriamente SIA per il dato
+    descrittivo JustETF/Fineco (es. 'MSCI World') SIA per il confronto.
+    Rimuoviamo la collisione senza perdere la fonte dell'arricchimento.
+    Nessuna attribuzione finanziaria e' dedotta dalla rinomina.
+    """
+    import copy
+    output=copy.deepcopy(instruments if isinstance(instruments,list) else [])
+    for inst in output:
+        if not isinstance(inst,dict):continue
+        old=inst.pop('benchmark',None)
+        if old not in (None,'') and not inst.get('indice_sottostante'):
+            inst['indice_sottostante']=old
+        src=inst.get('enrichment_source')
+        if isinstance(src,dict):
+            old_source=src.pop('benchmark',None)
+            if old_source not in (None,'') and inst.get('indice_sottostante') and not src.get('indice_sottostante'):
+                src['indice_sottostante']=old_source
+    return output
+
+
+def _strip_benchmark_master(master:dict)->dict:
+    """Sanitizza master senza mutare i dict del chiamante."""
+    import copy
+    out=copy.deepcopy(master if isinstance(master,dict) else {})
+    for entry in out.values():
+        if not isinstance(entry,dict):continue
+        entry.pop('benchmark_code',None)
+        entry.pop('benchmark_label',None)
+        entry.pop('auto_benchmark_fallback',None)
+        override=(entry.get('manual_overrides') or {}).get('sator') or {}
+        for key in ('benchmark_code','benchmark_label','benchmark_user_edited'):
+            override.pop(key,None)
+    return out
+
+
+def _save_market_live(data:dict)->None:
+    if not isinstance(data,dict):return
+    old=_read_json_file(MARKET_LIVE_FILE,{}).get('market_live_data',{})
+    old=old if isinstance(old,dict) else {}
+    _write_json_file(MARKET_LIVE_FILE,{'market_live_data':{**old,**data}})
+
+
+def save_benchmark_data(data):
+    """Persisti SOLO quotazioni live non-benchmark.
+
+    Questa funzione esiste ancora per i chiamanti Mercati/scheduler, ma
+    NON importa benchmark da JSON o da dizionari runtime. Il caricamento di
+    storici legacy è consentito soltanto dal comando esplicito
+    ``tools.migrate_benchmark_json`` (con backup).
+    """
+    if not isinstance(data, dict):
+        return
+    if 'benchmark_data' in data:
+        data.pop('benchmark_data', None)
+        logger.warning(
+            "Campo legacy benchmark_data ignorato nel refresh operativo: "
+            "solo tools.migrate_benchmark_json puo' importare storici JSON."
+        )
+    _save_market_live(data.get('market_live_data', {}))
+
+
+def _data_mtime() -> float:
+    try:
+        mtimes = [
+            os.path.getmtime(path)
+            for path in [DATA_FILE, SETTINGS_FILE, SNAPSHOTS_FILE, MARKET_LIVE_FILE, META_FILE]
+            if os.path.exists(path)
+        ]
+        return max(mtimes) if mtimes else 0.0
+    except OSError:
+        return 0.0
+
+
+def _is_privacy_related_event(event: dict, hidden: set[str]) -> bool:
+    """True se l'evento appartiene a uno strumento nascosto: o e' un evento
+    dello strumento (``ticker``) o e' un movimento correlato con
+    ``strumento_collegato`` (versamento automatico, rientro di un rimborso,
+    cash manuale legato). Il flag e' l'unica fonte: lo scrive la migrazione
+    schema 3.4 per i dati storici e le funzioni di inserimento per i nuovi."""
+    return (
+        str(event.get("ticker") or "") in hidden
+        or str(event.get("strumento_collegato") or "") in hidden
+    )
+
+
+def apply_privacy_filter(data: dict, settings: dict) -> dict:
+    """Filtra in memoria gli strumenti nascosti dalla Modalita' Privacy. Non
+    tocca mai i dati su disco: opera su una copia, da usare solo per il
+    rendering (mai per un dict che poi finisce in save_data() - vedi il
+    flag "_privacy_filtered" stampato sotto, che save_data() controlla e
+    rifiuta esplicitamente: bug reale trovato da /code-review ultra il
+    2026-09-08, non solo teorico - un chiamante a valle nella pipeline
+    Quotazioni (auto-fallback benchmark in core/dashboard_datasets.py)
+    violava gia' questo contratto passando la copia filtrata a save_data(),
+    cancellando permanentemente gli strumenti nascosti da disco e
+    eliminando anche i loro eventi dal registro
+    - prima solo documentato, ora anche
+    impedito attivamente al punto di massima leva invece di rincorrere
+    ogni possibile punto di chiamata che potrebbe violarlo).
+
+    Rimuove lo strumento nascosto da ``strumenti`` e ``storico_prezzi`` e
+    ELIMINA dal registro tutti i suoi eventi e ogni movimento correlato
+    (vedi ``_is_privacy_related_event``): la vista filtrata deve essere
+    identica a quella di un portafoglio in cui lo strumento non e' mai
+    esistito, liquidita' compresa. Nessun movimento puo' restare scollegato.
+    """
+    import copy
+    pm = (settings or {}).get("privacy_mode", {}) or {}
+    if not pm.get("enabled", False):
+        return data
+    hidden_tickers = {str(t) for t in (pm.get("hidden_tickers") or [])}
+    hidden_categories = {str(c).upper() for c in (pm.get("hidden_categories") or [])}
+    if not hidden_tickers and not hidden_categories:
+        return data
+    data = copy.deepcopy(data)
+    all_hidden: set[str] = set(hidden_tickers)
+    for s in (data.get("strumenti") or []):
+        tk = str(s.get("ticker") or "")
+        if str(s.get("tipo") or "").upper() in hidden_categories and tk:
+            all_hidden.add(tk)
+    if not all_hidden:
+        return data
+    # Marcatore esplicito controllato da save_data() (mai scritto su disco:
+    # non e' tra le chiavi elencate esplicitamente nel dict `core` costruito
+    # li'). Rimossa anche l'istantanea di base per il merge a 3 vie
+    # (_loaded_snapshot, sopravviveva al deepcopy) - non deve mai guidare un
+    # merge su questa vista filtrata, che non e' una continuazione fedele
+    # dello stato caricato.
+    data["_privacy_filtered"] = True
+    data.pop("_loaded_snapshot", None)
+    hidden_isins = {
+        str(s.get("isin") or "")
+        for s in (data.get("strumenti") or [])
+        if str(s.get("ticker") or "") in all_hidden and s.get("isin")
+    }
+    data["strumenti"] = [
+        s for s in (data.get("strumenti") or [])
+        if str(s.get("ticker") or "") not in all_hidden
+    ]
+    for day_prices in (data.get("storico_prezzi") or {}).values():
+        for tk in all_hidden:
+            day_prices.pop(tk, None)
+
+    # Registro eventi: fuori lo strumento e ogni movimento col suo flag.
+    eventi = list(data.get("registro_eventi") or [])
+    dropped_ids = {
+        str(e.get("event_id")) for e in eventi
+        if e.get("event_id") and _is_privacy_related_event(e, all_hidden)
+    }
+    data["registro_eventi"] = [e for e in eventi if not _is_privacy_related_event(e, all_hidden)]
+
+    # Sezioni derivate/duplicate del registro: devono restare coerenti con il
+    # registro filtrato, altrimenti lo strumento riaffiora da lettori che non
+    # passano dal registro eventi (operazioni, proventi, registro_liquidita,
+    # instrument_master, cache di posizioni/storico).
+    data["registro_liquidita"] = [
+        r for r in (data.get("registro_liquidita") or [])
+        if str(r.get("event_id") or "") not in dropped_ids
+    ]
+    for key in ("operazioni", "proventi"):
+        data[key] = [
+            r for r in (data.get(key) or [])
+            if not _is_privacy_related_event(r, all_hidden)
+        ]
+    master = data.get("instrument_master")
+    if isinstance(master, dict):
+        data["instrument_master"] = {
+            tk: v for tk, v in master.items() if str(tk) not in all_hidden
+        }
+    lookup = data.get("cache_lookup_strumenti")
+    if isinstance(lookup, dict) and hidden_isins:
+        data["cache_lookup_strumenti"] = {
+            k: v for k, v in lookup.items() if str(k) not in hidden_isins
+        }
+    data["cache_posizioni"] = {}
+    data["cache_storico_portafoglio"] = {}
+    return data

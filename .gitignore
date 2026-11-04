@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Streamlit
+.streamlit/secrets.toml
+.cache/
+
+# Temporary/cache directories
+.data/
+data/prices/.backups/
+
+# Dati personali portafoglio (mai nel repo)
+data/portfolio/
+data/prices/
+data/logs/
+data/ai_reports/
+data/forensic/
+data/indices/
+data/reports/
+data/cache/
+backups/
+test_enrichment_results.json
+test_enrichment_report.html
+
+# Configurazione (tutta, incluse impostazioni personali)
+data/config/
+
+# Piani e specifiche interne di sviluppo, e suite di test (mai nel repo pubblico)
+docs/
+tests/
+
+# Workspace di lavoro di subagent-driven-development (ledger, brief, diff di review)
+.superpowers/
+
+# Documenti interni di sviluppo
+HANDOFF_LUNEDI.md
+portfolio_dashboard_brief_per_altra_ai_v2.md
+HANDOFF_PROGRAMMATORE_BENCHMARK_CDS/
+
+# Istruzioni per l'agente AI (repo pubblico piu' pulito, richiesta esplicita
+# dell'utente 2026-09-05: resta in locale, non pubblicato)
+CLAUDE.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git worktrees (isolamento sessioni di lavoro)
+.worktrees/

@@ -1,0 +1,206 @@
+from __future__ import annotations
+
+from ui.charts.axis_refs import trace_yaxis_layout_name
+
+
+def numeric_values(values) -> list[float]:
+    out: list[float] = []
+    try:
+        for v in values:
+            if v is None:
+                continue
+            try:
+                if isinstance(v, str):
+                    continue
+                fv = float(v)
+                if fv == fv:
+                    out.append(fv)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return out
+
+
+def range_with_padding(values: list[float], pad_ratio: float, *, keep_zero_edge: bool = False) -> list[float] | None:
+    """Calcola un range aderente ai valori reali, con solo il padding richiesto."""
+    if not values:
+        return None
+
+    raw_min = min(values)
+    raw_max = max(values)
+    vmin = raw_min
+    vmax = raw_max
+
+    if vmin >= 0:
+        vmin = 0.0
+    if vmax <= 0:
+        vmax = 0.0
+
+    span = max(vmax - vmin, abs(vmax), abs(vmin))
+    if span <= 0:
+        span = 1.0
+
+    pad = span * pad_ratio
+    if keep_zero_edge and raw_min >= 0:
+        return [0.0, vmax + pad]
+    if keep_zero_edge and raw_max <= 0:
+        return [vmin - pad, 0.0]
+    return [vmin - pad, vmax + pad]
+
+
+def range_from_visible_values(values, pad_ratio: float) -> list[float] | None:
+    """Calcola il range Y sui soli valori visibili nella finestra temporale."""
+    vals = numeric_values(values)
+    if not vals:
+        return None
+    vmin = min(vals)
+    vmax = max(vals)
+
+    if vmin == vmax:
+        span = max(abs(vmin), 1.0)
+        delta = span * max(pad_ratio, 0.02)
+        return [vmin - delta, vmax + delta]
+
+    span = vmax - vmin
+    delta = span * max(pad_ratio, 0.0)
+    return [vmin - delta, vmax + delta]
+
+
+def trace_visible_y_values_for_x_range(trace, x_range) -> list[float]:
+    """Estrae i valori Y della traccia compresi nel range X indicato.
+
+    La conversione a datetime dei punti X e' vettorizzata: la versione
+    precedente chiamava pandas.to_datetime() punto per punto dentro un loop
+    Python, il che con bottoni temporali dinamici (fino a 6 chiamate per
+    grafico) arrivava a migliaia di conversioni scalari per una singola
+    figura (profilato: ~2.7s su 3.25s totali di apply_buttons per un
+    grafico da 819 punti). Qui la stessa conversione avviene in un'unica
+    chiamata vettoriale.
+
+    Nota comportamentale preservata di proposito: un valore X None/NaN
+    diventa NaT e NON viene escluso dal confronto di range (NaT < start e
+    NaT > end sono entrambi False, esattamente come nel loop scalare
+    originale), mentre un valore X non parsabile (es. stringa non valida)
+    viene escluso — nell'originale perche' pd.to_datetime() sollevava
+    un'eccezione catturata dal try/except; qui distinguendo esplicitamente
+    "valore grezzo gia' nullo" da "conversione fallita su valore non nullo".
+    """
+    try:
+        import pandas as pd
+
+        if x_range is None or len(x_range) != 2:
+            return []
+        start = pd.to_datetime(x_range[0])
+        end = pd.to_datetime(x_range[1])
+
+        raw_x = getattr(trace, "x", None)
+        raw_y = getattr(trace, "y", None)
+        if raw_x is None or raw_y is None:
+            return []
+
+        try:
+            x_vals = list(raw_x)
+            y_vals = list(raw_y)
+        except Exception:
+            return []
+
+        if len(x_vals) == 0 or len(y_vals) == 0:
+            return []
+
+        try:
+            x_index = pd.Index(x_vals)
+            raw_is_null = pd.isna(x_index)
+            dx_vec = pd.to_datetime(x_index, errors="coerce")
+            parse_failed = dx_vec.isna() & ~raw_is_null
+            outside = ((dx_vec < start) | (dx_vec > end)) | parse_failed
+        except Exception:
+            return []
+
+        out: list[float] = []
+        for is_outside, y in zip(outside, y_vals):
+            try:
+                if is_outside:
+                    continue
+                if y is None or isinstance(y, str):
+                    continue
+                fy = float(y)
+                if fy == fy:
+                    out.append(fy)
+            except Exception:
+                continue
+        return out
+    except Exception:
+        return []
+
+
+def _stacked_visible_values(traces, x_range) -> list[float]:
+    """Valori Y visibili di un gruppo di tracce impilate (stackgroup).
+
+    Il bordo di ogni area e' la somma cumulata delle tracce fino a quella: il
+    range deve coprire tutti i bordi (anche i parziali, con segni misti), non
+    i valori grezzi delle singole tracce, altrimenti l'area in cima viene
+    tagliata.
+    """
+    import pandas as pd
+
+    start = pd.to_datetime(x_range[0])
+    end = pd.to_datetime(x_range[1])
+    running = None
+    out: list[float] = []
+    for trace in traces:
+        try:
+            x = pd.to_datetime(pd.Index(list(trace.x)), errors="coerce")
+            y = pd.to_numeric(pd.Series(list(trace.y)), errors="coerce").to_numpy()
+        except Exception:
+            continue
+        s = pd.Series(y, index=x)
+        s = s[(s.index >= start) & (s.index <= end)]
+        s = s[~s.index.isna()]
+        s = s.groupby(level=0).last()
+        running = s if running is None else running.add(s, fill_value=0.0)
+        out.extend(float(v) for v in running.dropna())
+    return out
+
+
+def visible_y_ranges_for_x_range(fig, x_range, pad_ratio: float) -> dict[str, list[float]]:
+    """Restituisce i range Y dinamici per ogni asse Y della figura."""
+    grouped: dict[str, list[float]] = {}
+    stacks: dict[tuple[str, str], list] = {}
+    try:
+        for trace in fig.data:
+            axis_name = trace_yaxis_layout_name(trace)
+            stackgroup = getattr(trace, "stackgroup", None)
+            if stackgroup:
+                stacks.setdefault((axis_name, str(stackgroup)), []).append(trace)
+                continue
+            vals = trace_visible_y_values_for_x_range(trace, x_range)
+            if not vals:
+                continue
+            grouped.setdefault(axis_name, []).extend(vals)
+        for (axis_name, _), traces in stacks.items():
+            vals = _stacked_visible_values(traces, x_range) if x_range is not None and len(x_range) == 2 else []
+            if vals:
+                grouped.setdefault(axis_name, []).extend(vals)
+    except Exception:
+        return {}
+
+    ranges: dict[str, list[float]] = {}
+    for axis_name, values in grouped.items():
+        yr = range_from_visible_values(values, pad_ratio)
+        if yr is not None:
+            ranges[axis_name] = yr
+    return ranges
+
+
+def update_axis_range(fig, axis_name: str, range_values: list[float] | None, *, constrain_domain: bool = False) -> None:
+    """Aggiorna il range di un asse layout Plotly in modo sicuro."""
+    if range_values is None:
+        return
+    update = {"range": range_values, "automargin": True}
+    if constrain_domain:
+        update["constrain"] = "domain"
+    try:
+        fig.update_layout({axis_name: update})
+    except Exception:
+        pass

@@ -1,0 +1,955 @@
+"""
+core/cache_signatures.py — Deterministic signature generation for cache invalidation.
+
+This module provides signature functions that generate consistent hashes based on
+portfolio state, visual theme, and configuration. These signatures enable automatic
+cache invalidation without manual busting: when any relevant data changes, the
+signature changes, triggering regeneration of cached figures.
+
+All functions are pure (no side effects) and deterministic: identical inputs
+always produce identical signatures.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import math
+import os
+import re
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+from persistence.storage import macro_cat, get_registro_eventi
+
+logger = logging.getLogger("portafoglio.core.cache_signatures")
+
+
+def _normalize_positive_price(value: Any, *, digits: int) -> float | None:
+    try:
+        price = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(price) or price <= 0:
+        return None
+    return round(price, digits)
+
+
+def _finite_float_or_none(value: Any, *, digits: int = 6) -> float | None:
+    """Come _normalize_positive_price ma senza scartare zero/negativi.
+
+    Usato per campi obbligazionari (cedola_perc, aliquota_cedola, nominale)
+    dove 0 e' un valore legittimo (es. zero-coupon) da distinguere comunque
+    da "assente" nella firma.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return round(number, digits)
+
+
+def _safe_hash(data: Any, max_depth: int = 3) -> str:
+    """
+    Create a deterministic SHA256 hash for any object.
+
+    Attempts to JSON-serialize the data, falls back to repr() for non-JSON types.
+    Returns the first 12 characters of the hex digest.
+
+    Args:
+        data: Object to hash
+        max_depth: Maximum recursion depth for JSON serialization (default 3)
+
+    Returns:
+        12-character hex string
+    """
+    def _to_json_compatible(obj: Any, depth: int = 0) -> Any:
+        """Convert object to JSON-compatible format."""
+        if depth >= max_depth:
+            return repr(obj)
+        if isinstance(obj, (str, int, float, bool, type(None))):
+            return obj
+        if isinstance(obj, (list, tuple)):
+            return [_to_json_compatible(item, depth + 1) for item in obj]
+        if isinstance(obj, dict):
+            return {str(k): _to_json_compatible(v, depth + 1) for k, v in obj.items()}
+        if isinstance(obj, SimpleNamespace):
+            return _to_json_compatible(vars(obj), depth + 1)
+        return repr(obj)
+
+    try:
+        json_compatible = _to_json_compatible(data)
+        json_str = json.dumps(json_compatible, sort_keys=True, default=str)
+        digest = hashlib.sha256(json_str.encode("utf-8")).hexdigest()
+        return digest[:12]
+    except Exception as e:
+        logger.warning("Hash failure for data type %s: %s. Falling back to repr()", type(data).__name__, e)
+        try:
+            repr_str = repr(data)
+            digest = hashlib.sha256(repr_str.encode("utf-8")).hexdigest()
+            return digest[:12]
+        except Exception as e2:
+            logger.warning("Fallback hash also failed: %s. Using default signature", e2)
+            return "000000000000"
+
+
+def data_signature(
+    n_instruments: int,
+    n_operations: int,
+    last_quotes_update: str,
+    portfolio_data_hash: str,
+    app_version: str,
+    schema_version: str,
+) -> str:
+    """
+    Hash portfolio state to detect when data has changed.
+
+    Combines instrument count, operation count, portfolio content hash, and
+    version strings. `last_quotes_update` is accepted for backward-compatible
+    call sites but is intentionally excluded because it is operational metadata,
+    not a financial state change by itself.
+
+    Args:
+        n_instruments: Number of instruments in portfolio
+        n_operations: Number of transactions/operations
+        last_quotes_update: ISO timestamp of last quotes update
+        portfolio_data_hash: Content hash of portfolio data
+        app_version: Application version string
+        schema_version: Data schema version string
+
+    Returns:
+        12-character hex string
+    """
+    state = {
+        "n_instruments": n_instruments,
+        "n_operations": n_operations,
+        "portfolio_data_hash": portfolio_data_hash,
+        "app_version": app_version,
+        "schema_version": schema_version,
+    }
+    return _safe_hash(state)
+
+
+def _normalized_instrument_signature_payload(strumenti: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for item in strumenti:
+        if not isinstance(item, dict):
+            continue
+        prezzo = _normalize_positive_price(item.get("prezzo", None), digits=4)
+        stato_raw = item.get("stato")
+        stato_norm = "chiuso" if stato_raw in {"chiuso", "osservato"} else "aperto"
+        normalized.append({
+            "isin": str(item.get("isin", "")).strip(),
+            "ticker": str(item.get("ticker", "")).strip(),
+            "tipo": str(item.get("tipo", "")).strip(),
+            "prezzo": prezzo,
+            "stato": stato_norm,
+            "osserva_prezzo": bool(item.get("osserva_prezzo", False)),
+            # senza questo campo, un fix all'etichetta "natura" (icona
+            # Quotazioni/Portafoglio/Pianificazione, vedi
+            # ui/charts/natura_icons.py) non cambia la firma dati e gli
+            # artefatti page-cache gia' su disco continuano a servire
+            # l'icona vecchia a tempo indeterminato (bug trovato il
+            # 2026-08-13 su <strumento>/<strumento>/<strumento>).
+            "natura": str(item.get("natura", "")).strip(),
+            # Senza questi campi, correggere i dati cedola di un BTP gia'
+            # presente (es. prima_cedola sbagliata di anni) non cambia la
+            # firma dati: la Timeline BTP e il KPI "Cedole attese 12 mesi"
+            # (core/domain/calendar.py::build_btp_calendar, che legge questi
+            # campi direttamente dallo strumento) restano bloccati sul
+            # valore vecchio a tempo indeterminato (stessa classe di bug di
+            # "natura" sopra, trovata il 2026-08-20).
+            "scadenza": str(item.get("scadenza", "") or "").strip(),
+            "cedola_perc": _finite_float_or_none(item.get("cedola_perc")),
+            "cedola_frequenza": str(item.get("cedola_frequenza", "") or "").strip(),
+            "prima_cedola": str(item.get("prima_cedola", "") or "").strip(),
+            "aliquota_cedola": _finite_float_or_none(item.get("aliquota_cedola")),
+            "nominale": _finite_float_or_none(item.get("nominale")),
+            # Stessa classe di bug di "natura"/campi cedola sopra: senza
+            # questo campo, segnare/togliere un candidato all'acquisto in
+            # Strumenti non cambia la firma dati e il grafico storico
+            # quotazioni (titolo con stella piena/vuota, vedi
+            # ui/charts/quotazioni.py) resta bloccato sull'icona vecchia.
+            "candidato_acquisto": bool(item.get("candidato_acquisto", False)),
+        })
+    return sorted(normalized, key=lambda row: (row["ticker"], row["isin"], row["tipo"]))
+
+
+def _normalized_operation_signature_payload(operazioni: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for item in operazioni:
+        if not isinstance(item, dict):
+            continue
+        normalized.append({
+            "event_id": str(item.get("event_id", "") or ""),
+            "data": str(item.get("data", "") or ""),
+            "ticker": str(item.get("ticker", "") or ""),
+            "tipo_evento": str(item.get("tipo_evento", "") or item.get("tipo", "") or ""),
+            "quantita": item.get("quantita", None),
+            "prezzo_unitario": item.get("prezzo_unitario", None),
+            "importo_netto": item.get("importo_netto", None),
+            "commissioni": item.get("commissioni", None),
+            "imposte": item.get("imposte", None),
+        })
+    return sorted(
+        normalized,
+        key=lambda row: (
+            row["data"],
+            row["ticker"],
+            row["tipo_evento"],
+            row["event_id"],
+        ),
+    )
+
+
+def history_span_by_ticker(storico: dict[str, Any], tickers: list[str]) -> dict[str, dict[str, Any]]:
+    """
+    Per ogni ticker: quante date storiche lo includono e la piu' vecchia.
+
+    n_history_dates/latest_history_date globali non bastano a rilevare un
+    backfill (core.market_data.backfill_storico_prezzi) che riempie date piu'
+    vecchie GIA' presenti come chiave nello storico (es. altri strumenti hanno
+    gia' un prezzo su quel giorno): la chiave non e' nuova, quindi il conteggio
+    e la data piu' recente restano identici anche se il ticker backfillato ha
+    ora un perimetro storico piu' ampio. Guardare la presenza per-ticker cattura
+    questo caso senza invalidare categorie/ticker non toccati dal refresh.
+    """
+    ticker_set = {t for t in tickers if t}
+    dates_by_ticker: dict[str, list[str]] = {t: [] for t in ticker_set}
+    for day, prices in storico.items():
+        if not isinstance(prices, dict):
+            continue
+        for tk, value in prices.items():
+            if tk in ticker_set and _normalize_positive_price(value, digits=6) is not None:
+                dates_by_ticker[tk].append(day)
+    return {
+        tk: {"n_dates": len(dates), "earliest": min(dates) if dates else ""}
+        for tk, dates in dates_by_ticker.items()
+    }
+
+
+def history_content_digest_by_ticker(storico: dict[str, Any], tickers: list[str]) -> dict[str, str]:
+    """
+    Impronta del CONTENUTO dello storico di ciascun ticker (data e prezzo di
+    ogni punto valido, indipendente dall'ordine di inserimento).
+
+    `history_span_by_ticker` vede solo numero di date e data piu' vecchia, e
+    `latest_history_point_by_ticker` solo l'ultimo punto: la correzione del
+    prezzo di un giorno INTERMEDIO lascia entrambi identici, quindi grafici e
+    KPI restavano congelati sul dato vecchio (FG-01). Questa impronta cambia
+    se, e solo se, cambia un punto valido del ticker richiesto; non dipende da
+    altri ticker. Stessa normalizzazione dei prezzi delle funzioni gemelle
+    (valori non validi ignorati, 6 decimali).
+    """
+    ticker_set = {t for t in tickers if t}
+    points: dict[str, list[tuple[str, float]]] = {t: [] for t in ticker_set}
+    for day, prices in storico.items():
+        if not isinstance(prices, dict):
+            continue
+        day_str = str(day or "")
+        for tk, value in prices.items():
+            if tk not in ticker_set:
+                continue
+            normalized_value = _normalize_positive_price(value, digits=6)
+            if normalized_value is not None:
+                points[tk].append((day_str, normalized_value))
+    digests: dict[str, str] = {}
+    for tk, series in points.items():
+        series.sort()
+        raw = ";".join(f"{day}={value!r}" for day, value in series)
+        digests[tk] = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return digests
+
+
+def latest_history_point_by_ticker(storico: dict[str, Any], tickers: list[str]) -> dict[str, dict[str, Any]]:
+    """Ultima data/prezzo storico per ticker, scoped al perimetro richiesto."""
+    ticker_set = {t for t in tickers if t}
+    latest_by_ticker: dict[str, tuple[str, Any]] = {}
+    for day, prices in storico.items():
+        if not isinstance(prices, dict):
+            continue
+        day_str = str(day or "")
+        for tk, value in prices.items():
+            if tk not in ticker_set:
+                continue
+            normalized_value = _normalize_positive_price(value, digits=6)
+            if normalized_value is None:
+                continue
+            current = latest_by_ticker.get(tk)
+            if current is None or day_str > current[0]:
+                latest_by_ticker[tk] = (day_str, normalized_value)
+
+    result: dict[str, dict[str, Any]] = {}
+    for tk in ticker_set:
+        day, normalized_value = latest_by_ticker.get(tk, ("", None))
+        result[tk] = {"latest": day, "value": normalized_value}
+    return result
+
+
+def _base_market_signature_payload(
+    data: dict[str, Any] | None,
+    *,
+    include_benchmark_data: bool = False,
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], str]:
+    payload = data if isinstance(data, dict) else {}
+    strumenti = payload.get("strumenti", []) if isinstance(payload.get("strumenti", []), list) else []
+    operazioni = payload.get("operazioni", []) if isinstance(payload.get("operazioni", []), list) else []
+    storico = payload.get("storico_prezzi", {}) if isinstance(payload.get("storico_prezzi", {}), dict) else {}
+    latest_history_date = max(storico.keys()) if storico else ""
+    last_quotes_update = str(
+        payload.get("last_quotes_update")
+        or payload.get("_last_quotes_update")
+        or ""
+    )
+
+    registro_eventi = payload.get("registro_eventi", []) if isinstance(payload.get("registro_eventi", []), list) else []
+    registro_liquidita = payload.get("registro_liquidita", []) if isinstance(payload.get("registro_liquidita", []), list) else []
+
+    all_tickers = sorted({
+        str(s.get("ticker", "")).strip()
+        for s in strumenti
+        if isinstance(s, dict) and str(s.get("ticker", "")).strip()
+    })
+    signature_payload: dict[str, Any] = {
+        "instruments": _normalized_instrument_signature_payload(strumenti),
+        "n_history_dates": len(storico),
+        "latest_history_date": latest_history_date,
+        "n_eventi": len(registro_eventi),
+        # Contenuto del registro, non solo il conteggio: `operazioni` contiene
+        # solo ACQUISTO/VENDITA, quindi la modifica di un rimborso, di
+        # un'IMPOSTA o di una cedola (n_eventi invariato) non cambiava mai la
+        # firma e KPI/"Posizioni chiuse" restavano congelati finche' l'utente
+        # non svuotava la cache a mano (bug reale, 2026-10-07).
+        "eventi": _normalized_operation_signature_payload(registro_eventi),
+        "n_liquidita": len(registro_liquidita),
+        "history_span_by_ticker": history_span_by_ticker(storico, all_tickers),
+        "history_digest_by_ticker": history_content_digest_by_ticker(storico, all_tickers),
+    }
+    if include_benchmark_data:
+        # V2: il dato autorevole e' in SQLite; il JSON e' solo archivio legacy.
+        # Incluso il WAL per vedere il refresh prima del checkpoint.
+        try:
+            from core.verified_benchmarks import IndexStore
+            signature_payload['benchmark_sqlite_revision'] = IndexStore().revision_token()
+        except Exception:
+            signature_payload['benchmark_sqlite_revision'] = 'unavailable'
+        # Le quotazioni live non sono benchmark: possono ancora arrivare dal
+        # payload operativo. Non dipendere dalla presenza del campo nel JSON.
+        # Le serie e le assegnazioni benchmark restano ESCLUSIVAMENTE in SQLite.
+        market_live_raw = payload.get("market_live_data", {})
+        market_live_data = market_live_raw if isinstance(market_live_raw, dict) else {}
+        signature_payload["market_live"] = {
+            str(key): {
+                "price": value.get("price"),
+                "pct": value.get("pct"),
+                "price_date": value.get("price_date"),
+                "regular_market_time": value.get("regular_market_time"),
+            }
+            for key, value in sorted(market_live_data.items())
+            if isinstance(value, dict)
+        }
+
+    return signature_payload, strumenti, operazioni, storico, last_quotes_update
+
+
+def build_market_data_signature(
+    data: dict[str, Any] | None,
+    *,
+    app_version: str,
+    schema_version: str,
+    include_benchmark_data: bool = False,
+) -> str:
+    """Firma per dataset che dipendono da strumenti, storico prezzi e benchmark."""
+    signature_payload, strumenti, _operazioni, _storico, last_quotes_update = _base_market_signature_payload(
+        data,
+        include_benchmark_data=include_benchmark_data,
+    )
+    market_data_hash = _safe_hash(signature_payload)
+    return data_signature(
+        n_instruments=len(strumenti),
+        n_operations=0,
+        last_quotes_update=last_quotes_update,
+        portfolio_data_hash=market_data_hash,
+        app_version=str(app_version),
+        schema_version=str(schema_version),
+    )
+
+
+def build_cashflow_data_signature(
+    data: dict[str, Any] | None,
+    *,
+    app_version: str,
+    schema_version: str,
+    include_benchmark_data: bool = False,
+) -> str:
+    """Firma per dataset che dipendono anche dal dettaglio delle operazioni."""
+    signature_payload, strumenti, operazioni, _storico, last_quotes_update = _base_market_signature_payload(
+        data,
+        include_benchmark_data=include_benchmark_data,
+    )
+    signature_payload["operations"] = _normalized_operation_signature_payload(operazioni)
+    cashflow_data_hash = _safe_hash(signature_payload)
+    return data_signature(
+        n_instruments=len(strumenti),
+        n_operations=len(operazioni),
+        last_quotes_update=last_quotes_update,
+        portfolio_data_hash=cashflow_data_hash,
+        app_version=str(app_version),
+        schema_version=str(schema_version),
+    )
+
+
+def build_category_data_signature(
+    data: dict[str, Any] | None,
+    category: str,
+    *,
+    app_version: str,
+    schema_version: str,
+    include_benchmark_data: bool = False,
+) -> str:
+    """
+    Firma per figure che dipendono solo dagli strumenti di una macro-categoria.
+
+    Isola il subset di strumenti con tipo==category così che un aggiornamento
+    quotazioni su ETF non invalidi le figure GOV/FND e viceversa.
+    history_span_by_ticker (scoped ai soli ticker della categoria) e' l'unico
+    meccanismo di rilevamento cambi storico: cattura sia il caso "nuovo
+    giorno di quotazione per un ticker di questa categoria" sia il caso
+    backfill (una data piu' vecchia gia' esistente riceve ora un valore per
+    un ticker di questa categoria), senza dipendere da contatori globali che
+    invaliderebbero la firma anche per categorie non toccate dal refresh.
+
+    include_benchmark_data (bug reale trovato dall'utente in produzione,
+    2026-09-05, "grafici in Quotazioni senza benchmark"): l'artefatto L2
+    `quotazioni.category_ticker_bundles` (core/dashboard_datasets.py) e'
+    DICHIARATO dipendere da `benchmark_series_cache` nel registry
+    (core/cache_policy.py), ma quella dichiarazione e' solo una stringa
+    nel tuple `dependencies` - non veniva mai tradotta in un hash reale del
+    contenuto di `data["benchmark_data"]`. Risultato: se lo storico prezzi
+    di un benchmark viene scaricato/aggiornato DOPO che il bundle per quella
+    categoria e' gia' in cache su disco (nessun altro cambiamento nella
+    categoria nel frattempo - stesso identico strumento/prezzi/eventi), il
+    grafico resta agganciato alla versione vecchia (spesso senza benchmark)
+    indefinitamente, perche' la firma non cambia mai. Stesso payload gia'
+    usato da build_market_data_signature/build_cashflow_data_signature con
+    lo stesso flag (_base_market_signature_payload), qui applicato anche a
+    questa firma cosi' le tre restano coerenti tra loro invece di divergere
+    silenziosamente come accadeva finora.
+    """
+    payload = data if isinstance(data, dict) else {}
+    strumenti = payload.get("strumenti", [])
+    if not isinstance(strumenti, list):
+        strumenti = []
+
+    # "Tutto" e' uno pseudo-categoria che aggrega ogni strumento: macro_cat()
+    # non restituisce mai letteralmente "Tutto", quindi il confronto diretto
+    # lascerebbe cat_strumenti sempre vuoto per questo caso.
+    if category == "Tutto":
+        cat_strumenti = [s for s in strumenti if isinstance(s, dict)]
+    else:
+        cat_strumenti = [
+            s for s in strumenti
+            if isinstance(s, dict) and macro_cat(s.get("tipo", "")) == category
+        ]
+
+    storico = payload.get("storico_prezzi", {})
+    if not isinstance(storico, dict):
+        storico = {}
+    last_quotes_update = str(
+        payload.get("last_quotes_update")
+        or payload.get("_last_quotes_update")
+        or ""
+    )
+
+    cat_tickers = sorted({
+        str(s.get("ticker", "")).strip()
+        for s in cat_strumenti
+        if isinstance(s, dict) and str(s.get("ticker", "")).strip()
+    })
+    cat_ticker_set = set(cat_tickers)
+    # Il registro eventi e' l'unica fonte di verita' per stato aperto/chiuso
+    # (vedi core/domain/instrument_status.py): senza questo, un rimborso o
+    # una vendita totale non cambia ne' strumenti[] ne' storico_prezzi, e la
+    # firma resterebbe identica prima e dopo — i grafici di categoria
+    # continuerebbero a mostrare la composizione pre-evento indefinitamente.
+    cat_eventi = [
+        ev for ev in get_registro_eventi(payload)
+        if str(ev.get("ticker") or "").strip() in cat_ticker_set
+    ]
+    signature_payload: dict[str, Any] = {
+        "category": category,
+        "instruments": _normalized_instrument_signature_payload(cat_strumenti),
+        "history_span_by_ticker": history_span_by_ticker(storico, cat_tickers),
+        "latest_history_point_by_ticker": latest_history_point_by_ticker(storico, cat_tickers),
+        "history_digest_by_ticker": history_content_digest_by_ticker(storico, cat_tickers),
+        "category_events": _normalized_operation_signature_payload(cat_eventi),
+    }
+    if include_benchmark_data:
+        try:
+            from core.verified_benchmarks import IndexStore
+            signature_payload['benchmark_sqlite_revision']=IndexStore().revision_token()
+        except Exception:
+            signature_payload['benchmark_sqlite_revision']='unavailable'
+    cat_hash = _safe_hash(signature_payload)
+    return data_signature(
+        n_instruments=len(cat_strumenti),
+        n_operations=len(cat_eventi),
+        last_quotes_update=last_quotes_update,
+        portfolio_data_hash=cat_hash,
+        app_version=str(app_version),
+        schema_version=str(schema_version),
+    )
+
+
+def _ticker_benchmark_data_hash(
+    payload: dict[str, Any],
+    ticker_str: str,
+    ticker_strumenti: list[dict[str, Any]],
+) -> str:
+    """Hash della serie benchmark assegnata a questo ticker.
+
+    Task V-quindecies (2026-09-05): bug reale confermato dal vivo -
+    <strumento>/<strumento>/<strumento> (condividono tutti ^GSPC) restavano senza curva
+    benchmark visibile anche dopo aver riparato ^GSPC in
+    portafoglio_benchmark_cache.json, perche' la figura
+    "quotazioni_quote_history" e' cacheata su disco per (chart_id, data_sig,
+    theme_sig, charts_settings_sig) e build_ticker_data_signature (= data_sig)
+    non conteneva alcun riferimento a benchmark_data: qualunque riparazione
+    del benchmark restava invisibile perche' get_or_build continuava a fare
+    hit sulla figura salvata PRIMA della riparazione. Verificato leggendo
+    direttamente il JSON compresso in data/cache/figures/: la figura
+    cacheata per <strumento> non aveva alcuna traccia benchmark nei suoi 'data'.
+    Nota: _portfolio_semantic_signature in app.py esclude deliberatamente
+    benchmark_data (falsi signature_changed su cache diversa/più ampia) - qui
+    e' l'opposto, serve la firma scoped SOLO al benchmark di QUESTO ticker.
+    """
+    from core.benchmark_registry import resolve_instrument_benchmark
+
+    instrument = ticker_strumenti[0] if ticker_strumenti else {}
+    master_map = payload.get("instrument_master", {})
+    master_entry = master_map.get(ticker_str) if isinstance(master_map, dict) else None
+    try:
+        bench_assignment = resolve_instrument_benchmark(
+            instrument, master_entry=master_entry, prefer_master=True,
+        )
+    except Exception:
+        return "n/d"
+    bench_ticker = getattr(bench_assignment, "ticker", None)
+    if not bench_ticker:
+        return "n/d"
+    try:
+        from core.verified_benchmarks import IndexStore,stored_history
+        store=IndexStore()
+        bd=stored_history(payload,bench_ticker,store=store)
+        material={"ticker":bench_ticker,"label":bench_assignment.label,
+                  "type":bench_assignment.operational_kind,
+                  "grade":bench_assignment.relation_grade,
+                  "components":list(bench_assignment.components),
+                  "revision":store.revision_token(),
+                  "series":bd}
+        return _safe_hash(material) if bd else 'n/d'
+    except Exception:
+        return 'n/d'
+
+
+
+# Task V-ventiduesima (2026-09-06): bug reale trovato dall'utente subito
+# dopo il fix V-ventesima (ancoraggio benchmark a 100 sulla data di
+# acquisto) - la firma di questa figura dipende dal CONTENUTO dei dati
+# (prezzi, benchmark_data), mai dal codice che li trasforma in curve. Un
+# cambio della LOGICA di normalizzazione (es. quale data usare come base
+# 100) a parita' di dati sorgente produce la STESSA firma, quindi
+# get_or_build continua a servire la figura vecchia cacheata su disco con
+# la logica precedente - stesso identico meccanismo del bug V-quindecies,
+# ma sul codice invece che sui dati. Bump manuale ogni volta che cambia
+# davvero il modo in cui normalized_series/benchmark_series vengono
+# costruiti in core/dashboard_datasets.py (non per cambi che toccano solo
+# dati/cache) - stesso pattern di _STATE_MANAGER_SCHEMA in app.py.
+_TICKER_CHART_LOGIC_VERSION = "v3-2026-11-01-sqlite-proxy-candidates"
+
+
+def build_ticker_data_signature(
+    data: dict[str, Any] | None,
+    ticker: str,
+    *,
+    app_version: str,
+    schema_version: str,
+) -> str:
+    """
+    Firma per figure che dipendono solo da un singolo strumento.
+
+    Isola il subset di strumenti con ticker==ticker così che un aggiornamento
+    quotazioni su SWDA non invalidi le figure BTP/VWCE e viceversa.
+    history_span (scoped al solo ticker) e' l'unico meccanismo di rilevamento
+    cambi storico: cattura sia il caso "nuovo giorno di quotazione per questo
+    ticker" sia il caso backfill (una data piu' vecchia gia' esistente
+    riceve ora un valore per questo ticker), senza dipendere da contatori
+    globali che invaliderebbero la firma anche per ticker non toccati dal
+    refresh. benchmark_data_hash (Task V-quindecies) copre invece i cambi
+    alla curva di CONFRONTO disegnata nella stessa figura - vedi
+    _ticker_benchmark_data_hash. _TICKER_CHART_LOGIC_VERSION (Task
+    V-ventiduesima) copre i cambi al CODICE di normalizzazione, mai
+    catturati dall'hash dei dati da solo.
+    """
+    payload = data if isinstance(data, dict) else {}
+    strumenti = payload.get("strumenti", [])
+    if not isinstance(strumenti, list):
+        strumenti = []
+
+    ticker_str = str(ticker).strip()
+    ticker_strumenti = [
+        s for s in strumenti
+        if isinstance(s, dict) and str(s.get("ticker", "")).strip() == ticker_str
+    ]
+
+    storico = payload.get("storico_prezzi", {})
+    if not isinstance(storico, dict):
+        storico = {}
+    last_quotes_update = str(
+        payload.get("last_quotes_update")
+        or payload.get("_last_quotes_update")
+        or ""
+    )
+
+    signature_payload: dict[str, Any] = {
+        "ticker": ticker_str,
+        "instrument": _normalized_instrument_signature_payload(ticker_strumenti),
+        "history_span": history_span_by_ticker(storico, [ticker_str]).get(ticker_str, {"n_dates": 0, "earliest": ""}),
+        "latest_history_point": latest_history_point_by_ticker(storico, [ticker_str]).get(ticker_str, {"latest": "", "value": None}),
+        "history_digest": history_content_digest_by_ticker(storico, [ticker_str]).get(ticker_str, ""),
+        "benchmark_data_hash": _ticker_benchmark_data_hash(payload, ticker_str, ticker_strumenti),
+        "chart_logic_version": _TICKER_CHART_LOGIC_VERSION,
+    }
+    ticker_hash = _safe_hash(signature_payload)
+    return data_signature(
+        n_instruments=len(ticker_strumenti),
+        n_operations=0,
+        last_quotes_update=last_quotes_update,
+        portfolio_data_hash=ticker_hash,
+        app_version=str(app_version),
+        schema_version=str(schema_version),
+    )
+
+
+def build_historical_data_signature(
+    data: dict[str, Any] | None,
+    *,
+    app_version: str,
+    schema_version: str,
+    include_operations: bool = False,
+) -> str:
+    """
+    Firma per figure che dipendono solo dallo storico prezzi (end-of-day).
+
+    Non include i prezzi live (strumenti.prezzo): stabile durante refresh
+    intraday. Cambia solo quando arrivano nuovi dati storici, vengono
+    aggiunti/rimossi strumenti, o (con include_operations=True) cambiano
+    le operazioni.
+
+    Usare per figure basate su dh_hist (build_hist_df) o dh_flow
+    (build_expanded_price_frame) che non mostrano prezzi attuali.
+    """
+    payload = data if isinstance(data, dict) else {}
+    strumenti = payload.get("strumenti", [])
+    if not isinstance(strumenti, list):
+        strumenti = []
+
+    # Structural info only: ticker, tipo, isin — no current prices
+    instruments_structural = sorted(
+        [
+            {
+                "isin": str(s.get("isin", "")).strip(),
+                "ticker": str(s.get("ticker", "")).strip(),
+                "tipo": str(s.get("tipo", "")).strip(),
+            }
+            for s in strumenti
+            if isinstance(s, dict)
+        ],
+        key=lambda r: (r["ticker"], r["isin"], r["tipo"]),
+    )
+
+    storico = payload.get("storico_prezzi", {})
+    if not isinstance(storico, dict):
+        storico = {}
+    latest_history_date = max(storico.keys()) if storico else ""
+    last_quotes_update = str(
+        payload.get("last_quotes_update")
+        or payload.get("_last_quotes_update")
+        or ""
+    )
+
+    hist_tickers = sorted({row["ticker"] for row in instruments_structural if row["ticker"]})
+    signature_payload: dict[str, Any] = {
+        "instruments_structural": instruments_structural,
+        "n_history_dates": len(storico),
+        "latest_history_date": latest_history_date,
+        "history_span_by_ticker": history_span_by_ticker(storico, hist_tickers),
+        "history_digest_by_ticker": history_content_digest_by_ticker(storico, hist_tickers),
+    }
+    if include_operations:
+        operazioni = payload.get("operazioni", [])
+        if not isinstance(operazioni, list):
+            operazioni = []
+        signature_payload["operations"] = _normalized_operation_signature_payload(operazioni)
+        n_operations = len(operazioni)
+    else:
+        n_operations = 0
+
+    hist_hash = _safe_hash(signature_payload)
+    return data_signature(
+        n_instruments=len(strumenti),
+        n_operations=n_operations,
+        last_quotes_update=last_quotes_update,
+        portfolio_data_hash=hist_hash,
+        app_version=str(app_version),
+        schema_version=str(schema_version),
+    )
+
+
+def build_portfolio_data_signature(
+    data: dict[str, Any] | None,
+    *,
+    app_version: str,
+    schema_version: str,
+    include_benchmark_data: bool = False,
+) -> str:
+    """
+    Build a stable data signature from the portfolio payload.
+
+    This helper avoids hashing the full in-memory state, which is expensive and
+    can become unstable when runtime-only fields are added. It focuses on the
+    pieces that materially change rendered figures.
+    """
+    return build_cashflow_data_signature(
+        data,
+        app_version=str(app_version),
+        schema_version=str(schema_version),
+        include_benchmark_data=include_benchmark_data,
+    )
+
+
+def build_portfolio_signature_components(
+    data: dict[str, Any] | None,
+    *,
+    include_benchmark_data: bool = False,
+) -> dict[str, Any]:
+    """
+    Restituisce le componenti diagnostiche della firma portfolio.
+
+    Serve per capire *quale* blocco dati cambia tra due run, senza dover
+    confrontare solo l'hash finale opaco.
+    """
+    signature_payload, strumenti, operazioni, storico, last_quotes_update = _base_market_signature_payload(
+        data,
+        include_benchmark_data=include_benchmark_data,
+    )
+    components: dict[str, Any] = {
+        "instruments_hash": _safe_hash(signature_payload.get("instruments", [])),
+        "operations_hash": _safe_hash(_normalized_operation_signature_payload(operazioni)),
+        "history_dates_count": int(signature_payload.get("n_history_dates", 0) or 0),
+        "latest_history_date": str(signature_payload.get("latest_history_date", "") or ""),
+        "last_quotes_update": str(last_quotes_update or ""),
+        "instrument_count": len(strumenti),
+        "operation_count": len(operazioni),
+    }
+    if include_benchmark_data:
+        components["benchmark_points_hash"] = _safe_hash(signature_payload.get("benchmark_sqlite_revision", ""))
+    return components
+
+
+def theme_signature(theme_context: dict[str, Any] | SimpleNamespace) -> str:
+    """
+    Hash visual theme to detect when colors, fonts, or dark mode changes.
+
+    Extracts relevant theme properties and creates a deterministic signature.
+    Handles both dictionary and SimpleNamespace theme contexts, plus any object
+    with __dict__ attribute (like Streamlit's ThemeConfig).
+
+    Args:
+        theme_context: Theme configuration (dict, SimpleNamespace, or ThemeConfig)
+
+    Returns:
+        12-character hex string
+    """
+    if isinstance(theme_context, SimpleNamespace):
+        theme_dict = vars(theme_context)
+    elif isinstance(theme_context, dict):
+        theme_dict = theme_context
+    else:
+        # Handle ThemeConfig and other objects with __dict__ (e.g., Streamlit's theme config)
+        try:
+            theme_dict = vars(theme_context)
+        except TypeError:
+            logger.warning("Cannot extract theme_context attributes for type: %s. Using repr()", type(theme_context).__name__)
+            return _safe_hash(theme_context)
+
+    # Extract theme properties relevant to rendering
+    relevant_keys = {
+        "primaryColor",
+        "backgroundColor",
+        "secondaryBackgroundColor",
+        "textColor",
+        "fontFamily",
+        "base",
+    }
+
+    theme_subset = {k: v for k, v in theme_dict.items() if k in relevant_keys}
+
+    return _safe_hash(theme_subset)
+
+
+def charts_settings_signature(charts_settings_file_path: str | Path) -> str:
+    """
+    Hash ui/charts/settings.py content only (not mtime/size).
+
+    Detects when chart configuration file has been modified. Returns consistent
+    signature even if file doesn't exist (graceful fallback).
+
+    Only content_hash is included: mtime and size caused false cache invalidations
+    when the file was touched by git/IDE without actual content changes.
+
+    Args:
+        charts_settings_file_path: Path to ui/charts/settings.py
+
+    Returns:
+        12-character hex string
+    """
+    file_path = Path(charts_settings_file_path)
+
+    if not file_path.exists():
+        logger.warning("charts_settings file not found: %s. Using default signature", file_path)
+        return _safe_hash({"file_exists": False, "file": file_path.name})
+
+    try:
+        with open(file_path, "rb") as f:
+            content_hash = hashlib.sha256(f.read()).hexdigest()
+
+        file_info = {"content_hash": content_hash}
+        return _safe_hash(file_info)
+    except Exception as e:
+        logger.warning("Failed to compute charts_settings signature: %s. Using fallback", e)
+        return _safe_hash({"error_type": type(e).__name__, "file": file_path.name})
+
+
+def figure_signature(
+    chart_id: str,
+    data_sig: str,
+    theme_sig: str,
+    charts_settings_sig: str,
+    page_mode: str = "Rapida",
+    extra_params: dict[str, Any] | None = None,
+) -> str:
+    """
+    Combine all signatures into a single cache key signature.
+
+    Creates a deterministic signature from data, theme, and configuration
+    signatures plus optional extra parameters. This is the primary signature
+    used to determine if a figure needs regeneration.
+
+    Args:
+        chart_id: Identifier for the chart/figure
+        data_sig: Signature from data_signature()
+        theme_sig: Signature from theme_signature()
+        charts_settings_sig: Signature from charts_settings_signature()
+        page_mode: Page mode identifier (default "Rapida")
+        extra_params: Additional parameters affecting rendering
+
+    Returns:
+        12-character hex string
+    """
+    def _normalize_page_mode(value: str) -> str:
+        mode = str(value or "").strip().lower()
+        if mode == "report":
+            return "report"
+        return "interactive"
+
+    def _normalize_extra_params(params: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not params:
+            return None
+
+        normalized: dict[str, Any] = {}
+        for key, value in sorted(params.items(), key=lambda item: str(item[0])):
+            key_str = str(key)
+            if value in (None, ""):
+                continue
+
+            # Operational bust tokens should not fragment the figure cache.
+            if key_str == "cache_bust":
+                continue
+
+            # These counts are already represented by data_sig and only create
+            # redundant figure variants on disk.
+            if key_str in {"items", "count"}:
+                continue
+
+            # Order does not matter for these comparison charts.
+            if key_str in {"tickers", "categories"}:
+                if isinstance(value, str):
+                    tokens = [part.strip() for part in value.split("|") if part.strip()]
+                    normalized[key_str] = "|".join(sorted(tokens))
+                    continue
+                if isinstance(value, (list, tuple, set)):
+                    normalized[key_str] = sorted(str(part).strip() for part in value if str(part).strip())
+                    continue
+
+            normalized[key_str] = value
+
+        return normalized or None
+
+    params = {
+        "chart_id": chart_id,
+        "data_sig": data_sig,
+        "theme_sig": theme_sig,
+        "charts_settings_sig": charts_settings_sig,
+        "page_mode": _normalize_page_mode(page_mode),
+    }
+
+    normalized_extra = _normalize_extra_params(extra_params)
+    if normalized_extra:
+        params["extra_params"] = normalized_extra
+
+    return _safe_hash(params)
+
+
+def resolve_analysis_render_sig(current_sig: str, entry: Any) -> str:
+    """
+    Restituisce la firma stabile da usare come chiave per la cache di render
+    delle figure derivate da un'analisi congelata (Benchmark, Accumuli).
+
+    Usa la firma memorizzata nell'entry (da quando l'analisi fu costruita)
+    invece della firma corrente del portfolio. Così un aggiornamento prezzi
+    non invalida le figure di un'analisi che non è stata rigenerata.
+
+    Restituisce current_sig come fallback quando entry è None, non è un dict,
+    o non contiene una firma valida.
+    """
+    if isinstance(entry, dict):
+        stored = entry.get("signature")
+        if stored:
+            return str(stored)
+    return current_sig
+
+
+def cache_key(chart_id: str, figure_sig: str) -> str:
+    """
+    Generate deterministic cache filename from chart ID and figure signature.
+
+    Sanitizes chart_id to contain only alphanumeric characters, underscores,
+    and hyphens. Returns filename in format: {chart_id}_{figure_sig}.json
+
+    Args:
+        chart_id: Identifier for the chart/figure
+        figure_sig: Signature from figure_signature()
+
+    Returns:
+        Sanitized filename string
+    """
+    # Sanitize chart_id: keep only alphanumeric, underscore, hyphen
+    sanitized_id = re.sub(r"[^a-zA-Z0-9_-]", "_", chart_id)
+
+    return f"{sanitized_id}_{figure_sig}.json"

@@ -1,0 +1,21 @@
+[server]
+fileWatcherType = "poll"
+folderWatchBlacklist = ["data"]
+enableStaticServing = true
+
+[theme]
+primaryColor = "#5B8DEF"
+font = "sans-serif"
+headingFont = "sans-serif"
+headingFontSizes = ["1.75rem", "1.35rem", "1.08rem", "0.95rem"]
+headingFontWeights = [800, 800, 700, 600]
+codeFont = "monospace"
+baseFontSize = 16
+baseFontWeight = 400
+
+[theme.sidebar]
+font = "sans-serif"
+headingFont = "sans-serif"
+headingFontSizes = ["1.35rem", "1.12rem", "1rem", "0.9rem"]
+headingFontWeights = [800, 700, 700, 600]
+codeFont = "monospace"

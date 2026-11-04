@@ -1,0 +1,1687 @@
+"""
+ui/pages/pianificazione.py — Tab Pianificazione (t7): What-if simulator + liquidity planner
+Pure rendering with pre-computed simulation data.
+Fragment-based interactive components.
+"""
+from html import escape
+from types import SimpleNamespace
+
+import pandas as pd
+import streamlit as st
+from streamlit.delta_generator import DeltaGenerator
+
+from core.cache import invalidate_portfolio_cache
+from core.finance import compute_portfolio_state
+from core.services.sator import (
+    compute_current_bucket_mix,
+    compute_instrument_quota_status,
+    ensure_sator_metadata,
+    ensure_sator_settings,
+    build_portfolio_rings_frame,
+    compute_watchlist_reminders,
+    build_next_purchase_bubble_frame,
+    held_non_pac_tickers,
+    latest_sator_decision,
+    resolve_instrument_nature,
+)
+from core.cache_signatures import build_portfolio_data_signature
+from core.domain.tax import stima_imposta_vendita
+from core.sator_cache import get_cached_rebalancing_plan, get_cached_sator_analysis, get_cached_sator_frontier
+from core.services.instrument_clustering import build_instrument_map
+from core.services.rebalancing import build_full_instrument_view, build_reinforcement_candidates
+from core.services.sator_explain import build_sator_explanations
+from persistence.storage import APP_VERSION, SCHEMA_VERSION, load_sator_decisions, load_settings, save_settings
+from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it
+from ui.i18n import t
+from ui.page_chrome import render_page_intro as render_page_intro_shared, render_section_line as render_section_line_shared
+from ui.components import render_section_title, back_to_top, legend_block
+from ui.charts.natura_icons import get_nature_visual
+from core.instrument_classification import suggest_tipo_correction
+from core.render_profiler import profile_step
+from ui.charts.pianificazione import (
+    build_objective_mix_chart,
+    build_allocation_rings_chart,
+    build_next_purchase_bubble_chart,
+    build_instrument_map_chart,
+    build_sator_explanation_chart,
+    build_sator_frontier_chart,
+    build_instrument_comparison_chart,
+)
+from core.services.instrument_comparison import (
+    build_comparison_frame,
+    get_all_historical_tickers,
+    resolve_period_start_date,
+)
+from ui.theme import bucket_color, get_theme_context
+from ui.notifications import queue_success
+
+def _page_icon_svg(kind: str = "default") -> str:
+    icons = {
+        "summary": """
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <defs><linearGradient id="g-summary" x1="3" y1="3" x2="21" y2="21"><stop stop-color="var(--page-accent)"/><stop offset="1" stop-color="var(--page-accent-2)"/></linearGradient></defs>
+          <rect x="3.5" y="3" width="17" height="18" rx="4" fill="url(#g-summary)" opacity=".16"/>
+          <path d="M8 8.2h8M8 12h8M8 15.8h5" fill="none" stroke="url(#g-summary)" stroke-width="1.9" stroke-linecap="round"/>
+          <circle cx="17" cy="16" r="2.2" fill="url(#g-summary)"/>
+        </svg>
+        """,
+        "confronto": """
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <defs><linearGradient id="g-confronto" x1="4" y1="20" x2="20" y2="4"><stop stop-color="var(--page-accent)"/><stop offset="1" stop-color="var(--page-accent-2)"/></linearGradient></defs>
+          <rect x="3" y="4" width="18" height="16" rx="4" fill="url(#g-confronto)" opacity=".14"/>
+          <path d="M7 16.5V11M12 16.5V7.5M17 16.5v-4" fill="none" stroke="url(#g-confronto)" stroke-width="2.1" stroke-linecap="round"/>
+          <path d="M6.5 17.5h11" stroke="url(#g-confronto)" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        """,
+        "pianificazione": """
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <defs><linearGradient id="g-plan" x1="4" y1="4" x2="20" y2="20"><stop stop-color="var(--page-accent)"/><stop offset="1" stop-color="var(--page-accent-2)"/></linearGradient></defs>
+          <rect x="3.5" y="5" width="17" height="15.5" rx="4" fill="url(#g-plan)" opacity=".15"/>
+          <path d="M8 3.5v3M16 3.5v3M6.5 9h11" stroke="url(#g-plan)" stroke-width="1.8" stroke-linecap="round"/>
+          <path d="M8 13h3l1.5 2.2L16.5 11" fill="none" stroke="url(#g-plan)" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        """,
+        "gestione": """
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <defs><linearGradient id="g-data" x1="4" y1="4" x2="20" y2="20"><stop stop-color="var(--page-accent)"/><stop offset="1" stop-color="var(--page-accent-2)"/></linearGradient></defs>
+          <rect x="4" y="3.5" width="16" height="17" rx="4" fill="url(#g-data)" opacity=".15"/>
+          <path d="M8 8h8M8 12h8M8 16h5" stroke="url(#g-data)" stroke-width="1.8" stroke-linecap="round"/>
+          <circle cx="17" cy="16" r="2.2" fill="url(#g-data)"/>
+        </svg>
+        """,
+        "impostazioni": """
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <defs><linearGradient id="g-settings" x1="4" y1="4" x2="20" y2="20"><stop stop-color="var(--page-accent)"/><stop offset="1" stop-color="var(--page-accent-2)"/></linearGradient></defs>
+          <circle cx="12" cy="12" r="8.5" fill="url(#g-settings)" opacity=".15"/>
+          <path d="M12 8.1v-2M12 18v-2M8.1 12h-2M18 12h-2M9.25 9.25 7.8 7.8M16.2 16.2l-1.45-1.45M14.75 9.25 16.2 7.8M7.8 16.2l1.45-1.45" stroke="url(#g-settings)" stroke-width="1.7" stroke-linecap="round"/>
+          <circle cx="12" cy="12" r="3.1" fill="none" stroke="url(#g-settings)" stroke-width="2"/>
+        </svg>
+        """,
+        "default": """
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <defs><linearGradient id="g-default" x1="4" y1="4" x2="20" y2="20"><stop stop-color="var(--page-accent)"/><stop offset="1" stop-color="var(--page-accent-2)"/></linearGradient></defs>
+          <rect x="4" y="4" width="16" height="16" rx="4" fill="url(#g-default)" opacity=".15"/>
+          <path d="M8 9h8M8 13h8M8 17h5" stroke="url(#g-default)" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        """,
+    }
+    return icons.get(kind, icons["default"])
+
+
+def _render_page_intro(title: str, comment: str, icon: str = "default", theme=None) -> None:
+    return render_page_intro_shared(title, comment, icon, theme)
+
+
+def _section_line() -> None:
+    return render_section_line_shared()
+
+
+def _instrument_scost_severity(delta_pp: float, tolerance_pp: float) -> str:
+    """Tolleranza per-strumento configurabile (settings["sator"]["instrument_quota_tolerance_pp"]),
+    a differenza di _bucket_scost_severity che ha soglie fisse per il bucket aggregato."""
+    d = abs(delta_pp)
+    tol = max(0.1, tolerance_pp)
+    if d <= tol:
+        return "ok"
+    if d <= tol * 2:
+        return "warn"
+    return "bad"
+
+
+def _bucket_scost_severity(delta_pp: float) -> str:
+    """Tolleranza di ribilanciamento: entro 3pp = ok, entro 8pp = attenzione,
+    oltre = fuori target."""
+    d = abs(delta_pp)
+    if d <= 3.0:
+        return "ok"
+    if d <= 8.0:
+        return "warn"
+    return "bad"
+
+
+def _build_bucket_allocation_table_html(
+    rings_df: pd.DataFrame,
+    bucket_totals: "pd.Series",
+    current_mix: dict[str, float],
+    objective: dict,
+    objective_key: dict[str, str],
+    theme,
+    watchlist_reminders: dict[str, list[str]] | None = None,
+    quota_status: dict[str, dict] | None = None,
+    instrument_tolerance_pp: float = 5.0,
+) -> str:
+    """Tabella unica Core/Difensivo/Satellite: una riga-bucket con barra
+    obiettivo-vs-attuale (fill = attuale, tacca = obiettivo) seguita da una
+    riga per strumento (non piu' aggregata per natura): importo del singolo
+    ticker, barra mini con fill = peso attuale sul bucket e tacca = quota di
+    riferimento (quando definita in "Quote & impostazioni"), didascalia
+    "Attuale X% · Target Y%". Sostituisce sia il vecchio box testuale
+    "Lettura dell'allocazione" sia il box "Strumenti per bucket": un solo
+    oggetto visivo invece di grafico + due box di testo."""
+    total_value = float(bucket_totals.sum())
+    # Bug reale segnalato dall'utente (2026-09-05): uno strumento con
+    # bucket_exposure divisa (es. <strumento> 40% Core/60% Satellite) compare
+    # gia' come riga separata in ogni bucket a cui appartiene (rings_df ha
+    # una riga per (ticker, bucket) - vedi build_portfolio_rings_frame), ma
+    # senza alcuna indicazione che le due righe sono lo STESSO strumento
+    # diviso: l'utente vede lo stesso ticker ripetuto con "Attuale %"
+    # diversi (percentuali sul TOTALE DI BUCKET, non sulla ripartizione
+    # dello strumento) e non ha modo di capire la ripartizione C/D/S di
+    # riferimento. Calcolato qui (non serve toccare build_portfolio_rings_frame:
+    # la ripartizione e' gia' ricavabile dal rapporto tra il valore di questa
+    # riga e il valore totale dello stesso ticker su tutte le righe) e
+    # mostrato tra parentesi SOLO per i ticker che compaiono in piu' di un
+    # bucket - uno strumento non diviso resta invariato.
+    ticker_totals = rings_df.groupby("ticker")["value"].sum() if not rings_df.empty else pd.Series(dtype=float)
+    ticker_row_counts = rings_df.groupby("ticker")["bucket"].count() if not rings_df.empty else pd.Series(dtype=int)
+    split_tickers = set(ticker_row_counts[ticker_row_counts > 1].index)
+    body_rows: list[str] = []
+    for b in ("Core", "Difensivo", "Satellite"):
+        sub = rings_df[rings_df["bucket"] == b]
+        reminders_for_bucket = (watchlist_reminders or {}).get(b, [])
+        if sub.empty and not reminders_for_bucket:
+            continue
+        tone = bucket_color(b, theme)
+        target = float(objective.get(objective_key[b], 0.0))
+        attuale = float(current_mix.get(b, 0.0))
+        scost = (attuale - target) * 100.0
+        severity = _bucket_scost_severity(scost)
+        bucket_value = float(bucket_totals.get(b, 0.0))
+        fill_pct = min(max(attuale * 100.0, 0.0), 100.0)
+        target_pct = min(max(target * 100.0, 0.0), 100.0)
+        body_rows.append(f'''
+        <tr class="bucket-alloc-bucket-row" style="--tone:{tone}">
+          <td colspan="2"><span class="bucket-alloc-bucket-name"><span class="dot"></span>{b}</span></td>
+          <td class="num">{fmt_eur_it(bucket_value, 2)}</td>
+          <td>
+            <div class="bucket-alloc-bar-track">
+              <div class="bucket-alloc-bar-fill" style="width:{fill_pct:.2f}%"></div>
+              <div class="bucket-alloc-bar-target" style="left:{target_pct:.2f}%"></div>
+            </div>
+            <div class="bucket-alloc-bar-caption">
+              <span>Attuale {fmt_pct_it(attuale, 1)} &middot; obiettivo {fmt_pct_it(target, 1)}</span>
+              <span class="bucket-alloc-scost {severity}">{scost:+.1f}%</span>
+            </div>
+          </td>
+        </tr>''')
+        if not sub.empty:
+            sub = sub.copy()
+            sub = sub.sort_values("value", ascending=False)
+            bucket_quota = (quota_status or {}).get(b, {})
+            targets = bucket_quota.get("target_weights", {})
+            deviations = bucket_quota.get("deviations_pp", {})
+            for _, row in sub.iterrows():
+                ticker = str(row["ticker"])
+                nature = str(row["nature"]) if row["nature"] else "altro"
+                natura_color, natura_svg, natura_label = get_nature_visual(nature)
+                instrument_value = float(row["value"])
+                current_pct = (instrument_value / bucket_value * 100.0) if bucket_value > 0 else 0.0
+                ticker_label = escape(ticker)
+                if ticker in split_tickers:
+                    ticker_total = float(ticker_totals.get(ticker, 0.0))
+                    split_pct = (instrument_value / ticker_total * 100.0) if ticker_total > 0 else 0.0
+                    ticker_label += f' <span class="bucket-alloc-split-hint">({split_pct:.0f}% {b.lower()})</span>'
+                has_target = ticker in targets
+                target_pct = targets.get(ticker, 0.0) * 100.0
+                deviation_pp = deviations.get(ticker, 0.0)
+                severity = _instrument_scost_severity(deviation_pp, instrument_tolerance_pp) if has_target else "ok"
+                target_tick = (
+                    f'<div class="bucket-alloc-bar-target" style="left:{min(max(target_pct, 0.0), 100.0):.2f}%"></div>'
+                    if has_target else ""
+                )
+                caption = (
+                    f"Attuale {current_pct:.0f}% &middot; Target {target_pct:.0f}%"
+                    if has_target else f"Attuale {current_pct:.0f}%"
+                )
+                body_rows.append(f'''
+                <tr class="bucket-alloc-instrument-row {severity}" style="--tone:{tone}">
+                  <td><span class="bucket-alloc-natura" style="--natura-color:{natura_color}">{natura_svg}{natura_label}</span></td>
+                  <td class="bucket-alloc-ticker">{ticker_label}</td>
+                  <td class="num">{fmt_eur_it(instrument_value, 2)}</td>
+                  <td>
+                    <div class="bucket-alloc-mini-track">
+                      <div class="bucket-alloc-mini-fill" style="width:{min(max(current_pct, 0.0), 100.0):.2f}%"></div>{target_tick}
+                    </div>
+                    <span class="bucket-alloc-mini-caption">{caption}</span>
+                  </td>
+                </tr>''')
+        for reminder_nature in reminders_for_bucket:
+            natura_color, natura_svg, reminder_label = get_nature_visual(reminder_nature)
+            body_rows.append(f'''
+            <tr class="bucket-alloc-watchlist-row" style="--tone:{tone}">
+              <td><span class="bucket-alloc-natura" style="--natura-color:{natura_color}">{natura_svg}{reminder_label}</span></td>
+              <td class="bucket-alloc-ticker"></td>
+              <td class="num">{fmt_eur_it(0.0, 2)}</td>
+              <td><span class="bucket-alloc-mini-caption">In osservazione</span></td>
+            </tr>''')
+    body_rows.append(f'''
+    <tr class="bucket-alloc-total-row">
+      <td colspan="2">TOTALE</td>
+      <td class="num">{fmt_eur_it(total_value, 2)}</td>
+      <td>100%</td>
+    </tr>''')
+    return (
+        '<div class="bucket-alloc-card"><table class="bucket-alloc-table">'
+        '<thead><tr><th>Natura</th><th>Strumenti</th><th class="num">Importo</th><th>Peso</th></tr></thead>'
+        f'<tbody>{"".join(body_rows)}</tbody></table></div>'
+    )
+
+
+def _render_bucket_allocation_table(
+    rings_df: pd.DataFrame,
+    bucket_totals: "pd.Series",
+    current_mix: dict[str, float],
+    objective: dict,
+    objective_key: dict[str, str],
+    theme,
+    watchlist_reminders: dict[str, list[str]] | None = None,
+    quota_status: dict[str, dict] | None = None,
+    instrument_tolerance_pp: float = 5.0,
+) -> None:
+    st.markdown(
+        _build_bucket_allocation_table_html(
+            rings_df, bucket_totals, current_mix, objective, objective_key, theme,
+            watchlist_reminders, quota_status, instrument_tolerance_pp,
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def _tax_friction_phrase(pl_eur: float, is_gov_bond: bool) -> str:
+    """Frase di attrito fiscale per una riga di riduzione, secondo la
+    distinzione italiana ETF-vs-titolo di Stato (spec 'Attrito fiscale
+    italiano'): una minusvalenza da ETF va comunque nello zainetto ma
+    compensa SOLO altri redditi diversi (BTP, azioni, certificati), mai
+    altri ETF (che generano redditi di capitale, mai compensabili); una
+    minusvalenza da titolo di Stato compensa direttamente altri redditi
+    diversi. Riusa sempre stima_imposta_vendita (core/domain/tax.py):
+    nessuna aliquota ricalcolata qui."""
+    imposta = stima_imposta_vendita(pl_eur, is_gov_bond)
+    if pl_eur < 0:
+        minus_eur = fmt_eur_it(pl_eur, 2)
+        zainetto_eur = fmt_eur_it(abs(pl_eur), 2, signed=True)
+        if is_gov_bond:
+            return (
+                f"{minus_eur} &middot; minus su titolo di Stato &middot; imposta {fmt_eur_it(imposta, 2)} &middot; "
+                f"{zainetto_eur} nello zainetto, compensa direttamente altri redditi diversi (BTP, azioni, certificati)"
+            )
+        return (
+            f"{minus_eur} &middot; minus su ETF &middot; imposta {fmt_eur_it(imposta, 2)} &middot; "
+            f"{zainetto_eur} nello zainetto, compensa solo redditi diversi (BTP/azioni), non altri ETF"
+        )
+    if pl_eur > 0:
+        return f"{fmt_eur_it(pl_eur, 2, signed=True)} &middot; plus &middot; imposta stimata ~{fmt_eur_it(imposta, 2)}"
+    return "nessuna plus/minusvalenza &middot; imposta 0"
+
+
+_VERDETTO_PRIORITA = {"vendi": 0, "compra": 1, "non_toccare": 2, "tieni": 3}
+_VERDETTO_SEVERITY = {"vendi": "bad", "compra": "ok", "non_toccare": "warn", "tieni": ""}
+_BUCKET_ORDER = ("Core", "Difensivo", "Satellite")
+
+
+def _build_rebalancing_rows(righe: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Prepara le righe di build_full_instrument_view per la resa HTML:
+    calcola l'etichetta dell'azione e ordina vendi/compra/non_toccare/
+    tieni. Nessun calcolo finanziario qui, solo formattazione - i numeri
+    vengono gia' pronti da core.services.rebalancing."""
+    preparate: list[dict[str, Any]] = []
+    for r in righe:
+        verdetto = r["verdetto"]
+        if verdetto == "vendi":
+            quote = int(r.get("quote") or 0)
+            importo = float(r.get("importo_eur") or 0.0)
+            azione_label = f"VENDI {quote} {'quota' if quote == 1 else 'quote'} ({fmt_eur_it(importo, 2)})"
+        elif verdetto == "compra":
+            quote = int(r.get("quote") or 0)
+            importo = float(r.get("importo_eur") or 0.0)
+            prefisso = "OPPURE COMPRA" if r.get("alternativa") else "COMPRA"
+            azione_label = f"{prefisso} {quote} {'quota' if quote == 1 else 'quote'} ({fmt_eur_it(importo, 2)})"
+        elif verdetto == "non_toccare":
+            if r.get("forzato"):
+                quote = int(r.get("quote") or 0)
+                importo = float(r.get("importo_eur") or 0.0)
+                azione_label = (
+                    f"NON TOCCARE &mdash; forzato: vendi {quote} "
+                    f"{'quota' if quote == 1 else 'quote'} ({fmt_eur_it(importo, 2)})"
+                )
+            else:
+                azione_label = "NON TOCCARE"
+        else:
+            azione_label = "TIENI"
+        preparate.append({**r, "azione_label": azione_label})
+    preparate.sort(key=lambda r: _VERDETTO_PRIORITA[r["verdetto"]])
+    return preparate
+
+
+def _build_composition_bar_html(esposizione: dict[str, float], theme) -> str:
+    """Barra segmentata: quanto lo strumento e' esposto a ciascun bucket,
+    stessi colori di bucket_color() gia' usati ovunque nell'app per Core/
+    Difensivo/Satellite (nessun colore nuovo). Risponde al feedback
+    utente 2026-09-19: "potrebbe andar[e]" sul mockup con le barre invece
+    del solo testo."""
+    segmenti = []
+    for bucket in _BUCKET_ORDER:
+        frac = float(esposizione.get(bucket, 0.0) or 0.0)
+        if frac <= 0:
+            continue
+        tone = bucket_color(bucket, theme)
+        segmenti.append(f'<div style="width:{frac * 100:.1f}%;background:{tone};"></div>')
+    if not segmenti:
+        return ""
+    return f'<div class="bucket-alloc-composition-bar">{"".join(segmenti)}</div>'
+
+
+_LIVELLO_LABEL = {
+    0: "Liquidita'", 1: "Ridondante", 2: "Bassa convinzione",
+    3: "Duration alta", 3.5: "Rischio/peso", 4: "Generico", 5: "Vicino a scadenza",
+}
+
+
+def _voto_severity(voto: float) -> str:
+    if voto >= 7.5:
+        return "ok"
+    if voto >= 6.0:
+        return "warn"
+    return "bad"
+
+
+def _build_reason_badges_html(r: dict[str, Any]) -> str:
+    """Motivo come badge GRAFICI compatti (chip di categoria + pillola
+    numerica), non una frase intera - feedback utente 2026-09-20: "invece
+    di trovare una soluzione grafica come ti dico dall'inizio tronchi il
+    testo... follia!". Per vendi/non_toccare: la categoria di vendita gia'
+    classificata da _classify_reduction_candidate (livello) + il P/L reale
+    colorato. Per compra: il voto SATOR colorato + il fattore che pesa di
+    piu' sul voto (build_sator_explanations, stessa scomposizione a 5
+    fattori mostrata altrove nell'app, nessun nuovo calcolo). Il testo
+    completo (perche'/attrito fiscale) resta comunque leggibile in un
+    tooltip nativo per chi lo vuole, ma non e' piu' il contenuto primario
+    visibile - quello ora e' sempre grafico."""
+    verdetto = r["verdetto"]
+    bits: list[str] = []
+    if verdetto in ("vendi", "non_toccare"):
+        label = _LIVELLO_LABEL.get(r.get("livello"), "")
+        if label:
+            bits.append(f'<span class="bucket-alloc-chip">{escape(label)}</span>')
+        pl_eur = r.get("pl_eur")
+        if pl_eur is not None:
+            severity = "ok" if pl_eur > 0 else ("bad" if pl_eur < 0 else "")
+            pl_txt = fmt_eur_it(float(pl_eur), 2, signed=True)
+            bits.append(
+                f'<span class="bucket-alloc-scost {severity}">{pl_txt}</span>' if severity else
+                f'<span class="bucket-alloc-mini-caption">{pl_txt}</span>'
+            )
+    elif verdetto == "compra":
+        voto = r.get("voto")
+        if voto is not None:
+            bits.append(f'<span class="bucket-alloc-scost {_voto_severity(float(voto))}">Voto {float(voto):.1f}</span>')
+        top_factor = r.get("top_factor")
+        if top_factor:
+            bits.append(f'<span class="bucket-alloc-chip">{escape(str(top_factor))}</span>')
+    else:
+        bits.append(f'<span class="bucket-alloc-mini-caption">{escape(str(r.get("motivo", "")))}</span>')
+    return "".join(bits)
+
+
+def _build_rebalancing_html(righe: list[dict[str, Any]], theme) -> str:
+    """Blocco 'ribilanciamento': UNA sola tabella piatta, una riga per
+    strumento POSSEDUTO (tutti, non solo quelli di un bucket - vedi
+    build_full_instrument_view), senza raggruppamento per bucket Core/
+    Difensivo/Satellite - riscritta su feedback esplicito del proprietario
+    del repo (2026-09-19/20: "non vedere questa divisione C/D/S che non
+    ha senso... vorrei vedere tutti gli strumenti... perche' me ne fai
+    vedere solo 9 e non tutti?!"). Ogni riga ha un verdetto (VENDI/COMPRA/
+    NON TOCCARE/TIENI) come badge colorato (bucket-alloc-scost ok/warn/
+    bad, gia' esistenti) e una barra di composizione per bucket. Il
+    motivo e' su UNA riga troncata con ellissi (classe bucket-alloc-
+    motivo) - il testo completo resta leggibile via tooltip nativo del
+    browser (attributo title, non un menu che si apre): risponde al
+    feedback "troppo testo... voglio la tabella piu' compatta" tenendo
+    comunque la trasparenza sul perche' delle scelte."""
+    if not righe:
+        return ""
+    preparate = _build_rebalancing_rows(righe)
+
+    body_rows: list[str] = []
+    conteggio_azioni = {"vendi": 0, "compra": 0, "non_toccare": 0, "tieni": 0}
+    alternative_disponibili = 0
+    for r in preparate:
+        e_alternativa = r["verdetto"] == "compra" and bool(r.get("alternativa"))
+        if e_alternativa:
+            # Un'alternativa e' un OPPURE, non una seconda spesa - non
+            # conta nel "N da comprare" del footer (feedback utente
+            # 2026-09-20: "vorrei poter fare azionario", non un secondo
+            # acquisto sommato al primo).
+            alternative_disponibili += 1
+        else:
+            conteggio_azioni[r["verdetto"]] += 1
+        severity = "" if e_alternativa else _VERDETTO_SEVERITY[r["verdetto"]]
+        ticker = escape(str(r["ticker"]))
+        name = escape(str(r.get("name", "")))
+        azione_html = (
+            f'<span class="bucket-alloc-scost {severity}">{r["azione_label"]}</span>'
+            if severity else
+            f'<span class="bucket-alloc-mini-caption">{r["azione_label"]}</span>'
+        )
+        badges_html = _build_reason_badges_html(r)
+        if r["verdetto"] in ("vendi", "non_toccare", "compra"):
+            motivo_plain = escape(str(r.get("motivo", "")))
+            if r["verdetto"] in ("vendi", "non_toccare") and r.get("pl_eur") is not None:
+                attrito = _tax_friction_phrase(float(r["pl_eur"]), bool(r.get("is_gov_bond")))
+                tooltip_full = f'{motivo_plain} &middot; {attrito}'
+            else:
+                tooltip_full = motivo_plain
+            motivo_cell = f'<span title="{tooltip_full}">{badges_html}</span>'
+        else:
+            motivo_cell = badges_html
+        bar_html = _build_composition_bar_html(r.get("esposizione") or {}, theme)
+        # L'alternativa riusa lo stile gia' esistente delle righe
+        # 'tieni' (bordo tratteggiato, opacita' ridotta): e' informazione
+        # secondaria/opzionale, non un'azione primaria - nessuno stile
+        # nuovo, solo la classe gia' usata per lo stesso concetto altrove.
+        row_class = "bucket-alloc-watchlist-row" if (r["verdetto"] == "tieni" or e_alternativa) else "bucket-alloc-instrument-row"
+        body_rows.append(f'''
+                <tr class="{row_class}">
+                  <td class="bucket-alloc-ticker" title="{name}">{ticker}</td>
+                  <td class="num">{azione_html}</td>
+                  <td>{motivo_cell}</td>
+                  <td>{bar_html}</td>
+                </tr>''')
+
+    footer_bits = []
+    if conteggio_azioni["vendi"]:
+        footer_bits.append(f'{conteggio_azioni["vendi"]} da vendere')
+    if conteggio_azioni["compra"]:
+        footer_bits.append(f'{conteggio_azioni["compra"]} da comprare')
+    if alternative_disponibili:
+        footer_bits.append(f'{alternative_disponibili} con alternativa di asset class')
+    if conteggio_azioni["non_toccare"]:
+        footer_bits.append(f'{conteggio_azioni["non_toccare"]} da non toccare')
+    if conteggio_azioni["tieni"]:
+        footer_bits.append(f'{conteggio_azioni["tieni"]} da tenere cosi\' come sono')
+    footer_text = f"{len(preparate)} strumenti posseduti: " + ", ".join(footer_bits) + "."
+    body_rows.append(
+        '<tr class="bucket-alloc-instrument-row"><td colspan="4">'
+        f'<span class="bucket-alloc-mini-caption">{footer_text}</span></td></tr>'
+    )
+    return (
+        '<div class="bucket-alloc-card"><table class="bucket-alloc-table">'
+        '<thead><tr><th>Strumento</th><th class="num">Verdetto</th><th>Motivo</th><th>Composizione</th></tr></thead>'
+        f'<tbody>{"".join(body_rows)}</tbody></table></div>'
+    )
+
+
+def _compute_projected_mix(
+    righe: list[dict[str, Any]], current_mix: dict[str, float], total_value: float,
+) -> dict[str, float]:
+    """Mix proiettato se si eseguissero TUTTE le vendite/acquisti proposti
+    oggi (non i tenuti/non_toccare, che non muovono nulla). Uno strumento
+    a esposizione frazionata sposta valore su PIU' bucket in proporzione
+    (stessa esposizione gia' usata dal motore per calcolare contributo_eur/
+    quota_vendita_eur - nessun nuovo calcolo finanziario, solo la stessa
+    proporzione riapplicata all'importo reale della riga). Un'alternativa
+    (stessa cifra di un'altra riga compra, asset class diversa) e' un
+    OPPURE: non muove il mix in aggiunta al primario, altrimenti la
+    stessa cifra verrebbe contata due volte."""
+    if total_value <= 0:
+        return dict(current_mix)
+    delta_eur = {b: 0.0 for b in _BUCKET_ORDER}
+    for r in righe:
+        if r.get("alternativa"):
+            continue
+        segno = 1.0 if r["verdetto"] == "compra" else (-1.0 if r["verdetto"] == "vendi" else 0.0)
+        if segno == 0.0:
+            continue
+        importo = float(r.get("importo_eur") or 0.0)
+        if importo <= 0:
+            continue
+        for b, frac in (r.get("esposizione") or {}).items():
+            if b in delta_eur and frac:
+                delta_eur[b] += segno * importo * float(frac)
+    return {
+        b: max(0.0, (current_mix.get(b, 0.0) * total_value + delta_eur.get(b, 0.0)) / total_value)
+        for b in _BUCKET_ORDER
+    }
+
+
+def _bucket_nota_ribilanciamento(info: dict[str, Any]) -> str:
+    """Perche' la barra di questo bucket non arriva (del tutto) al
+    confine banda - solo per i due casi che restavano silenziosi prima
+    (bug reali trovati dall'utente 2026-09-20): nessun acquisto proposto
+    nonostante il deficit, o vendita che copre solo una parte
+    dell'eccesso perche' il resto e' condiviso con un bucket in deficit."""
+    if info["status"] == "deficit":
+        reinforcement = info.get("reinforcement") or {}
+        if reinforcement.get("candidates"):
+            return ""
+        budget_eur = float(info.get("budget_eur", 0.0))
+        if reinforcement.get("budget_insufficiente"):
+            return f"Nessun acquisto proposto: ricavato disponibile ({fmt_eur_it(budget_eur, 2)}) troppo piccolo per un acquisto sensato."
+        return "Nessun acquisto proposto: nessun titolo SATOR eleggibile con il budget disponibile."
+    reduction = info.get("reduction") or {}
+    coverage_pct = float(reduction.get("coverage_pct", 1.0))
+    if coverage_pct >= 0.999:
+        return ""
+    covered_eur = float(reduction.get("covered_eur", 0.0))
+    amount_eur = float(info.get("amount_eur", 0.0))
+    return (
+        f"La vendita copre solo {fmt_eur_it(covered_eur, 2)} su {fmt_eur_it(amount_eur, 2)} di eccesso "
+        f"({fmt_pct_it(coverage_pct, 0)}) - il resto e' escluso (vedi la tabella sotto) o sotto la soglia minima."
+    )
+
+
+def _build_rebalancing_bucket_bars_html(
+    plan: dict[str, dict], current_mix: dict[str, float], projected_mix: dict[str, float],
+    total_value: float, theme,
+) -> str:
+    """Una barra per bucket (Core/Difensivo/Satellite), nello stesso
+    identico stile della card 'Fotografia di riferimento' qui sotto
+    (ref-snapshot-bar-track/fill/target + ref-snapshot-amount-row) - non
+    piu' uno stile inventato per il ribilanciamento: feedback utente
+    2026-09-20 "mi sarebbe piaciuta più la grafica che hai usato sempre
+    in pianificazione per... Fotografia di riferimento, con le 3 barre
+    semplici, compatte". La riga sotto la barra (quando presente) spiega
+    perche' non arriva al confine banda (vedi _bucket_nota_ribilanciamento)."""
+    rows: list[str] = []
+    for bucket in _BUCKET_ORDER:
+        info = plan.get(bucket)
+        if not info:
+            continue
+        tone = bucket_color(bucket, theme)
+        attuale = float(current_mix.get(bucket, 0.0))
+        dopo = float(projected_mix.get(bucket, attuale))
+        amount_eur = float(info["amount_eur"])
+        if info["status"] == "deficit":
+            target_frac = attuale + amount_eur / total_value if total_value > 0 else attuale
+        else:
+            target_frac = attuale - amount_eur / total_value if total_value > 0 else attuale
+        fill_pct = min(max(attuale * 100.0, 0.0), 100.0)
+        target_pct = min(max(target_frac * 100.0, 0.0), 100.0)
+        nota = _bucket_nota_ribilanciamento(info)
+        nota_html = f'<div class="ref-snapshot-note">{nota}</div>' if nota else ""
+        # nota_html va SEMPRE attaccato senza andare a capo su una riga
+        # dedicata: quando e' vuoto, una riga fatta di soli spazi rompe il
+        # riconoscimento "ancora HTML grezzo" di Markdown/Streamlit (stesso
+        # bug reale gia' trovato e corretto altrove in questa stessa
+        # sessione per _build_rebalancing_html - qui non era stata
+        # applicata la stessa protezione, regressione reale vista
+        # dall'utente: l'HTML appariva come testo letterale).
+        rows.append(f'''
+        <div style="margin-bottom:14px;">
+          <div class="ref-snapshot-amount-row">
+            <span><span class="dot" style="width:8px;height:8px;border-radius:50%;background:{tone};display:inline-block;margin-right:6px;"></span>{escape(bucket)}</span>
+            <span class="val">{fmt_pct_it(attuale, 1)} <span class="cap">&rarr; {fmt_pct_it(dopo, 1)} dopo oggi &middot; confine banda {fmt_pct_it(target_frac, 1)}</span></span>
+          </div>
+          <div class="ref-snapshot-bar-track" style="--tone:{tone};margin-bottom:{'4px' if nota else '14px'};">
+            <div class="ref-snapshot-bar-fill" style="width:{fill_pct:.2f}%"></div>
+            <div class="ref-snapshot-bar-target" style="left:{target_pct:.2f}%"></div>
+          </div>{nota_html}
+        </div>''')
+    # .strip(): il primo/ultimo blocco iniziano/finiscono con un a-capo di
+    # indentazione - innocuo quando concatenato dopo _build_rebalancing_
+    # summary_boxes_html (come fa _render_rebalancing_table), ma renderebbe
+    # questa funzione fragile se mai usata da sola (una riga iniziale
+    # vuota rompe lo stesso riconoscimento "ancora HTML grezzo").
+    return "".join(rows).strip()
+
+
+def _build_rebalancing_summary_boxes_html(righe: list[dict[str, Any]]) -> str:
+    """Sintesi come box colorati, stesso stile ref-snapshot-judgement gia'
+    usato da 'Fotografia di riferimento' qui sotto - non piu' un paragrafo
+    o un elenco: feedback utente 2026-09-20 "mi sarebbe piaciuta più la
+    grafica che hai usato sempre in pianificazione... box interni
+    colorati". Un box per azione (VENDI in rosso, COMPRA in verde, stessa
+    scala colori gia' usata per il badge Verdetto in tabella sotto). Le
+    alternative per asset class (OPPURE COMPRA) restano fuori, visibili
+    solo in tabella - qui la conclusione resta una sola per riga. Il
+    "perche' non basta"/"perche' niente" (bucket senza candidati, vendita
+    parziale) e' spiegato riga per riga sotto ciascuna barra bucket
+    (_bucket_nota_ribilanciamento), non piu' qui: piu' vicino al numero a
+    cui si riferisce."""
+    vendi = [r for r in righe if r["verdetto"] == "vendi"]
+    # Le alternative (stessa cifra, asset class diversa - feedback utente
+    # 2026-09-20: "vorrei poter fare azionario") sono un OPPURE, non una
+    # seconda azione: restano fuori dalla sintesi, visibili solo nella
+    # tabella sotto con l'etichetta "OPPURE COMPRA".
+    compra = [r for r in righe if r["verdetto"] == "compra" and not r.get("alternativa")]
+
+    boxes: list[str] = []
+    for r in vendi:
+        importo = float(r.get("importo_eur") or 0.0)
+        boxes.append(
+            '<div><span>Vendi</span>'
+            f'<b class="bad">{escape(str(r["ticker"]))} &middot; {fmt_eur_it(importo, 2)}</b></div>'
+        )
+    for r in compra:
+        quote = int(r.get("quote") or 0)
+        importo = float(r.get("importo_eur") or 0.0)
+        boxes.append(
+            '<div><span>Compra</span>'
+            f'<b class="ok">{quote}q {escape(str(r["ticker"]))} &middot; {fmt_eur_it(importo, 2)}</b></div>'
+        )
+    if not boxes:
+        boxes.append('<div><span>Oggi</span><b>Nessuna operazione eseguibile</b></div>')
+    return (
+        '<div class="ref-snapshot-judgement" style="grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));">'
+        + "".join(boxes) + "</div>"
+    )
+
+
+def _suggerisci_acquisto_capitale(
+    data: dict[str, Any], settings: dict[str, Any], bucket: str, capitale: float,
+    current_mix: dict[str, float], plan: dict[str, dict], total_value: float,
+    data_sig: str = "",
+) -> list[dict[str, Any]]:
+    """Cosa comprare se si iniettasse capitale NUOVO in questo bucket,
+    riusando lo stesso motore delle proposte "con il ricavato delle
+    vendite" (get_cached_sator_analysis + build_reinforcement_candidates,
+    stesso filtro anti-surplus, stessa alternativa per asset class) -
+    nessun calcolo nuovo. Risponde al feedback utente 2026-09-20: "se io
+    volessi pareggiare CORE potrei decidere comunque di comprare 1113 di
+    SWDA... decidendo di non comprare nessun obbligazionario" - il
+    simulatore di capitale diceva solo la percentuale risultante, non
+    COSA comprare.
+
+    `capitale` di default e' precompilato dal deficit del bucket (vedi
+    _render_rebalancing_table), che st.number_input mantiene stabile in
+    session_state tra i rerun finche' l'utente non lo cambia a mano:
+    root cause reale del costo esclusivo ~3s di rebalancing_table (indagine
+    2026-09-22, fino a 3 chiamate SATOR grezze a render, una per bucket in
+    deficit) - get_cached_sator_analysis lo elimina sugli stessi rerun senza
+    cambiamenti, stesso pattern gia' usato per rebalancing_table/sator_analysis."""
+    if capitale <= 0:
+        return []
+    objective = settings.get("portfolio_objective", {}) if isinstance(settings, dict) else {}
+    surplus_buckets = frozenset(b for b, i in plan.items() if i["status"] == "surplus")
+    try:
+        ranking = get_cached_sator_analysis(data, settings, budget=capitale, data_sig=data_sig).get("ranking")
+        if ranking is None or ranking.empty:
+            return []
+        result = build_reinforcement_candidates(
+            ranking, data, settings, bucket, capitale, current_mix, objective, total_value,
+            surplus_buckets=surplus_buckets,
+        )
+        return result["candidates"]
+    except Exception:
+        return []
+
+
+def _render_rebalancing_table(
+    data: dict[str, Any], state_df: pd.DataFrame, plan: dict[str, dict],
+    current_mix: dict[str, float], total_value: float, theme, settings: dict[str, Any],
+    exclude_tickers: frozenset[str] = frozenset(), data_sig: str = "",
+) -> None:
+    righe = build_full_instrument_view(data, state_df, plan, exclude_tickers=exclude_tickers)
+    if not righe:
+        return
+    render_section_title(
+        "Ribilanciamento suggerito",
+        comment="Ogni strumento posseduto, con un verdetto: vendi, compra, non toccare o tieni cosi' com'e'. Proposta di lettura, mai un ordine automatico: valuta sempre tu prima di agire.",
+        gap_after="sm",
+    )
+    projected_mix = _compute_projected_mix(righe, current_mix, total_value)
+    # Una sola card verticale (sintesi + barre), stesso identico stile
+    # ref-snapshot-* gia' usato da "Fotografia di riferimento" piu' sotto
+    # nella pagina - feedback utente 2026-09-20: "mi sarebbe piaciuta più
+    # la grafica che hai usato sempre in pianificazione per... Fotografia
+    # di riferimento, con le 3 barre semplici, compatte... box interni
+    # colorati". Risolve anche, per costruzione, il problema di allineare
+    # due box affiancati (qui non ce ne sono piu' due: e' tutto impilato
+    # in un'unica card, come nel riferimento) dopo tre round di fix
+    # CSS (Flexbox poi Grid) che non erano mai la soluzione giusta.
+    summary_html = _build_rebalancing_summary_boxes_html(righe)
+    bars_html = _build_rebalancing_bucket_bars_html(plan, current_mix, projected_mix, total_value, theme)
+    st.markdown(
+        '<div class="ref-snapshot-card"><div class="ref-snapshot-body">'
+        f'{summary_html}{bars_html}'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
+    # Box nativo Streamlit ben distinto (feedback utente 2026-09-20: "la
+    # parte capitale nuovo... starebbe bene in un box chiaro e ben
+    # individuato in quanto... introdurre denaro nuovo e' comunque una
+    # soluzione alternativa alla vendita/acquisto") - st.container(border=
+    # True), non un div HTML a mano: i widget nativi sotto (number_input,
+    # caption) non possono stare dentro un div aperto via st.markdown,
+    # mentre un container nativo li contiene davvero e rispetta il tema
+    # (bordo/colori) senza inventare nulla. Sempre tutti e tre i bucket
+    # (feedback utente: "hai messo 2 cursori C/D ma manca il terzo
+    # cursore S... oggi magari non serve ma in futuro magari si") - non
+    # solo quelli oggi in deficit. Niente st.expander: l'utente ha gia'
+    # respinto in passato ogni "menu che si apre" - il calcolatore resta
+    # sempre visibile, mai dietro un click.
+    with st.container(border=True):
+        st.markdown("**Alternativa: capitale nuovo** (invece di vendere per comprare)")
+        colonne = st.columns(len(_BUCKET_ORDER))
+        for col, bucket in zip(colonne, _BUCKET_ORDER):
+            info = plan.get(bucket)
+            amount_eur = float(info["amount_eur"]) if info and info["status"] == "deficit" else 0.0
+            default_val = int(round(amount_eur / 100.0) * 100) if amount_eur > 0 else 0
+            label = f"{bucket} (mancano {fmt_eur_it(amount_eur, 2)})" if amount_eur > 0 else bucket
+            with col:
+                capitale = st.number_input(
+                    label, min_value=0, max_value=500000, value=default_val, step=500,
+                    key=f"rebalancing_capitale_{bucket}",
+                )
+                bucket_value = float(current_mix.get(bucket, 0.0)) * total_value
+                nuovo_frac = (
+                    (bucket_value + capitale) / (total_value + capitale)
+                    if (total_value + capitale) > 0 else 0.0
+                )
+                st.caption(f"{bucket}: {fmt_pct_it(current_mix.get(bucket, 0.0), 1)} → {fmt_pct_it(nuovo_frac, 1)}")
+                # Feedback utente 2026-09-20: "se io volessi pareggiare
+                # CORE potrei decidere comunque di comprare 1113 di
+                # SWDA... non comprare nessun obbligazionario o titolo
+                # misto" - il simulatore ora dice anche COSA comprare con
+                # quel capitale, non solo la percentuale risultante.
+                for c in _suggerisci_acquisto_capitale(data, settings, bucket, float(capitale), current_mix, plan, total_value, data_sig=data_sig):
+                    prefisso = "Oppure compra" if c.get("alternativa") else "Compra"
+                    st.caption(f"→ {prefisso} {c['quote']} quote di {c['ticker']} ({fmt_eur_it(float(c['importo_eur']), 2)})")
+    html = _build_rebalancing_html(righe, theme)
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def _normalize_objective_inputs(core: float, difensivo: float, satellite: float) -> dict[str, float]:
+    total = max(0.0, core) + max(0.0, difensivo) + max(0.0, satellite)
+    if total <= 0:
+        return {"core": 1 / 3, "difensivo": 1 / 3, "satellite": 1 / 3}
+    return {"core": max(0.0, core) / total, "difensivo": max(0.0, difensivo) / total, "satellite": max(0.0, satellite) / total}
+
+
+_OBJECTIVE_PRESETS = {
+    "Prudente (Core 50 / Difensivo 40 / Satellite 10)": {"core": 0.50, "difensivo": 0.40, "satellite": 0.10},
+    "Equilibrato (Core 55 / Difensivo 25 / Satellite 20)": {"core": 0.55, "difensivo": 0.25, "satellite": 0.20},
+    "Dinamico (Core 50 / Difensivo 15 / Satellite 35)": {"core": 0.50, "difensivo": 0.15, "satellite": 0.35},
+}
+
+
+def _state_float(key: str, fallback: float) -> float:
+    try:
+        return float(st.session_state.get(key, fallback) or fallback)
+    except Exception:
+        return float(fallback)
+
+
+def _save_portfolio_objective_settings_from_state() -> None:
+    settings = load_settings()
+    preset_label = str(st.session_state.get("obj_preset", "-") or "-")
+    preset = _OBJECTIVE_PRESETS.get(preset_label)
+    if preset:
+        objective = dict(preset)
+    else:
+        objective = _normalize_objective_inputs(
+            _state_float("obj_core", 0.0),
+            _state_float("obj_difensivo", 0.0),
+            _state_float("obj_satellite", 0.0),
+        )
+    st.session_state["obj_core"] = objective["core"] * 100
+    st.session_state["obj_difensivo"] = objective["difensivo"] * 100
+    st.session_state["obj_satellite"] = objective["satellite"] * 100
+    st.session_state["obj_preset"] = "-"
+
+    settings["portfolio_objective"] = objective
+    save_settings(settings)
+    st.session_state["_settings_runtime"] = settings
+    invalidate_portfolio_cache("impostazioni obiettivo portafoglio salvate")
+    queue_success("Obiettivo di portafoglio salvato. Cruscotti, Analitica e SATOR useranno subito il nuovo target.")
+
+
+def _save_deficit_pac_only_from_state() -> None:
+    """Salva subito il toggle "Escludi BTP/GOV" (chiave invariata,
+    settings["sator"]["deficit_pac_only"]): non e' dentro il form obiettivo,
+    aggiorna al click via on_change - stessa azione esplicita dell'utente
+    gia' prevista dalla regola madre (01_REGOLE_NON_NEGOZIABILI.md, §0), non
+    un rerun a sorpresa."""
+    settings = load_settings()
+    settings.setdefault("sator", {})["deficit_pac_only"] = bool(
+        st.session_state.get("pianificazione_deficit_pac_only", False)
+    )
+    save_settings(settings)
+    st.session_state["_settings_runtime"] = settings
+    invalidate_portfolio_cache("toggle esclusione BTP/GOV in Pianificazione")
+
+
+def _render_btp_exclusion_toggle(data: dict, settings: dict) -> frozenset[str]:
+    """Checkbox unico in cima alla pagina Pianificazione (fuori da qualunque
+    form): pilota settings["sator"]["deficit_pac_only"], la stessa chiave
+    gia' usata per il deficit di bucket in SATOR, ora estesa a ogni
+    grafico/tabella della pagina. Ritorna l'insieme di ticker BTP/GOV
+    posseduti da escludere (frozenset vuoto se il toggle e' spento), calcolato
+    una sola volta qui e da passare esplicitamente a valle - stesso pattern
+    gia' usato per chiusi_tickers/active_fetch_tickers (ui/runtime_context.py,
+    core/domain/instrument_status.py)."""
+    sator_cfg = ensure_sator_settings(settings)
+    st.checkbox(
+        "Escludi BTP/GOV da tutta la pagina Pianificazione",
+        value=bool(sator_cfg["deficit_pac_only"]),
+        key="pianificazione_deficit_pac_only",
+        help=(
+            "Se attivo, i titoli non ad accumulo posseduti (BTP/GOV) sono esclusi da ogni grafico "
+            "e tabella di questa pagina: obiettivo-vs-mix, allocazione, mappa strumenti, frontiera "
+            "rischio/rendimento, confronto strumenti, spiegazione del voto SATOR e deficit di bucket."
+        ),
+        on_change=_save_deficit_pac_only_from_state,
+    )
+    active = bool(st.session_state.get("pianificazione_deficit_pac_only", sator_cfg["deficit_pac_only"]))
+    if not active:
+        return frozenset()
+    st.warning("BTP esclusi volutamente da tutti i calcoli e grafici di questa pagina.")
+    state_df = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
+    return held_non_pac_tickers(data, state_df)
+
+
+def _render_quota_invalid_banner(quota_status: dict) -> None:
+    invalid_buckets = [
+        (bucket, status) for bucket, status in quota_status.items() if not status.get("valid", True)
+    ]
+    if not invalid_buckets:
+        return
+    details = "; ".join(
+        f"{bucket}: manca la quota per {', '.join(status['missing_tickers'])}"
+        if status["missing_tickers"]
+        else f"{bucket}: somma quote {status['sum_target']*100:.0f}% invece di 100%"
+        for bucket, status in invalid_buckets
+    )
+    st.error(
+        "Quote interne non valide — SATOR non propone acquisti per questi bucket finché non le aggiorni "
+        f"da \"Quote & impostazioni\" in sidebar. {details}."
+    )
+
+
+def _render_quota_unconfigured_reminder(quota_status: dict) -> None:
+    """Avviso informativo (non bloccante, st.info) per bucket che possiedono
+    strumenti ma non hanno ancora nessuna quota interna configurata - a
+    differenza di _render_quota_invalid_banner (st.error, bucket opt-in ma
+    con copertura incompleta o somma sbagliata), qui il bucket e' valido a
+    tutti gli effetti (comportamento opt-in confermato dall'utente): SATOR
+    continua a funzionare, ma senza un segnale l'utente non si accorge mai
+    che la feature esiste per quel bucket. Richiesto esplicitamente
+    dall'utente dopo il merge - "volevo un avviso vero e proprio", non solo
+    un'etichetta diversa."""
+    unconfigured = [
+        bucket for bucket, status in quota_status.items()
+        if status.get("valid", True) and not status.get("target_weights") and status.get("current_weights")
+    ]
+    if not unconfigured:
+        return
+    st.info(
+        "Non hai ancora impostato le quote interne per " + ", ".join(unconfigured) + ": "
+        "SATOR continua a funzionare normalmente, ma non puoi tracciare le proporzioni tra "
+        "gli strumenti di questi bucket. Configurale quando vuoi da \"Quote & impostazioni\" in sidebar."
+    )
+
+
+def _render_portfolio_objective_section(ctx: SimpleNamespace, theme, exclude_tickers: frozenset[str] = frozenset()) -> None:
+    settings = ctx.settings
+    data = ctx.data
+    objective = settings.get("portfolio_objective", {"core": 0.55, "difensivo": 0.25, "satellite": 0.20})
+
+    render_section_title(
+        "Obiettivo di portafoglio",
+        comment="Le percentuali Core/Difensivo/Satellite che guidano SATOR e la Liquidita' da investire. Nessun valore preimpostato nascosto: tutto qui e' quello che leggi.",
+        gap_after="sm",
+    )
+
+    with st.form("portfolio_objective_form", clear_on_submit=False):
+        st.selectbox("Preset rapido (facoltativo)", ["-"] + list(_OBJECTIVE_PRESETS.keys()), key="obj_preset")
+        st.caption("Se scegli un preset, al salvataggio avra' priorita' sui tre valori manuali Core/Difensivo/Satellite.")
+        c1, c2, c3 = st.columns(3, gap="small")
+        core_pct = c1.number_input("Core %", min_value=0.0, max_value=100.0, step=1.0,
+                                    value=float(st.session_state.get("obj_core", objective["core"] * 100)), key="obj_core")
+        dif_pct = c2.number_input("Difensivo %", min_value=0.0, max_value=100.0, step=1.0,
+                                   value=float(st.session_state.get("obj_difensivo", objective["difensivo"] * 100)), key="obj_difensivo")
+        sat_pct = c3.number_input("Satellite %", min_value=0.0, max_value=100.0, step=1.0,
+                                   value=float(st.session_state.get("obj_satellite", objective["satellite"] * 100)), key="obj_satellite")
+
+        st.form_submit_button(
+            "Salva obiettivo e aggiorna analisi",
+            width="stretch",
+            on_click=_save_portfolio_objective_settings_from_state,
+        )
+
+    with profile_step("Pianificazione", "obiettivo_state_mix"):
+        state_df = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
+        current_mix = compute_current_bucket_mix(data, state_df, exclude_tickers=exclude_tickers)
+    with profile_step("Pianificazione", "obiettivo_chart"):
+        _render_objective_mix_chart(objective, current_mix, theme)
+    st.caption("Limiti di concentrazione, pesi SATOR e quote interne per bucket: vai su **Quote & impostazioni** dalla sidebar.")
+
+
+def _render_objective_mix_chart(objective: dict, current_mix: dict, theme) -> None:
+    """Obiettivo vs mix attuale: builder centralizzato in ui/charts/pianificazione.py,
+    layout governato da ui/charts/settings.py (chart_id pianificazione_obiettivo_mix)."""
+    fig = build_objective_mix_chart(objective, current_mix, theme)
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+
+
+def _decision_float(value, default: float = 0.0) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return default
+    return default if pd.isna(result) else result
+
+
+def _decision_line_amount(line: dict) -> float:
+    amount = _decision_float(line.get("amount"), 0.0)
+    if amount > 0:
+        return amount
+    shares = _decision_float(line.get("shares"), 0.0)
+    price = _decision_float(line.get("price"), 0.0)
+    return max(0.0, shares * price)
+
+
+def _summarize_sator_execution_history(decisions: list[dict] | None) -> dict | None:
+    executed_count = 0
+    adherence_total = 0.0
+    delta_total = 0.0
+    skipped_total = 0
+    added_total = 0
+    skipped_by_ticker: dict[str, int] = {}
+    target_left_weighted = 0.0
+    target_left_amount = 0.0
+
+    for decision in decisions or []:
+        if not isinstance(decision, dict):
+            continue
+        actual_lines = [
+            line for line in (decision.get("actual_order") or [])
+            if isinstance(line, dict) and _decision_line_amount(line) > 0
+        ]
+        if not actual_lines:
+            continue
+
+        planned_lines = [
+            line for line in (decision.get("order_lines") or [])
+            if isinstance(line, dict) and _decision_line_amount(line) > 0
+        ]
+        planned_by_ticker = {
+            str(line.get("ticker") or "").strip().upper(): line
+            for line in planned_lines
+            if str(line.get("ticker") or "").strip()
+        }
+        actual_by_ticker = {
+            str(line.get("ticker") or "").strip().upper(): line
+            for line in actual_lines
+            if str(line.get("ticker") or "").strip()
+        }
+        planned_tickers = set(planned_by_ticker)
+        actual_tickers = set(actual_by_ticker)
+        proposed_total = _decision_float(decision.get("importo_ordine"), 0.0)
+        if proposed_total <= 0:
+            proposed_total = sum(_decision_line_amount(line) for line in planned_lines)
+        actual_total = sum(_decision_line_amount(line) for line in actual_lines)
+
+        if proposed_total > 0:
+            adherence = max(0.0, 100.0 - (abs(actual_total - proposed_total) / proposed_total * 100.0))
+        else:
+            adherence = 0.0
+        executed_count += 1
+        adherence_total += adherence
+        delta_total += actual_total - proposed_total
+
+        skipped = sorted(planned_tickers - actual_tickers)
+        added = sorted(actual_tickers - planned_tickers)
+        skipped_total += len(skipped)
+        added_total += len(added)
+
+        # Bug reale trovato da /code-review ultra (2026-09-08):
+        # bucket_target_improvement_pp e' un SOLO valore cumulativo per
+        # bucket (identico su ogni riga di quel bucket, vedi
+        # build_sator_decision_record) - usarlo TAL QUALE come contributo di
+        # UNA riga saltata nella media pesata sotto restituisce l'intero
+        # miglioramento cumulativo del bucket anche quando solo una parte
+        # delle sue righe e' stata saltata (es. 1 riga su 3), sovrastimando
+        # sistematicamente "target lasciato". Fix: aggregare le righe saltate
+        # PER BUCKET (non per singola riga) prima di pesare - un solo
+        # contributo per bucket, scalato sulla quota dell'importo pianificato
+        # di quel bucket effettivamente saltata in QUESTA decisione. Pesare
+        # per riga invece che per bucket sembra equivalente ma non lo e':
+        # amount_i/bucket_totale moltiplicato una seconda volta per amount_i
+        # nella media pesata introduce un effetto quadratico nell'importo che
+        # non riduce piu' esattamente al cumulativo intero quando l'intero
+        # bucket e' saltato (verificato con un test dedicato).
+        planned_amount_by_bucket: dict[str, float] = {}
+        for line in planned_lines:
+            bucket = str(line.get("bucket") or "")
+            if bucket:
+                planned_amount_by_bucket[bucket] = planned_amount_by_bucket.get(bucket, 0.0) + _decision_line_amount(line)
+
+        skipped_amount_by_bucket: dict[str, float] = {}
+        bucket_cumulative_pp: dict[str, float] = {}
+        for ticker in skipped:
+            skipped_by_ticker[ticker] = skipped_by_ticker.get(ticker, 0) + 1
+            line = planned_by_ticker[ticker]
+            amount = _decision_line_amount(line)
+            bucket = str(line.get("bucket") or "")
+            has_cumulative = line.get("bucket_target_improvement_pp") not in (None, "")
+            if has_cumulative and bucket and planned_amount_by_bucket.get(bucket, 0.0) > 0:
+                skipped_amount_by_bucket[bucket] = skipped_amount_by_bucket.get(bucket, 0.0) + amount
+                bucket_cumulative_pp.setdefault(bucket, max(0.0, _decision_float(line.get("bucket_target_improvement_pp"), 0.0)))
+            else:
+                # Fallback al campo storico isolato per riga (decisioni
+                # salvate prima di questo fix, gia' scalato per costruzione
+                # perche' calcolato sulla singola riga - contributo diretto,
+                # non aggregato per bucket).
+                improvement = max(0.0, _decision_float(line.get("target_improvement_pp"), 0.0))
+                if amount > 0 and improvement > 0:
+                    target_left_weighted += improvement * amount
+                    target_left_amount += amount
+
+        for bucket, skipped_amount in skipped_amount_by_bucket.items():
+            bucket_planned_total = planned_amount_by_bucket.get(bucket, 0.0)
+            if bucket_planned_total <= 0 or skipped_amount <= 0:
+                continue
+            scaled = bucket_cumulative_pp.get(bucket, 0.0) * (skipped_amount / bucket_planned_total)
+            if scaled > 0:
+                target_left_weighted += scaled * skipped_amount
+                target_left_amount += skipped_amount
+
+    if executed_count <= 0:
+        return None
+
+    adherence_avg = adherence_total / executed_count
+    drift_count = skipped_total + added_total
+    if adherence_avg >= 95.0 and drift_count == 0:
+        label, label_class = "molto coerente", "ok"
+    elif adherence_avg >= 85.0 and drift_count <= 2:
+        label, label_class = "coerente", "ok"
+    elif adherence_avg >= 70.0:
+        label, label_class = "da monitorare", "warn"
+    else:
+        label, label_class = "dispersiva", "bad"
+
+    most_skipped = None
+    if skipped_by_ticker:
+        most_skipped = sorted(skipped_by_ticker.items(), key=lambda item: (-item[1], item[0]))[0]
+
+    return {
+        "executed_count": executed_count,
+        "adherence_avg": adherence_avg,
+        "delta_total": delta_total,
+        "skipped_total": skipped_total,
+        "added_total": added_total,
+        "target_left_pp": (target_left_weighted / target_left_amount) if target_left_amount > 0 else 0.0,
+        "most_skipped": most_skipped,
+        "label": label,
+        "label_class": label_class,
+    }
+
+
+def _build_sator_execution_compact_html(decisions: list[dict] | None) -> str:
+    summary = _summarize_sator_execution_history(decisions)
+    if not summary:
+        return ""
+
+    most_skipped = summary["most_skipped"]
+    if most_skipped:
+        skipped_value = f"{escape(most_skipped[0])} <span>{int(most_skipped[1])}x</span>"
+    else:
+        skipped_value = "Nessuno"
+    delta_class = "ok" if summary["delta_total"] >= 0 else "bad"
+    drift_value = f'{int(summary["skipped_total"])} saltati / {int(summary["added_total"])} extra'
+    return (
+        '<div class="ref-snapshot-exec">'
+        '<div class="ref-snapshot-exec-title">'
+        '<span>Disciplina esecuzione</span>'
+        f'<b class="{summary["label_class"]}">{escape(summary["label"])}</b>'
+        '</div>'
+        '<div><span>Foto eseguite</span>'
+        f'<b>{int(summary["executed_count"])}</b></div>'
+        '<div><span>Aderenza importo</span>'
+        f'<b>{fmt_pct_it(summary["adherence_avg"] / 100.0, 1)}</b></div>'
+        '<div><span>Delta eseguito</span>'
+        f'<b class="{delta_class}">{fmt_eur_it(summary["delta_total"], 2)}</b></div>'
+        '<div><span>Scostamenti</span>'
+        f'<b>{drift_value}</b></div>'
+        '<div><span>Target lasciato</span>'
+        f'<b>{summary["target_left_pp"]:.2f} pp</b></div>'
+        '<div><span>Saltato piu spesso</span>'
+        f'<b>{skipped_value}</b></div>'
+        '</div>'
+    )
+
+
+def _build_sator_reference_summary_html(latest: dict, theme, data: dict, decisions: list[dict] | None = None) -> str:
+    """Card per 'Fotografia di riferimento' sotto la mappa a bolle dei
+    prossimi acquisti: usa i campi della fotografia decisionale SATOR salvata
+    su disco, senza ricalcolare l'analisi live (solo lookup natura
+    per ticker da data['strumenti'], stessa fonte del donut ad anelli). Sostituisce
+    il vecchio box testuale con una card in stile bucket-alloc (barra con tacca
+    budget + lista righe ordine con nome/icona natura) per una lettura piu' immediata."""
+    data_label = str(latest.get("month_id") or latest.get("created_at") or "n/d")
+    note = str(latest.get("note") or "").strip()
+    importo = float(latest.get("importo_ordine", 0.0))
+    budget = float(latest.get("budget", 0.0))
+    over_budget = budget > 0 and importo > budget
+    total_scale = max(importo, budget, 1e-9)
+    fill_pct = min(max((importo / total_scale) * 100.0, 0.0), 100.0)
+    target_pct = min(max((budget / total_scale) * 100.0, 0.0), 100.0) if budget > 0 else 0.0
+    over_pct = ((importo / budget) - 1.0) * 100.0 if over_budget else 0.0
+    bar_tone = "var(--ptf-danger)" if over_budget else "var(--ptf-primary)"
+    over_html = f'<span class="ref-snapshot-over bad">+{over_pct:.1f}% oltre budget</span>' if over_budget else ''
+    target_html = f'<div class="ref-snapshot-bar-target" style="left:{target_pct:.2f}%"></div>' if budget > 0 else ''
+
+    giudizio = latest.get("giudizio") or {}
+    voto_medio = _decision_float(giudizio.get("voto_medio"))
+    giudizio_label = str(giudizio.get("label") or "n/d").strip() or "n/d"
+    giudizio_class = "ok" if voto_medio >= 7.5 else ("warn" if voto_medio >= 5.5 else "bad")
+    giudizio_html = ""
+    if voto_medio > 0:
+        giudizio_html = (
+            '<div class="ref-snapshot-judgement">'
+            '<div><span>Giudizio SATOR</span>'
+            f'<b class="{giudizio_class}">{voto_medio:.1f} · {escape(giudizio_label)}</b></div>'
+            '<div><span>Uso budget</span>'
+            f'<b>{fmt_pct_it((importo / budget) if budget > 0 else 0.0, 1)}</b></div>'
+            '</div>'
+        )
+
+    alerts_html = ""
+    alerts = [item for item in (latest.get("alerts") or []) if isinstance(item, dict)]
+    if alerts:
+        alert_items = ""
+        for alert in alerts[:2]:
+            title = escape(str(alert.get("title") or "Avviso"))
+            message = escape(str(alert.get("message") or ""))
+            alert_items += (
+                '<div class="ref-snapshot-alert">'
+                f'<b>{title}</b>'
+                f'<span>{message}</span>'
+                '</div>'
+            )
+        alerts_html = (
+            '<div class="ref-snapshot-alerts">'
+            '<div class="ref-snapshot-lines-label">Alert principali</div>'
+            f'{alert_items}'
+            '</div>'
+        )
+
+    mix_rows_html = ""
+    ripartizione = latest.get("ripartizione") or {}
+    for b in ("Core", "Difensivo", "Satellite"):
+        entry = ripartizione.get(b) or {}
+        pct = float(entry.get("pct", 0.0))
+        if not entry:
+            continue
+        tone = bucket_color(b, theme)
+        mix_rows_html += (
+            f'<div class="ref-snapshot-mix-row" style="--tone:{tone}">'
+            f'<span class="ref-snapshot-mix-label"><span class="dot"></span>{b}</span>'
+            f'<div class="ref-snapshot-mix-track"><div class="ref-snapshot-mix-fill" style="width:{min(max(pct, 0.0), 100.0):.2f}%"></div></div>'
+            f'<span class="ref-snapshot-mix-pct">{fmt_pct_it(pct / 100.0, 1)}</span>'
+            f'</div>'
+        )
+
+    nature_by_ticker = {
+        str(item.get("ticker") or "").strip().upper(): resolve_instrument_nature(data, item, True)
+        for item in (data.get("strumenti") or [])
+    }
+
+    bucket_totals = {b: float((ripartizione.get(b) or {}).get("amount", 0.0)) for b in ("Core", "Difensivo", "Satellite")}
+
+    lines_html = ""
+    order_lines = latest.get("order_lines") or []
+    if order_lines:
+        bucket_order = {"Core": 0, "Difensivo": 1, "Satellite": 2}
+        order_lines = sorted(order_lines, key=lambda l: bucket_order.get(str(l.get("bucket") or "Satellite"), 2))
+        bucket_row_counts: dict[str, int] = {}
+        for line in order_lines:
+            b = str(line.get("bucket") or "Satellite")
+            bucket_row_counts[b] = bucket_row_counts.get(b, 0) + 1
+        buckets_rendered: set[str] = set()
+        line_rows = ""
+        for line in order_lines:
+            ticker = str(line.get("ticker", ""))
+            name = str(line.get("name") or "").strip() or ticker
+            isin = str(line.get("isin") or "").strip()
+            nature = nature_by_ticker.get(ticker.strip().upper(), "altro")
+            natura_color, natura_svg, natura_label = get_nature_visual(nature)
+            bucket = str(line.get("bucket") or "Satellite")
+            bucket_tone = bucket_color(bucket, theme)
+            if bucket in buckets_rendered:
+                bucket_total_cell = ""
+            else:
+                buckets_rendered.add(bucket)
+                bucket_total_cell = (
+                    f'<td class="num ref-snapshot-bucket-total" rowspan="{bucket_row_counts[bucket]}">'
+                    f'{fmt_eur_it(bucket_totals.get(bucket, 0.0), 2)}</td>'
+                )
+            line_rows += (
+                '<tr>'
+                '<td><span class="ref-snapshot-instrument">'
+                f'<span class="ref-snapshot-bucket-dot" style="--tone:{bucket_tone}" title="{bucket}"></span>'
+                f'<span class="ref-snapshot-natura" style="--natura-color:{natura_color}" title="{natura_label}">{natura_svg}</span>'
+                f'<span class="ref-snapshot-instrument-text"><span class="ticker">{ticker}</span><span class="name">{name}</span></span>'
+                '</span></td>'
+                f'<td class="ref-snapshot-isin">{escape(isin) or "&mdash;"}</td>'
+                f'<td class="num">{int(line.get("shares", 0))}q</td>'
+                f'<td class="num">{fmt_eur_it(float(line.get("price", 0.0)), 2)}</td>'
+                f'<td class="num">{fmt_eur_it(float(line.get("amount", 0.0)), 2)}</td>'
+                f'{bucket_total_cell}'
+                '</tr>'
+            )
+        lines_html = (
+            f'<div class="ref-snapshot-lines-label">Righe ordine ({len(order_lines)})</div>'
+            '<div class="ref-snapshot-lines"><table>'
+            '<thead><tr><th>Strumento</th><th>ISIN</th><th class="num">Quote</th><th class="num">Prezzo*</th>'
+            '<th class="num">Importo</th><th class="num">Totale bucket</th></tr></thead>'
+            f'<tbody>{line_rows}</tbody></table></div>'
+            '<div class="ref-snapshot-footnote">* Prezzo rilevato al momento del salvataggio della fotografia, non il prezzo attuale.</div>'
+        )
+
+    note_html = f'<span class="ref-snapshot-note">{escape(note)}</span>' if note else ''
+    mix_html = f'<div class="ref-snapshot-mix">{mix_rows_html}</div>' if mix_rows_html else ''
+    execution_html = _build_sator_execution_compact_html(decisions)
+    return (
+        '<div class="ref-snapshot-card">'
+        '<div class="ref-snapshot-head">'
+        f'<span class="ref-snapshot-title">Fotografia di riferimento &middot; {data_label}</span>'
+        f'{note_html}'
+        '</div>'
+        '<div class="ref-snapshot-body">'
+        '<div class="ref-snapshot-amount-row">'
+        '<span>Importo ordine</span>'
+        f'<span class="val">{fmt_eur_it(importo, 2)} <span class="cap">su budget {fmt_eur_it(budget, 2)}</span>{over_html}</span>'
+        '</div>'
+        f'<div class="ref-snapshot-bar-track" style="--tone:{bar_tone}">'
+        f'<div class="ref-snapshot-bar-fill" style="width:{fill_pct:.2f}%"></div>'
+        f'{target_html}'
+        '</div>'
+        f'{giudizio_html}'
+        f'{execution_html}'
+        f'{mix_html}'
+        f'{alerts_html}'
+        f'{lines_html}'
+        '</div>'
+        '</div>'
+    )
+
+
+def _build_sator_shopping_list_csv(latest: dict) -> bytes:
+    """CSV 'lista della spesa' della fotografia SATOR salvata: ticker, ISIN,
+    nome, bucket, quote da prenotare, prezzo presunto e importo - pensato per
+    la ricerca/inserimento ordine sul sito della banca, non ricalcola nulla
+    (stessi campi gia' salvati in order_lines)."""
+    order_lines = latest.get("order_lines") or []
+    rows = [{
+        "Ticker": str(line.get("ticker", "")),
+        "ISIN": str(line.get("isin") or ""),
+        "Nome": str(line.get("name") or ""),
+        "Bucket": str(line.get("bucket") or ""),
+        "Quote": int(line.get("shares", 0)),
+        "Prezzo presunto": float(line.get("price", 0.0)),
+        "Importo": float(line.get("amount", 0.0)),
+    } for line in order_lines]
+    df = pd.DataFrame(rows, columns=["Ticker", "ISIN", "Nome", "Bucket", "Quote", "Prezzo presunto", "Importo"])
+    return df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig")
+
+
+def _render_sator_reference_summary(latest: dict, theme, data: dict, decisions: list[dict] | None = None) -> None:
+    st.markdown(_build_sator_reference_summary_html(latest, theme, data, decisions), unsafe_allow_html=True)
+    if latest.get("order_lines"):
+        month_id = str(latest.get("month_id") or "foto").replace("/", "-")
+        st.download_button(
+            "⬇ Scarica lista della spesa (CSV)",
+            data=_build_sator_shopping_list_csv(latest),
+            file_name=f"sator_lista_spesa_{month_id}.csv",
+            mime="text/csv",
+            width="stretch",
+        )
+
+
+def _render_instrument_comparison_section(ctx: SimpleNamespace, exclude_tickers: frozenset[str] = frozenset()) -> None:
+    """Confronto normalizzato tra strumenti, con overlay benchmark opzionale
+    quando e' selezionato un solo strumento. Si aggiorna subito ad ogni
+    cambio di selezione/periodo (nessun bottone "Costruisci grafico", a
+    differenza della vecchia sezione in Cruscotti/Benchmark che sostituisce
+    — vedi docs/superpowers/specs/2026-08-14-pianificazione-confronto-strumenti-design.md)."""
+    data = ctx.data
+    storico = data.get("storico_prezzi") or {}
+    render_section_title(
+        "Confronto strumenti",
+        comment="Sovrappone gli strumenti normalizzati a 0% dalla data scelta. Si aggiorna subito ad ogni modifica, nessun bottone da premere.",
+        gap_after="sm",
+    )
+    if not storico:
+        st.info("Nessuno storico prezzi disponibile.")
+        return
+
+    all_tickers = get_all_historical_tickers(data, exclude_tickers=exclude_tickers)
+    # Stesso formato etichetta della vecchia sezione "Performance normalizzata"
+    # in Cruscotti/Benchmark (rimossa in Task 10): "(In portafoglio)" /
+    # "(Fuori portafoglio)" nel widget, non solo nel grafico dopo la scelta.
+    option_labels = [
+        f"{t['ticker']} {'(In portafoglio)' if t['active'] else '(Fuori portafoglio)'}"
+        for t in all_tickers
+    ]
+    ticker_by_label = {label: t["ticker"] for label, t in zip(option_labels, all_tickers)}
+    default_labels = [label for label, t in zip(option_labels, all_tickers) if t["active"]]
+
+    col_sel, col_period = st.columns([2, 1])
+    with col_sel:
+        selected_labels = st.multiselect(
+            "Strumenti da confrontare", options=option_labels, default=default_labels,
+            key="_pianificazione_comparison_tickers",
+        )
+    selected = [ticker_by_label[label] for label in selected_labels if label in ticker_by_label]
+    with col_period:
+        period = st.radio(
+            "Periodo", options=["1M", "3M", "6M", "1A", "3A", "Tutto"], index=5,
+            horizontal=True, key="_pianificazione_comparison_period",
+        )
+
+    col_align, col_bench = st.columns([1, 1])
+    with col_align:
+        align_starts = st.checkbox(
+            "Origini allineate", value=False, key="_pianificazione_comparison_align",
+            help="Ogni strumento riparte da Giorno 0: il periodo scelto sopra si applica agli ultimi N di storico di ciascuno strumento (non a una data di calendario comune), cosi' il confronto resta leggibile anche tra strumenti con storie di lunghezza diversa.",
+        )
+    benchmark_for = None
+    with col_bench:
+        if len(selected) == 1:
+            want_benchmark = st.checkbox(
+                "Confronta con benchmark", value=False, key="_pianificazione_comparison_benchmark",
+            )
+            if want_benchmark:
+                benchmark_for = selected[0]
+        else:
+            st.caption("Confronto con benchmark disponibile solo con un singolo strumento selezionato.")
+
+    if not selected:
+        legend_block("Seleziona almeno uno strumento per vedere il confronto.", variant="bottom")
+        return
+
+    sorted_dates = sorted(storico.keys())
+    start_date = None if align_starts else resolve_period_start_date(sorted_dates, period)
+
+    with profile_step("Pianificazione/Confronto", "build_comparison_frame", count=len(selected)):
+        series = build_comparison_frame(
+            data, selected, start_date=start_date, align_starts=align_starts, period=period,
+            benchmark_for=benchmark_for, exclude_tickers=exclude_tickers,
+        )
+
+    plotted = {s.ticker for s in series if not s.is_benchmark}
+    skipped = sorted(set(selected) - plotted)
+    if skipped:
+        st.caption("Esclusi per storico insufficiente nel periodo scelto: " + ", ".join(skipped))
+    if benchmark_for and not any(s.is_benchmark for s in series):
+        st.caption(f"Nessun benchmark assegnato a {benchmark_for}.")
+
+    if not series:
+        legend_block("Nessuno storico disponibile per gli strumenti scelti nel periodo indicato.", variant="bottom")
+        return
+
+    with profile_step("Pianificazione/Confronto", "render chart", count=len(series)):
+        fig = build_instrument_comparison_chart(series)
+        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+
+
+def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tickers: frozenset[str] = frozenset()) -> None:
+    """Dashboard decisionale basata sul portafoglio corrente e sull'ultima
+    fotografia SATOR salvata su disco dalla pagina standalone in sidebar."""
+    data = ctx.data
+    settings = ctx.settings
+    data_sig = build_portfolio_data_signature(data, app_version=APP_VERSION, schema_version=SCHEMA_VERSION)
+    with profile_step("Pianificazione/SATOR", "state_and_rings"):
+        ensure_sator_metadata(data)
+        state_df = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
+        rings_df = build_portfolio_rings_frame(data, state_df, exclude_tickers=exclude_tickers)
+
+    held_tickers = set(rings_df["ticker"]) if not rings_df.empty else set()
+    warnings: list[str] = []
+    with profile_step("Pianificazione/SATOR", "classification_checks", count=len(held_tickers)):
+        for item in data.get("strumenti", []) or []:
+            ticker = str(item.get("ticker") or "").strip().upper()
+            if not ticker or ticker not in held_tickers:
+                continue
+            natura = str(item.get("natura") or "")
+            if not natura or natura == "Esposizione diversificata":
+                warnings.append(f"{ticker}: natura non chiaramente classificata (\"Esposizione diversificata\"); verifica in Arricchimento.")
+            elif suggest_tipo_correction(item):
+                warnings.append(f"{ticker}: benchmark/focus in contraddizione col tipo salvato; verifica in Arricchimento.")
+    if warnings:
+        st.warning("Classificazioni da verificare:\n\n" + "\n".join(f"- {w}" for w in warnings))
+
+    objective = settings.get("portfolio_objective", {"core": 0.55, "difensivo": 0.25, "satellite": 0.20})
+    objective_key = {"Core": "core", "Difensivo": "difensivo", "Satellite": "satellite"}
+
+    if rings_df.empty:
+        st.info("Nessuno strumento posseduto: la mappa di allocazione comparira' dopo il primo acquisto.")
+    else:
+        render_section_title(
+            "Allocazione: bucket e strumenti",
+            # Didascalia riscritta (2026-09-08, trovata disallineata in un audit
+            # di usabilita' dal vivo): descriveva ancora il vecchio doppio
+            # anello ("Anello interno/esterno"), sostituito da barre orizzontali
+            # impilate una per bucket nella sessione precedente (Task V-nonies/
+            # V-decies) - la didascalia non era mai stata aggiornata di
+            # conseguenza, disallineata dal grafico realmente mostrato sotto.
+            comment="Una barra per bucket (Core/Difensivo/Satellite): ogni segmento e' uno strumento, colorato per natura (stesso colore per strumenti della stessa natura nello stesso bucket). L'hover mostra ticker, nome e quota sul bucket di ciascun segmento.",
+            gap_after="sm",
+        )
+        with profile_step("Pianificazione/SATOR", "allocation_rings_chart"):
+            fig_rings = build_allocation_rings_chart(rings_df, objective, theme)
+            st.plotly_chart(fig_rings, width="stretch", config={"displayModeBar": False})
+        with profile_step("Pianificazione/SATOR", "allocation_table_and_reminders"):
+            bucket_totals = rings_df.groupby("bucket")["value"].sum()
+            total_value = float(bucket_totals.sum())
+            current_mix = {
+                b: (float(bucket_totals.get(b, 0.0)) / total_value if total_value > 0 else 0.0)
+                for b in ("Core", "Difensivo", "Satellite")
+            }
+            watchlist_reminders = compute_watchlist_reminders(data, state_df, exclude_tickers=exclude_tickers)
+            _render_bucket_allocation_table(
+                rings_df, bucket_totals, current_mix, objective, objective_key, theme, watchlist_reminders,
+                quota_status=compute_instrument_quota_status(data, settings, exclude_tickers=exclude_tickers),
+                instrument_tolerance_pp=ensure_sator_settings(settings)["instrument_quota_tolerance_pp"] * 100.0,
+            )
+        with profile_step("Pianificazione/SATOR", "rebalancing_table"):
+            try:
+                rebalancing_plan = get_cached_rebalancing_plan(
+                    data, settings, state_df, current_mix, total_value,
+                    exclude_tickers=exclude_tickers, data_sig=data_sig,
+                )
+            except Exception:
+                rebalancing_plan = None
+            if rebalancing_plan:
+                _render_rebalancing_table(
+                    data, state_df, rebalancing_plan, current_mix, total_value, theme, settings,
+                    exclude_tickers=exclude_tickers, data_sig=data_sig,
+                )
+    render_section_title(
+        "Prossimo acquisto: mappa decisionale",
+        comment="Dati dall'ultima fotografia SATOR salvata dalla pagina SATOR attiva in sidebar, non da un'analisi dal vivo dentro Streamlit.",
+        gap_after="sm",
+    )
+    with profile_step("Pianificazione/SATOR", "decision_snapshot_load"):
+        decisions_state = load_sator_decisions()
+        latest_decision = latest_sator_decision(decisions_state.get("items") or [])
+    with profile_step("Pianificazione/SATOR", "decision_bubble_frame"):
+        bubble_df, missing_tickers = build_next_purchase_bubble_frame(data, exclude_tickers=exclude_tickers)
+    if not (decisions_state.get("items") or []):
+        st.info("Nessuna fotografia SATOR salvata: apri SATOR dalla sidebar e salva una decisione per popolare questa mappa.")
+    elif bubble_df.empty:
+        st.info("L'ultima fotografia SATOR salvata non contiene ancora i punteggi necessari per questa mappa: salvane una nuova per popolarla.")
+    else:
+        if missing_tickers:
+            st.warning("Dati insufficienti nell'ultima fotografia per: " + ", ".join(missing_tickers) + ". Salva una fotografia aggiornata per includerli.")
+        with profile_step("Pianificazione/SATOR", "decision_bubble_chart", count=len(bubble_df)):
+            fig_bubble = build_next_purchase_bubble_chart(bubble_df, theme)
+            st.plotly_chart(fig_bubble, width="stretch", config={"displayModeBar": False})
+        legend_block(
+            "Quadranti: in basso a destra = buon contributo difensivo; in alto a destra = diversifica ma aumenta volatilita'; "
+            "in alto a sinistra = satellite aggressivo/ridondante; in basso a sinistra = poco utile/non prioritario. "
+            "Dimensione bolla = importo proposto nella fotografia.",
+            variant="bottom",
+        )
+    if latest_decision:
+        _col_spacer, _col_refresh = st.columns([5, 1])
+        with _col_refresh:
+            if st.button("🔄 Aggiorna", key="sator_refresh_snapshot", width="stretch"):
+                st.rerun()
+        with profile_step("Pianificazione/SATOR", "reference_summary"):
+            _render_sator_reference_summary(latest_decision, theme, data, decisions_state.get("items") or [])
+
+    render_section_title(
+        "Mappa strumenti",
+        comment="Rischio e rendimento storico osservato per ogni strumento posseduto o in osservazione, con segnalazione delle coppie molto correlate (possibile ridondanza). L'orizzonte del rendimento varia per strumento (12/6/3/1 mesi, il più lungo disponibile — vedi il tooltip di ogni punto). Nessuna previsione: solo comportamento passato.",
+        gap_after="sm",
+    )
+    with profile_step("Pianificazione/SATOR", "sator_analysis"):
+        try:
+            sator_cfg = ensure_sator_settings(settings)
+            sator_result = get_cached_sator_analysis(
+                data, settings, budget=sator_cfg["default_budget"], data_sig=data_sig,
+            )
+        except Exception:
+            sator_result = None
+    with profile_step("Pianificazione/SATOR", "instrument_map"):
+        try:
+            instrument_map = build_instrument_map(
+                data, settings, precomputed_result=sator_result, exclude_tickers=exclude_tickers,
+            ) if sator_result is not None else None
+        except Exception:
+            instrument_map = None
+    if instrument_map is None:
+        st.info("Mappa strumenti non disponibile su questi dati.")
+    elif instrument_map.scatter_df.empty:
+        st.info("Storico prezzi insufficiente per calcolare rischio/rendimento di almeno uno strumento dell'universo SATOR.")
+    else:
+        with profile_step("Pianificazione/SATOR", "instrument_map_chart", count=len(instrument_map.scatter_df)):
+            fig_instrument_map = build_instrument_map_chart(instrument_map.scatter_df, theme)
+            st.plotly_chart(fig_instrument_map, width="stretch", config={"displayModeBar": False})
+        legend_block(
+            "Come si legge: più a destra = lo strumento sale e scende di più nel tempo (rischio); "
+            "più in alto = ha reso di più in passato (non è una garanzia per il futuro). "
+            "Bolla più grande = pesa di più nel tuo portafoglio oggi. Il colore indica sempre "
+            "la categoria; il cerchio pieno = lo possiedi già, il cerchio vuoto = lo stai solo osservando. "
+            "Punti vicini tra loro si sono comportati in modo simile: se sono molto vicini "
+            "potrebbero essere ridondanti (vedi tabella sotto).",
+            variant="bottom",
+        )
+        if instrument_map.redundant_pairs.empty:
+            st.caption("Nessuna coppia di strumenti sopra la soglia di ridondanza (correlazione 0,85) nell'universo attuale.")
+        else:
+            st.markdown("**Coppie potenzialmente ridondanti**")
+            display_pairs = instrument_map.redundant_pairs.rename(columns={
+                "ticker_a": "Strumento A", "ticker_b": "Strumento B",
+                "category_a": "Categoria A", "category_b": "Categoria B",
+                "correlazione": "Correlazione",
+            })[["Strumento A", "Categoria A", "Strumento B", "Categoria B", "Correlazione"]]
+            display_pairs["Correlazione"] = display_pairs["Correlazione"].map(lambda v: fmt_num_it(v, 2))
+            st.dataframe(display_pairs, hide_index=True, width="stretch")
+
+    render_section_title(
+        "Frontiera rischio/rendimento",
+        comment="Portafogli simulati (nessun ottimizzatore): rendimento storico e volatilita' annualizzati sull'orizzonte scelto. La proposta SATOR usa le quote suggerite al budget corrente; lo slider interpola linearmente tra il portafoglio attuale e la proposta. Min-rischio e Miglior Sharpe sono i punti migliori osservati nella simulazione, non un ottimo garantito.",
+        gap_after="sm",
+    )
+    _col_horizon, _col_slider = st.columns([1, 2])
+    _horizon_options = {"6 mesi": 6, "12 mesi": 12, "24 mesi": 24, "36 mesi": 36}
+    with _col_horizon:
+        _horizon_label = st.selectbox(
+            "Orizzonte storico", list(_horizon_options.keys()), index=1, key="sator_frontier_horizon",
+        )
+    with _col_slider:
+        _manual_pct = st.slider(
+            "Adesione alla proposta SATOR", min_value=0, max_value=100, value=0, step=5,
+            format="%d%%", key="sator_frontier_slider",
+        )
+    with profile_step("Pianificazione/SATOR", "frontier"):
+        try:
+            frontier_result = get_cached_sator_frontier(
+                data, settings, precomputed_result=sator_result,
+                lookback_months=_horizon_options[_horizon_label], manual_slider_pct=_manual_pct / 100.0,
+                exclude_tickers=exclude_tickers, data_sig=data_sig,
+            ) if sator_result is not None else None
+        except Exception:
+            frontier_result = None
+    if frontier_result is None or not frontier_result.available:
+        st.info(frontier_result.reason if frontier_result is not None else "Frontiera non disponibile su questi dati.")
+    else:
+        if frontier_result.excluded_tickers:
+            st.warning(
+                "Esclusi dalla simulazione per storico insufficiente sull'orizzonte scelto: "
+                + ", ".join(frontier_result.excluded_tickers)
+            )
+        if not frontier_result.has_proposal:
+            st.caption("Nessuna quota suggerita da SATOR al budget corrente: lo slider non ha effetto (Proposta SATOR coincide con Attuale).")
+        if frontier_result.cloud_degenerate:
+            st.warning("Con questo vincolo di concentrazione e questo numero di strumenti simulati, la nuvola genera pochi portafogli davvero distinti: interpreta minimo-rischio e miglior Sharpe con cautela.")
+        with profile_step("Pianificazione/SATOR", "frontier_chart", count=len(frontier_result.cloud)):
+            fig_frontier = build_sator_frontier_chart(frontier_result.cloud, frontier_result.markers, theme)
+            st.plotly_chart(fig_frontier, width="stretch", config={"displayModeBar": False})
+        legend_block(
+            "Quadrato = portafoglio attuale; diamante = proposta SATOR; cerchio = punto scelto con lo slider; "
+            "le due stelle sono il minor rischio e il miglior rapporto rendimento/rischio osservati nella "
+            f"simulazione, non un ottimo garantito. {frontier_result.verdict_vs_current.capitalize()}; "
+            f"{frontier_result.verdict_vs_frontier}.",
+            variant="bottom",
+        )
+
+    render_section_title(
+        "Perché questo voto",
+        comment="Per ogni strumento della classifica SATOR, quanto pesa ciascuno dei 5 fattori sul voto finale. I pesi sono fissi e uguali per tutti gli strumenti — un segmento più lungo significa un punteggio più alto su quel fattore, non un peso maggiore.",
+        gap_after="sm",
+    )
+    with profile_step("Pianificazione/SATOR", "sator_explain"):
+        try:
+            explanations = build_sator_explanations(
+                sator_result.get("ranking", pd.DataFrame()),
+                weights=sator_result.get("sator_settings", {}).get("score_weights"),
+                exclude_tickers=exclude_tickers,
+            ) if sator_result is not None else []
+        except Exception:
+            explanations = []
+    if not explanations:
+        st.info("Spiegazione del voto non disponibile su questi dati.")
+    else:
+        with profile_step("Pianificazione/SATOR", "sator_explain_chart", count=len(explanations)):
+            fig_explain = build_sator_explanation_chart(explanations, theme)
+            st.plotly_chart(fig_explain, width="stretch", config={"displayModeBar": False})
+        legend_block(
+            "Ogni barra è uno strumento: i segmenti colorati mostrano quanto ciascun fattore contribuisce, il numero nella colonna a destra è il voto vero (1-10). "
+            "Un segmento più lungo significa un punteggio più alto su quel fattore per quello strumento — i pesi sono sempre gli stessi per tutti. "
+            "Barra piena = lo possiedi già; barra più chiara = lo stai solo osservando (passa il mouse per conferma).",
+            variant="bottom",
+        )
+
+    _render_instrument_comparison_section(ctx, exclude_tickers)
+
+
+def render_pianificazione(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
+    """
+    Scheda Pianificazione: obiettivo di portafoglio e SATOR.
+    """
+    theme = get_theme_context()
+    settings = ctx.settings
+    data = ctx.data
+
+    with tab:
+
+        with profile_step("Pianificazione", "intro"):
+            _render_page_intro(
+                t(settings, "page_intro.pianificazione.title", "Pianificazione"),
+                t(settings, "page_intro.pianificazione.comment", "Simula acquisti, vendite e strumenti ipotetici prima di toccare il portafoglio reale. Le stime sono scenari, non previsioni."),
+                "pianificazione",
+                theme,
+            )
+        with profile_step("Pianificazione", "btp_exclusion_toggle"):
+            exclude_tickers = _render_btp_exclusion_toggle(data, settings)
+        with profile_step("Pianificazione", "quota_invalid_banner"):
+            from core.services.sator import compute_instrument_quota_status
+            quota_status_for_banners = compute_instrument_quota_status(data, settings, exclude_tickers=exclude_tickers)
+            _render_quota_invalid_banner(quota_status_for_banners)
+            _render_quota_unconfigured_reminder(quota_status_for_banners)
+        with st.container():
+            with profile_step("Pianificazione", "obiettivo_section"):
+                _render_portfolio_objective_section(ctx, theme, exclude_tickers)
+
+        _section_line()
+        with st.container():
+            with profile_step("Pianificazione", "decision_dashboard_section"):
+                _render_decision_dashboard_section(ctx, theme, exclude_tickers)
+
+        with profile_step("Pianificazione", "footer"):
+            back_to_top()

@@ -1,0 +1,166 @@
+"""core/domain/bonds.py — Calcoli finanziari obbligazionari (YTM, Duration)."""
+from __future__ import annotations
+
+import logging
+import math
+from typing import Any
+
+import numpy as np
+import pandas as pd
+
+logger = logging.getLogger("portafoglio.core.domain.bonds")
+
+
+def _finite_float(value: Any, default: float = 0.0) -> float:
+    if isinstance(value, bool) or value in (None, ""):
+        return float(default)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    return number if math.isfinite(number) else float("nan")
+
+
+def _future_cashflows(
+    nominale: float,
+    cedola_perc: float,
+    scadenza: pd.Timestamp,
+    prima_cedola: pd.Timestamp,
+    freq: int,
+    months_per_payment: int,
+    today: pd.Timestamp,
+) -> list[tuple[float, float]]:
+    """Restituisce lista di (anni_da_oggi, importo) per tutti i flussi futuri."""
+    coupon_per_period = cedola_perc / 100.0 * nominale / freq
+    cashflows: list[tuple[float, float]] = []
+    current = prima_cedola.normalize()
+    while current <= scadenza:
+        if current > today:
+            years = (current - today).days / 365.25
+            cashflows.append((years, coupon_per_period))
+        current = (current + pd.DateOffset(months=months_per_payment)).normalize()
+    years_to_maturity = (scadenza - today).days / 365.25
+    if years_to_maturity > 0:
+        cashflows.append((years_to_maturity, nominale))
+    return cashflows
+
+
+def calc_ytm_and_duration(
+    strumento: dict[str, Any],
+    today: pd.Timestamp | None = None,
+) -> tuple[float | None, float | None]:
+    """
+    Calcola YTM lordo annualizzato e Duration Modificata (anni) per un BTP.
+
+    Restituisce (ytm, modified_duration). Entrambi None se non calcolabili
+    (scaduto, dati mancanti, bisection non converge).
+
+    YTM convention: tasso continuo-equivalente annuo che uguaglia il PV dei
+    flussi futuri (cedole + rimborso) al prezzo di mercato corrente.
+    """
+    from core.domain.calendar import CEDOLA_FREQ_MONTHS, CEDOLA_FREQ_PAYMENTS
+
+    today = pd.Timestamp.today().normalize() if today is None else pd.Timestamp(today).normalize()
+
+    try:
+        prezzo = _finite_float(strumento.get("prezzo"), 0.0)
+        nominale = _finite_float(strumento.get("nominale"), 100.0)
+        cedola_perc = _finite_float(strumento.get("cedola_perc"), 0.0)
+        from core.domain.calendar import _to_ts
+        scadenza_ts = _to_ts(strumento["scadenza"])
+        if scadenza_ts is None:
+            return None, None
+        scadenza = scadenza_ts.normalize()
+        prima_cedola_raw = (
+            strumento.get("prima_cedola")
+            or strumento.get("data_origine")
+            or strumento.get("data_acquisto")
+        )
+        prima_cedola_ts = _to_ts(prima_cedola_raw) if prima_cedola_raw else None
+        cedola_freq_str = str(strumento.get("cedola_frequenza") or "annuale").strip().lower()
+        if prima_cedola_ts is not None:
+            prima_cedola = prima_cedola_ts.normalize()
+        else:
+            # Nessun riferimento temporale (prima_cedola/data_origine/
+            # data_acquisto tutti assenti): la scadenza e' comunque una
+            # data di pagamento reale (rimborso + ultima cedola coincidono
+            # sempre a scadenza per un BTP) - si ricava il calendario
+            # andando a ritroso dalla scadenza a passi di
+            # CEDOLA_FREQ_MONTHS mesi, invece di ancorare arbitrariamente a
+            # oggi (che produce date di stacco sfalsate rispetto al vero
+            # calendario dell'emittente, es. gennaio/luglio invece di
+            # marzo/settembre). Se anche la scadenza fosse assente si
+            # sarebbe gia' usciti sopra (return None, None).
+            _months_fallback = CEDOLA_FREQ_MONTHS.get(cedola_freq_str, 12)
+            _anchor = scadenza
+            for _ in range(1000):
+                _prev = _anchor - pd.DateOffset(months=_months_fallback)
+                if _prev <= today:
+                    break
+                _anchor = _prev
+            prima_cedola = _anchor
+            logger.warning(
+                "calc_ytm_and_duration: nessuna data di riferimento per %s - calendario "
+                "cedole ricavato a ritroso dalla scadenza (%s), approssimato.",
+                strumento.get("ticker") or strumento.get("nome") or "?", scadenza.date(),
+            )
+    except Exception:
+        return None, None
+
+    if not all(np.isfinite(v) for v in (prezzo, nominale, cedola_perc)):
+        return None, None
+    if prezzo <= 0 or nominale <= 0 or cedola_perc <= 0:
+        return None, None
+    if scadenza <= today:
+        return None, None
+
+    freq = CEDOLA_FREQ_PAYMENTS.get(cedola_freq_str, 1)
+    months = CEDOLA_FREQ_MONTHS.get(cedola_freq_str, 12)
+    cashflows = _future_cashflows(nominale, cedola_perc, scadenza, prima_cedola, freq, months, today)
+    if not cashflows:
+        return None, None
+
+    def npv(rate: float) -> float:
+        try:
+            return sum(cf / (1.0 + rate) ** t for t, cf in cashflows) - prezzo
+        except (ZeroDivisionError, OverflowError):
+            return float("nan")
+
+    lo, hi = -0.9999, 5.0
+    npv_lo, npv_hi = npv(lo), npv(hi)
+    if not (np.isfinite(npv_lo) and np.isfinite(npv_hi)):
+        return None, None
+    if npv_lo * npv_hi > 0:
+        return None, None
+
+    for _ in range(200):
+        mid = (lo + hi) / 2.0
+        if abs(hi - lo) < 1e-9:
+            break
+        val = npv(mid)
+        if not np.isfinite(val):
+            return None, None
+        if npv(lo) * val < 0:
+            hi = mid
+        else:
+            lo = mid
+
+    ytm = (lo + hi) / 2.0
+    if not np.isfinite(ytm) or ytm < -0.99:
+        return None, None
+
+    # Macaulay Duration = Σ(t × PV_t) / Prezzo
+    total_pv = 0.0
+    weighted_pv = 0.0
+    for t, cf in cashflows:
+        pv = cf / (1.0 + ytm) ** t
+        total_pv += pv
+        weighted_pv += t * pv
+
+    if total_pv <= 0:
+        return ytm, None
+
+    macaulay = weighted_pv / total_pv
+    # Modified Duration = Macaulay / (1 + YTM/freq)
+    modified = macaulay / (1.0 + ytm / freq)
+    return ytm, modified
