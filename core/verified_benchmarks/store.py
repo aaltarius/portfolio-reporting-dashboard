@@ -34,9 +34,9 @@ def db_path() -> Path:
 class IndexStore:
     def __init__(self,path: str | Path | None = None):
         self.path=Path(path) if path is not None else db_path()
-        self.path.parent.mkdir(parents=True,exist_ok=True)
-        key=str(self.path.resolve())
+        key=str(self.path)
         if key not in _READY_PATHS or not self.path.exists():
+            self.path.parent.mkdir(parents=True,exist_ok=True)
             self._ensure()
             _READY_PATHS.add(key)
 
