@@ -15,8 +15,10 @@ Usage:
     # Save atomically (backup + compress + verify)
     save_storico_prezzi_hybrid(data, path_base)
 """
+import hashlib
 import json
 import gzip
+import os
 import shutil
 import logging
 from pathlib import Path
@@ -145,26 +147,59 @@ def load_storico_prezzi_hybrid(json_path: str | Path) -> dict[str, dict[str, flo
     return {}
 
 
+def _storico_digest(storico: dict[str, dict[str, float]]) -> str:
+    """Impronta canonica del contenuto (indipendente dall'ordine delle chiavi)."""
+    raw = json.dumps(storico, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def _file_stat(path: Path) -> list[int] | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return [st.st_mtime_ns, st.st_size]
+
+
+def _is_unchanged(storico: dict[str, dict[str, float]], json_path: Path, gzip_path: Path, parquet_path: Path, digest_path: Path) -> bool:
+    """True se i file su disco sono quelli scritti per questo stesso contenuto."""
+    try:
+        side = json.loads(digest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if side.get("digest") != _storico_digest(storico):
+        return False
+    return all(side.get(name) == _file_stat(path) and _file_stat(path) is not None
+               for name, path in (("json", json_path), ("gzip", gzip_path), ("parquet", parquet_path))
+               if name != "parquet" or (PARQUET_AVAILABLE and storico))
+
+
 def save_storico_prezzi_hybrid(storico: dict[str, dict[str, float]], json_path: str | Path) -> bool:
-    """Save storico_prezzi atomically (backup → write → verify → commit).
+    """Salva lo storico prezzi in modo atomico, solo se il contenuto e' cambiato.
 
-    Strategy:
-    1. Backup previous version
-    2. Save JSON (primary) + gzip (compressed) + Parquet (optional)
-    3. Verify integrity (reload and count)
-    4. Clean old backups
+    1. Se contenuto e file su disco coincidono con l'ultimo salvataggio, non scrive nulla.
+    2. Altrimenti: copia di sicurezza del JSON precedente, scrittura di JSON, gzip e
+       Parquet su file temporanei, verifica del JSON, poi sostituzione con
+       ``os.replace`` (Parquet, formato preferito dal caricamento, per ultimo).
+       In caso di errore i file validi precedenti restano intatti.
 
-    Returns: True if successful, False otherwise (with data always recoverable)
+    Returns: True se riuscito (o gia' aggiornato), False altrimenti.
     """
     json_path = Path(json_path)
     parquet_path = json_path.with_suffix(".parquet")
     gzip_path = json_path.with_suffix(".json.gz")
+    digest_path = json_path.with_suffix(".digest")
     backup_dir = json_path.parent / ".backups"
+    temps: list[Path] = []
 
     try:
         json_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # 1. Backup previous version (atomic: backup before write)
+        if _is_unchanged(storico, json_path, gzip_path, parquet_path, digest_path):
+            logger.debug("storico_prezzi invariato: nessuna scrittura")
+            return True
+
+        # 1. Copia di sicurezza della versione precedente (prima di scrivere)
         if json_path.exists():
             backup_dir.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -173,55 +208,57 @@ def save_storico_prezzi_hybrid(storico: dict[str, dict[str, float]], json_path: 
                 with open(json_path, "rb") as src:
                     with gzip.open(backup_file, "wb") as dst:
                         dst.write(src.read())
-                logger.debug(f"Backed up: {backup_file}")
             except Exception as e:
                 logger.warning(f"Backup creation failed (non-fatal): {e}")
 
-        # 2. Save JSON (primary, uncompressed for readability)
-        with open(json_path, "w", encoding="utf-8") as f:
+        # 2. Scrittura su file temporanei
+        tmp_json = json_path.with_name(json_path.name + ".tmp")
+        temps.append(tmp_json)
+        with open(tmp_json, "w", encoding="utf-8") as f:
             json.dump(storico, f, indent=2, default=str)
-        logger.debug(f"Saved storico_prezzi to JSON: {json_path}")
-
-        # 3. Save gzipped JSON (compressed, universal)
-        with gzip.open(gzip_path, "wt", encoding="utf-8") as f:
+        tmp_gzip = gzip_path.with_name(gzip_path.name + ".tmp")
+        temps.append(tmp_gzip)
+        with gzip.open(tmp_gzip, "wt", encoding="utf-8") as f:
             json.dump(storico, f, indent=2, default=str)
-        json_size = json_path.stat().st_size if json_path.exists() else 0
-        gzip_size = gzip_path.stat().st_size if gzip_path.exists() else 0
-        gzip_reduction = (1 - gzip_size / max(json_size, 1)) * 100
-        logger.debug(f"Saved storico_prezzi to gzip: {gzip_path} ({gzip_reduction:.0f}% reduction)")
-
-        # 4. Save Parquet (optional, fastest + smallest)
+        tmp_parquet: Path | None = None
         if PARQUET_AVAILABLE and storico:
             try:
                 df = _storico_dict_to_df(storico)
                 if not df.empty:
-                    df.to_parquet(parquet_path, compression="snappy", index=False)
-                    parquet_size = parquet_path.stat().st_size if parquet_path.exists() else 0
-                    parquet_reduction = (1 - parquet_size / max(json_size, 1)) * 100
-                    logger.info(
-                        f"Saved storico_prezzi (all formats): {len(storico)} dates, "
-                        f"JSON {json_size/1024:.1f}KB, gzip {gzip_reduction:.0f}%, Parquet {parquet_reduction:.0f}%"
-                    )
+                    tmp_parquet = parquet_path.with_name(parquet_path.name + ".tmp")
+                    temps.append(tmp_parquet)
+                    df.to_parquet(tmp_parquet, compression="snappy", index=False)
             except Exception as e:
                 logger.warning(f"Parquet save failed (non-fatal): {e}")
+                tmp_parquet = None
 
-        # 5. Verify integrity (reload and count)
-        try:
-            with open(json_path, "r", encoding="utf-8") as f:
-                verify = json.load(f)
-            if not isinstance(verify, dict) or len(verify) != len(storico):
-                raise ValueError(f"Verification failed: wrote {len(storico)}, read {len(verify)}")
-            logger.debug(f"Integrity verified: {len(verify)} dates")
-        except Exception as e:
-            logger.error(f"Verification failed: {e}")
-            return False
+        # 3. Verifica del JSON temporaneo
+        with open(tmp_json, "r", encoding="utf-8") as f:
+            verify = json.load(f)
+        if not isinstance(verify, dict) or len(verify) != len(storico):
+            raise ValueError(f"Verification failed: wrote {len(storico)}, read {len(verify)}")
 
-        # 6. Clean old backups (keep last 5)
+        # 4. Sostituzione atomica (Parquet per ultimo)
+        os.replace(tmp_json, json_path)
+        os.replace(tmp_gzip, gzip_path)
+        if tmp_parquet is not None:
+            os.replace(tmp_parquet, parquet_path)
+        temps.clear()
+
+        side = {
+            "digest": _storico_digest(storico),
+            "json": _file_stat(json_path),
+            "gzip": _file_stat(gzip_path),
+            "parquet": _file_stat(parquet_path),
+        }
+        digest_path.write_text(json.dumps(side), encoding="utf-8")
+        logger.info(f"Saved storico_prezzi: {len(storico)} dates")
+
+        # 5. Pulizia vecchie copie di sicurezza (ultime 5)
         try:
             backups = sorted(backup_dir.glob("storico_prezzi_*.json.gz"), reverse=True)
             for old_backup in backups[5:]:
                 old_backup.unlink()
-                logger.debug(f"Cleaned old backup: {old_backup.name}")
         except Exception as e:
             logger.warning(f"Backup cleanup failed (non-fatal): {e}")
 
@@ -229,4 +266,9 @@ def save_storico_prezzi_hybrid(storico: dict[str, dict[str, float]], json_path: 
 
     except Exception as e:
         logger.error(f"Save storico_prezzi failed: {e}")
+        for tmp in temps:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
         return False
