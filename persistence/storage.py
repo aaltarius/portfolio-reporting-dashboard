@@ -310,6 +310,7 @@ def default_settings():
             "custom_enabled": False,
             "custom_name": "",
             "custom_components": [],
+            "scheduler_enabled": False,
         },
         "alerts": {
             "enabled": False,
@@ -540,6 +541,7 @@ def _normalize_settings_payload(settings):
     if benchmarking["default_portfolio_benchmark"] == "100% BTP Italia":
         benchmarking["default_portfolio_benchmark"] = "100% GOV"
     benchmarking["custom_enabled"] = bool(benchmarking.get("custom_enabled", False))
+    benchmarking["scheduler_enabled"] = bool(benchmarking.get("scheduler_enabled", False))
     benchmarking["custom_name"] = str(benchmarking.get("custom_name", "") or "").strip()
     raw_custom_components = benchmarking.get("custom_components", [])
     normalized_components = []
@@ -1259,7 +1261,7 @@ def load_settings():
     preferences=IndexStore().preference('portfolio_benchmark_settings')
     if isinstance(preferences,dict):
         if isinstance(preferences.get('benchmarking'),dict):
-            normalized['benchmarking']=preferences['benchmarking']
+            normalized['benchmarking']={**normalized.get('benchmarking',{}),**preferences['benchmarking']}
         if preferences.get('portfolio_benchmark_default'):
             normalized['portfolio_benchmark_default']=preferences['portfolio_benchmark_default']
     if raw!=core_raw:

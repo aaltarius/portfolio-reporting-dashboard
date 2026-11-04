@@ -86,15 +86,20 @@ def _scheduler_loop(data: dict[str, Any]) -> None:
             time.sleep(60)  # Retry dopo 1 minuto se errore
 
 
-def start_benchmark_scheduler(data: dict[str, Any]) -> bool:
+def start_benchmark_scheduler(data: dict[str, Any], settings: dict[str, Any] | None = None) -> bool:
     """
-    Avvia lo scheduler benchmark in background se non già in esecuzione.
+    Avvia lo scheduler benchmark in background se l'utente lo ha attivato (Impostazioni → Benchmark,
+    `benchmarking.scheduler_enabled`, spento di default: ADR-0018) e se non è già in esecuzione.
     Ritorna True se il thread è stato avviato, False se già attivo.
     Usa il nome del thread come guard process-wide: funziona anche dopo
     hot-reload di Streamlit (reimport azzera la variabile globale ma i
     thread preesistenti restano vivi con lo stesso nome).
     """
     global _benchmark_scheduler_thread
+    bench = (settings or {}).get("benchmarking") if isinstance(settings, dict) else None
+    if not (isinstance(bench, dict) and bench.get("scheduler_enabled")):
+        logger.info("Benchmark scheduler non avviato: non attivato dall'utente")
+        return False
     with _scheduler_lock:
         # Cerca tra tutti i thread vivi, non solo nella variabile locale al modulo
         for t in threading.enumerate():

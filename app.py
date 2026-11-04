@@ -706,7 +706,7 @@ else:
     try:
         from core.infrastructure.schedule import start_benchmark_scheduler
         with _logged_app_phase("benchmark_scheduler_start"):
-            start_benchmark_scheduler(data)
+            start_benchmark_scheduler(data, settings)
     except Exception as exc:
         app_logger.warning("Benchmark scheduler non avviato: %s", exc)
 

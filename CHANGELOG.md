@@ -13,6 +13,7 @@ Questo file è stato riscritto in forma sintetica il 02/11/2026. Il testo integr
 - Controllo automatico esteso: blocca ogni elenco di simboli di mercato e le vecchie scale.
 
 ### Modificato
+- L'aggiornamento giornaliero dei prezzi benchmark (18:00) è spento di default e si attiva da Impostazioni → Benchmark.
 - L'archivio SQLite è il registro dei benchmark: una serie va registrata prima di essere usata ([ADR-0022](docs/adr/0022-archivio-registro-dei-benchmark-e-isolamento-test.md)).
 - Analisi strumento: il benchmark è scelto con lo stesso algoritmo di scoperta.
 - Opzioni del benchmark personalizzato dalle serie in archivio.

@@ -280,6 +280,7 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 st.caption("Indici ufficiali o ETF proxy dichiarati, conservati esclusivamente in SQLite; i componenti e le date devono avere una copertura comune.")
                 st.caption("Il 60/40 seleziona automaticamente un riferimento azionario globale e uno obbligazionario con storico disponibile, esplicitando eventuali ETF proxy.")
                 st.caption("L'obiettivo di portafoglio (Core/Difensivo/Satellite) e i radar della scheda Portafoglio si impostano ora in Pianificazione.")
+                benchmark_scheduler_enabled = st.checkbox("Aggiorna ogni giorno alle 18:00 i prezzi dei benchmark scelti (in background)", value=bool(benchmarking_settings.get("scheduler_enabled", False)), help="Spento di default: la rete si usa solo quando premi i pulsanti in Cruscotti → Benchmark. Se lo attivi, l'aggiornamento parte all'avvio successivo dell'applicazione.")
                 custom_benchmark_enabled = st.checkbox("Usa benchmark personalizzato", value=bool(benchmarking_settings.get("custom_enabled", False)))
                 custom_benchmark_name = st.text_input("Nome benchmark personalizzato", value=str(benchmarking_settings.get("custom_name", "")), disabled=not custom_benchmark_enabled)
                 current_components = benchmarking_settings.get("custom_components", []) if isinstance(benchmarking_settings.get("custom_components", []), list) else []
@@ -734,6 +735,7 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 settings["benchmarking"] = {
                     **settings.get("benchmarking", {}),
                     "default_portfolio_benchmark": bench_default,
+                    "scheduler_enabled": bool(benchmark_scheduler_enabled),
                     "custom_enabled": bool(custom_benchmark_enabled),
                     "custom_name": str(custom_benchmark_name or "").strip(),
                     "custom_components": component_rows,
