@@ -69,7 +69,7 @@ def normalize_instrument_analysis_auto_refresh_settings(settings: dict[str, Any]
     raw = raw_settings.get("instrument_analysis_auto_refresh", {})
     cfg = raw if isinstance(raw, dict) else {}
     return {
-        "enabled": bool(cfg.get("enabled", True)),
+        "enabled": bool(cfg.get("enabled", False)),  # ADR-0018: la rete parte solo su comando esplicito (SC-01)
         "interval_minutes": _coerce_int(
             cfg.get("interval_minutes", 15), default=15, min_value=5, max_value=1440,
         ),

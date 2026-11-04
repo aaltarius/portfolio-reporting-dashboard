@@ -692,7 +692,7 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 iar1, iar2 = st.columns(2)
                 instrument_analysis_auto_refresh_enabled = iar1.checkbox(
                     "Aggiorna profili strumenti in background",
-                    value=bool(instrument_analysis_auto_refresh_settings.get("enabled", True)),
+                    value=bool(instrument_analysis_auto_refresh_settings.get("enabled", False)),
                     help="Avvia un thread leggero che colma la cache InstrumentAnalysis a intervalli regolari, per gli strumenti non ancora coperti.",
                 )
                 instrument_analysis_auto_refresh_minutes = iar2.number_input(
