@@ -26,7 +26,13 @@ from core.services.sator import (
 )
 from core.cache_signatures import build_portfolio_data_signature
 from core.domain.tax import stima_imposta_vendita
-from core.sator_cache import get_cached_rebalancing_plan, get_cached_sator_analysis, get_cached_sator_frontier
+from core.sator_cache import (
+    get_cached_rebalancing_plan,
+    get_cached_sator_analysis,
+    get_cached_sator_frontier,
+    get_stale_info,
+    reset_stale_info,
+)
 from core.services.instrument_clustering import build_instrument_map
 from core.services.rebalancing import build_full_instrument_view, build_reinforcement_candidates
 from core.services.sator_explain import build_sator_explanations
@@ -665,6 +671,18 @@ def _build_rebalancing_summary_boxes_html(righe: list[dict[str, Any]]) -> str:
         '<div class="ref-snapshot-judgement" style="grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));">'
         + "".join(boxes) + "</div>"
     )
+
+
+def _render_sator_stale_notice(section: str) -> None:
+    """Avviso «dati precedenti» per le sezioni SATOR a ricalcolo differito (ADR-0023)."""
+    info = get_stale_info()
+    if info is None:
+        return
+    st.info(
+        f"{section}: dati SATOR precedenti, calcolati alle {info.computed_at:%H:%M}; "
+        "si aggiornano al prossimo aggiornamento della pagina."
+    )
+    reset_stale_info()
 
 
 def _suggerisci_acquisto_capitale(
@@ -1477,13 +1495,15 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
                 instrument_tolerance_pp=ensure_sator_settings(settings)["instrument_quota_tolerance_pp"] * 100.0,
             )
         with profile_step("Pianificazione/SATOR", "rebalancing_table"):
+            reset_stale_info()
             try:
                 rebalancing_plan = get_cached_rebalancing_plan(
                     data, settings, state_df, current_mix, total_value,
-                    exclude_tickers=exclude_tickers, data_sig=data_sig,
+                    exclude_tickers=exclude_tickers, data_sig=data_sig, allow_stale=True,
                 )
             except Exception:
                 rebalancing_plan = None
+            _render_sator_stale_notice("Piano di ribilanciamento")
             if rebalancing_plan:
                 _render_rebalancing_table(
                     data, state_df, rebalancing_plan, current_mix, total_value, theme, settings,
@@ -1531,11 +1551,16 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
     with profile_step("Pianificazione/SATOR", "sator_analysis"):
         try:
             sator_cfg = ensure_sator_settings(settings)
+            reset_stale_info()
             sator_result = get_cached_sator_analysis(
-                data, settings, budget=sator_cfg["default_budget"], data_sig=data_sig,
+                data, settings, budget=sator_cfg["default_budget"], data_sig=data_sig, allow_stale=True,
             )
         except Exception:
             sator_result = None
+    # La frontiera deriva dal ranking: se il ranking e' quello precedente, anche la
+    # frontiera calcolata ora e' «precedente» e non deve essere registrata come aggiornata.
+    _ranking_is_stale = get_stale_info() is not None
+    _render_sator_stale_notice("Mappa strumenti")
     with profile_step("Pianificazione/SATOR", "instrument_map"):
         try:
             instrument_map = build_instrument_map(
@@ -1590,13 +1615,16 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
         )
     with profile_step("Pianificazione/SATOR", "frontier"):
         try:
+            reset_stale_info()
             frontier_result = get_cached_sator_frontier(
                 data, settings, precomputed_result=sator_result,
                 lookback_months=_horizon_options[_horizon_label], manual_slider_pct=_manual_pct / 100.0,
-                exclude_tickers=exclude_tickers, data_sig=data_sig,
+                exclude_tickers=exclude_tickers,
+                data_sig=data_sig + ("|ranking-precedente" if _ranking_is_stale else ""), allow_stale=True,
             ) if sator_result is not None else None
         except Exception:
             frontier_result = None
+    _render_sator_stale_notice("Frontiera rischio/rendimento")
     if frontier_result is None or not frontier_result.available:
         st.info(frontier_result.reason if frontier_result is not None else "Frontiera non disponibile su questi dati.")
     else:
