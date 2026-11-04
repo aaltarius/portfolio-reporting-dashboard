@@ -1,5 +1,5 @@
 import logging
-from core.volume_policy import FIGURE_CACHE_CLEANUP_DAYS, FIGURE_CACHE_MAX_MB
+from core.volume_policy import FIGURE_CACHE_CLEANUP_DAYS, FIGURE_CACHE_MAX_MB, FIGURE_CACHE_MAX_VARIANTS_PER_CHART
 import json
 import gzip
 import pickle
@@ -265,7 +265,7 @@ class FigureCache:
 
                 # Save to disk cache (if enabled)
                 if strategy in (CachingStrategy.DISK_ONLY, CachingStrategy.HYBRID):
-                    self._save_to_disk(chart_id, fig_sig, fig)
+                    self._save_to_disk(chart_id, fig_sig, fig, label=log_label)
 
                 return fig
 
@@ -449,7 +449,7 @@ class FigureCache:
             logger.error(f"Errore caricamento figura da disco per {chart_id}: {e}")
             return None
 
-    def _save_to_disk(self, chart_id: str, fig_sig: str, fig: go.Figure) -> None:
+    def _save_to_disk(self, chart_id: str, fig_sig: str, fig: go.Figure, label: Optional[str] = None) -> None:
         """
         Salva figura su disco come JSON+gzip (nuovo formato).
 
@@ -471,10 +471,41 @@ class FigureCache:
             logger.debug(f"Figura salvata su disco (JSON): {file_path} ({file_size} bytes)")
 
             # Aggiorna manifest
-            self._update_manifest(chart_id, fig_sig, file_size)
+            self._update_manifest(chart_id, fig_sig, file_size, label=label)
+            self._prune_label_variants(chart_id, label)
 
         except Exception as e:
             logger.error(f"Errore salvataggio figura su disco per {chart_id}: {e}")
+
+    def _prune_label_variants(self, chart_id: str, label: Optional[str]) -> None:
+        """Tiene solo le ultime FIGURE_CACHE_MAX_VARIANTS_PER_CHART varianti di una figura.
+
+        Una figura e' identificata da (chart_id, label), dove label e' l'etichetta
+        di log con i parametri (es. il ticker). Le voci senza label (cache
+        precedenti) non si toccano qui: le gestisce la pulizia per eta'/dimensione.
+        """
+        if not label:
+            return
+        try:
+            with self._MANIFEST_LOCK:
+                manifest = self._load_manifest(repair_on_corruption=True)
+                same = [
+                    (str(v.get("timestamp") or ""), key, v)
+                    for key, v in manifest.items()
+                    if isinstance(v, dict) and v.get("chart_id") == chart_id and v.get("label") == label
+                ]
+                excess = len(same) - int(FIGURE_CACHE_MAX_VARIANTS_PER_CHART)
+                if excess <= 0:
+                    return
+                same.sort(key=lambda item: item[0])
+                for _ts, key, entry in same[:excess]:
+                    stem = self._cache_file_stem(chart_id, str(entry.get("signature") or ""))
+                    for suffix in (".json.gz", ".json.json.gz"):
+                        (self.CACHE_DIR / f"{stem}{suffix}").unlink(missing_ok=True)
+                    manifest.pop(key, None)
+                type(self)._MANIFEST_DIRTY = True
+        except Exception as exc:
+            logger.warning("Pulizia varianti figura non eseguita per %s: %s", chart_id, exc)
 
     def _salvage_manifest_text(self, raw_text: str) -> Dict[str, Any]:
         """Try to recover the first valid JSON object from a corrupted manifest."""
@@ -578,7 +609,7 @@ class FigureCache:
             except Exception:
                 pass
 
-    def _update_manifest(self, chart_id: str, fig_sig: str, file_size: int) -> None:
+    def _update_manifest(self, chart_id: str, fig_sig: str, file_size: int, label: Optional[str] = None) -> None:
         """
         Update cache manifest with new entry (in memory only; vedi flush_manifest()).
 
@@ -598,6 +629,8 @@ class FigureCache:
                     "file_size": file_size,
                     "timestamp": datetime.now().isoformat()
                 }
+                if label:
+                    manifest[key]["label"] = label
                 type(self)._MANIFEST_DIRTY = True
                 logger.debug(f"Manifest updated (in memory, pending flush): {key}")
 

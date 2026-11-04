@@ -26,6 +26,10 @@ RENDER_PROFILE_HISTORY_MAX_BYTES = 3 * 1024 * 1024
 # Cache figure (`data/cache/figures`): eta' massima e tetto in MB.
 FIGURE_CACHE_CLEANUP_DAYS = 14
 FIGURE_CACHE_MAX_MB = 100
+# Varianti conservate per ogni figura (chart_id + parametri, es. un ticker): le
+# firme cambiano a ogni variazione dei dati, le versioni vecchie non si
+# riusano piu'. Prima: 4.766 file per le sole figure per strumento.
+FIGURE_CACHE_MAX_VARIANTS_PER_CHART = 3
 
 # Artefatti pagina (`data/cache/page_artifacts`): versioni per (pagina, layer).
 PAGE_ARTIFACT_KEEP_PER_LAYER = 3
