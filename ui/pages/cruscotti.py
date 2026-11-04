@@ -11,7 +11,7 @@ import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
 
 from core.asset_categories import get_selected_category_codes
-from core.cache_signatures import build_historical_data_signature, build_portfolio_data_signature, charts_settings_signature, theme_signature
+from core.cache_signatures import build_historical_data_signature, build_operations_signature, build_portfolio_data_signature, charts_settings_signature, theme_signature
 from core.constants import QTY_ZERO_EPS
 from core.cache_orchestrator import get_registered_figure_cache
 from core.domain.returns import normalize_to_first
@@ -1187,7 +1187,12 @@ def _render_flussi_acquisti(ctx: SimpleNamespace, theme, *, data_sig: str, theme
         )
         monthly_fig = fcache.get_or_build(
             chart_id="cruscotti_flussi_monthly_spending",
-            data_sig=data_sig,
+            # Dipende solo dal registro eventi: un aggiornamento prezzi non la invalida.
+            data_sig=build_operations_signature(
+                getattr(ctx, "data", {}),
+                app_version=str(getattr(ctx, "app_version", "n/d")),
+                schema_version=str(getattr(ctx, "schema_version", "n/d")),
+            ),
             theme_sig=theme_sig,
             charts_settings_sig=charts_settings_sig,
             builder=lambda: apply_settings(build_monthly_purchase_spending_time_chart(monthly_purchase_df, theme), "andamento_monthly_spending"),
