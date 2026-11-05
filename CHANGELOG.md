@@ -13,6 +13,10 @@ Questo file è stato riscritto in forma sintetica il 02/11/2026. Il testo integr
 - Controllo automatico esteso: blocca ogni elenco di simboli di mercato e le vecchie scale.
 
 ### Modificato
+- Avvio a freddo da ~20–23 s a ~11–12 s e rerun a caldo da ~13–15 s a ~6–9 s (misure su AppTest): archivio SQLite dei benchmark senza riaperture di connessione, firma dei dati stabile tra processi (le figure per strumento non si ricostruiscono più a ogni avvio), cache di risoluzione degli strumenti letta una volta per run.
+- SATOR in Pianificazione dopo un cambio di prezzi: piano di ribilanciamento, mappa strumenti e frontiera mostrano l'ultimo risultato con l'avviso «dati precedenti, calcolati alle HH:MM» mentre si ricalcolano (ADR-0023).
+- Aggiornamento automatico dei profili strumenti spento di default; backup automatici dell'aggiornamento quotazioni al massimo ogni 30 minuti; storico prezzi riscritto solo se cambia.
+- Cache figure: al massimo 3 varianti per figura; «Spesa mensile per acquisto strumenti» non si ricostruisce più all'aggiornamento prezzi.
 - L'aggiornamento giornaliero dei prezzi benchmark (18:00) è spento di default e si attiva da Impostazioni → Benchmark.
 - L'archivio SQLite è il registro dei benchmark: una serie va registrata prima di essere usata ([ADR-0022](docs/adr/0022-archivio-registro-dei-benchmark-e-isolamento-test.md)).
 - Analisi strumento: il benchmark è scelto con lo stesso algoritmo di scoperta.
