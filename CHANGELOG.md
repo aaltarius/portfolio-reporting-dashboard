@@ -6,7 +6,10 @@ Questo file è stato riscritto in forma sintetica il 02/11/2026. Il testo integr
 
 ## [Non rilasciato]
 
+## [5.7] — 2026-11-05
+
 ### Aggiunto
+- Operazioni: riga di sintesi (operazioni, acquistato, vendite e rimborsi, cedole e dividendi, costi e imposte, liquidità; anno in corso e da sempre) e cronologia unica al posto delle due tabelle, per mese, con filtri per tipo e periodo, ricerca, totali che seguono i filtri, dettaglio per riga ed esportazione CSV, tutto nel browser senza ricaricare la pagina; il versamento che copre un acquisto è mostrato nella riga dell'acquisto.
 - Summary, archivio report: griglia con un report per riga (data, periodo in italiano, contenuti, valore e P/L, dimensione), anteprima in popup con apertura in una nuova scheda, pulsante di download accanto all'anteprima e «Riprendi», eliminazione con conferma; i report oltre l'ottavo in un pannello a parte.
 - Backup: ogni copia include ora storico prezzi e decisioni SATOR, ha un manifest con controllo di integrità (dimensioni sempre, hash su richiesta) e il ripristino li riporta entrambi. La chiave API dell'AI resta esclusa dai backup.
 - Dati: riquadro «Salute dei dati» in cima con le poche azioni da fare (cosa, dove) e KPI «Ultimo backup»; la tabella qualità ha la colonna «Posizione» (In portafoglio, Chiuso/Rimborsato con data, Candidato, Osservato).

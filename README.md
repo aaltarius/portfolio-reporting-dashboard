@@ -4,7 +4,7 @@ Applicazione Python/Streamlit per il monitoraggio di un portafoglio titoli gesti
 
 | Voce | Valore corrente |
 | --- | --- |
-| Versione applicativa (`APP_VERSION`, `persistence/storage.py`) | 5.6 |
+| Versione applicativa (`APP_VERSION`, `persistence/storage.py`) | 5.7 |
 | Ultima versione stabile taggata | `v5.0` (2026-09-08) |
 | Schema dati | 3.4 |
 | Repository | `aaltarius/portfolio-reporting-dashboard` (**pubblico**, verificato il 02/11/2026) |

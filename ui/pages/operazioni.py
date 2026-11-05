@@ -1,56 +1,53 @@
 """
-ui/pages/operazioni.py — Tab Operazioni: event log and transaction registry
-Pure rendering with pre-filtered service data.
+ui/pages/operazioni.py — Tab Operazioni: sintesi e cronologia degli eventi di portafoglio.
+Pure rendering: i dati arrivano dai servizi (`core/services/operations_ledger.py`); filtri e
+dettagli girano nel browser (`ui/pages/operazioni_timeline.py`), senza rerun.
 """
 from types import SimpleNamespace
-from typing import Any
 
-import pandas as pd
 import streamlit as st
-
 from streamlit.delta_generator import DeltaGenerator
 
-from persistence.storage import (
-    macro_cat,
-    get_registro_eventi,
-)
-from core.domain.calendar import TAX_RATE_GOV_PCT, TAX_RATE_OTHER_PCT
-from core.services import (
-    get_portfolio_operations,
-    get_cash_movements,
-    build_monthly_purchase_spending,
-)
-from ui.formatting import (
-    fmt_eur_it, fmt_qty_it, fmtds,
-)
-from ui.components import (
-    macro_color, back_to_top,
-    render_styled_table,
-    render_section_title, should_render_section,
-)
-from ui.charts.operazioni import (
-    build_monthly_purchase_spending_time_chart,
-)
-from ui.charts.calendario_btp import render_btp_calendar
-from ui.charts.settings import apply_settings
+from core.render_profiler import profile_step
+from core.services.operations_ledger import build_operations_ledger, build_operations_summary
+from persistence.storage import get_registro_eventi
+from ui.components import back_to_top, kpi_card, render_section_title, vertical_gap
+from ui.formatting import fmt_eur_it
 from ui.i18n import t
-from ui.theme import get_theme_context
 from ui.page_chrome import render_page_intro as render_page_intro_shared
+from ui.pages.operazioni_timeline import build_timeline_html
+from ui.streamlit_compat import render_html_iframe
+from ui.theme import get_theme_context, macro_color
 
-def _default_tax_rate_pct(evento: str, ticker: str, info_map: dict[str, dict[str, Any]]) -> float:
-    if evento != "CEDOLA":
-        return TAX_RATE_OTHER_PCT
-    instrument_type = info_map.get(ticker, {}).get("tipo", "")
-    return TAX_RATE_GOV_PCT if macro_cat(instrument_type) == "GOV" else TAX_RATE_OTHER_PCT
+TIMELINE_HEIGHT = 780
+
+
+def _timeline_colors(theme) -> dict[str, str]:
+    return {
+        "surface": theme.bg_surface,
+        "surface2": theme.colors.get("bg_surface_alt", theme.bg_surface),
+        "text": theme.font_color,
+        "muted": theme.muted_color,
+        "border": theme.border_color,
+        "primary": theme.primary_color,
+        "font": theme.colors.get("font_family", "system-ui, -apple-system, sans-serif"),
+        # stessa assegnazione colori delle vecchie tabelle (acquisto verde, vendita rosso, rimborso viola)
+        "acquisto": theme.color_green,
+        "vendita": theme.color_red,
+        "rimborso": theme.color_purple,
+        "cedola": theme.color_blue,
+        "dividendo": theme.color_yellow,
+        "versamento": theme.color_orange,
+        "prelievo": theme.color_orange,
+        "costo": theme.color_gray,
+        "pos": theme.color_green,
+        "neg": theme.color_red,
+    }
 
 
 def render_operazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
-    """
-    Pure rendering for operazioni page (transaction log).
-    All filtering is done by service functions.
-    """
+    """Pure rendering for operazioni page (sintesi + cronologia)."""
     data = ctx.data
-    fmtds = ctx.fmtds
     settings = getattr(ctx, "settings", {}) if hasattr(ctx, "settings") else {}
     theme = get_theme_context()
 
@@ -62,134 +59,49 @@ def render_operazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             theme,
         )
 
-        operations = get_portfolio_operations(get_registro_eventi(data))
+        eventi = get_registro_eventi(data)
+        info_map = {s["ticker"]: s for s in data.get("strumenti", []) if s.get("ticker")}
+        with profile_step("Operazioni", "build registro e sintesi"):
+            ledger = build_operations_ledger(eventi, info_map)
+            summary = build_operations_summary(eventi)
+            for row in ledger:
+                row["catColor"] = macro_color(row["cat"]) if row.get("cat") else ""
 
-        # ─── Operazioni di portafoglio ──────────────────────────────
+        # ─── Sintesi ───────────────────────────────────────────────
+        year, anno, tot = summary["year"], summary["anno"], summary["totale"]
         render_section_title(
-            t(settings, 'operations.portfolio_title', 'Registro operazioni di portafoglio'),
-            comment=t(settings, "operations.portfolio_note", "Operazioni che incidono sulle posizioni del portafoglio: acquisti, vendite e rimborsi a scadenza."),
+            t(settings, "operations.summary_title", "Sintesi"),
+            comment=f"Totali dell'anno {year}; sotto ogni valore, quanto da sempre. Calcolati dagli stessi eventi della cronologia.",
             gap_after="xs",
         )
+        cols = st.columns(6, gap="small")
+        cards = [
+            ("Operazioni", f"{anno['operazioni']}", f"da sempre: {tot['operazioni']}", theme.color_blue),
+            ("Acquistato", fmt_eur_it(anno["acquistato"], 0), f"da sempre: {fmt_eur_it(tot['acquistato'], 0)}", theme.color_green),
+            ("Vendite e rimborsi", fmt_eur_it(anno["incassato"], 0), f"da sempre: {fmt_eur_it(tot['incassato'], 0)}", theme.color_purple),
+            ("Cedole e dividendi", fmt_eur_it(anno["proventi"], 0), f"da sempre: {fmt_eur_it(tot['proventi'], 0)} (netti)", theme.color_yellow),
+            ("Costi e imposte", fmt_eur_it(anno["costi"], 0), f"da sempre: {fmt_eur_it(tot['costi'], 0)}", theme.color_gray),
+            ("Liquidità attuale", fmt_eur_it(getattr(ctx, "liquidita_attuale", 0.0), 0), "disponibile in cassa", theme.color_orange),
+        ]
+        for col, (title, value, sub, accent) in zip(cols, cards):
+            with col:
+                kpi_card(title, value, sub, accent=accent)
+        vertical_gap("sm")
 
-        if operations:
-            info_map = {s["ticker"]: s for s in data.get("strumenti", [])}
-            dfp = pd.DataFrame(operations)
-
-            # Build display columns
-            dfp["Data"] = dfp["data"].apply(fmtds)
-            dfp["Evento"] = dfp["tipo_evento"]
-            dfp["Ticker"] = dfp["ticker"]
-            dfp["Strumento"] = dfp["ticker"].map(
-                lambda tk: (lambda n: n[:24] + "…" if len(n) > 24 else n)(
-                    info_map.get(tk, {}).get("nome", tk)
-                )
-            )
-            dfp["Tipo"] = dfp["ticker"].map(
-                lambda tk: macro_cat(info_map.get(tk, {}).get("tipo", ""))
-            ).fillna("")
-            dfp["Qtà"] = pd.to_numeric(dfp.get("quantita", 0), errors="coerce")
-            dfp["Prezzo €"] = pd.to_numeric(dfp.get("prezzo_unitario", 0), errors="coerce")
-            dfp["Comm. €"] = pd.to_numeric(dfp.get("commissioni", 0), errors="coerce")
-            dfp["Imposte €"] = pd.to_numeric(dfp.get("imposte", 0), errors="coerce")
-            dfp["Netto €"] = pd.to_numeric(dfp.get("importo_netto", 0), errors="coerce")
-
-            out = dfp[["Data", "Evento", "Ticker", "Strumento", "Tipo", "Qtà", "Prezzo €", "Comm. €", "Imposte €", "Netto €"]].copy()
-
-            def _style_port(row):
-                ev_color = {
-                    "ACQUISTO": theme.color_green,
-                    "VENDITA": theme.color_red,
-                    "RIMBORSO A SCADENZA": theme.color_purple,
-                }.get(str(row["Evento"]), theme.color_gray)
-                cls_color = macro_color(row["Tipo"]) if row.get("Tipo") else None
-                styles = []
-                for col in row.index:
-                    s = ""
-                    if col == "Evento":
-                        s += f"color:{ev_color};font-weight:700;"
-                    if col in {"Ticker", "Tipo"} and cls_color:
-                        s += f"color:{cls_color};font-weight:700;"
-                    if col == "Strumento":
-                        s += "font-weight:600;"
-                    styles.append(s)
-                return styles
-
-            styled_port = out.style.format({
-                "Qtà": lambda v: fmt_qty_it(v, 4),
-                "Prezzo €": lambda v: fmt_eur_it(v, 4),
-                "Comm. €": lambda v: fmt_eur_it(v, 2),
-                "Imposte €": lambda v: fmt_eur_it(v, 2),
-                "Netto €": lambda v: fmt_eur_it(v, 2, signed=True),
-            }).apply(_style_port, axis=1)
-            render_styled_table(styled_port, height=520)
-        else:
-            st.info(t(settings, "operations.portfolio_empty", "Nessuna operazione di portafoglio registrata."))
-
-        # ─── Movimenti di liquidità ────────────────────────────────
+        # ─── Cronologia ────────────────────────────────────────────
         render_section_title(
-            t(settings, 'operations.cash_title', 'Registro movimenti di liquidità'),
-            comment=t(settings, "operations.cash_note", "Movimenti che incidono sulla cassa del portafoglio: versamenti, prelievi, vendite/rimborsi (entrate), acquisti (uscite), cedole, dividendi, commissioni e imposte."),
+            t(settings, "operations.timeline_title", "Cronologia"),
+            comment=t(
+                settings,
+                "operations.timeline_note",
+                "Operazioni e movimenti di cassa in un'unica lista, dal più recente. Il versamento che copre un acquisto è nella riga dell'acquisto. Filtra, cerca, apri una riga per il dettaglio ed esporta in CSV: tutto nel browser, senza ricaricare la pagina.",
+            ),
             gap_after="xs",
         )
-
-        # Get pre-filtered cash movements from service
-        cash_movements = get_cash_movements(get_registro_eventi(data))
-
-        if cash_movements:
-            info_map = {s["ticker"]: s for s in data.get("strumenti", [])}
-            dfc = pd.DataFrame(cash_movements)
-
-            # Build display columns
-            dfc["Data"] = dfc["data"].apply(fmtds)
-            dfc["Causale"] = dfc["tipo_evento"]
-            dfc["Ticker"] = dfc["ticker"].fillna("")
-            dfc["Strumento"] = dfc["ticker"].map(
-                lambda tk: info_map.get(tk, {}).get("nome", tk) if tk else ""
-            )
-            dfc["Riferimento"] = dfc.apply(
-                lambda r: (
-                    f"{r['Ticker']} — {r['Strumento']}"
-                    if str(r.get("Ticker", "")).strip() and str(r.get("Strumento", "")).strip()
-                    else (str(r.get("Ticker", "")).strip() or str(r.get("Strumento", "")).strip() or "—")
-                ),
-                axis=1,
-            )
-            dfc["Lordo"] = pd.to_numeric(dfc.get("importo_lordo", 0), errors="coerce")
-            dfc["Imposte"] = pd.to_numeric(dfc.get("imposte", 0), errors="coerce")
-            dfc["Netto cassa"] = pd.to_numeric(dfc.get("importo_netto", 0), errors="coerce")
-            dfc["Note"] = dfc.get("note", "")
-
-            outc = dfc[["Data", "Causale", "Riferimento", "Lordo", "Imposte", "Netto cassa", "Note"]].copy()
-
-            def _style_cash(row):
-                ev_color = {
-                    "VERSAMENTO": theme.color_green,
-                    "PRELIEVO": theme.color_red,
-                    "CEDOLA": theme.color_purple,
-                    "DIVIDENDO": theme.color_yellow,
-                    "COMMISSIONE": theme.color_gray,
-                    "IMPOSTA": theme.color_gray,
-                    "VENDITA": theme.color_blue,
-                    "RIMBORSO A SCADENZA": theme.color_orange,
-                    "ACQUISTO": theme.color_orange,
-                }.get(str(row["Causale"]), theme.color_gray)
-                styles = []
-                for col in row.index:
-                    s = ""
-                    if col == "Causale":
-                        s += f"color:{ev_color};font-weight:700;"
-                    if col == "Riferimento" and str(row.get("Riferimento", "")).strip() not in {"", "—"}:
-                        s += "font-weight:600;"
-                    styles.append(s)
-                return styles
-
-            styled_cash = outc.style.format({
-                "Lordo": lambda v: fmt_eur_it(v, 2),
-                "Imposte": lambda v: fmt_eur_it(v, 2),
-                "Netto cassa": lambda v: fmt_eur_it(v, 2, signed=True),
-            }).apply(_style_cash, axis=1)
-            render_styled_table(styled_cash, height=520)
+        if ledger:
+            with profile_step("Operazioni", "render cronologia", count=len(ledger)):
+                render_html_iframe(build_timeline_html(ledger, _timeline_colors(theme)), height=TIMELINE_HEIGHT)
         else:
-            st.info(t(settings, "operations.cash_empty", "Nessun movimento di liquidità registrato."))
+            st.info(t(settings, "operations.portfolio_empty", "Nessuna operazione registrata."))
 
         back_to_top(show_prev=True, show_next=True, nav_key="operazioni")
