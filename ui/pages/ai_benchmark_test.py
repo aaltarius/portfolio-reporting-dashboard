@@ -9,6 +9,7 @@ import streamlit as st
 
 from core.ai_analysis import AI_CALL_COUNT_KEY
 from core.ai_benchmark_probe import BenchmarkProbeResult, collect_probe_instruments, run_benchmark_probe
+from core.market_data import get_isin_ticker_cache
 from ui.components import legend_block, render_section_title, vertical_gap
 
 _RESULT_KEY = "_ai_benchmark_probe_result_v1"
@@ -33,13 +34,15 @@ def render_ai_benchmark_test(ctx: SimpleNamespace, *, api_key: str, model: str) 
         icon="analysis",
     )
     legend_block(
-        "A Google vengono inviati solo ticker, ISIN, nome e tipo degli strumenti posseduti: nessuna quantità, importo o P/L. "
+        "A Google vengono inviati solo ticker, ISIN, nome, tipo e simbolo Yahoo degli strumenti posseduti: nessuna quantità, importo o P/L. "
         "Le risposte non sono verificate: controllale sul KID o sulla scheda dell'emittente prima di fidartene.",
         variant="bottom",
     )
     vertical_gap("xs")
 
-    instruments = collect_probe_instruments(getattr(ctx, "data", {}) or {}, getattr(ctx, "da", pd.DataFrame()))
+    data = getattr(ctx, "data", {}) or {}
+    yahoo_by_isin = {**(data.get("cache_lookup_strumenti") or {}), **get_isin_ticker_cache()}
+    instruments = collect_probe_instruments(data, getattr(ctx, "da", pd.DataFrame()), yahoo_by_isin=yahoo_by_isin)
     if not instruments:
         st.info("Nessuno strumento in portafoglio da interrogare.")
         return

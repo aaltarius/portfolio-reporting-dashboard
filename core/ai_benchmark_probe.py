@@ -42,7 +42,7 @@ Rispondi ESCLUSIVAMENTE con un oggetto JSON valido (nessun testo extra), con que
 "confidenza": "alta|media|bassa", "note": "..."}]}
 Includi tutti gli strumenti, uno per riga, con lo stesso ticker dell'elenco.
 
-Strumenti:
+Il ticker e' un codice interno; l'ISIN e il simbolo Yahoo (se presente) identificano lo strumento.\n\nStrumenti:
 """
 
 
@@ -53,8 +53,20 @@ class BenchmarkProbeResult:
     raw_text: str = ""
 
 
-def collect_probe_instruments(data: dict[str, Any], da: pd.DataFrame | None) -> list[dict[str, str]]:
-    """Strumenti attualmente in portafoglio (righe di ``da``), con soli ticker/ISIN/nome/tipo."""
+def _yahoo_symbol(item: dict[str, Any], ticker: str, yahoo_by_isin: dict[str, str] | None) -> str:
+    """Simbolo Yahoo noto: quello salvato per l'ISIN (fondi FAM, il cui ticker interno non esiste su Yahoo),
+    altrimenti il ticker stesso se ha la forma di un simbolo di borsa (es. ``ABC.MI``)."""
+    isin = str(item.get("isin") or "")
+    mapped = (yahoo_by_isin or {}).get(isin)
+    if mapped:
+        return str(mapped)
+    return ticker if "." in ticker and not ticker.upper().startswith("BTP") else ""
+
+
+def collect_probe_instruments(
+    data: dict[str, Any], da: pd.DataFrame | None, *, yahoo_by_isin: dict[str, str] | None = None
+) -> list[dict[str, str]]:
+    """Strumenti attualmente in portafoglio (righe di ``da``), con soli ticker/ISIN/nome/tipo/simbolo Yahoo."""
     if da is None or da.empty or "Ticker" not in da.columns:
         return []
     held = [str(t) for t in da["Ticker"].tolist()]
@@ -62,13 +74,16 @@ def collect_probe_instruments(data: dict[str, Any], da: pd.DataFrame | None) -> 
     rows: list[dict[str, str]] = []
     for ticker in dict.fromkeys(held):
         item = by_ticker.get(ticker, {})
-        rows.append({key: str(item.get(key) or (ticker if key == "ticker" else "")) for key in _PROBE_FIELDS})
+        row = {key: str(item.get(key) or (ticker if key == "ticker" else "")) for key in _PROBE_FIELDS}
+        row["yahoo"] = _yahoo_symbol(item, ticker, yahoo_by_isin)
+        rows.append(row)
     return rows
 
 
 def build_benchmark_probe_prompt(instruments: list[dict[str, str]]) -> str:
     lines = [
         f"- ticker: {r['ticker']} | ISIN: {r['isin'] or 'n.d.'} | nome: {r['nome'] or 'n.d.'} | tipo: {r['tipo'] or 'n.d.'}"
+        f" | simbolo Yahoo: {r.get('yahoo') or 'n.d.'}"
         for r in instruments
     ]
     return _PROMPT_HEADER + "\n".join(lines) + "\n"
