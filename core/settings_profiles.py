@@ -4,6 +4,9 @@ core/settings_profiles.py -- Accesso canonico ai domini delle impostazioni.
 
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 from typing import Any, Mapping
 
 from persistence.storage import _normalize_settings_payload, default_settings
@@ -239,3 +242,58 @@ def resolve_page_render_mode(
         "render_mode": render_mode,
         "include_advanced": render_mode == "Completa",
     }
+
+
+# Opzioni di sola diagnosi: cambiano cosa viene mostrato o registrato, non i calcoli.
+# Non devono entrare nelle firme delle cache, altrimenti attivare il log dei tempi
+# ricostruisce Summary, Cruscotti e figure senza motivo.
+DIAGNOSTIC_UI_KEYS = frozenset(
+    {
+        "debug_render_monitor",
+        "debug_render_progress",
+        "debug_render_log",
+        "debug_render_scope",
+        "log_level",
+    }
+)
+_DIAGNOSTIC_TOP_LEVEL_KEYS = frozenset({"ui_debug_render_monitor"})
+
+
+def without_diagnostic_keys(values: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Copia di un blocco impostazioni UI senza le opzioni di sola diagnosi."""
+    return {key: value for key, value in dict(values or {}).items() if key not in DIAGNOSTIC_UI_KEYS}
+
+
+def _strip_diagnostic_settings(settings: Mapping[str, Any] | None) -> dict[str, Any]:
+    out = copy.deepcopy(dict(settings or {}))
+    for key in _DIAGNOSTIC_TOP_LEVEL_KEYS:
+        out.pop(key, None)
+    for block in ("ui_preferences", "runtime_ui"):
+        if isinstance(out.get(block), dict):
+            out[block] = without_diagnostic_keys(out[block])
+    return out
+
+
+def settings_change_is_diagnostic_only(before: Mapping[str, Any] | None, after: Mapping[str, Any] | None) -> bool:
+    """True se le due impostazioni differiscono al massimo per opzioni di diagnosi."""
+    return _strip_diagnostic_settings(before) == _strip_diagnostic_settings(after)
+
+
+def build_runtime_settings_signature(settings: dict[str, Any] | None) -> str:
+    """Firma delle impostazioni che influenzano davvero il bootstrap runtime."""
+    from core.asset_categories import get_selected_category_codes
+
+    settings = settings or {}
+    payload = {
+        "selected_categories": list(get_selected_category_codes(settings)),
+        "calculations": get_calculations_settings(settings),
+        "pre_render": get_pre_render_settings(settings),
+        "runtime_ui": without_diagnostic_keys(get_runtime_ui_settings(settings)),
+        "ui_preferences": without_diagnostic_keys(get_ui_preferences(settings)),
+        "portfolio_benchmark": settings.get("portfolio_benchmark", {}),
+        "portfolio_identity": settings.get("portfolio_identity", {}),
+        "portfolio_objective": settings.get("portfolio_objective", {}),
+        "sator_settings": settings.get("sator", {}),
+        "include_proventi_in_total_return": settings.get("include_proventi_in_total_return"),
+    }
+    return hashlib.md5(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]

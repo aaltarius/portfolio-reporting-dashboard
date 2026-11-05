@@ -2,6 +2,7 @@
 ui/pages/impostazioni.py — Tab Impostazioni: configurazione strutturale.
 Pure rendering - le operazioni amministrative vivono in Gestione Dati.
 """
+import copy
 import logging
 import json
 import os
@@ -49,6 +50,7 @@ from core.finance import (
 )
 from core.services.benchmark import resolve_effective_benchmark_components
 from core.settings_profiles import (
+    settings_change_is_diagnostic_only,
     get_alerts_settings,
     get_benchmarking_settings,
     get_calculations_settings,
@@ -707,6 +709,7 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
 
             submitted_settings = st.form_submit_button("💾 Salva impostazioni", width="stretch", type="primary")
         if submitted_settings:
+            settings_before_save = copy.deepcopy(settings)
             try:
                 if not str(portfolio_name or "").strip():
                     raise ValueError("Il nome del portafoglio è obbligatorio.")
@@ -830,7 +833,11 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 )
                 if settings_changed:
                     queue_success("Impostazioni salvate")
-                    invalidate_portfolio_cache("impostazioni salvate")
+                    if settings_change_is_diagnostic_only(settings_before_save, settings):
+                        # Solo opzioni di diagnosi (log tempi, livello log): nessun calcolo cambia.
+                        logger.info("Impostazioni di sola diagnosi: nessuna cache invalidata")
+                    else:
+                        invalidate_portfolio_cache("impostazioni salvate")
                     st.rerun()
                 else:
                     record_cache_decision(

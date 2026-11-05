@@ -62,6 +62,7 @@ from core.cache import get_portfolio_cache_bust, consume_next_render_scope
 from core.cache_policy import build_cache_artifact_signature
 from core.cache_orchestrator import get_or_build_registered_artifact
 from core.settings_profiles import (
+    build_runtime_settings_signature,
     get_calculations_settings,
     get_pre_render_settings,
     get_runtime_ui_settings,
@@ -321,19 +322,7 @@ if not data.get("strumenti"):
 # === ORCHESTRATION: Pre-compute all page data via services ===
 def _runtime_settings_signature() -> str:
     """Firma delle impostazioni che influenzano davvero il bootstrap runtime."""
-    settings_payload = {
-        "selected_categories": list(get_selected_category_codes(settings)),
-        "calculations": get_calculations_settings(settings),
-        "pre_render": get_pre_render_settings(settings),
-        "runtime_ui": get_runtime_ui_settings(settings),
-        "ui_preferences": get_ui_preferences(settings),
-        "portfolio_benchmark": settings.get("portfolio_benchmark", {}),
-        "portfolio_identity": settings.get("portfolio_identity", {}),
-        "portfolio_objective": settings.get("portfolio_objective", {}),
-        "sator_settings": settings.get("sator", {}),
-        "include_proventi_in_total_return": settings.get("include_proventi_in_total_return"),
-    }
-    return hashlib.md5(json.dumps(settings_payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
+    return build_runtime_settings_signature(settings)
 
 
 def _portfolio_semantic_signature(*, include_cache_bust: bool) -> str:

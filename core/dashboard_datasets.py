@@ -23,7 +23,7 @@ from core.cache_signatures import build_category_data_signature
 from core.cache_policy import build_cache_artifact_signature, get_cache_artifact_spec
 from core.cache_orchestrator import get_or_build_registered_artifact
 from core.cashflow_indices import build_group_cashflow_indices, seed_group_cashflow_indices_cache
-from core.settings_profiles import get_effective_summary_settings, get_runtime_ui_settings
+from core.settings_profiles import get_effective_summary_settings, get_runtime_ui_settings, without_diagnostic_keys
 from core.services import get_valid_quote_tickers_by_category
 from core.finance import build_category_dashboard_data, build_gov_dashboard_data
 from core.finance import build_portfolio_summary_payload, get_cached_benchmark_series, calc_positions
@@ -499,7 +499,7 @@ def build_summary_dataset_signature(
         "ui_show_explanations": effective_summary_settings.get("show_explanations"),
         "ui_summary_show_commentary": effective_summary_settings.get("show_commentary"),
         "ui_summary_show_advanced_metrics": effective_summary_settings.get("show_advanced_metrics"),
-        "ui_preferences": settings.get("ui_preferences", {}),
+        "ui_preferences": without_diagnostic_keys(settings.get("ui_preferences", {})),
     }
     summary_input_sig = _summary_payload_input_signature(
         data=data,
