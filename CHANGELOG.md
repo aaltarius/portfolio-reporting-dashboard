@@ -13,6 +13,7 @@ Questo file è stato riscritto in forma sintetica il 02/11/2026. Il testo integr
 - Controllo automatico esteso: blocca ogni elenco di simboli di mercato e le vecchie scale.
 
 ### Modificato
+- Pianificazione: i candidati al rinforzo di un bucket (quote reali SATOR) non si ricalcolano più a ogni rerun; rerun a caldo da ~6–9 s a ~3,5–4,5 s (AppTest).
 - Avvio a freddo da ~20–23 s a ~11–12 s e rerun a caldo da ~13–15 s a ~6–9 s (misure su AppTest): archivio SQLite dei benchmark senza riaperture di connessione, firma dei dati stabile tra processi (le figure per strumento non si ricostruiscono più a ogni avvio), cache di risoluzione degli strumenti letta una volta per run.
 - SATOR in Pianificazione dopo un cambio di prezzi: piano di ribilanciamento, mappa strumenti e frontiera mostrano l'ultimo risultato con l'avviso «dati precedenti, calcolati alle HH:MM» mentre si ricalcolano (ADR-0023).
 - Aggiornamento automatico dei profili strumenti spento di default; backup automatici dell'aggiornamento quotazioni al massimo ogni 30 minuti; storico prezzi riscritto solo se cambia.
