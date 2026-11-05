@@ -751,6 +751,45 @@ def build_portfolio_data_signature(
     )
 
 
+def build_sator_data_signature(
+    data: dict[str, Any] | None,
+    *,
+    app_version: str,
+    schema_version: str,
+) -> str:
+    """
+    Firma dati per le cache SATOR (ranking, ribilanciamento, frontiera, candidati).
+
+    SATOR e' un'analisi di lungo periodo usata a ridosso dell'acquisto: non va
+    ricalcolata a ogni «Aggiorna quotazioni». Rispetto a
+    `build_portfolio_data_signature` NON dipende da:
+    - `strumenti[].prezzo` (prezzo live, cambia a ogni refresh);
+    - l'ultimo giorno dello storico, l'unico che il refresh riscrive
+      (`ui/sidebar.py`: prezzi della seduta in corso o appena chiusa).
+    Dipende invece da operazioni, registro eventi, anagrafica strumenti (natura,
+    cedole, stato, candidato) e dai giorni di storico gia' consolidati: la
+    firma cambia quando arriva un nuovo giorno o si corregge un dato passato.
+    """
+    payload = data if isinstance(data, dict) else {}
+    storico_all = payload.get("storico_prezzi", {})
+    storico_all = storico_all if isinstance(storico_all, dict) else {}
+    latest_day = max(storico_all.keys()) if storico_all else None
+    consolidated = {d: v for d, v in storico_all.items() if d != latest_day}
+    strumenti = payload.get("strumenti", [])
+    stripped_strumenti = [
+        {k: v for k, v in item.items() if k != "prezzo"} if isinstance(item, dict) else item
+        for item in (strumenti if isinstance(strumenti, list) else [])
+    ]
+    scoped = dict(payload)
+    scoped["strumenti"] = stripped_strumenti
+    scoped["storico_prezzi"] = consolidated
+    return build_cashflow_data_signature(
+        scoped,
+        app_version=str(app_version),
+        schema_version=str(schema_version),
+    )
+
+
 def build_prices_scope_signature(data: dict[str, Any] | None, tickers: Any) -> str:
     """Firma dei soli prezzi storici dei ticker indicati.
 

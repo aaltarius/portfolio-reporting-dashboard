@@ -25,7 +25,7 @@ from core.services.sator import (
     resolve_instrument_nature,
 )
 from core.cache_orchestrator import get_registered_figure_cache
-from core.cache_signatures import build_portfolio_data_signature, charts_settings_signature, content_signature, theme_signature
+from core.cache_signatures import build_sator_data_signature, charts_settings_signature, content_signature, theme_signature
 from core.figure_cache import CachingStrategy
 from core.settings_profiles import resolve_figure_cache_strategy
 from core.domain.tax import stima_imposta_vendita
@@ -1463,12 +1463,24 @@ def _render_instrument_comparison_section(ctx: SimpleNamespace, exclude_tickers:
         st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
+def _request_sator_recalc() -> None:
+    """Callback del pulsante «Ricalcola SATOR»: nuova firma e calcolo sincrono al rerun."""
+    st.session_state["sator_recalc_nonce"] = int(st.session_state.get("sator_recalc_nonce", 0)) + 1
+    st.session_state["sator_recalc_sync"] = True
+
+
 def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tickers: frozenset[str] = frozenset()) -> None:
     """Dashboard decisionale basata sul portafoglio corrente e sull'ultima
     fotografia SATOR salvata su disco dalla pagina standalone in sidebar."""
     data = ctx.data
     settings = ctx.settings
-    data_sig = build_portfolio_data_signature(data, app_version=APP_VERSION, schema_version=SCHEMA_VERSION)
+    data_sig = build_sator_data_signature(data, app_version=APP_VERSION, schema_version=SCHEMA_VERSION)
+    # «Ricalcola SATOR»: il sale cambia la firma (nuovo calcolo) e il flag una tantum
+    # lo rende sincrono, senza «dati precedenti» (vedi _request_sator_recalc).
+    _recalc_nonce = int(st.session_state.get("sator_recalc_nonce", 0))
+    if _recalc_nonce:
+        data_sig = f"{data_sig}|ricalcolo{_recalc_nonce}"
+    _sator_allow_stale = not bool(st.session_state.pop("sator_recalc_sync", False))
     with profile_step("Pianificazione/SATOR", "state_and_rings"):
         ensure_sator_metadata(data)
         state_df = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
@@ -1523,11 +1535,18 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
                 instrument_tolerance_pp=ensure_sator_settings(settings)["instrument_quota_tolerance_pp"] * 100.0,
             )
         with profile_step("Pianificazione/SATOR", "rebalancing_table"):
+            _recalc_col, _ = st.columns([2, 5])
+            with _recalc_col:
+                st.button(
+                    "🔄 Ricalcola SATOR con i prezzi attuali", key="sator_recalc_now",
+                    on_click=_request_sator_recalc, width="stretch",
+                    help="SATOR non si ricalcola a ogni aggiornamento quotazioni: usa questo pulsante prima di un acquisto.",
+                )
             reset_stale_info()
             try:
                 rebalancing_plan = get_cached_rebalancing_plan(
                     data, settings, state_df, current_mix, total_value,
-                    exclude_tickers=exclude_tickers, data_sig=data_sig, allow_stale=True,
+                    exclude_tickers=exclude_tickers, data_sig=data_sig, allow_stale=_sator_allow_stale,
                 )
             except Exception:
                 rebalancing_plan = None
@@ -1581,7 +1600,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
             sator_cfg = ensure_sator_settings(settings)
             reset_stale_info()
             sator_result = get_cached_sator_analysis(
-                data, settings, budget=sator_cfg["default_budget"], data_sig=data_sig, allow_stale=True,
+                data, settings, budget=sator_cfg["default_budget"], data_sig=data_sig, allow_stale=_sator_allow_stale,
             )
         except Exception:
             sator_result = None
@@ -1648,7 +1667,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
                 data, settings, precomputed_result=sator_result,
                 lookback_months=_horizon_options[_horizon_label], manual_slider_pct=_manual_pct / 100.0,
                 exclude_tickers=exclude_tickers,
-                data_sig=data_sig + ("|ranking-precedente" if _ranking_is_stale else ""), allow_stale=True,
+                data_sig=data_sig + ("|ranking-precedente" if _ranking_is_stale else ""), allow_stale=_sator_allow_stale,
             ) if sator_result is not None else None
         except Exception:
             frontier_result = None
