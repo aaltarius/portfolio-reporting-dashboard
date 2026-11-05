@@ -320,8 +320,12 @@ def render_sidebar(data: dict) -> None:
     Modifica `data` in-place, salva e chiama st.rerun() se necessario.
     """
     with st.sidebar:
-        st.markdown("# ⚙️ Gestione")
-        st.caption(f"v{APP_VERSION}")
+        # Logo compatto (ritaglio di static/sestante_logo_header_final.png) con la versione accanto.
+        st.markdown(
+            f"<div class='sb-brand'><img src='app/static/sestante_logo_sidebar.png?v={APP_VERSION}' alt='Sestante'>"
+            f"<span class='sb-brand-ver'>v{APP_VERSION}</span></div>",
+            unsafe_allow_html=True,
+        )
         _btn_area = st.container()
         st.divider()
         _arresta_area = st.container()

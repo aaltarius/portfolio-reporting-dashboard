@@ -22,6 +22,7 @@ from core.page_cache import clear_page_artifact_disk_cache, get_page_artifact_ca
 from streamlit.delta_generator import DeltaGenerator
 
 from core.finance import _build_snapshot_from_data, _rebuild_cash_ledger_from_events
+from core.services.data_health import build_data_health
 from core.services.integrity import build_integrity_checks
 from core.services.instrument_quality import build_instrument_quality_dataset
 from core.settings_profiles import get_backup_settings, get_figure_cache_settings
@@ -38,10 +39,15 @@ from core.render_profiler import get_render_profile_events, profile_step, render
 from core.logging_utils import get_default_log_file_path, get_log_file_stats, read_log_tail
 from core.validators import validate_date, validate_quote_import, validate_selection
 from persistence.storage import (
-    BACKUP_DIR,
+    BASE_DIR,
+    SATOR_DECISIONS_FILE,
+    STORICO_PREZZI_FILE,
+    list_backups,
+    resolve_backup_folder,
+    restore_backup_bundle,
+    verify_backup_bundle,
     MARKET_LIVE_FILE,
     DATA_DIR,
-    PRICES_DIR,
     DATA_FILE,
     META_FILE,
     QUOTES_LOG_FILE,
@@ -65,7 +71,7 @@ from ui.i18n import t
 from ui.page_chrome import render_page_intro as render_page_intro_shared, render_section_line as render_section_line_shared
 from core.config import COLORS
 from ui.theme import get_theme_context, macro_color
-from ui.notifications import queue_info, queue_success, update_status
+from ui.notifications import queue_success, update_status
 from ui.ux_helpers import confirm_danger, render_danger_hint
 
 logger = logging.getLogger("portafoglio.ui.gestione_dati")
@@ -556,7 +562,8 @@ def _section_line() -> None:
     return render_section_line_shared()
 
 
-def _render_arricchimento(data: dict, ctx) -> None:
+def _load_quality(data: dict, ctx) -> pd.DataFrame:
+    """Dataset qualità strumenti (artefatto in cache `dati.quality_table`)."""
     from persistence.storage import load_settings, apply_privacy_filter
 
     # Sola lettura: usa il dataset già caricato nel run e applica comunque
@@ -568,18 +575,21 @@ def _render_arricchimento(data: dict, ctx) -> None:
             app_version=str(getattr(ctx, "app_version", "n/d")),
             schema_version=str(getattr(ctx, "schema_version", "n/d")),
         )
-        # v3: aggiunto il campo "in_portfolio" a build_instrument_quality_dataset
-        # (2026-08-20) — bump obbligatorio, altrimenti un artefatto gia' in
-        # cache (stessa firma dati, forma vecchia senza il campo) resta
-        # servito cosi' com'e' e la UI che legge quality["in_portfolio"]
-        # solleva KeyError (bug reale riscontrato in produzione).
-        + f"|quality_light_v3|asof={date.today().isoformat()}"
+        # v4: aggiunte le colonne "lifecycle" e "closed_date" e l'azione «Chiuso»
+        # (stesso motivo del bump in core/cache_policy.py: la firma non include il codice).
+        + f"|quality_light_v4|asof={date.today().isoformat()}"
     )
     quality_sig_label = quality_sig.replace("|", "/")[-48:]
     with profile_step("Dati", "load/build qualita dati dataset", detail=f"sig={quality_sig_label}"):
         quality, quality_source = _get_instrument_quality_dataset(quality_sig, raw_data)
     with profile_step("Dati", "qualita dati dataset source", detail=f"source={quality_source}; sig={quality_sig_label}"):
         pass
+    return quality
+
+
+def _render_arricchimento(data: dict, ctx, quality: pd.DataFrame | None = None) -> None:
+    if quality is None:
+        quality = _load_quality(data, ctx)
 
     def _fmt_days(value) -> str:
         try:
@@ -590,18 +600,23 @@ def _render_arricchimento(data: dict, ctx) -> None:
             return "n/d"
 
     if not quality.empty:
-        def _ptf_symbol(row: pd.Series) -> str:
-            if bool(row.get("in_portfolio", False)):
-                return "-"
-            # .get() con default, non row["candidato_acquisto"]: un
-            # artefatto cache costruito prima che questa colonna esistesse
-            # (vedi bump version in core/cache_policy.py, "dati.quality_table")
+        def _position_label(row: pd.Series) -> str:
+            # .get() con default: un artefatto cache costruito prima di queste
+            # colonne (vedi version in core/cache_policy.py, "dati.quality_table")
             # non deve far esplodere la pagina con un KeyError.
-            return "★" if bool(row.get("candidato_acquisto", False)) else "☆"
+            life = str(row.get("lifecycle", "") or ("in_portafoglio" if row.get("in_portfolio", False) else "osservato"))
+            when = fmt_date_only_it(row.get("closed_date")) if str(row.get("closed_date", "") or "") else ""
+            if life == "in_portafoglio":
+                return "In portafoglio"
+            if life == "rimborsato":
+                return f"Rimborsato {when}".strip()
+            if life == "chiuso":
+                return f"Chiuso {when}".strip()
+            return "★ Candidato" if bool(row.get("candidato_acquisto", False)) else "☆ Osservato"
 
         display = pd.DataFrame({
             "Ticker": quality["ticker"].astype(str),
-            "Ptf": quality.apply(_ptf_symbol, axis=1),
+            "Posizione": quality.apply(_position_label, axis=1),
             "Cat": quality["category"].astype(str),
             "Qualità dati": quality["data_quality_label"].astype(str),
             "Arricchimento": quality["enrichment_completeness"].round().astype(int),
@@ -628,13 +643,15 @@ def _render_arricchimento(data: dict, ctx) -> None:
         # (ui/charts/quotes_popup.py).
         def _style_quality_row(row: pd.Series) -> list[str]:
             cat_color = macro_color(str(row.get("Cat", "")))
-            ptf_color = COLORS["info"] if str(row.get("Ptf", "")) == "★" else "#9CA3AF"
+            pos = str(row.get("Posizione", ""))
+            closed = pos.startswith(("Chiuso", "Rimborsato"))
+            pos_color = COLORS["info"] if pos.startswith("★") else "#9CA3AF"
             styles = []
             for col in row.index:
                 if col in {"Ticker", "Cat"}:
-                    styles.append(f"color:{cat_color};font-weight:700;")
-                elif col == "Ptf":
-                    styles.append(f"color:{ptf_color};font-weight:700;")
+                    styles.append(f"color:{'#9CA3AF' if closed else cat_color};font-weight:700;")
+                elif col == "Posizione":
+                    styles.append(f"color:{pos_color};font-weight:700;")
                 else:
                     styles.append("")
             return styles
@@ -645,10 +662,10 @@ def _render_arricchimento(data: dict, ctx) -> None:
             height=table_h,
             column_config={
                 "Ticker": st.column_config.TextColumn("Ticker", width=72),
-                "Ptf": st.column_config.TextColumn(
-                    "★☆",
-                    width=36,
-                    help="- se lo strumento è realmente in portafoglio (quote possedute); ★ se è un candidato all'acquisto; ☆ se è solo osservato/tracciato.",
+                "Posizione": st.column_config.TextColumn(
+                    "Posizione",
+                    width=112,
+                    help="In portafoglio (quote possedute); Chiuso/Rimborsato con la data dell'ultima chiusura (nessuna azione richiesta); ★ candidato all'acquisto; ☆ solo osservato, mai acquistato.",
                 ),
                 "Cat": st.column_config.TextColumn(
                     "Cat.",
@@ -896,6 +913,59 @@ def _render_ripara_buchi(data: dict, quality: pd.DataFrame) -> None:
         st.rerun()
 
 
+def _last_backup_summary() -> tuple[str, str]:
+    """(valore, nota) per il KPI «Ultimo backup»: solo `os.scandir`, nessuna lettura dei file."""
+    stamps = [mtime for _, mtime in list_backups()]
+    if not stamps:
+        return "Nessuno", "Crea un backup qui sotto"
+    last = datetime.fromtimestamp(max(stamps))
+    days = (date.today() - last.date()).days
+    label = "Oggi" if days == 0 else "Ieri" if days == 1 else f"{days} giorni fa"
+    return label, f"{last:%d/%m/%Y %H:%M} · {len(stamps)} copie"
+
+
+def _data_files_inventory() -> pd.DataFrame:
+    """Inventario dei file dati reali, costruito dalle costanti di persistence.storage."""
+    storico_base = os.path.splitext(STORICO_PREZZI_FILE)[0]
+    entries = [
+        ("Portafoglio", DATA_FILE), ("Portafoglio", SNAPSHOTS_FILE), ("Portafoglio", SATOR_DECISIONS_FILE),
+        ("Prezzi", storico_base + ".parquet"), ("Prezzi", storico_base + ".json.gz"),
+        ("Prezzi", QUOTES_LOG_FILE), ("Prezzi", MARKET_LIVE_FILE),
+        ("Benchmark", os.path.join(DATA_DIR, "indices", "benchmarks.sqlite3")),
+        ("Configurazione", SETTINGS_FILE), ("Configurazione", META_FILE),
+        ("Configurazione", os.path.join(DATA_DIR, "config", "ai_config.json")),
+    ]
+    rows = []
+    for category, path in entries:
+        exists = os.path.exists(path)
+        rows.append({
+            "Categoria": category,
+            "File": os.path.relpath(path, BASE_DIR).replace("\\", "/"),
+            "Presente": exists,
+            "Dimensione KB": round(os.path.getsize(path) / 1024, 1) if exists else 0.0,
+            "Ultima modifica": datetime.fromtimestamp(os.path.getmtime(path)).strftime("%d/%m/%Y %H:%M") if exists else "—",
+        })
+    return pd.DataFrame(rows)
+
+
+def _render_data_health(health: dict) -> None:
+    """Riquadro «cosa fare ora»: esito sintetico e al massimo poche azioni ordinate."""
+    level = health.get("level", "ok")
+    headline = str(health.get("headline", ""))
+    (st.success if level == "ok" else st.error if level == "problema" else st.warning)(f"**Salute dei dati** — {headline}")
+    items = health.get("items", []) or []
+    icons = {"Errore": "🔴", "Warning": "🟠", "Info": "⚪"}
+    for item in items:
+        st.markdown(
+            f"{icons.get(item['severity'], '•')} **{item['title']}** — {item['detail']}<br>"
+            f"<span style='opacity:.65'>Dove: {item['where']}</span>",
+            unsafe_allow_html=True,
+        )
+    hidden = int(health.get("total", len(items))) - len(items)
+    if hidden > 0:
+        st.caption(f"... e altre {hidden} segnalazioni minori nelle tabelle qui sotto.")
+
+
 def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
     theme = get_theme_context()
     data = ctx.data
@@ -905,14 +975,14 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
     with tab:
 
         with profile_step("Dati", "render intro"):
-            _render_page_intro(t(settings, "tab.data_management", "Gestione Dati"), t(settings, "page_intro.gestione_dati.comment", "Controllo dati, backup, cache grafici, import quotazioni e log applicativo."), "gestione", theme)
+            _render_page_intro(t(settings, "tab.data_management", "Gestione Dati"), t(settings, "page_intro.gestione_dati.comment", "Stato e integrità dei dati, backup e ripristino, qualità degli strumenti, import quotazioni; in fondo gli strumenti tecnici."), "gestione", theme)
 
         # ─────────────────────────────────────────────
         # 1. Stato sintetico
         # ─────────────────────────────────────────────
         render_section_title(
             "Stato dati",
-            comment="Stato sintetico di archivio, anagrafica, prezzi, storico e coerenza minima del portafoglio prima di ogni intervento operativo.",
+            comment="Stato sintetico di archivio, anagrafica, prezzi e backup, seguito dai controlli di integrità: è il primo posto dove guardare se qualcosa non torna.",
             icon="data",
         )
 
@@ -926,6 +996,7 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 else "n/d"
             )
 
+        last_backup_label, last_backup_note = _last_backup_summary()
         s1, s2, s3, s4 = st.columns(4, gap="small")
         with s1:
             kpi_card("Strumenti", fmt_num_it(len(data.get("strumenti", []) or []), 0), "Anagrafica", accent=theme.color_blue)
@@ -934,139 +1005,82 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         with s3:
             kpi_card("Quotazioni", freshness_label, fmt_dt_it(data.get("last_quotes_update")), accent=theme.color_orange)
         with s4:
-            kpi_card("Log", "Presente" if log_stats.get("exists") else "Assente", f"{fmt_num_it((int(log_stats.get('size_bytes') or 0) / 1024), 1)} KB", accent=theme.color_red)
+            kpi_card("Ultimo backup", last_backup_label, last_backup_note, accent=theme.color_red if last_backup_label == "Nessuno" else theme.color_purple)
 
         vertical_gap("sm")
 
+        with profile_step("Dati", "build controlli integrita"):
+            integrity_checks = build_integrity_checks(
+                data=data,
+                btp_calendar_df=getattr(ctx, "btp_calendar_df", pd.DataFrame()),
+            )
+            integrity_df = pd.DataFrame(integrity_checks)
+        quality_df = _load_quality(data, ctx)
+        _backups = list_backups()
+        backup_age_days = (date.today() - datetime.fromtimestamp(max(m for _, m in _backups)).date()).days if _backups else None
+        with profile_step("Dati", "sintesi salute dati"):
+            health = build_data_health(integrity_checks, quality_df, quote_age_days=quote_age_days, backup_age_days=backup_age_days)
+        _render_data_health(health)
+
+        _section_line()
+        render_section_title(
+            "Controlli integrita",
+            comment="Verifica incrociata tra anagrafica, eventi, prezzi e metadati GOV/BTP. Gli strumenti chiusi o solo osservati non generano avvisi.",
+            icon="risk",
+        )
+        severity_sort = {"Errore": 0, "Warning": 1, "Info": 2, "OK": 3}
+        if not integrity_df.empty and "Severita" in integrity_df.columns:
+            integrity_df["_sort"] = integrity_df["Severita"].map(lambda v: severity_sort.get(str(v), 9))
+            integrity_df = integrity_df.sort_values(["_sort", "Ambito", "Elemento"]).drop(columns=["_sort"])
+
+            def _style_integrity(row):
+                sev = str(row.get("Severita", ""))
+                sev_color = {
+                    "Errore": theme.color_red,
+                    "Warning": theme.color_orange,
+                    "Info": theme.color_blue,
+                    "OK": theme.color_green,
+                }.get(sev, theme.font_color)
+                styles = []
+                for col in row.index:
+                    style = ""
+                    if col == "Severita":
+                        style += f"color:{sev_color};font-weight:700;"
+                    if col == "Elemento":
+                        style += "font-weight:600;"
+                    styles.append(style)
+                return styles
+
+            styled_integrity = integrity_df.style.apply(_style_integrity, axis=1)
+            render_styled_table(styled_integrity, height="content")
+        else:
+            st.info("Nessun controllo disponibile.")
+
         with st.expander("Inventario file dati", expanded=False):
             with profile_step("Dati", "render inventario file dati"):
-                storico_gz_path = os.path.join(PRICES_DIR, "portafoglio_storico_prezzi.json.gz")
-                storico_parquet_path = os.path.join(PRICES_DIR, "portafoglio_storico_prezzi.parquet")
-                files_inventory = pd.DataFrame(
-                    [
-                        {"Categoria": "Configurazione", "File": "settings.json", "Presente": os.path.exists(SETTINGS_FILE), "Dimensione KB": round((os.path.getsize(SETTINGS_FILE) / 1024), 1) if os.path.exists(SETTINGS_FILE) else 0.0},
-                        {"Categoria": "Configurazione", "File": "meta.json", "Presente": os.path.exists(META_FILE), "Dimensione KB": round((os.path.getsize(META_FILE) / 1024), 1) if os.path.exists(META_FILE) else 0.0},
-                        {"Categoria": "Dati", "File": "data.json", "Presente": os.path.exists(DATA_FILE), "Dimensione KB": round((os.path.getsize(DATA_FILE) / 1024), 1) if os.path.exists(DATA_FILE) else 0.0},
-                        {"Categoria": "Dati", "File": "snapshots.json", "Presente": os.path.exists(SNAPSHOTS_FILE), "Dimensione KB": round((os.path.getsize(SNAPSHOTS_FILE) / 1024), 1) if os.path.exists(SNAPSHOTS_FILE) else 0.0},
-                        {"Categoria": "Dati", "File": "quotes_log.json", "Presente": os.path.exists(QUOTES_LOG_FILE), "Dimensione KB": round((os.path.getsize(QUOTES_LOG_FILE) / 1024), 1) if os.path.exists(QUOTES_LOG_FILE) else 0.0},
-                        {"Categoria": "Dati", "File": "market_live_data.json", "Presente": os.path.exists(MARKET_LIVE_FILE), "Dimensione KB": round((os.path.getsize(MARKET_LIVE_FILE) / 1024), 1) if os.path.exists(MARKET_LIVE_FILE) else 0.0},
-                        {"Categoria": "Benchmark", "File": "indices/benchmarks.sqlite3", "Presente": os.path.exists(os.path.join(DATA_DIR,'indices','benchmarks.sqlite3')), "Dimensione KB": round((os.path.getsize(os.path.join(DATA_DIR,'indices','benchmarks.sqlite3')) / 1024), 1) if os.path.exists(os.path.join(DATA_DIR,'indices','benchmarks.sqlite3')) else 0.0},
-                        {"Categoria": "Storico", "File": "storico_prezzi.json.gz", "Presente": os.path.exists(storico_gz_path), "Dimensione KB": round((os.path.getsize(storico_gz_path) / 1024), 1) if os.path.exists(storico_gz_path) else 0.0},
-                        {"Categoria": "Storico", "File": "storico_prezzi.parquet", "Presente": os.path.exists(storico_parquet_path), "Dimensione KB": round((os.path.getsize(storico_parquet_path) / 1024), 1) if os.path.exists(storico_parquet_path) else 0.0},
-                    ]
-                )
-                render_styled_table(files_inventory.style, height="content")
-
-        with st.expander("Bonifica avanzata per categoria / ticker", expanded=False):
-            st.caption("Strumento tecnico per ispezionare e rimuovere record di test o porzioni incoerenti dei dataset applicativi.")
-            # NON applicare qui il filtro privacy: raw_data finisce direttamente
-            # in save_data() più sotto (bonifica/cancellazione record) — filtrarlo
-            # cancellerebbe per sempre lo strumento nascosto al primo utilizzo di
-            # questo strumento, anche su una categoria/ticker diversi.
-            with profile_step("Dati", "build bonifica inventory"):
-                raw_data_for_inventory = data
-                category_options = [code for code in ASSET_CATEGORY_REGISTRY.keys() if code != "ALTRO"]
-            cleanup_category = st.selectbox(
-                "Categoria da ispezionare",
-                options=category_options,
-                index=category_options.index("AZI") if "AZI" in category_options else 0,
-                key="datahub_cleanup_category",
-                format_func=lambda code: f"{code} - {ASSET_CATEGORY_REGISTRY.get(code, {}).get('name', code)}",
-            )
-            with profile_step("Dati", "build bonifica ticker table"):
-                tickers_in_category, inventory_df = _category_ticker_inventory(raw_data_for_inventory, cleanup_category)
-            selected_cleanup_tickers = st.multiselect(
-                "Ticker coinvolti",
-                options=tickers_in_category,
-                default=tickers_in_category,
-                key="datahub_cleanup_tickers",
-                help="Puoi limitare la cancellazione a uno o più ticker specifici della categoria.",
-            )
-            render_styled_table(inventory_df.style, height="content")
-            cleanup_sections = st.multiselect(
-                "Sezioni JSON da ripulire",
-                options=[
-                    "strumenti",
-                    "instrument_master",
-                    "operazioni",
-                    "registro_eventi",
-                    "proventi",
-                    "registro_liquidita",
-                    "storico_prezzi",
-                    "quotes_log",
-                ],
-                default=[
-                    "strumenti",
-                    "instrument_master",
-                    "operazioni",
-                    "registro_eventi",
-                    "proventi",
-                    "registro_liquidita",
-                    "storico_prezzi",
-                    "quotes_log",
-                ],
-                key="datahub_cleanup_sections",
-            )
-            render_danger_hint("L'azione rimuove i record selezionati dalle sezioni indicate e poi invalida le cache interne. Usare solo quando sai esattamente cosa stai eliminando.")
-            cleanup_confirm = confirm_danger(
-                "Confermo la bonifica avanzata dei record selezionati",
-                key="datahub_cleanup_confirm",
-                help_text="La conferma e' richiesta per evitare cancellazioni tecniche accidentali sui dataset JSON.",
-            )
-            if st.button("🧨 Cancella record selezionati", type="primary", width="stretch", key="datahub_cleanup_execute", disabled=not cleanup_confirm):
-                status_box = st.status("Bonifica dati in corso...", expanded=True)
-                status_box.write("Eliminazione record selezionati e invalidazione cache.")
-                try:
-                    if not selected_cleanup_tickers:
-                        raise ValueError("Seleziona almeno un ticker da cancellare.")
-                    if not cleanup_sections:
-                        raise ValueError("Seleziona almeno una sezione JSON da ripulire.")
-                    raw_data = load_data()
-                    removed = _delete_category_records(raw_data, selected_cleanup_tickers, cleanup_sections)
-                    save_data(raw_data)
-                    if "quotes_log" in cleanup_sections:
-                        quotes_log = load_quotes_log()
-                        quote_items = list((quotes_log or {}).get("items", []) or [])
-                        before = len(quote_items)
-                        quotes_log["items"] = [
-                            item for item in quote_items
-                            if str((item or {}).get("ticker") or "").strip() not in set(selected_cleanup_tickers)
-                        ]
-                        removed["quotes_log"] = before - len(quotes_log["items"])
-                        save_quotes_log(quotes_log)
-                    append_audit_event(
-                        "data_cleanup_brutal",
-                        {
-                            "category": cleanup_category,
-                            "tickers": selected_cleanup_tickers,
-                            "sections": cleanup_sections,
-                            "removed": removed,
-                        },
-                    )
-                    invalidate_portfolio_cache("bonifica brutale dati")
-                    queue_success("Bonifica completata: " + ", ".join(f"{key}={value}" for key, value in removed.items() if value))
-                    update_status(status_box, label="Bonifica completata", state="complete")
-                    st.rerun()
-                except Exception as exc:
-                    update_status(status_box, label="Bonifica non riuscita", state="error", expanded=True)
-                    st.error(f"Bonifica non riuscita: {exc}")
+                render_styled_table(_data_files_inventory().style, height="content")
 
         # ─────────────────────────────────────────────
         # 2. Backup e ripristino
         # ─────────────────────────────────────────────
         render_section_title(
             "Backup e ripristino",
-            comment="Qui controlli copie di sicurezza, ripristino e regole automatiche. Le modifiche in questo blocco incidono sulla protezione dei dati, non sui numeri di portafoglio.",
+            comment="Ogni copia contiene portafoglio, storico prezzi, snapshot, decisioni SATOR, impostazioni e archivio benchmark, con un controllo di integrità. La chiave API dell'AI non viene copiata.",
             icon="data",
         )
 
         b1, b2 = st.columns(2)
         if b1.button("📦 Crea backup ora", width="stretch", key="datahub_backup_now"):
             status_box = st.status("Creazione backup in corso...", expanded=True)
-            folder, _ = create_backup_bundle()
+            folder, copied = create_backup_bundle()
             logger.info("Backup manuale creato da Gestione Dati: folder=%s", folder)
-            update_status(status_box, label="Backup creato", state="complete")
-            queue_success(f"Backup creato in: {folder}")
+            check = verify_backup_bundle(os.path.basename(folder), deep=True)
+            if check["problems"]:
+                update_status(status_box, label="Backup creato con anomalie", state="error", expanded=True)
+                st.error("Il backup è stato creato ma la verifica ha trovato: " + "; ".join(check["problems"]))
+            else:
+                update_status(status_box, label="Backup creato e verificato", state="complete")
+                queue_success(f"Backup creato e verificato ({len(copied)} file) in: {folder}")
 
         if b2.button("📸 Salva snapshot corrente", width="stretch", key="datahub_snapshot_now"):
             snaps = load_snapshots()
@@ -1141,40 +1155,30 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
 
             st.divider()
 
-            backup_list = sorted(
-                [name for name in os.listdir(BACKUP_DIR) if os.path.isdir(os.path.join(BACKUP_DIR, name))],
-                reverse=True,
-            ) if os.path.exists(BACKUP_DIR) else []
+            backup_list = [name for name, _ in list_backups()]
 
             if backup_list:
                 selected_backup = st.selectbox("Backup disponibili", backup_list, key="datahub_restore_bkp_sel")
                 rb1, rb2 = st.columns(2)
+                check = verify_backup_bundle(selected_backup)
+                if check["problems"]:
+                    st.error("Backup con anomalie, ripristino sconsigliato: " + "; ".join(check["problems"]))
+                elif check["has_manifest"]:
+                    st.caption(f"✔ {check['files']} file presenti con le dimensioni attese.")
+                    if st.button("🔎 Verifica contenuto (hash)", key="datahub_verify_backup_deep"):
+                        deep = verify_backup_bundle(selected_backup, deep=True)
+                        if deep["problems"]:
+                            st.error("Contenuto non conforme: " + "; ".join(deep["problems"]))
+                        else:
+                            st.success("Contenuto verificato: tutti i file corrispondono al manifest.")
+                else:
+                    st.caption("Backup precedente ai controlli di integrità: non verificabile; potrebbe non contenere storico prezzi e decisioni SATOR.")
                 if rb1.button("♻️ Ripristina backup", width="stretch", key="datahub_restore_backup_btn", type="primary"):
                     status_box = st.status("Ripristino backup in corso...", expanded=True)
                     status_box.write("Copia dei file dati dal backup selezionato.")
                     try:
                         validate_selection([selected_backup], backup_list, label="Backup selezionato")
-                        backup_path = os.path.realpath(os.path.join(BACKUP_DIR, selected_backup))
-                        backup_root = os.path.realpath(BACKUP_DIR)
-                        if os.path.commonpath([backup_path, backup_root]) != backup_root or not os.path.isdir(backup_path):
-                            raise ValueError("Il backup selezionato non è disponibile.")
-                        restored = []
-                        for target_file in [DATA_FILE, SETTINGS_FILE, SNAPSHOTS_FILE, QUOTES_LOG_FILE, MARKET_LIVE_FILE, META_FILE]:
-                            source_file = os.path.join(backup_path, os.path.basename(target_file))
-                            if os.path.exists(source_file):
-                                os.makedirs(os.path.dirname(target_file), exist_ok=True)
-                                shutil.copy2(source_file, target_file)
-                                restored.append(os.path.basename(target_file))
-                        # Per il database SQLite utilizzare l'API di backup,
-                        # evitando di copiare brutalmente un file con WAL.
-                        sqlite_backup=os.path.join(backup_path,'benchmarks.sqlite3')
-                        if os.path.exists(sqlite_backup):
-                            import sqlite3
-                            dest_sqlite=os.path.join(DATA_DIR,'indices','benchmarks.sqlite3')
-                            os.makedirs(os.path.dirname(dest_sqlite),exist_ok=True)
-                            with sqlite3.connect(sqlite_backup) as db_source, sqlite3.connect(dest_sqlite) as db_dest:
-                                db_source.backup(db_dest)
-                            restored.append('benchmarks.sqlite3')
+                        restored = restore_backup_bundle(selected_backup)
                         if restored:
                             append_audit_event("backup_restored", {"backup": selected_backup, "files_restored": len(restored)})
                             queue_success(f"Ripristinati {len(restored)} file dal backup '{selected_backup}'.")
@@ -1192,11 +1196,7 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     status_box = st.status("Eliminazione backup in corso...", expanded=True)
                     try:
                         validate_selection([selected_backup], backup_list, label="Backup selezionato")
-                        backup_path = os.path.realpath(os.path.join(BACKUP_DIR, selected_backup))
-                        backup_root = os.path.realpath(BACKUP_DIR)
-                        if os.path.commonpath([backup_path, backup_root]) != backup_root or not os.path.isdir(backup_path):
-                            raise ValueError("Il backup selezionato non è disponibile.")
-                        shutil.rmtree(backup_path, ignore_errors=True)
+                        shutil.rmtree(resolve_backup_folder(selected_backup), ignore_errors=True)
                         append_audit_event("backup_deleted", {"backup": selected_backup})
                         queue_success(f"Backup '{selected_backup}' eliminato.")
                         update_status(status_box, label="Backup eliminato", state="complete")
@@ -1217,8 +1217,94 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             icon="data",
         )
         with profile_step("Dati", "render qualita dati strumenti"):
-            _render_arricchimento(data, ctx)
+            _render_arricchimento(data, ctx, quality_df)
         vertical_gap("sm")
+
+        # ─────────────────────────────────────────────
+        # 5. Import quotazioni e log
+        # ─────────────────────────────────────────────
+        _section_line()
+        render_section_title(
+            "Importa quotazioni",
+            comment="Aggiorna i prezzi da un file prodotto dal tuo script remoto, senza connessione internet dall'app.",
+            icon="operations",
+        )
+
+        with st.expander("Importa quotazioni da file esterno", expanded=False):
+            legend_block(
+                "Carica il file JSON scaricato dal tuo script PHP remoto. Le quotazioni vengono aggiornate nel portafoglio senza connessione internet da questa app."
+            )
+
+            remote_sig = (
+                build_portfolio_data_signature(
+                    data,
+                    app_version=str(getattr(ctx, "app_version", "n/d")),
+                    schema_version=str(getattr(ctx, "schema_version", "n/d")),
+                )
+                + "|remote_php_v1"
+            )
+            with profile_step("Dati", "build remote php export", detail=f"sig={remote_sig[-24:]}"):
+                php_code, remote_php_source = _get_remote_quotes_php(remote_sig, data)
+            with profile_step("Dati", "remote php export source", detail=f"source={remote_php_source}"):
+                pass
+            st.download_button(
+                "⬇️ Scarica aggiorna_remoto.php",
+                data=php_code,
+                file_name="aggiorna_remoto.php",
+                mime="application/x-httpd-php",
+                width="stretch",
+                key="datahub_download_remote_php",
+            )
+            st.caption("Il file PHP viene generato partendo da aggiorna_remoto.php del progetto, ma con l'elenco strumenti sincronizzato con l'anagrafica attuale dell'app.")
+
+            uploaded_quotes = st.file_uploader(
+                "Seleziona file quotazioni",
+                type=["json"],
+                key="datahub_import_quotes_uploader",
+            )
+            if uploaded_quotes is not None and st.button("⬇️ Importa quotazioni", type="primary", width="stretch", key="datahub_import_quotes_btn"):
+                status_box = st.status("Import quotazioni in corso...", expanded=True)
+                status_box.write("Validazione file e aggiornamento storico prezzi.")
+                try:
+                    import json as _json
+                    quotes_payload = _json.loads(uploaded_quotes.read().decode("utf-8"))
+                    validate_quote_import(quotes_payload)
+                    prices = quotes_payload.get("prezzi", {})
+                    timestamp = quotes_payload.get("timestamp", str(date.today()))
+                    timestamp_date = timestamp[:10] if isinstance(timestamp, str) and len(timestamp) >= 10 else str(date.today())
+                    validate_date(timestamp_date)
+
+                    updated = 0
+                    skipped = 0
+                    info_map = {item["ticker"]: item for item in data.get("strumenti", [])}
+                    for ticker, px in prices.items():
+                        try:
+                            px_float = float(px)
+                        except (TypeError, ValueError):
+                            skipped += 1
+                            continue
+                        if px_float <= 0 or ticker not in info_map:
+                            skipped += 1
+                            continue
+                        info_map[ticker]["prezzo"] = px_float
+                        info_map[ticker]["fonte"] = "remoto"
+                        info_map[ticker]["aggiornato"] = timestamp_date
+                        if date.today().weekday() < 5:
+                            data["storico_prezzi"].setdefault(timestamp_date, {})[ticker] = px_float
+                        updated += 1
+
+                    if updated <= 0:
+                        raise ValueError("Il file non contiene ticker riconosciuti del portafoglio.")
+                    data["last_quotes_update"] = timestamp_date + " 00:00:00 (importato)"
+                    save_data(data)
+                    append_audit_event("quotes_imported", {"updated": updated, "skipped": skipped, "timestamp": timestamp_date})
+                    invalidate_portfolio_cache("quotazioni importate")
+                    queue_success(f"Import completato: {updated} aggiornati, {skipped} saltati.")
+                    update_status(status_box, label="Import quotazioni completato", state="complete")
+                    st.rerun()
+                except Exception as exc:
+                    update_status(status_box, label="Import quotazioni non riuscito", state="error", expanded=True)
+                    st.error(f"Import non riuscito: {exc}")
 
         # ─────────────────────────────────────────────
         # 4. Cache grafici
@@ -1333,9 +1419,8 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                         st.info("Pre-warming già in esecuzione.")
 
             st.caption(
-                "Il pulsante \"Riavvia sessione app\" (dati, benchmark, artefatti pagina, "
-                "cache interna ricaricati da zero) si trova ora in sidebar, sempre "
-                "raggiungibile invece che qui sotto un expander."
+                "Ottimizza: toglie file orfani e applica i limiti. Svuota: costringe i grafici a rigenerarsi alla prossima apertura. "
+                "Pre-warming: prepara i grafici in anticipo. Per ricaricare tutto da zero usa «Riavvia sessione app» nella sidebar."
             )
 
             with st.expander("Dettagli, diagnostica e regole cache", expanded=False):
@@ -1408,113 +1493,9 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     queue_success("Regole cache aggiornate.")
                     st.rerun()
 
-                st.divider()
-                page_map = {"summary": "Riepilogo", "andamento": "Andamento", "quotazioni": "Quotazioni", "analisi": "Analisi", "cruscotti": "Cruscotti"}
-                col_sel, col_reset = st.columns([2, 1])
-                with col_sel:
-                    selected_page = st.selectbox("Reset selettivo pagina", options=list(page_map.keys()), format_func=lambda x: page_map.get(x, x), key="cache_page_select")
-                with col_reset:
-                    st.markdown("<div style='height:1.65rem;'></div>", unsafe_allow_html=True)
-                    if st.button("🔄 Reset pagina", width="stretch", type="secondary", key=f"reset_cache_{selected_page}"):
-                        count = fcache.clear_by_pattern(selected_page)
-                        if count > 0:
-                            queue_success(f"Cache {page_map.get(selected_page, selected_page)} ripulita: {count} file rimossi")
-                        else:
-                            queue_info(
-                                f"Nessun file eliminato per {page_map.get(selected_page, selected_page)}. "
-                                "Il reset selettivo funziona se i chart_id o i nomi cache sono riconducibili alla pagina selezionata."
-                            )
-                        st.rerun()
-
         except Exception as e:
             logger.error("Cache section error: %s", e)
             st.error(f"Errore nella gestione cache: {e}")
-
-        # ─────────────────────────────────────────────
-        # 5. Import quotazioni e log
-        # ─────────────────────────────────────────────
-        _section_line()
-        render_section_title(
-            "Import e log",
-            comment="Raccolta degli strumenti operativi per import quotazioni, osservare il log applicativo e fare diagnostica tecnica.",
-            icon="operations",
-        )
-
-        with st.expander("Importa quotazioni da file esterno", expanded=False):
-            legend_block(
-                "Carica il file JSON scaricato dal tuo script PHP remoto. Le quotazioni vengono aggiornate nel portafoglio senza connessione internet da questa app."
-            )
-
-            remote_sig = (
-                build_portfolio_data_signature(
-                    data,
-                    app_version=str(getattr(ctx, "app_version", "n/d")),
-                    schema_version=str(getattr(ctx, "schema_version", "n/d")),
-                )
-                + "|remote_php_v1"
-            )
-            with profile_step("Dati", "build remote php export", detail=f"sig={remote_sig[-24:]}"):
-                php_code, remote_php_source = _get_remote_quotes_php(remote_sig, data)
-            with profile_step("Dati", "remote php export source", detail=f"source={remote_php_source}"):
-                pass
-            st.download_button(
-                "⬇️ Scarica aggiorna_remoto.php",
-                data=php_code,
-                file_name="aggiorna_remoto.php",
-                mime="application/x-httpd-php",
-                width="stretch",
-                key="datahub_download_remote_php",
-            )
-            st.caption("Il file PHP viene generato partendo da aggiorna_remoto.php del progetto, ma con l'elenco strumenti sincronizzato con l'anagrafica attuale dell'app.")
-
-            uploaded_quotes = st.file_uploader(
-                "Seleziona file quotazioni",
-                type=["json"],
-                key="datahub_import_quotes_uploader",
-            )
-            if uploaded_quotes is not None and st.button("⬇️ Importa quotazioni", type="primary", width="stretch", key="datahub_import_quotes_btn"):
-                status_box = st.status("Import quotazioni in corso...", expanded=True)
-                status_box.write("Validazione file e aggiornamento storico prezzi.")
-                try:
-                    import json as _json
-                    quotes_payload = _json.loads(uploaded_quotes.read().decode("utf-8"))
-                    validate_quote_import(quotes_payload)
-                    prices = quotes_payload.get("prezzi", {})
-                    timestamp = quotes_payload.get("timestamp", str(date.today()))
-                    timestamp_date = timestamp[:10] if isinstance(timestamp, str) and len(timestamp) >= 10 else str(date.today())
-                    validate_date(timestamp_date)
-
-                    updated = 0
-                    skipped = 0
-                    info_map = {item["ticker"]: item for item in data.get("strumenti", [])}
-                    for ticker, px in prices.items():
-                        try:
-                            px_float = float(px)
-                        except (TypeError, ValueError):
-                            skipped += 1
-                            continue
-                        if px_float <= 0 or ticker not in info_map:
-                            skipped += 1
-                            continue
-                        info_map[ticker]["prezzo"] = px_float
-                        info_map[ticker]["fonte"] = "remoto"
-                        info_map[ticker]["aggiornato"] = timestamp_date
-                        if date.today().weekday() < 5:
-                            data["storico_prezzi"].setdefault(timestamp_date, {})[ticker] = px_float
-                        updated += 1
-
-                    if updated <= 0:
-                        raise ValueError("Il file non contiene ticker riconosciuti del portafoglio.")
-                    data["last_quotes_update"] = timestamp_date + " 00:00:00 (importato)"
-                    save_data(data)
-                    append_audit_event("quotes_imported", {"updated": updated, "skipped": skipped, "timestamp": timestamp_date})
-                    invalidate_portfolio_cache("quotazioni importate")
-                    queue_success(f"Import completato: {updated} aggiornati, {skipped} saltati.")
-                    update_status(status_box, label="Import quotazioni completato", state="complete")
-                    st.rerun()
-                except Exception as exc:
-                    update_status(status_box, label="Import quotazioni non riuscito", state="error", expanded=True)
-                    st.error(f"Import non riuscito: {exc}")
 
         with st.expander("Log applicativo", expanded=False):
             log_path = str(log_stats.get("path") or get_default_log_file_path())
@@ -1592,45 +1573,106 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             )
             _render_diagnostic_table(tech_rows, height="content")
 
-        _section_line()
-        render_section_title(
-            "Controlli integrita",
-            comment="Verifica incrociata tra anagrafica, eventi, prezzi e metadati GOV/BTP. Serve a capire se il portafoglio e' leggibile correttamente prima ancora di interpretarne i risultati.",
-            icon="risk",
-        )
-        with profile_step("Dati", "build controlli integrita"):
-            integrity_checks = build_integrity_checks(
-                data=data,
-                btp_calendar_df=getattr(ctx, "btp_calendar_df", pd.DataFrame()),
+        with st.expander("Bonifica avanzata per categoria / ticker (solo uso tecnico)", expanded=False):
+            st.caption("Strumento tecnico per ispezionare e rimuovere record di test o porzioni incoerenti dei dataset applicativi.")
+            # NON applicare qui il filtro privacy: raw_data finisce direttamente
+            # in save_data() più sotto (bonifica/cancellazione record) — filtrarlo
+            # cancellerebbe per sempre lo strumento nascosto al primo utilizzo di
+            # questo strumento, anche su una categoria/ticker diversi.
+            with profile_step("Dati", "build bonifica inventory"):
+                raw_data_for_inventory = data
+                category_options = [code for code in ASSET_CATEGORY_REGISTRY.keys() if code != "ALTRO"]
+            cleanup_category = st.selectbox(
+                "Categoria da ispezionare",
+                options=category_options,
+                index=category_options.index("AZI") if "AZI" in category_options else 0,
+                key="datahub_cleanup_category",
+                format_func=lambda code: f"{code} - {ASSET_CATEGORY_REGISTRY.get(code, {}).get('name', code)}",
             )
-            integrity_df = pd.DataFrame(integrity_checks)
-        severity_sort = {"Errore": 0, "Warning": 1, "Info": 2, "OK": 3}
-        if not integrity_df.empty and "Severita" in integrity_df.columns:
-            integrity_df["_sort"] = integrity_df["Severita"].map(lambda v: severity_sort.get(str(v), 9))
-            integrity_df = integrity_df.sort_values(["_sort", "Ambito", "Elemento"]).drop(columns=["_sort"])
-
-            def _style_integrity(row):
-                sev = str(row.get("Severita", ""))
-                sev_color = {
-                    "Errore": theme.color_red,
-                    "Warning": theme.color_orange,
-                    "Info": theme.color_blue,
-                    "OK": theme.color_green,
-                }.get(sev, theme.font_color)
-                styles = []
-                for col in row.index:
-                    style = ""
-                    if col == "Severita":
-                        style += f"color:{sev_color};font-weight:700;"
-                    if col == "Elemento":
-                        style += "font-weight:600;"
-                    styles.append(style)
-                return styles
-
-            styled_integrity = integrity_df.style.apply(_style_integrity, axis=1)
-            render_styled_table(styled_integrity, height="content")
-        else:
-            st.info("Nessun controllo disponibile.")
+            with profile_step("Dati", "build bonifica ticker table"):
+                tickers_in_category, inventory_df = _category_ticker_inventory(raw_data_for_inventory, cleanup_category)
+            selected_cleanup_tickers = st.multiselect(
+                "Ticker coinvolti",
+                options=tickers_in_category,
+                default=tickers_in_category,
+                key="datahub_cleanup_tickers",
+                help="Puoi limitare la cancellazione a uno o più ticker specifici della categoria.",
+            )
+            render_styled_table(inventory_df.style, height="content")
+            cleanup_sections = st.multiselect(
+                "Sezioni JSON da ripulire",
+                options=[
+                    "strumenti",
+                    "instrument_master",
+                    "operazioni",
+                    "registro_eventi",
+                    "proventi",
+                    "registro_liquidita",
+                    "storico_prezzi",
+                    "quotes_log",
+                ],
+                default=[
+                    "strumenti",
+                    "instrument_master",
+                    "operazioni",
+                    "registro_eventi",
+                    "proventi",
+                    "registro_liquidita",
+                    "storico_prezzi",
+                    "quotes_log",
+                ],
+                key="datahub_cleanup_sections",
+            )
+            render_danger_hint("L'azione rimuove i record selezionati dalle sezioni indicate e poi invalida le cache interne. Prima della cancellazione viene creato un backup automatico. Usare solo quando sai esattamente cosa stai eliminando.")
+            cleanup_typed = st.text_input(
+                f"Per confermare scrivi il codice della categoria ({cleanup_category})",
+                key="datahub_cleanup_confirm_text",
+                help="La cancellazione si sblocca solo se il testo coincide con la categoria scelta.",
+            )
+            cleanup_confirm = bool(selected_cleanup_tickers) and bool(cleanup_sections) and str(cleanup_typed).strip().upper() == str(cleanup_category).upper()
+            if cleanup_confirm:
+                # Anteprima calcolata solo a conferma digitata (copia profonda: nessun costo nei rerun normali).
+                import copy as _copy
+                _preview = _delete_category_records(_copy.deepcopy(data), selected_cleanup_tickers, cleanup_sections)
+                st.info("Verranno rimossi: " + (", ".join(f"{k}={v}" for k, v in _preview.items() if v) or "nessun record"))
+            if st.button("Cancella record selezionati (con backup automatico)", type="primary", width="stretch", key="datahub_cleanup_execute", disabled=not cleanup_confirm):
+                status_box = st.status("Bonifica dati in corso...", expanded=True)
+                status_box.write("Eliminazione record selezionati e invalidazione cache.")
+                try:
+                    if not selected_cleanup_tickers:
+                        raise ValueError("Seleziona almeno un ticker da cancellare.")
+                    if not cleanup_sections:
+                        raise ValueError("Seleziona almeno una sezione JSON da ripulire.")
+                    create_backup_bundle()
+                    raw_data = load_data()
+                    removed = _delete_category_records(raw_data, selected_cleanup_tickers, cleanup_sections)
+                    save_data(raw_data)
+                    if "quotes_log" in cleanup_sections:
+                        quotes_log = load_quotes_log()
+                        quote_items = list((quotes_log or {}).get("items", []) or [])
+                        before = len(quote_items)
+                        quotes_log["items"] = [
+                            item for item in quote_items
+                            if str((item or {}).get("ticker") or "").strip() not in set(selected_cleanup_tickers)
+                        ]
+                        removed["quotes_log"] = before - len(quotes_log["items"])
+                        save_quotes_log(quotes_log)
+                    append_audit_event(
+                        "data_cleanup_brutal",
+                        {
+                            "category": cleanup_category,
+                            "tickers": selected_cleanup_tickers,
+                            "sections": cleanup_sections,
+                            "removed": removed,
+                        },
+                    )
+                    invalidate_portfolio_cache("bonifica brutale dati")
+                    queue_success("Bonifica completata: " + ", ".join(f"{key}={value}" for key, value in removed.items() if value))
+                    update_status(status_box, label="Bonifica completata", state="complete")
+                    st.rerun()
+                except Exception as exc:
+                    update_status(status_box, label="Bonifica non riuscita", state="error", expanded=True)
+                    st.error(f"Bonifica non riuscita: {exc}")
 
         vertical_gap("lg")
         back_to_top()

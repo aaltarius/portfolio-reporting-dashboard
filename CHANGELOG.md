@@ -7,12 +7,22 @@ Questo file è stato riscritto in forma sintetica il 02/11/2026. Il testo integr
 ## [Non rilasciato]
 
 ### Aggiunto
+- Summary, archivio report: griglia con un report per riga (data, periodo in italiano, contenuti, valore e P/L, dimensione), anteprima in popup con apertura in una nuova scheda, pulsante di download accanto all'anteprima e «Riprendi», eliminazione con conferma; i report oltre l'ottavo in un pannello a parte.
+- Backup: ogni copia include ora storico prezzi e decisioni SATOR, ha un manifest con controllo di integrità (dimensioni sempre, hash su richiesta) e il ripristino li riporta entrambi. La chiave API dell'AI resta esclusa dai backup.
+- Dati: riquadro «Salute dei dati» in cima con le poche azioni da fare (cosa, dove) e KPI «Ultimo backup»; la tabella qualità ha la colonna «Posizione» (In portafoglio, Chiuso/Rimborsato con data, Candidato, Osservato).
+- Setup: riga di sintesi con benchmark di portafoglio, uso della rete, categorie attive e preset di visibilità.
 - Popup della tabella Portafoglio: grafico del valore della posizione sotto quello del prezzo (costo tratteggiato, area verde/rossa, frecce verso l'alto sugli acquisti); grafici e mini-sparkline («90g») su 90 giorni (erano 60); cascata del risultato (P/L aperto, realizzato, cedole, totale) e peso sul portafoglio ad anello con contributo a 90 giorni.
 - Popup della tabella Quotazioni: grafico a 30 giorni (erano 12) con la tabella letture sugli ultimi 10; riepilogo del periodo (variazione, massimo, minimo, distanza dal picco, posizione nel range) e cerchi vuoti per i giorni senza lettura.
 - Benchmark scelto dal web per ogni strumento (ETF proxy etichettati, scelta manuale prioritaria, pannello «perché questo benchmark»), ricalcolo solo su comando; benchmark di portafoglio con riferimenti cercati dallo stesso algoritmo.
 - Controllo automatico esteso: blocca ogni elenco di simboli di mercato e le vecchie scale.
 
 ### Modificato
+- Sidebar: al posto del titolo «⚙️ Gestione» c'è il logo Sestante (versione compatta in `static/sestante_logo_sidebar.png`) con la versione piccola accanto.
+- Margini superiori ridotti: il logo ora parte subito sotto la barra di Streamlit (circa 80 px in meno; la causa erano cinque elementi vuoti di CSS e script iniettati prima dell'intestazione, ciascuno con 16 px di spazio); barra e intestazione della sidebar più basse (la barra resta visibile).
+- Dati: ordine nuovo (stato e integrità, backup, qualità strumenti, import quotazioni, poi, in fondo, cache, log, diagnostica e bonifica); inventario file dai percorsi reali con data di modifica; la bonifica avanzata crea un backup automatico, mostra l'anteprima dei record e si sblocca scrivendo la categoria.
+- Setup: «Aggiornamenti automatici in rete» raccoglie benchmark, Mercati e profili strumenti in un solo riquadro; le opzioni avanzate sono in un pannello chiuso; tolti i selettori disabilitati di valuta, locale e formati; soglie degli avvisi con «0 = spenta» nell'etichetta; test connessione AI senza risposta grezza.
+- Pianificazione: pulsante «🔄 Ricalcola SATOR con i prezzi attuali» sopra il piano di ribilanciamento; ricalcolo sincrono, senza «dati precedenti».
+- SATOR (ranking, ribilanciamento, mappa, frontiera) non si ricalcola più a ogni «Aggiorna quotazioni»: la firma ignora prezzi live e ultimo giorno di storico; si ricalcola con nuove operazioni, un nuovo giorno di storico o impostazioni SATOR.
 - Modello Gemini predefinito `gemini-3.6-flash` (il 3.5 è deprecato e instradato al 3.6); testo di aiuto del modello aggiornato.
 - Pagina AI: nuova scheda «Test benchmark», prova su richiesta che chiede a Gemini in una sola chiamata il benchmark ufficiale degli strumenti in portafoglio (solo ticker, ISIN, nome, tipo; risultato non salvato).
 - Attivare il log dei tempi, l'avanzamento tecnico o il livello log nelle Impostazioni non ricostruisce più Summary, Cruscotti e figure: queste opzioni non entrano più nelle firme delle cache.
@@ -27,7 +37,11 @@ Questo file è stato riscritto in forma sintetica il 02/11/2026. Il testo integr
 - Opzioni del benchmark personalizzato dalle serie in archivio.
 - Documentazione riorganizzata: stato corrente, backlog, ADR, diario mensile, architettura, sviluppo e archivio separati (vedi `docs/README.md`).
 
+### Corretto
+- Dati: gli strumenti chiusi o rimborsati non generano più avvisi (prezzo mancante, storico corto, cedola) né «azioni da fare» nella tabella qualità; gli strumenti solo osservati (mai movimentati) sono un'informazione, non un avviso.
+
 ### Rimosso
+- Dati: «Reset pagina» della cache grafici (elenco pagine superato, spesso senza effetto).
 - Scale per famiglia, tabelle per strumento, catalogo fisso di indici e ETF, curva sovrana BCE e vecchio pannello «Dove intervenire».
 - Script di diagnostica monouso `tools/diagnose_home_delta.py` e `tools/diagnose_xirr_change.py` e il logo inutilizzato `assets/sestante_logo_header.png`.
 

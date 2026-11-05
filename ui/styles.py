@@ -28,7 +28,7 @@ html, body, [class*="css"]{
 [data-testid="stAppViewContainer"] > .main, .main, .block-container{background:transparent!important}
 section[data-testid="stSidebar"], [data-testid="stSidebar"], [data-testid="stSidebarContent"], section[data-testid="stSidebar"] > div:first-child{background:var(--ptf-surface-2)!important;color:var(--ptf-text)!important}
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p{color:var(--ptf-text)!important}
-.block-container{padding-top:3.35rem;padding-bottom:2.2rem;max-width:1460px}
+.block-container, [data-testid="stMainBlockContainer"]{padding-top:3rem!important;padding-bottom:2.2rem;max-width:1460px}
 .summary-help{
   margin-top:6px;
   color:var(--ptf-muted)!important;
@@ -258,7 +258,21 @@ section[data-testid="stSidebar"], [data-testid="stSidebar"], [data-testid="stSid
 }
 hr,.section-divider{border:none;height:1px;background:var(--ptf-border);margin:1.5rem 0;opacity:0.7}
 header[data-testid="stHeader"]{background:var(--ptf-bg)!important;backdrop-filter:blur(8px);border-bottom:1px solid var(--ptf-border)}
-[data-testid="stToolbar"]{top:0.45rem;right:0.75rem}
+[data-testid="stToolbar"]{top:0.2rem;right:0.75rem}
+/* Margini alti ridotti: barra Streamlit e intestazione sidebar piu' basse (restano visibili: servono per riaprire la sidebar e per lo stato di esecuzione) */
+header[data-testid="stHeader"]{height:2.4rem!important;min-height:2.4rem!important}
+[data-testid="stSidebarHeader"]{height:2.4rem!important;min-height:2.4rem!important;padding-top:.3rem!important;padding-bottom:.3rem!important;margin-bottom:0!important}
+[data-testid="stSidebarUserContent"]{padding-top:.5rem!important}
+[data-testid="stSidebarUserContent"] h1{padding-top:.2rem!important;padding-bottom:.4rem!important}
+.sb-brand{display:flex;align-items:flex-end;justify-content:center;gap:10px;padding:.15rem .1rem .55rem}
+.sb-brand img{display:block;height:48px;width:auto;max-width:80%;object-fit:contain}
+.sb-brand-ver{font-size:.72rem;font-weight:700;color:var(--ptf-muted);letter-spacing:.02em;padding-bottom:3px;white-space:nowrap}
+/* Elementi alti 0 px (CSS iniettato, script di servizio, ancora #page-top) emessi prima dell'intestazione:
+   Streamlit mette 1rem di spazio tra ogni elemento, quindi cinque elementi vuoti spingevano il logo
+   di circa 5rem verso il basso. Restano nella pagina; si annulla solo lo spazio che aggiungono. */
+[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] [data-testid="stMarkdownContainer"] > style:only-child),
+[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:has(> iframe.stIFrame[srcdoc^="<script>"]),
+[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] #page-top){margin-top:-1rem}
 [data-testid="stSidebar"]{background:var(--ptf-surface-2)!important; border-right:1px solid var(--ptf-border)}
 [data-testid="stSidebar"] [data-testid="stExpander"]{background:var(--ptf-surface)!important}
 [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] label, [data-testid="stSidebar"] .stCaption{color:var(--ptf-text)!important}

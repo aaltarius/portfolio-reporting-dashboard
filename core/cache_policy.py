@@ -190,7 +190,9 @@ register_cache_artifact(
         # ENRICHMENT_REQUIRED_FIELDS in instrument_quality.py). Un
         # artefatto v3 gia' in cache mostrerebbe ancora le percentuali
         # calcolate con la formula vecchia finche' i dati non cambiano.
-        version="quality-light-v4",
+        # v5 (2026-11-05): colonne lifecycle/closed_date e azione «Chiuso» (strumenti chiusi o
+        # rimborsati non richiedono interventi); stesso motivo dei bump precedenti.
+        version="quality-light-v5",
         dependencies=("portfolio_data_signature", "instrument_registry", "price_history", "privacy_filter", "asof_date"),
         clear_group="dati",
         stale_policy="rebuild_on_data_or_history_change",

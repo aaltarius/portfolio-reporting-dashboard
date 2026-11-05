@@ -50,6 +50,17 @@ def build_integrity_checks(data: dict[str, Any], btp_calendar_df: pd.DataFrame |
         if str(item.get("ticker", "") or "").strip()
     }
     today = pd.Timestamp(date.today())
+    # Strumenti chiusi o rimborsati: la mancanza di prezzo corrente, storico corto o
+    # metadati cedola non e' un'anomalia (fonte unica: registro eventi).
+    try:
+        from core.domain.instrument_status import compute_instrument_statuses
+        _statuses = compute_instrument_statuses(data)
+    except Exception:
+        _statuses = {}
+    closed_tickers = {
+        tk for tk, st_ in _statuses.items()
+        if not st_.is_open and st_.has_any_event and (st_.is_terminal or not st_.osserva_prezzo)
+    }
     checks: list[dict[str, Any]] = []
 
     def add(scope: str, severity: str, item: str, detail: str, count: int = 0) -> None:
@@ -74,11 +85,11 @@ def build_integrity_checks(data: dict[str, Any], btp_calendar_df: pd.DataFrame |
         if not any(str(ev.get("ticker", "") or "").strip() == tk for ev in events)
     )
     if never_moved:
-        add("Anagrafica/Eventi", "Warning", "Strumenti mai movimentati", ", ".join(never_moved[:12]), len(never_moved))
+        add("Anagrafica/Eventi", "Info", "Strumenti in osservazione (nessuna operazione)", "Normale per gli strumenti seguiti ma non acquistati: " + ", ".join(never_moved[:12]), len(never_moved))
 
     missing_prices = sorted(
         tk for tk, item in info_map.items()
-        if not _is_valid_price(item.get("prezzo"))
+        if tk not in closed_tickers and not _is_valid_price(item.get("prezzo"))
     )
     if missing_prices:
         add("Prezzi", "Warning", "Strumenti senza prezzo corrente", ", ".join(missing_prices[:12]), len(missing_prices))
@@ -98,7 +109,7 @@ def build_integrity_checks(data: dict[str, Any], btp_calendar_df: pd.DataFrame |
         add("Prezzi", "Warning", "Prezzi storici non validi", ", ".join(invalid_history_prices[:12]), len(invalid_history_prices))
     short_history = sorted(
         tk for tk in info_map
-        if history_per_ticker.get(tk, 0) < 3
+        if tk not in closed_tickers and history_per_ticker.get(tk, 0) < 3
     )
     if short_history:
         add("Prezzi", "Info", "Storico molto corto (< 3 date)", ", ".join(short_history[:12]), len(short_history))
@@ -141,6 +152,8 @@ def build_integrity_checks(data: dict[str, Any], btp_calendar_df: pd.DataFrame |
     ]
     btp_missing_meta = []
     for item in btp_instruments:
+        if str(item.get("ticker", "") or "") in closed_tickers:
+            continue
         missing = [
             label for label, key in [
                 ("scadenza", "scadenza"),

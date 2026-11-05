@@ -1213,13 +1213,156 @@ def _prune_backups(keep_last_n=None):
     return removed
 
 
+BACKUP_MANIFEST_NAME = "manifest.json"
+_SQLITE_BACKUP_NAME = "benchmarks.sqlite3"
+
+
+def _backup_source_files():
+    """File dati copiati da ogni backup, nell'ordine di copia.
+
+    Include le decisioni SATOR e lo storico prezzi (BK-01). Non include
+    `ai_config.json`: contiene una chiave API e non si moltiplica nei backup.
+    Dello storico si copiano le sole forme usate in lettura (parquet e gzip);
+    il JSON in chiaro solo se manca la forma compressa.
+    """
+    files = [DATA_FILE, SETTINGS_FILE, QUOTES_LOG_FILE, SNAPSHOTS_FILE,
+             SATOR_DECISIONS_FILE, MARKET_LIVE_FILE, META_FILE]
+    base = os.path.splitext(STORICO_PREZZI_FILE)[0]
+    parquet, gzip_path = base + ".parquet", base + ".json.gz"
+    storico = [p for p in (parquet, gzip_path) if os.path.exists(p)]
+    if not storico and os.path.exists(STORICO_PREZZI_FILE):
+        storico = [STORICO_PREZZI_FILE]
+    return files + storico
+
+
+def _storico_prezzi_paths():
+    base = os.path.splitext(STORICO_PREZZI_FILE)[0]
+    return [base + ".parquet", base + ".json.gz", STORICO_PREZZI_FILE]
+
+
+def _sha256_of(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _write_backup_manifest(folder):
+    entries = {}
+    for name in sorted(os.listdir(folder)):
+        path = os.path.join(folder, name)
+        if name == BACKUP_MANIFEST_NAME or not os.path.isfile(path):
+            continue
+        entries[name] = {"size": os.path.getsize(path), "sha256": _sha256_of(path)}
+    manifest = {
+        "created": datetime.now().isoformat(timespec="seconds"),
+        "app_version": APP_VERSION,
+        "files": entries,
+    }
+    with open(os.path.join(folder, BACKUP_MANIFEST_NAME), "w", encoding="utf-8") as handle:
+        json.dump(manifest, handle, indent=2, ensure_ascii=False)
+    return manifest
+
+
+def resolve_backup_folder(name):
+    """Percorso reale di un backup, solo se resta dentro BACKUP_DIR."""
+    root = os.path.realpath(BACKUP_DIR)
+    path = os.path.realpath(os.path.join(BACKUP_DIR, str(name)))
+    if os.path.commonpath([path, root]) != root or path == root or not os.path.isdir(path):
+        raise ValueError("Il backup selezionato non è disponibile.")
+    return path
+
+
+def list_backups():
+    """[(nome, mtime)] dei backup presenti, dal più recente. Legge solo la directory."""
+    try:
+        with os.scandir(BACKUP_DIR) as it:
+            found = [(e.name, e.stat().st_mtime) for e in it if e.is_dir()]
+    except OSError:
+        return []
+    return sorted(found, key=lambda item: item[0], reverse=True)
+
+
+def verify_backup_bundle(name, deep=False):
+    """Controlla un backup rispetto al suo manifest.
+
+    Di default confronta presenza e dimensioni (costo trascurabile, adatto a ogni
+    rerun); con ``deep=True`` ricalcola anche gli hash SHA-256 (azione esplicita).
+
+    Ritorna ``{"has_manifest", "files", "problems"}``; i backup precedenti al
+    manifest risultano ``has_manifest=False`` senza problemi segnalati.
+    """
+    folder = resolve_backup_folder(name)
+    manifest_path = os.path.join(folder, BACKUP_MANIFEST_NAME)
+    present = [n for n in os.listdir(folder) if os.path.isfile(os.path.join(folder, n)) and n != BACKUP_MANIFEST_NAME]
+    if not os.path.exists(manifest_path):
+        return {"has_manifest": False, "files": len(present), "problems": []}
+    try:
+        with open(manifest_path, encoding="utf-8") as handle:
+            files = (json.load(handle) or {}).get("files", {})
+    except (OSError, ValueError):
+        return {"has_manifest": True, "files": len(present), "problems": ["manifest illeggibile"]}
+    problems = []
+    for fname, meta in files.items():
+        path = os.path.join(folder, fname)
+        if not os.path.exists(path):
+            problems.append(f"{fname}: mancante")
+        elif os.path.getsize(path) != meta.get("size"):
+            problems.append(f"{fname}: dimensione diversa dal manifest")
+        elif deep and _sha256_of(path) != meta.get("sha256"):
+            problems.append(f"{fname}: contenuto diverso dal manifest")
+    return {"has_manifest": True, "files": len(files), "problems": problems}
+
+
+def restore_backup_bundle(name):
+    """Ripristina i file dati da un backup. Ritorna i nomi dei file ripristinati."""
+    folder = resolve_backup_folder(name)
+    restored = []
+    for target in [DATA_FILE, SETTINGS_FILE, QUOTES_LOG_FILE, SNAPSHOTS_FILE,
+                   SATOR_DECISIONS_FILE, MARKET_LIVE_FILE, META_FILE]:
+        source = os.path.join(folder, os.path.basename(target))
+        if os.path.exists(source):
+            _ensure_dir(os.path.dirname(target))
+            shutil.copy2(source, target)
+            restored.append(os.path.basename(target))
+    # Storico prezzi: la lettura preferisce parquet > gzip > json, quindi una
+    # forma assente nel backup ma presente su disco la farebbe vincere sul dato
+    # ripristinato: va rimossa. Solo se il backup contiene lo storico (i backup
+    # precedenti a BK-01 non lo hanno e lo lasciano com'è).
+    storico_targets = _storico_prezzi_paths()
+    if any(os.path.exists(os.path.join(folder, os.path.basename(t))) for t in storico_targets):
+        _ensure_dir(PRICES_DIR)
+        for target in storico_targets:
+            source = os.path.join(folder, os.path.basename(target))
+            if os.path.exists(source):
+                shutil.copy2(source, target)
+                restored.append(os.path.basename(target))
+            elif os.path.exists(target):
+                os.remove(target)
+        digest = os.path.splitext(STORICO_PREZZI_FILE)[0] + ".digest"
+        if os.path.exists(digest):
+            os.remove(digest)
+    # SQLite: API di backup, non copia di un file con WAL.
+    sqlite_backup = os.path.join(folder, _SQLITE_BACKUP_NAME)
+    if os.path.exists(sqlite_backup):
+        import sqlite3
+        from core.verified_benchmarks import IndexStore
+        dest = str(IndexStore().path)
+        _ensure_dir(os.path.dirname(dest))
+        with sqlite3.connect(sqlite_backup) as db_source, sqlite3.connect(dest) as db_dest:
+            db_source.backup(db_dest)
+        restored.append(_SQLITE_BACKUP_NAME)
+    return restored
+
+
 def create_backup_bundle(tag=None):
     _ensure_dir(BACKUP_DIR)
     stamp = tag or datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     folder = os.path.join(BACKUP_DIR, stamp)
     _ensure_dir(folder)
     copied = []
-    for src in [DATA_FILE, SETTINGS_FILE, QUOTES_LOG_FILE, SNAPSHOTS_FILE, MARKET_LIVE_FILE, META_FILE]:
+    for src in _backup_source_files():
         if os.path.exists(src):
             dst = os.path.join(folder, os.path.basename(src))
             shutil.copy2(src, dst)
@@ -1230,10 +1373,14 @@ def create_backup_bundle(tag=None):
     import sqlite3
     db_path=IndexStore().path
     if db_path.exists():
-        target=os.path.join(folder,'benchmarks.sqlite3')
+        target=os.path.join(folder,_SQLITE_BACKUP_NAME)
         with sqlite3.connect(str(db_path)) as source, sqlite3.connect(target) as destination:
             source.backup(destination)
         copied.append(target)
+    try:
+        _write_backup_manifest(folder)
+    except OSError:
+        logger.warning("Manifest del backup non scritto: %s", folder, exc_info=True)
     logger.info("Backup bundle creato: folder=%s files=%s", folder, len(copied))
     settings = load_settings()
     auditing_cfg = settings.get("auditing", {})

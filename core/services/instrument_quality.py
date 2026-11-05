@@ -420,7 +420,12 @@ def _action_required(
     gap_ratio: float,
     stagnant_days: int | None,
     metrics_available: bool,
+    lifecycle: str = "in_portafoglio",
 ) -> str:
+    # Strumento chiuso o rimborsato senza osservazione prezzo: non c'e' nulla da
+    # sistemare (prezzo fermo, storico che non cresce piu' sono normali).
+    if lifecycle in {"chiuso", "rimborsato"}:
+        return "Chiuso"
     if instrument.get("enrichment_error"):
         return "Verifica errore"
     if not instrument.get("enriched_at") or completeness < 40:
@@ -467,6 +472,12 @@ def build_instrument_quality_dataset(
         positions = calc_positions(data) if data else {}
     except Exception:
         positions = {}
+    # Ciclo di vita dalla fonte unica (registro eventi), mai da strumento["stato"].
+    try:
+        from core.domain.instrument_status import compute_instrument_statuses
+        statuses = compute_instrument_statuses(data) if data else {}
+    except Exception:
+        statuses = {}
     trailing = compute_trailing_risk_return_metrics(tickers, price_frame) if include_financial_metrics else {}
     as_of_ts = _coerce_date(as_of) or pd.Timestamp(date.today())
 
@@ -493,12 +504,23 @@ def build_instrument_quality_dataset(
         category = infer_category_code(instrument.get("tipo", ""), default="ALTRO")
         trail = trailing.get(ticker, {})
         held_qty = float(positions.get(ticker, {}).get("qty", 0.0) or 0.0)
+        status = statuses.get(ticker)
+        if status is None or status.is_open or abs(held_qty) > 1e-9:
+            lifecycle = "in_portafoglio" if abs(held_qty) > 1e-9 else "osservato"
+        elif status.is_terminal:
+            lifecycle = "rimborsato"
+        elif status.has_any_event and not status.osserva_prezzo:
+            lifecycle = "chiuso"
+        else:
+            lifecycle = "osservato"
         rows.append({
             "ticker": ticker,
             "name": str(instrument.get("nome") or ""),
             "category": category,
             "tipo": str(instrument.get("tipo") or ""),
             "in_portfolio": abs(held_qty) > 1e-9,
+            "lifecycle": lifecycle,
+            "closed_date": (status.closed_date or "") if status is not None and lifecycle in {"chiuso", "rimborsato"} else "",
             "candidato_acquisto": bool(instrument.get("candidato_acquisto", False)),
             "enrichment_status": _enrichment_status(instrument),
             "enrichment_source_label": _enrichment_source_label(instrument),
@@ -525,6 +547,7 @@ def build_instrument_quality_dataset(
                 gap_ratio=gap_ratio,
                 stagnant_days=stagnant_days,
                 metrics_available=metrics_available,
+                lifecycle=lifecycle,
             ),
             "ret_1m": trail.get("ret_1m", np.nan),
             "ret_3m": trail.get("ret_3m", np.nan),
