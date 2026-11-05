@@ -24,7 +24,10 @@ from core.services.sator import (
     latest_sator_decision,
     resolve_instrument_nature,
 )
-from core.cache_signatures import build_portfolio_data_signature
+from core.cache_orchestrator import get_registered_figure_cache
+from core.cache_signatures import build_portfolio_data_signature, charts_settings_signature, content_signature, theme_signature
+from core.figure_cache import CachingStrategy
+from core.settings_profiles import resolve_figure_cache_strategy
 from core.domain.tax import stima_imposta_vendita
 from core.sator_cache import (
     get_cached_rebalancing_plan,
@@ -113,6 +116,31 @@ def _page_icon_svg(kind: str = "default") -> str:
         """,
     }
     return icons.get(kind, icons["default"])
+
+
+_FIGURE_STRATEGIES = {
+    "disabled": CachingStrategy.DISABLED,
+    "session_only": CachingStrategy.SESSION_ONLY,
+    "disk_only": CachingStrategy.DISK_ONLY,
+}
+
+
+def _cached_figure(chart_id: str, builder, *inputs, theme, settings: dict):
+    """Figura costruita una sola volta per questi ingressi, tema e impostazioni grafici.
+
+    La chiave e' il contenuto degli ingressi del grafico (DataFrame, serie, marker): non
+    puo' restare indietro rispetto a quello che viene disegnato.
+    """
+    strategy = _FIGURE_STRATEGIES.get(resolve_figure_cache_strategy(settings, st.session_state), CachingStrategy.HYBRID)
+    return get_registered_figure_cache().get_or_build(
+        chart_id=chart_id,
+        data_sig=content_signature(*inputs),
+        theme_sig=theme_signature(theme),
+        charts_settings_sig=charts_settings_signature("ui/charts/settings.py"),
+        builder=builder,
+        page_mode="Completa",
+        strategy=strategy,
+    )
 
 
 def _render_page_intro(title: str, comment: str, icon: str = "default", theme=None) -> None:
@@ -1431,7 +1459,7 @@ def _render_instrument_comparison_section(ctx: SimpleNamespace, exclude_tickers:
         return
 
     with profile_step("Pianificazione/Confronto", "render chart", count=len(series)):
-        fig = build_instrument_comparison_chart(series)
+        fig = _cached_figure("pianificazione_instrument_comparison", lambda: build_instrument_comparison_chart(series), series, theme=get_theme_context(), settings=ctx.settings)
         st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
@@ -1479,7 +1507,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
             gap_after="sm",
         )
         with profile_step("Pianificazione/SATOR", "allocation_rings_chart"):
-            fig_rings = build_allocation_rings_chart(rings_df, objective, theme)
+            fig_rings = _cached_figure("pianificazione_allocation_rings", lambda: build_allocation_rings_chart(rings_df, objective, theme), rings_df, objective, theme=theme, settings=settings)
             st.plotly_chart(fig_rings, width="stretch", config={"displayModeBar": False})
         with profile_step("Pianificazione/SATOR", "allocation_table_and_reminders"):
             bucket_totals = rings_df.groupby("bucket")["value"].sum()
@@ -1527,7 +1555,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
         if missing_tickers:
             st.warning("Dati insufficienti nell'ultima fotografia per: " + ", ".join(missing_tickers) + ". Salva una fotografia aggiornata per includerli.")
         with profile_step("Pianificazione/SATOR", "decision_bubble_chart", count=len(bubble_df)):
-            fig_bubble = build_next_purchase_bubble_chart(bubble_df, theme)
+            fig_bubble = _cached_figure("pianificazione_next_purchase_bubble", lambda: build_next_purchase_bubble_chart(bubble_df, theme), bubble_df, theme=theme, settings=settings)
             st.plotly_chart(fig_bubble, width="stretch", config={"displayModeBar": False})
         legend_block(
             "Quadranti: in basso a destra = buon contributo difensivo; in alto a destra = diversifica ma aumenta volatilita'; "
@@ -1574,7 +1602,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
         st.info("Storico prezzi insufficiente per calcolare rischio/rendimento di almeno uno strumento dell'universo SATOR.")
     else:
         with profile_step("Pianificazione/SATOR", "instrument_map_chart", count=len(instrument_map.scatter_df)):
-            fig_instrument_map = build_instrument_map_chart(instrument_map.scatter_df, theme)
+            fig_instrument_map = _cached_figure("pianificazione_instrument_map", lambda: build_instrument_map_chart(instrument_map.scatter_df, theme), instrument_map.scatter_df, theme=theme, settings=settings)
             st.plotly_chart(fig_instrument_map, width="stretch", config={"displayModeBar": False})
         legend_block(
             "Come si legge: più a destra = lo strumento sale e scende di più nel tempo (rischio); "
@@ -1638,7 +1666,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
         if frontier_result.cloud_degenerate:
             st.warning("Con questo vincolo di concentrazione e questo numero di strumenti simulati, la nuvola genera pochi portafogli davvero distinti: interpreta minimo-rischio e miglior Sharpe con cautela.")
         with profile_step("Pianificazione/SATOR", "frontier_chart", count=len(frontier_result.cloud)):
-            fig_frontier = build_sator_frontier_chart(frontier_result.cloud, frontier_result.markers, theme)
+            fig_frontier = _cached_figure("pianificazione_sator_frontier", lambda: build_sator_frontier_chart(frontier_result.cloud, frontier_result.markers, theme), frontier_result.cloud, frontier_result.markers, theme=theme, settings=settings)
             st.plotly_chart(fig_frontier, width="stretch", config={"displayModeBar": False})
         legend_block(
             "Quadrato = portafoglio attuale; diamante = proposta SATOR; cerchio = punto scelto con lo slider; "
@@ -1666,7 +1694,7 @@ def _render_decision_dashboard_section(ctx: SimpleNamespace, theme, exclude_tick
         st.info("Spiegazione del voto non disponibile su questi dati.")
     else:
         with profile_step("Pianificazione/SATOR", "sator_explain_chart", count=len(explanations)):
-            fig_explain = build_sator_explanation_chart(explanations, theme)
+            fig_explain = _cached_figure("pianificazione_sator_explain", lambda: build_sator_explanation_chart(explanations, theme), explanations, theme=theme, settings=settings)
             st.plotly_chart(fig_explain, width="stretch", config={"displayModeBar": False})
         legend_block(
             "Ogni barra è uno strumento: i segmenti colorati mostrano quanto ciascun fattore contribuisce, il numero nella colonna a destra è il voto vero (1-10). "

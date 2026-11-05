@@ -894,6 +894,36 @@ def charts_settings_signature(charts_settings_file_path: str | Path) -> str:
 _DERIVED_NUMERIC_EXTRA_PARAMS = frozenset({"tv", "y_range", "total_value"})
 
 
+def _content_default(value: Any) -> Any:
+    import dataclasses
+
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return dataclasses.asdict(value)
+    if isinstance(value, (set, frozenset)):
+        return sorted(str(v) for v in value)
+    return str(value)
+
+
+def content_signature(*parts: Any) -> str:
+    """Firma del contenuto effettivo degli ingressi di un grafico.
+
+    Per i grafici costruiti da strutture gia' derivate (DataFrame, liste di
+    dataclass, dizionari) la chiave piu' sicura e' il contenuto stesso: non puo'
+    restare indietro rispetto ai dati, a differenza di una firma «a monte».
+    """
+    import pandas as pd
+
+    hasher = hashlib.md5()
+    for part in parts:
+        if isinstance(part, pd.DataFrame):
+            text = part.to_json(orient="split", date_format="iso", default_handler=str)
+        else:
+            text = json.dumps(part, sort_keys=True, default=_content_default)
+        hasher.update(text.encode("utf-8"))
+        hasher.update(b"")
+    return hasher.hexdigest()[:16]
+
+
 def figure_signature(
     chart_id: str,
     data_sig: str,
