@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,8 @@ _AI_REPORTS_DIR: Path = PATHS["data_dir"] / "ai_reports"
 
 _GEMINI_MODEL = "gemini-3.6-flash"
 AI_CALL_COUNT_KEY = "_ai_gemini_call_count"
+_BUSY_RETRIES = 3
+_BUSY_WAIT_SECONDS = 3
 
 GEMINI_MODELS = [
     "gemini-3.6-flash",
@@ -198,12 +201,17 @@ def call_gemini_flash(prompt: str, api_key: str, model: str = _GEMINI_MODEL, *, 
     body: dict[str, Any] = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
     if use_search:
         body["tools"] = [{"google_search": {}}]
-    try:
-        response = requests.post(url, json=body, timeout=90)
-    except requests.exceptions.Timeout:
-        raise RuntimeError("Timeout: Gemini non ha risposto entro 90s. Riprova tra qualche momento.")
-    except requests.exceptions.RequestException as exc:
-        raise RuntimeError(f"Errore di rete Gemini: {exc}") from exc
+    for attempt in range(_BUSY_RETRIES):
+        try:
+            response = requests.post(url, json=body, timeout=90)
+        except requests.exceptions.Timeout:
+            raise RuntimeError("Timeout: Gemini non ha risposto entro 90s. Riprova tra qualche momento.")
+        except requests.exceptions.RequestException as exc:
+            raise RuntimeError(f"Errore di rete Gemini: {exc}") from exc
+        # 503 = modello sovraccarico, di norma temporaneo: pochi tentativi con attesa crescente.
+        if response.status_code != 503 or attempt == _BUSY_RETRIES - 1:
+            break
+        time.sleep(_BUSY_WAIT_SECONDS * (attempt + 1))
     if response.status_code != 200:
         hint = ""
         if response.status_code == 429 and use_search:
