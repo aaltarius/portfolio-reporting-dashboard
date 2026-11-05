@@ -18,17 +18,28 @@ _PROBE_FIELDS = ("ticker", "isin", "nome", "tipo")
 
 _PROMPT_HEADER = """\
 Per ciascuno strumento finanziario elencato indica il benchmark (indice di riferimento) UFFICIALE
-dichiarato dall'emittente nel KID/KIID, nel prospetto o nella scheda prodotto.
+dichiarato dall'emittente nel KID/KIID, nel prospetto o nella scheda prodotto, e dove ottenere lo storico
+giornaliero di quell'indice.
 
 Regole:
-- Usa solo informazioni ufficiali dell'emittente. Se non le trovi con certezza scrivi "non disponibile":
-  non dedurre e non inventare.
+- Usa solo informazioni ufficiali dell'emittente e non inventare: se non sei sicuro scrivi "non disponibile".
+- "origine_dato" deve essere "documento consultato" solo se hai davvero letto il documento in questa risposta;
+  se vai a memoria scrivi "ricordo". Non usare "alta" come confidenza se vai a memoria.
 - Per titoli di Stato, ETC e strumenti senza indice ufficiale scrivi "nessun indice ufficiale" e spiega in "note".
-- Indica la variante dell'indice (TR = total return, NR = net return, PR = price return) solo se dichiarata.
+- Indica la variante (TR = total return, NR = net return, PR = price return) solo se dichiarata.
+- "indice_simbolo": il codice dell'indice come compare su un fornitore di dati (per esempio simbolo Yahoo Finance
+  che inizia con ^, codice Bloomberg o RIC); "n.d." se non lo conosci.
+- "storico_scaricabile": "si" solo se sai che lo storico giornaliero dell'indice (o del suo total return) si scarica
+  gratuitamente; "parziale" se esiste solo una versione diversa (per esempio price return o un indice gemello);
+  "no" o "n.d." altrimenti. Se "no", indica in "note" un ETF o indice proxy con storico scaricabile.
+- "dove_scaricarlo": fornitore e simbolo o indirizzo preciso (per esempio il sito dell'amministratore dell'indice);
+  "n.d." se non lo sai.
 
 Rispondi ESCLUSIVAMENTE con un oggetto JSON valido (nessun testo extra), con questa struttura:
 {"strumenti": [{"ticker": "...", "isin": "...", "benchmark_ufficiale": "...", "fornitore_indice": "...",
-"variante": "TR|NR|PR|n.d.", "fonte": "documento o URL ufficiale", "confidenza": "alta|media|bassa", "note": "..."}]}
+"variante": "TR|NR|PR|n.d.", "indice_simbolo": "...", "storico_scaricabile": "si|parziale|no|n.d.",
+"dove_scaricarlo": "...", "origine_dato": "documento consultato|ricordo", "fonte": "documento o URL ufficiale",
+"confidenza": "alta|media|bassa", "note": "..."}]}
 Includi tutti gli strumenti, uno per riga, con lo stesso ticker dell'elenco.
 
 Strumenti:

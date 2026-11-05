@@ -15,8 +15,11 @@ _RESULT_KEY = "_ai_benchmark_probe_result_v1"
 _COLUMNS = {
     "ticker": "Ticker",
     "benchmark_ufficiale": "Benchmark ufficiale",
-    "fornitore_indice": "Fornitore indice",
     "variante": "Variante",
+    "indice_simbolo": "Simbolo indice",
+    "storico_scaricabile": "Storico scaricabile",
+    "dove_scaricarlo": "Dove scaricarlo",
+    "origine_dato": "Origine del dato",
     "confidenza": "Confidenza",
     "fonte": "Fonte dichiarata",
     "note": "Note",
