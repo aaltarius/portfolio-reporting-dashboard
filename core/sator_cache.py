@@ -34,7 +34,7 @@ import pandas as pd
 
 from core.cache_orchestrator import get_or_build_registered_artifact
 from core.cache_policy import build_cache_artifact_signature
-from core.services.rebalancing import build_rebalancing_plan
+from core.services.rebalancing import build_rebalancing_plan, build_reinforcement_candidates
 from core.services.sator import run_sator_analysis
 from core.services.sator_frontier import build_sator_frontier
 
@@ -308,3 +308,48 @@ def get_cached_sator_frontier(
         lambda: run(copy.deepcopy(data), copy.deepcopy(settings), copy.deepcopy(precomputed_result)),
         allow_stale,
     )
+
+
+def get_cached_reinforcement_candidates(
+    ranking: pd.DataFrame,
+    data: dict[str, Any],
+    settings: dict[str, Any],
+    bucket: str,
+    capitale: float,
+    current_mix: dict[str, float],
+    objective: dict[str, float],
+    total_value: float,
+    *,
+    surplus_buckets: frozenset[str] = frozenset(),
+    data_sig: str = "",
+) -> list[dict[str, Any]]:
+    """Wrapper cacheato di `build_reinforcement_candidates` (candidati al rinforzo di un bucket).
+
+    Prima veniva ricalcolato a ogni rerun di Pianificazione, e a ogni rerun
+    riscriveva nel log la riga «bucket_first_allocation: ridistribuiti ...».
+    `ranking` non entra nella firma: deriva da `data_sig`, `settings["sator"]`
+    e dal budget (= `capitale`), gli stessi ingressi di `get_cached_sator_analysis`.
+    """
+    signature = build_cache_artifact_signature(
+        "sator.reinforcement_candidates_cache",
+        inputs={
+            "data_sig": str(data_sig or ""),
+            "sator_settings": _sator_settings_slice(settings),
+            "bucket": str(bucket),
+            "capitale": round(float(capitale), 2),
+            "current_mix": {str(k): round(float(v), 6) for k, v in sorted((current_mix or {}).items())},
+            "objective": {str(k): round(float(v), 6) for k, v in sorted((objective or {}).items())},
+            "total_value": round(float(total_value), 2),
+            "surplus_buckets": tuple(sorted(str(b) for b in (surplus_buckets or ()))),
+        },
+    )
+    artifact = get_or_build_registered_artifact(
+        artifact_id="sator.reinforcement_candidates_cache",
+        signature=signature,
+        builder=lambda: build_reinforcement_candidates(
+            ranking, data, settings, bucket, capitale, current_mix, objective, total_value,
+            surplus_buckets=surplus_buckets,
+        )["candidates"],
+        clone_on_read=True,
+    )
+    return artifact.value

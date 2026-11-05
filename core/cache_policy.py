@@ -751,6 +751,25 @@ register_cache_artifact(
 
 register_cache_artifact(
     CacheArtifactSpec(
+        artifact_id="sator.reinforcement_candidates_cache",
+        page_id="shared",
+        layer="reinforcement_candidates",
+        level="L3",
+        owner="core.sator_cache.get_cached_reinforcement_candidates",
+        storage="page_artifact",
+        version="sator-reinforcement-candidates-cache-v1",
+        dependencies=("portfolio_data_signature", "sator_settings", "bucket", "capitale", "current_mix", "objective", "total_value", "surplus_buckets"),
+        clear_group="sator",
+        stale_policy="rebuild_on_data_or_sator_settings_or_bucket_or_capital_change",
+        log_page="Pianificazione",
+        description="Candidati al rinforzo di un bucket (build_reinforcement_candidates, quote reali con l'allocatore SATOR): prima ricalcolati a ogni rerun di Pianificazione, con la riga di log bucket_first_allocation ripetuta ogni volta.",
+        prebuild=False,
+        status="registered_provider",
+    )
+)
+
+register_cache_artifact(
+    CacheArtifactSpec(
         artifact_id="sator.frontier_cache",
         page_id="shared",
         layer="frontier",

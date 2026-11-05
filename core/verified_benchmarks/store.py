@@ -332,7 +332,15 @@ class IndexStore:
         contenuto (per quella vedi revision_token).
         """
         wal=Path(str(self.path)+'-wal')
-        return tuple((p.stat().st_mtime_ns,p.stat().st_size) if p.exists() else None for p in (self.path,wal))
+        def one(p: Path):
+            # Il WAL puo' sparire (checkpoint alla chiusura dell'ultima connessione)
+            # tra il controllo e la lettura: in quel caso e' semplicemente assente.
+            try:
+                st=p.stat()
+            except OSError:
+                return None
+            return (st.st_mtime_ns,st.st_size)
+        return tuple(one(p) for p in (self.path,wal))
 
     def revision_token(self) -> str:
         """Impronta del CONTENUTO che incide sui benchmark, stabile tra processi.

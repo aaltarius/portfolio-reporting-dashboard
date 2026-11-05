@@ -28,13 +28,14 @@ from core.cache_signatures import build_portfolio_data_signature
 from core.domain.tax import stima_imposta_vendita
 from core.sator_cache import (
     get_cached_rebalancing_plan,
+    get_cached_reinforcement_candidates,
     get_cached_sator_analysis,
     get_cached_sator_frontier,
     get_stale_info,
     reset_stale_info,
 )
 from core.services.instrument_clustering import build_instrument_map
-from core.services.rebalancing import build_full_instrument_view, build_reinforcement_candidates
+from core.services.rebalancing import build_full_instrument_view
 from core.services.sator_explain import build_sator_explanations
 from persistence.storage import APP_VERSION, SCHEMA_VERSION, load_sator_decisions, load_settings, save_settings
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it
@@ -715,11 +716,10 @@ def _suggerisci_acquisto_capitale(
         ranking = get_cached_sator_analysis(data, settings, budget=capitale, data_sig=data_sig).get("ranking")
         if ranking is None or ranking.empty:
             return []
-        result = build_reinforcement_candidates(
+        return get_cached_reinforcement_candidates(
             ranking, data, settings, bucket, capitale, current_mix, objective, total_value,
-            surplus_buckets=surplus_buckets,
+            surplus_buckets=surplus_buckets, data_sig=data_sig,
         )
-        return result["candidates"]
     except Exception:
         return []
 
