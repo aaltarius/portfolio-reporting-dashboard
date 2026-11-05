@@ -14,10 +14,11 @@ from core.config import PATHS
 _AI_CONFIG_PATH: Path = PATHS["data_dir"] / "config" / "ai_config.json"
 _AI_REPORTS_DIR: Path = PATHS["data_dir"] / "ai_reports"
 
-_GEMINI_MODEL = "gemini-3.5-flash"
+_GEMINI_MODEL = "gemini-3.6-flash"
 AI_CALL_COUNT_KEY = "_ai_gemini_call_count"
 
 GEMINI_MODELS = [
+    "gemini-3.6-flash",
     "gemini-3.5-flash",
     "gemini-2.5-flash",
     "gemini-2.5-pro",
@@ -188,10 +189,15 @@ def _parse_gemini_error(response: requests.Response) -> str:
     return response.text[:600]
 
 
-def call_gemini_flash(prompt: str, api_key: str, model: str = _GEMINI_MODEL) -> str:
-    """Chiama Gemini Flash e restituisce il testo della risposta."""
+def call_gemini_flash(prompt: str, api_key: str, model: str = _GEMINI_MODEL, *, use_search: bool = False) -> str:
+    """Chiama Gemini Flash e restituisce il testo della risposta.
+
+    ``use_search`` abilita il grounding con Google Search (utile per dati ufficiali recenti).
+    """
     url = _GEMINI_URL.format(model=model, api_key=api_key)
-    body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
+    body: dict[str, Any] = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
+    if use_search:
+        body["tools"] = [{"google_search": {}}]
     try:
         response = requests.post(url, json=body, timeout=90)
     except requests.exceptions.Timeout:

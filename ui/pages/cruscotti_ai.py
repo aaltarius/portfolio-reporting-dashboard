@@ -107,9 +107,8 @@ def render_ai_analysis(ctx: SimpleNamespace) -> None:
             options=GEMINI_MODELS,
             index=0,
             key="_ai_model_select",
-            help="gemini-2.0-flash è il modello gratuito disponibile. "
-                 "gemini-2.0-flash-lite è più veloce ma meno accurato. "
-                 "I modelli 2.5 sono a pagamento.",
+            help="gemini-3.6-flash è il modello Flash corrente (gemini-3.5-flash è deprecato e viene "
+                 "instradato al 3.6). Limiti e costi del piano gratuito: vedi Google AI Studio.",
         )
     with col_btn:
         vertical_gap("sm")

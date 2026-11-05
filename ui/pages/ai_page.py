@@ -1,5 +1,5 @@
 # ui/pages/ai_page.py
-"""Pagina AI: dispatcher con 3 tab — Analisi, Chat, Report."""
+"""Pagina AI: dispatcher con 4 tab — Analisi, Chat, Report, Test benchmark."""
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -12,6 +12,7 @@ from ui.components import back_to_top, render_section_title, vertical_gap
 from ui.i18n import t
 from ui.page_chrome import render_page_intro as render_page_intro_shared
 from ui.pages.ai_analysis import render_ai_analysis
+from ui.pages.ai_benchmark_test import render_ai_benchmark_test
 from ui.pages.ai_chat import render_ai_chat
 from ui.pages.ai_reports import render_ai_reports
 
@@ -70,7 +71,7 @@ def render_ai_page(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         )
         vertical_gap("xs")
 
-        tab_analisi, tab_chat, tab_report = st.tabs(["Analisi", "Chat", "Report"])
+        tab_analisi, tab_chat, tab_report, tab_test = st.tabs(["Analisi", "Chat", "Report", "Test benchmark"])
 
         with tab_analisi:
             render_ai_analysis(ctx, api_key=api_key, model=selected_model)
@@ -80,5 +81,8 @@ def render_ai_page(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
 
         with tab_report:
             render_ai_reports(ctx, api_key=api_key, model=selected_model)
+
+        with tab_test:
+            render_ai_benchmark_test(ctx, api_key=api_key, model=selected_model)
 
         back_to_top(show_prev=True, show_next=True, nav_key="ai")

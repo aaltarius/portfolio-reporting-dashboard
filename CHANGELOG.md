@@ -13,6 +13,8 @@ Questo file è stato riscritto in forma sintetica il 02/11/2026. Il testo integr
 - Controllo automatico esteso: blocca ogni elenco di simboli di mercato e le vecchie scale.
 
 ### Modificato
+- Modello Gemini predefinito `gemini-3.6-flash` (il 3.5 è deprecato e instradato al 3.6); testo di aiuto del modello aggiornato.
+- Pagina AI: nuova scheda «Test benchmark», prova su richiesta che chiede a Gemini in una sola chiamata il benchmark ufficiale degli strumenti in portafoglio (solo ticker, ISIN, nome, tipo; risultato non salvato).
 - Attivare il log dei tempi, l'avanzamento tecnico o il livello log nelle Impostazioni non ricostruisce più Summary, Cruscotti e figure: queste opzioni non entrano più nelle firme delle cache.
 - Pianificazione: i candidati al rinforzo di un bucket (quote reali SATOR) non si ricalcolano più a ogni rerun; rerun a caldo da ~6–9 s a ~3,5–4,5 s (AppTest).
 - Avvio a freddo da ~20–23 s a ~11–12 s e rerun a caldo da ~13–15 s a ~6–9 s (misure su AppTest): archivio SQLite dei benchmark senza riaperture di connessione, firma dei dati stabile tra processi (le figure per strumento non si ricostruiscono più a ogni avvio), cache di risoluzione degli strumenti letta una volta per run.
