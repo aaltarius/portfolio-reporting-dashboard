@@ -43,9 +43,9 @@ def render_ai_benchmark_test(ctx: SimpleNamespace, *, api_key: str, model: str) 
 
     use_search = st.checkbox(
         "Usa la ricerca Google (grounding) per i documenti ufficiali",
-        value=True,
+        value=False,
         key="_ai_benchmark_probe_search",
-        help="Se la tua chiave non lo consente, togli la spunta: la risposta si baserà solo sulla conoscenza del modello.",
+        help="Di default spenta, come Analisi e Chat: la risposta si basa sulla conoscenza del modello. La ricerca ha una quota propria (per Gemini 3 è fatturata a parte) e sul piano gratuito può dare errore 429.",
     )
     st.caption(f"{len(instruments)} strumenti · modello {model} · 1 richiesta")
     if st.button("Chiedi i benchmark a Gemini", type="primary", key="_ai_benchmark_probe_btn"):

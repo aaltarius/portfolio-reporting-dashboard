@@ -205,7 +205,10 @@ def call_gemini_flash(prompt: str, api_key: str, model: str = _GEMINI_MODEL, *, 
     except requests.exceptions.RequestException as exc:
         raise RuntimeError(f"Errore di rete Gemini: {exc}") from exc
     if response.status_code != 200:
-        raise RuntimeError(f"Gemini API error {response.status_code}: {_parse_gemini_error(response)}")
+        hint = ""
+        if response.status_code == 429 and use_search:
+            hint = " (la richiesta usava la ricerca Google: sul piano gratuito potrebbe non avere quota; riprova senza)"
+        raise RuntimeError(f"Gemini API error {response.status_code}: {_parse_gemini_error(response)}{hint}")
     data = response.json()
     candidates = data.get("candidates", [])
     if not candidates:

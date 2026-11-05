@@ -72,7 +72,7 @@ def parse_benchmark_probe_response(text: str, expected_tickers: list[str]) -> tu
 
 
 def run_benchmark_probe(
-    instruments: list[dict[str, str]], api_key: str, *, model: str, use_search: bool = True
+    instruments: list[dict[str, str]], api_key: str, *, model: str, use_search: bool = False
 ) -> BenchmarkProbeResult:
     """Una sola chiamata a Gemini per tutti gli strumenti."""
     text = call_gemini_flash(build_benchmark_probe_prompt(instruments), api_key, model=model, use_search=use_search)
