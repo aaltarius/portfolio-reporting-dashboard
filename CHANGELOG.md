@@ -6,6 +6,9 @@ Questo file è stato riscritto in forma sintetica il 02/11/2026. Il testo integr
 
 ## [Non rilasciato]
 
+### Modificato
+- Portafoglio, grafico «P/L per Categoria»: linea dello zero marcata (2,5 px, scura, sopra le aree impilate).
+
 ## [5.7] — 2026-11-05
 
 ### Aggiunto

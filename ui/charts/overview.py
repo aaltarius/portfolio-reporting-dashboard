@@ -7,7 +7,7 @@ from core.asset_categories import get_selected_category_codes
 from persistence.storage import macro_cat
 from ui.charts.extrema import add_extrema_markers
 from ui.charts.runtime import empty_chart, finalize_chart
-from ui.charts.settings import apply_settings
+from ui.charts.settings import apply_settings, get_chart_setting
 from ui.formatting import fmt_eur_it, hex_to_rgba
 from ui.theme import P, macro_color
 
@@ -124,7 +124,19 @@ def build_overview_time_chart(dfh_top, da_frame, view, pl_color, pl_total, chart
                 value_formatter=lambda v: f"{v:,.0f} €".replace(",", "."),
             )
         fig.update_layout(hovermode="x unified", uirevision="pl-cat-home")
-        return apply_settings(fig, "overview_pl_categoria")
+        fig = apply_settings(fig, "overview_pl_categoria")
+        # Linea dello zero marcata: sopra le aree (layer="above"), altrimenti le aree impilate la coprono.
+        try:
+            default_zero_color = hex_to_rgba(theme.font_color, 0.85)
+        except Exception:
+            default_zero_color = "rgba(15,23,42,0.85)"
+        fig.add_hline(
+            y=0,
+            line_width=float(get_chart_setting("overview_pl_categoria", "zero_line_width", 2.5)),
+            line_color=get_chart_setting("overview_pl_categoria", "zero_line_color_strong", default_zero_color),
+            layer="above",
+        )
+        return fig
 
     fig = go.Figure()
     if view == "P/L del portafoglio":

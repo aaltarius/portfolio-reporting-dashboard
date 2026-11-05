@@ -1024,7 +1024,7 @@ def _render_portfolio_table_section(
                             lambda: build_overview_time_chart(
                                 dfh_top, da, "P/L per Categoria", None, 0.0, None, None, theme, settings=settings, total_return=None, data=data
                             ),
-                            extra_params={"rows": len(dfh_top), "cats": "|".join(get_selected_category_codes(settings))},
+                            extra_params={"rows": len(dfh_top), "cats": "|".join(get_selected_category_codes(settings)), "cache_bust": "pl_cat_zero_line_v1"},
                         )
                     st.plotly_chart(fig_cat_history, width="stretch")
                     legend_block(

@@ -590,6 +590,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'show_extrema': True},
 
     'overview_pl_categoria': {'type': 'time',
+     'zero_line_width': 2.5,
      'height': 400,
      'legend': 'bottom',
      'show_buttons': True,
