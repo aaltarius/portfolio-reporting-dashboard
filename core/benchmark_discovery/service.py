@@ -93,6 +93,22 @@ def refresh_series(data: dict, *, store=None, source: CandidateSource | None = N
         updated += int(got_any)
         failed += int(not got_any)
         items.append({"ticker": tk, "status": "AGGIORNATO" if got_any else "FALLITO", "codes": codes})
+    if target_instrument is None:  # l'aggiornamento completo comprende i riferimenti del benchmark di portafoglio
+        from .portfolio import REFERENCE_PROFILES
+        for family in REFERENCE_PROFILES:
+            a = store.assignment("PORTFOLIO:" + family)
+            code = str(a.get("ticker") or "") if a and a.get("discovery") else ""
+            if not code:
+                continue
+            series = src.history(code)
+            if series:
+                store.upsert(code, series, source="discovery", replace_existing=True)
+                store.mark_fetch(code, "ok", "discovery")
+            else:
+                store.mark_fetch(code, "failed", "discovery")
+            updated += int(bool(series))
+            failed += int(not series)
+            items.append({"ticker": "PORTFOLIO:" + family, "status": "AGGIORNATO" if series else "FALLITO", "codes": [code]})
     return {"requested": len(items), "updated": updated, "failed": failed, "items": items}
 
 

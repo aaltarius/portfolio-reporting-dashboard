@@ -553,8 +553,12 @@ def _ticker_benchmark_data_hash(
         # Piu' strumenti condividono lo stesso benchmark: la serie si carica e si
         # impronta una volta per (benchmark, revisione dell'archivio, giorno). Il
         # giorno entra perche' stored_history scarta le serie non piu' correnti.
+        # Le componenti sono dizionari (non hashable): nella chiave entra la loro forma serializzata.
+        # Con la tupla di dict la chiave sollevava TypeError, l'eccezione veniva inghiottita e l'hash
+        # restava 'n/d' per sempre: la figura cacheata non vedeva piu' alcun cambio del benchmark.
         memo_key=(bench_ticker,bench_assignment.label,bench_assignment.operational_kind,
-                  bench_assignment.relation_grade,tuple(bench_assignment.components),
+                  bench_assignment.relation_grade,
+                  json.dumps(list(bench_assignment.components),sort_keys=True,default=str),
                   revision,date.today().isoformat())
         cached=_BENCHMARK_HASH_MEMO.get(memo_key)
         if cached is not None:

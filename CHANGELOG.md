@@ -8,6 +8,12 @@ Questo file è stato riscritto in forma sintetica il 02/11/2026. Il testo integr
 
 ### Modificato
 - Portafoglio, grafico «P/L per Categoria»: linea dello zero marcata (2,5 px, scura, sopra le aree impilate).
+- Dipendenze: yfinance 1.7.0 → 1.8.0, che non usa più `inplace=True` e non emette più i `Pandas4Warning` con pandas 3.1.
+
+### Corretto
+- Benchmark, «Aggiorna i prezzi dei benchmark scelti»: aggiorna anche i riferimenti del benchmark di portafoglio, che prima restavano fermi e facevano comparire «Componenti non disponibili in SQLite» dopo 10 giorni.
+- Benchmark, pannello «Benchmark scelto dal web»: lo stato «Dati non aggiornati» e la colonna «aggiornato al» leggono l'ultimo prezzo in archivio e non la data fotografata alla scelta.
+- Quotazioni, grafici per strumento: la linea del benchmark torna dopo un aggiornamento dei dati; la firma della figura ignorava il benchmark quando le componenti erano un elenco di dizionari e la cache serviva la figura vecchia senza la linea.
 
 ## [5.7] — 2026-11-05
 

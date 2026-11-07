@@ -7,12 +7,27 @@ from core.domain.instrument_status import active_fetch_tickers
 from core.verified_benchmarks.freshness import MAX_REFERENCE_AGE_DAYS, age_days
 
 
-def _state(override: dict | None, assignment: dict | None) -> str:
+def data_end(store, assignment: dict | None) -> str:
+    """Ultimo giorno di dati del benchmark scelto, letto dall'archivio dei prezzi.
+
+    `coverage_end` dell'assegnazione e' la data al momento della scelta e non segue gli aggiornamenti dei prezzi:
+    e' solo il ripiego quando la serie non e' in archivio."""
+    if not assignment:
+        return ""
+    code = str(assignment.get("ticker") or "")
+    try:
+        last = store.last_date(code) if code else None
+    except Exception:
+        last = None
+    return str(last or assignment.get("coverage_end") or "")
+
+
+def _state(override: dict | None, assignment: dict | None, end: str = "") -> str:
     if override:
         return "manual"
     if not assignment or not assignment.get("discovery"):
         return "pending"
-    age = age_days(assignment.get("coverage_end"), as_of=date.today())
+    age = age_days(end or assignment.get("coverage_end"), as_of=date.today())
     return "stale" if age is None or age > MAX_REFERENCE_AGE_DAYS else "ok"
 
 
@@ -26,14 +41,15 @@ def decision_rows(data: dict, store) -> list[dict]:
         tk = str(s["ticker"])
         override, a = store.override(tk), store.assignment(tk)
         disc = (a or {}).get("discovery") or {}
+        end = data_end(store, a) if disc else ""
         rows.append({
             "ticker": tk, "name": str(s.get("nome") or ""),
             "benchmark": (override or {}).get("benchmark_code") or ((a or {}).get("ticker", "") if disc else ""),
             "label": (override or {}).get("benchmark_label") or ((a or {}).get("label", "") if disc else ""),
             "grade": "MANUALE" if override else ((a or {}).get("grade", "") if disc else ""),
             "corr": disc.get("corr"), "te_pct": disc.get("te_pct"),
-            "updated": (a or {}).get("coverage_end", "") if disc else "",
-            "state": _state(override, a),
+            "updated": end,
+            "state": _state(override, a, end),
         })
     return rows
 
