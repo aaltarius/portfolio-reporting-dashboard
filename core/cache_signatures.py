@@ -564,7 +564,10 @@ def _ticker_benchmark_data_hash(
         if cached is not None:
             return cached
         bd=stored_history(payload,bench_ticker,store=store)
+        from core.verified_benchmarks.freshness import staleness
         material={"ticker":bench_ticker,"label":bench_assignment.label,
+                  # la legenda cambia quando la serie diventa "ferma" (BM-14): deve cambiare anche la chiave
+                  "stale":bool(staleness(bd)["stale"]),
                   "type":bench_assignment.operational_kind,
                   "grade":bench_assignment.relation_grade,
                   "components":list(bench_assignment.components),
@@ -580,6 +583,7 @@ def _ticker_benchmark_data_hash(
 
 
 
+# BM-14: v4 = la serie benchmark ferma resta disegnata con la data dell'ultimo dato in legenda.
 # Task V-ventiduesima (2026-09-06): bug reale trovato dall'utente subito
 # dopo il fix V-ventesima (ancoraggio benchmark a 100 sulla data di
 # acquisto) - la firma di questa figura dipende dal CONTENUTO dei dati
@@ -592,7 +596,7 @@ def _ticker_benchmark_data_hash(
 # davvero il modo in cui normalized_series/benchmark_series vengono
 # costruiti in core/dashboard_datasets.py (non per cambi che toccano solo
 # dati/cache) - stesso pattern di _STATE_MANAGER_SCHEMA in app.py.
-_TICKER_CHART_LOGIC_VERSION = "v3-2026-11-01-sqlite-proxy-candidates"
+_TICKER_CHART_LOGIC_VERSION = "v4-2026-11-07-stale-benchmark-shown"
 
 
 def build_ticker_data_signature(

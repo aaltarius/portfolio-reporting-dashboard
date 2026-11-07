@@ -1,9 +1,12 @@
 """Modello dati del pannello «Benchmark scelto dal web»: legge solo l'archivio (mai la rete)."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
+from core.asset_categories import get_selected_category_codes
 from core.domain.instrument_status import active_fetch_tickers
+from core.domain.positions import held_tickers
+from persistence.storage import macro_cat
 from core.verified_benchmarks.freshness import MAX_REFERENCE_AGE_DAYS, age_days
 
 
@@ -31,9 +34,45 @@ def _state(override: dict | None, assignment: dict | None, end: str = "") -> str
     return "stale" if age is None or age > MAX_REFERENCE_AGE_DAYS else "ok"
 
 
+CHANGE_NOTE_DAYS = 3  # la «novita'» resta visibile per qualche giorno, poi la riga torna neutra
+
+
+def change_note(change: dict | None, *, now: datetime | None = None) -> str:
+    """Data («gg/mm») in cui il benchmark e' stato sostituito, se di recente; vuoto altrimenti.
+
+    Il benchmark precedente non sta nella cella (la colonna e' stretta): lo mostra il dettaglio dello strumento."""
+    if not change:
+        return ""
+    try:
+        when = datetime.fromisoformat(str(change["changed_at"]).replace("Z", "+00:00")).astimezone()
+    except (KeyError, ValueError):
+        return ""
+    if ((now or datetime.now().astimezone()) - when).total_seconds() > CHANGE_NOTE_DAYS * 86400:
+        return ""
+    return when.strftime("%d/%m")
+
+
+def category_rank(settings: dict | None) -> dict[str, int]:
+    """Posizione di ogni categoria nell'ordine scelto nelle impostazioni (lo stesso delle schede di Quotazioni)."""
+    return {code: i for i, code in enumerate(get_selected_category_codes(settings))}
+
+
 def decision_rows(data: dict, store) -> list[dict]:
-    """Una riga per strumento attivo: benchmark, grado, misura, data dei dati e stato."""
+    """Una riga per strumento attivo, in ordine di categoria: benchmark, grado, misura, data dei dati e stato."""
     active = active_fetch_tickers(data)
+    held = held_tickers(data)
+    settings = data.get("settings") if isinstance(data.get("settings"), dict) else None
+    if settings is None:  # i dati non sempre portano le impostazioni: l'ordine di categoria lo decidono loro
+        try:
+            from persistence.storage import load_settings
+            settings = load_settings()
+        except Exception:
+            settings = None
+    rank = category_rank(settings)
+    try:
+        changes = store.benchmark_changes()
+    except Exception:  # la storia e' solo un'informazione in piu': mai un errore di pagina
+        changes = {}
     rows = []
     for s in data.get("strumenti", []):
         if not isinstance(s, dict) or not s.get("ticker") or str(s["ticker"]) not in active:
@@ -50,7 +89,14 @@ def decision_rows(data: dict, store) -> list[dict]:
             "corr": disc.get("corr"), "te_pct": disc.get("te_pct"),
             "updated": end,
             "state": _state(override, a, end),
+            "change": change_note(changes.get(tk)),
+            "change_prev": str((changes.get(tk) or {}).get("previous") or ""),
+            "category": macro_cat(str(s.get("tipo") or "")),
+            # stessa simbologia della colonna «Ptf» di Quotazioni: - in portafoglio, ★ candidato, ☆ osservato
+            "ptf": "-" if tk in held else ("★" if bool(s.get("candidato_acquisto", False)) else "☆"),
         })
+    ptf_order = {"-": 0, "★": 1, "☆": 2}
+    rows.sort(key=lambda r: (rank.get(r["category"], len(rank)), r["category"], ptf_order[r["ptf"]], r["ticker"]))
     return rows
 
 

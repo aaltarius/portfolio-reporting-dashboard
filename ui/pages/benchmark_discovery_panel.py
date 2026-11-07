@@ -10,6 +10,7 @@ from typing import Callable
 import streamlit as st
 
 from core.benchmark_discovery.view import decision_detail, decision_rows
+from core.verified_benchmarks.freshness import MAX_REFERENCE_AGE_DAYS
 from ui.components import render_section_title
 from ui.pages.benchmark_tables import render_benchmark_table
 
@@ -35,15 +36,30 @@ def render_discovery_panel(data: dict, store, *, on_rediscover: Callable, on_ref
     if not rows:
         st.caption("Nessuno strumento attivo.")
         return
-    records = [{"Strumento": r["ticker"], "Benchmark": r["benchmark"] or "—", "Nome": r["label"] or "—",
+    records = [{"Strumento": r["ticker"], "Categoria": r["category"], "Ptf": r["ptf"],
+                "Benchmark": r["benchmark"] or "—", "Nome": r["label"] or "—",
                 "Parentela": _GRADE_LABEL.get(r["grade"], r["grade"] or "—"),
                 "Correlazione": _fmt(r["corr"]), "Scostamento %": _fmt(r["te_pct"], 1),
-                "Dati al": r["updated"] or "—", "Stato": _STATE_LABEL.get(r["state"], r["state"])} for r in rows]
+                "Dati al": (r["updated"][8:10] + "/" + r["updated"][5:7]) if r["updated"] else "—",
+                "Modifica": r["change"]} for r in rows]
     render_benchmark_table(records, key="benchmark_discovery_table",
-                           columns=[("Strumento", "Strumento"), ("Benchmark", "Benchmark"), ("Nome", "Nome"),
-                                    ("Parentela", "Parentela"), ("Correlazione", "Correlazione"),
-                                    ("Scostamento %", "Scostamento annuo %"), ("Dati al", "Dati al"), ("Stato", "Stato")],
-                           widths=[10, 12, 28, 11, 10, 10, 10, 13])
+                           category_key="Categoria", instrument_key="Strumento",
+                           columns=[("Strumento", "Strumento"), ("Categoria", "Cat."), ("Ptf", "Ptf"),
+                                    ("Benchmark", "Benchmark"), ("Nome", "Nome"), ("Parentela", "Parentela"),
+                                    ("Correlazione", "Correl."), ("Scostamento %", "Scost.annuo%"),
+                                    ("Dati al", "Dati al"), ("Modifica", "Modifica")],
+                           # Solo «Nome» e' senza larghezza e prende lo spazio che resta: la somma delle altre
+                           # sta sotto la larghezza utile anche con la barra laterale aperta (niente scroll orizzontale).
+                           col_widths={"Strumento": 92, "Categoria": 48, "Ptf": 38, "Benchmark": 110, "Parentela": 78,
+                                       "Correlazione": 66, "Scostamento %": 90, "Dati al": 62, "Modifica": 62, "Nome": 170})
+    changed = sum(bool(r["change"]) for r in rows)
+    if changed:
+        st.caption(f"**Modifica:** {changed} strumenti hanno un benchmark sostituito negli ultimi giorni; la colonna indica la data, "
+                   "il benchmark precedente è nel dettaglio qui sotto.")
+    stale = sum(r["state"] == "stale" for r in rows)
+    if stale:
+        st.caption(f"**{stale} strumenti con dati del benchmark fermi da oltre {MAX_REFERENCE_AGE_DAYS} giorni** (vedi la colonna «Dati al»): "
+                   "premi «Aggiorna i prezzi dei benchmark scelti».")
     pending = sum(r["state"] == "pending" for r in rows)
     if pending:
         st.caption(f"**{pending} strumenti in attesa di calcolo.** Premi «Ricalcola la scelta» per cercare il benchmark sul web.")
@@ -61,6 +77,8 @@ def render_discovery_panel(data: dict, store, *, on_rediscover: Callable, on_ref
                           format_func=lambda t: t + " · " + next(r["name"] for r in rows if r["ticker"] == t)[:40])
     row = next(r for r in rows if r["ticker"] == ticker)
     detail = decision_detail(store, ticker)
+    if row["change"]:
+        st.caption(f"**Benchmark sostituito il {row['change']}:** prima era {row['change_prev'] or 'n/d'}, ora {row['benchmark'] or 'n/d'}.")
     if detail is None:
         st.caption("Nessuna decisione salvata per questo strumento: premi «Ricalcola la scelta».")
     else:

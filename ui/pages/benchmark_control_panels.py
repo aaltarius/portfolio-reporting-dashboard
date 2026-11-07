@@ -148,9 +148,11 @@ def render_relation_guide() -> None:
     )
 
 
-def _main_rows(matrix: pd.DataFrame, snapshot: dict) -> list[dict]:
+def _main_rows(matrix: pd.DataFrame, snapshot: dict, changes: dict | None = None, settings: dict | None = None) -> list[dict]:
     """Una riga per strumento: etichette separate da qualità e parentela."""
+    from core.benchmark_discovery.view import change_note
     states=snapshot.get('series_by_code') or {}
+    changes=changes or {}
     result=[]
     for _,rec in matrix.iterrows():
         ticker=str(rec.get('ticker') or '')
@@ -174,9 +176,15 @@ def _main_rows(matrix: pd.DataFrame, snapshot: dict) -> list[dict]:
                        'Riferimento':code or '—',
                        'Parentela':('Composito' if grade=='COMPOSITO' else grade.replace('_',' ').title()),
                        'Ultimo':_date(last),'Extra':extra_text,'Verifica':quality,
+                       'Modifica':change_note(changes.get(ticker)),
+                       '_ctv':_number(rec.get('controvalore')) or 0.0,
                        '_impact':impact,'_stale':stale,'_legacy':legacy,'_missing':missing,
                        '_last_iso':last,'_sources':sorted({src for item in actual if isinstance(item,dict)
                                             for src in (item.get('sources') or [])})})
+    # Ordine di categoria come nelle altre pagine (impostazioni), poi per controvalore decrescente.
+    from core.benchmark_discovery.view import category_rank
+    rank=category_rank(settings)
+    result.sort(key=lambda r:(rank.get(r['Categoria'],len(rank)),r['Categoria'],-r['_ctv'],r['Strumento']))
     return result
 
 
@@ -234,17 +242,30 @@ def _selected_detail(rec: pd.Series, row: dict, snapshot: dict) -> None:
             for x in legs if isinstance(x,dict)))
 
 
-def render_assignments(matrix:pd.DataFrame|None,snapshot:dict)->None:
+def render_assignments(matrix:pd.DataFrame|None,snapshot:dict,settings:dict|None=None)->None:
     render_section_title('Strumenti e benchmark',icon='quotes',
         comment='Stessa tabella di Quotazioni e Portafoglio. «Stato» descrive il dato, «Parentela» quanto il riferimento assomiglia allo strumento.')
     if not isinstance(matrix,pd.DataFrame) or matrix.empty:
         st.info('Analisi non disponibile: usa «Analizza benchmark» per ricostruirla.');return
-    rows=_main_rows(matrix,snapshot)
+    try:
+        from core.verified_benchmarks import IndexStore
+        changes=IndexStore().benchmark_changes()
+    except Exception:  # solo un'informazione in piu'
+        changes={}
+    if not isinstance(settings,dict):
+        try:  # ordine di categoria come nelle altre pagine: lo decidono le impostazioni (16 ms)
+            from persistence.storage import load_settings
+            settings=load_settings()
+        except Exception:
+            settings=None
+    rows=_main_rows(matrix,snapshot,changes,settings)
     render_benchmark_table(rows,key='assignments',category_key='Categoria',
         instrument_key='Strumento',tone_key='Extra',
         columns=[('Strumento','Ticker'),('Categoria','Cat.'),('Riferimento','Benchmark'),
-            ('Parentela','Parentela'),('Ultimo','Ultimo dato'),('Extra','Extra'),('Verifica','Stato')],
-        widths=[15,6,18,12,14,12,18])
+            ('Parentela','Parentela'),('Ultimo','Ultimo dato'),('Extra','Extra'),('Verifica','Stato'),
+            ('Modifica','Modifica')],
+        # «Stato» e' senza larghezza: prende lo spazio che resta
+        col_widths={'Strumento':95,'Categoria':50,'Riferimento':130,'Parentela':90,'Ultimo':92,'Extra':80,'Modifica':64})
     st.caption('Extra = differenza dei rendimenti in punti percentuali sul periodo comune. '
                'Il trattino «—» indica che non è corretto mostrare il confronto, non che il rendimento sia zero.')
     render_relation_guide()

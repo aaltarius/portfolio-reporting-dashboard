@@ -10,7 +10,16 @@ Questo file è stato riscritto in forma sintetica il 02/11/2026. Il testo integr
 - Portafoglio, grafico «P/L per Categoria»: linea dello zero marcata (2,5 px, scura, sopra le aree impilate).
 - Dipendenze: yfinance 1.7.0 → 1.8.0, che non usa più `inplace=True` e non emette più i `Pandas4Warning` con pandas 3.1.
 
+### Aggiunto
+- Benchmark, tabelle «Benchmark scelto dal web» e «Strumenti e benchmark»: colonna «Modifica» con la data (gg/mm) per gli strumenti il cui benchmark è stato sostituito negli ultimi 3 giorni, letta dalla storia delle assegnazioni; il benchmark precedente è nel dettaglio dello strumento.
+- Strumento `tools/realign_weekly_benchmarks.py` (dry-run di default, backup prima di scrivere, idempotente): porta al venerdì le barre settimanali salvate con la data del lunedì e ripristina i prezzi sovrascritti dai backup.
+
 ### Corretto
+- Benchmark, tabelle «Strumenti e benchmark» e «Benchmark scelto dal web»: larghezze delle colonne applicate senza scroll orizzontale (prima erano tutte uguali e il testo lungo veniva troncato), righe ordinate per categoria nell'ordine delle impostazioni, «Benchmark scelto dal web» con ticker e categoria colorati come l'altra tabella e colonna «Ptf» (- in portafoglio, ★ candidato, ☆ osservato) come in Quotazioni, colonna «Stato» sostituita da una riga sotto la tabella quando ci sono serie ferme, intestazioni «Correl.» e «Scost.annuo%», date come gg/mm, nomi con «&» mostrati correttamente (comparivano come «&amp;»).
+- Benchmark, correlazione e tracking error nella matrice «Strumenti e benchmark»: erano molto bassi (0,1–0,3) perché le barre settimanali di Yahoo portavano la data del lunedì con la chiusura del venerdì (sfalsamento di quattro giorni) e i rendimenti erano confrontati giorno per giorno con una serie che si muove una volta a settimana. Ora si misurano sui rendimenti settimanali, gli stessi con cui il benchmark è stato scelto.
+- Benchmark, scaricamento prezzi: barre giornaliere al posto di quelle settimanali, che sovrascrivevano i prezzi del lunedì nelle serie già giornaliere.
+- Benchmark, serie ferme da più di 10 giorni: non spariscono più dai grafici, dal benchmark di portafoglio e dalla matrice; restano disegnate con la data dell'ultimo dato in legenda («· dati al gg/mm») e un avviso nella pagina. Il messaggio «Componenti non disponibili» ora compare solo se manca davvero lo storico.
+- Benchmark, pulsanti «Ricalcola la scelta di tutti» e «Aggiorna i prezzi dei benchmark scelti»: il risultato indica i riferimenti di portafoglio e il motivo di ogni richiesta non riuscita; una scelta non salvata (serie non scaricata) non è più contata come riuscita; ogni passo scrive nel log.
 - Benchmark, «Aggiorna i prezzi dei benchmark scelti»: aggiorna anche i riferimenti del benchmark di portafoglio, che prima restavano fermi e facevano comparire «Componenti non disponibili in SQLite» dopo 10 giorni.
 - Benchmark, pannello «Benchmark scelto dal web»: lo stato «Dati non aggiornati» e la colonna «aggiornato al» leggono l'ultimo prezzo in archivio e non la data fotografata alla scelta.
 - Quotazioni, grafici per strumento: la linea del benchmark torna dopo un aggiornamento dei dati; la firma della figura ignorava il benchmark quando le componenti erano un elenco di dizionari e la cache serviva la figura vecchia senza la linea.

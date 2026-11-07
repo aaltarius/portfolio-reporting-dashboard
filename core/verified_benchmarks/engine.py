@@ -99,4 +99,5 @@ def stored_history(data:dict,code:str,*,store:IndexStore|None=None)->dict[str,fl
         s,cur=_series_eur(store,code)
     except ValueError:
         return {}
-    return s if s and cur=='EUR' and is_current_series(s) else {}
+    # Una serie ferma da giorni resta disponibile: la freschezza si segnala (freshness.staleness), non si nasconde.
+    return s if s and cur=='EUR' else {}

@@ -1,7 +1,7 @@
 """Adattatore Yahoo Finance per la scoperta dei candidati (CandidateSource).
 
 Sottile e sostituibile: unisce `Search` e `Lookup(...).get_etf()` (solo ETF e
-indici), scarica lo storico settimanale rettificato degli ultimi 5 anni e legge
+indici), scarica lo storico giornaliero rettificato degli ultimi 5 anni e legge
 l'ISIN. Ogni errore di rete diventa un risultato vuoto: la decisione resta
 'in attesa', mai un'eccezione. Verso la rete esce solo testo descrittivo e simboli.
 """
@@ -21,6 +21,7 @@ class YahooSource:
         self._history_cache: dict[str, dict[str, float]] = {}
         self._isin_cache: dict[str, str] = {}
         self._name_cache: dict[str, str] = {}
+        self.errors: dict[str, str] = {}  # ultimo errore di rete per simbolo: la risposta vuota non va piu' persa
 
     def _wait(self) -> None:
         if self._pause:
@@ -63,11 +64,18 @@ class YahooSource:
     def _fetch_history(self, symbol: str) -> dict[str, float]:
         out: dict[str, float] = {}
         try:
-            df = self._yf.Ticker(symbol).history(period="5y", interval="1wk", auto_adjust=True)
+            # Barre giornaliere: quelle settimanali portano la data del lunedi ma la chiusura del venerdi
+            # (sfalsamento di quattro giorni) e, scritte con replace_existing su serie che hanno gia' prezzi
+            # giornalieri, sovrascrivevano i lunedi con il valore del venerdi precedente (BM-16).
+            df = self._yf.Ticker(symbol).history(period="5y", interval="1d", auto_adjust=True)
             for ts, val in df["Close"].dropna().items():
                 out[ts.strftime("%Y-%m-%d")] = float(val)
-        except Exception:
+            self.errors.pop(symbol, None)
+        except Exception as exc:
             out = {}
+            self.errors[symbol] = f"{type(exc).__name__}: {exc}"[:160]
+        if not out and symbol not in self.errors:
+            self.errors[symbol] = "nessun dato restituito"
         return out
 
     def isin(self, symbol: str) -> str:

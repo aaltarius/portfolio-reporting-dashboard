@@ -57,9 +57,10 @@ def discover_references(store, source: CandidateSource) -> dict[str, bool]:
 
 
 def reference_choice(store, family: str, *, min_points: int = 20) -> Choice | None:
-    """Riferimento salvato per un concetto, con serie in euro e aggiornata; None se manca."""
+    """Riferimento salvato per un concetto, con serie in euro; None se manca o e' troppo corta.
+
+    Una serie ferma da giorni e' valida: la sua eta' la segnala `resolve_portfolio_components` (BM-14)."""
     from core.verified_benchmarks.engine import _series_eur
-    from core.verified_benchmarks.freshness import is_current_series
 
     a = store.assignment("PORTFOLIO:" + family)
     if not a or not a.get("discovery") or not a.get("ticker"):
@@ -68,7 +69,7 @@ def reference_choice(store, family: str, *, min_points: int = 20) -> Choice | No
         series, currency = _series_eur(store, a["ticker"])
     except ValueError:
         return None
-    if len(series) < min_points or currency != "EUR" or not is_current_series(series):
+    if len(series) < min_points or currency != "EUR":
         return None
     return Choice(a["ticker"], series, family, 0, currency)
 
@@ -115,15 +116,17 @@ def _government_share(frame) -> float:
 
 def _entry(store, code: str, label: str, weight: float, family: str, series: dict, currency: str, requested: str = "") -> dict:
     spec = store._spec(code)
+    from core.verified_benchmarks.freshness import staleness
+    age = staleness(series)
     return {"ticker": code, "label": label or spec.label, "weight": weight, "kind": spec.asset_kind, "currency": currency,
             "requested_ticker": requested, "family": family, "points": len(series), "first_date": min(series),
-            "last_date": max(series), "source": "SQLite"}
+            "last_date": max(series), "source": "SQLite", "age_days": age["age_days"], "stale": age["stale"]}
 
 
 def resolve_portfolio_components(settings: dict | None, da_frame, store, *, label: str | None = None) -> dict:
     """Componenti effettivi del benchmark di portafoglio, letti dall'archivio. Nessuna sostituzione silenziosa."""
     from core.verified_benchmarks.engine import _series_eur
-    from core.verified_benchmarks.freshness import is_current_series
+    from core.verified_benchmarks.freshness import staleness
 
     settings = settings if isinstance(settings, dict) else {}
     bench = settings.get("benchmarking") if isinstance(settings.get("benchmarking"), dict) else {}
@@ -164,16 +167,21 @@ def resolve_portfolio_components(settings: dict | None, da_frame, store, *, labe
                 series, currency = _series_eur(store, comp["ticker"])
             except ValueError:
                 series, currency = {}, ""
-            if len(series) < 20 or not is_current_series(series):
+            if len(series) < 20:
                 missing.append({"family": comp["ticker"], "requested": comp["ticker"], "weight": comp["weight"], "attempted": []})
                 continue
             out.append(_entry(store, comp["ticker"], "", comp["weight"], comp["ticker"], series, currency, comp["ticker"]))
     for e in out:
         if e["kind"] == "etf_proxy":
             notes.append(f"{e['ticker']} e' un ETF proxy, NON un indice ufficiale.")
+    stale = [e for e in out if e.get("stale")]
+    if stale:
+        oldest = min(stale, key=lambda e: e["last_date"])
+        notes.append(f"Dati fermi al {oldest['last_date'][8:10]}/{oldest['last_date'][5:7]}/{oldest['last_date'][:4]} "
+                     f"({oldest['age_days']} giorni fa): premi «Aggiorna i prezzi dei benchmark scelti» in Cruscotti → Benchmark.")
     note = " ".join(dict.fromkeys(notes))
     if missing:
-        note += " Componenti privi di storico: " + ", ".join(m["family"] for m in missing) + ". Premi «Ricalcola la scelta» in Cruscotti → Benchmark."
+        note += " Componenti senza storico utilizzabile: " + ", ".join(m["family"] for m in missing) + ". Premi «Ricalcola la scelta» in Cruscotti → Benchmark."
     if mode == "blend automatico":
         note += " I pesi GOV dipendono dalla composizione attuale: non sono un benchmark strategico fisso."
     return {"label": chosen, "mode": mode, "components": out, "missing_components": missing,

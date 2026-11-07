@@ -311,6 +311,24 @@ class IndexStore:
             rows=c.execute('SELECT assignment_json,created_at FROM assignment_history WHERE instrument_id=? ORDER BY id',(ticker,)).fetchall()
         return [{**json.loads(doc),'version_created_at':stamp} for doc,stamp in rows]
 
+    def benchmark_changes(self) -> dict[str,dict]:
+        """Ultimo cambio di benchmark per strumento, dalla storia delle assegnazioni.
+
+        {strumento: {'previous': codice precedente, 'current': codice attuale, 'changed_at': istante UTC ISO}}.
+        Compare solo chi ha avuto almeno due versioni con codici diversi; le modifiche di sola
+        composizione o parentela con lo stesso codice non sono un cambio di benchmark."""
+        with self._connect() as c:
+            rows=c.execute("SELECT instrument_id,json_extract(assignment_json,'$.ticker'),created_at "
+                           "FROM assignment_history ORDER BY id").fetchall()
+        last: dict[str,list]={}
+        for instrument,code,stamp in rows:
+            last.setdefault(instrument,[]).append((code,stamp))
+        out={}
+        for instrument,versions in last.items():
+            if len(versions)>=2 and versions[-1][0]!=versions[-2][0]:
+                out[instrument]={'previous':versions[-2][0],'current':versions[-1][0],'changed_at':versions[-1][1]}
+        return out
+
     def assignment(self,ticker:str) -> dict|None:
         with self._connect() as c:
             row=c.execute('SELECT assignment_json FROM assignment_snapshot WHERE instrument_id=?',(ticker,)).fetchone()

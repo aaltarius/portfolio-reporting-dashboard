@@ -211,18 +211,24 @@ def render_benchmark(ctx: SimpleNamespace, summary_bundle: Any | None = None) ->
         with st.spinner('Ricerca del benchmark sul web'+(' di '+ticker if ticker else '')+'…'):
             result=rediscover(data,store=store,target_instrument=ticker)
         pending=result['pending']
+        refs=result.get('references') or {}
+        reasons=[f"{i['ticker']}: {i['detail']}" for i in result.get('items',[]) if i.get('status') in ('NON_SALVATO','ERRORE')][:3]
         st.session_state['_benchmark_center_last_result']=(
             ('**'+ticker+'** · ' if ticker else 'Ricalcolo generale · ')
-            +f"{result['resolved']}/{result['requested']} strumenti con benchmark scelto."
+            +f"{result['resolved']}/{result['requested']} strumenti con benchmark scelto e salvato."
             +(' In attesa (decisione precedente conservata): '+', '.join(pending)+'.' if pending else ' Nessuno strumento in attesa.')
+            +(' Motivi: '+'; '.join(reasons)+'.' if reasons else '')
+            +(f" Riferimenti di portafoglio salvati: {sum(1 for v in refs.values() if v)}/{len(refs)}." if refs else '')
             +' Per aggiornare grafici e KPI congelati usa «Analizza benchmark».')
 
     def _refresh_series(ticker: str | None = None):
         from core.benchmark_discovery.service import refresh_series
         with st.spinner('Aggiornamento dei prezzi dei benchmark scelti…'):
             result=refresh_series(data,store=store,target_instrument=ticker)
+        reasons=[f"{i['ticker']}: {i['reason']}" for i in result.get('items',[]) if i.get('status')=='FALLITO' and i.get('reason')][:3]
         st.session_state['_benchmark_center_last_result']=(
-            f"Prezzi aggiornati per {result['updated']} strumenti; {result['failed']} richieste non riuscite. "
+            f"Prezzi aggiornati per {result['updated']} su {result['requested']} (strumenti e riferimenti di portafoglio); "
+            f"{result['failed']} richieste non riuscite"+(' ('+'; '.join(reasons)+')' if reasons else '')+'. '
             'La scelta dei benchmark non è cambiata. Per aggiornare grafici e KPI congelati usa «Analizza benchmark».')
 
     def _fix_manual(ticker: str):
@@ -369,6 +375,11 @@ def render_benchmark(ctx: SimpleNamespace, summary_bundle: Any | None = None) ->
             st.error('Confronto da verificare: ' + str(reason))
     elif availability.get('has_benchmark'):
         st.caption('Confronto sullo stesso periodo temporale per portafoglio e riferimento.')
+    stale=availability.get('stale') or []
+    if stale:
+        oldest=min(stale,key=lambda x:x.get('last_date') or '')
+        st.warning('Dati del benchmark fermi al '+fmt_date_only_it(oldest.get('last_date'))+f" ({oldest.get('age_days')} giorni fa): "
+                   'il confronto arriva fin dove ci sono dati. Per aggiornarli premi «Aggiorna i prezzi dei benchmark scelti» e poi «Analizza benchmark».')
 
     with profile_step('Cruscotti/Benchmark','grafico comparativo principale'):
         history_count=_safe_count(payload.get('history'))

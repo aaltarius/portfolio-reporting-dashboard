@@ -239,7 +239,8 @@ def _aligned_return_metrics(aligned: pd.DataFrame) -> dict[str, Any]:
     }
     if out["instrument_return"] is not None and out["benchmark_return"] is not None:
         out["extra_return"] = float(out["instrument_return"] - out["benchmark_return"])
-    returns = aligned[["strumento", "benchmark"]].pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+    grid, periods_per_year = _return_grid(aligned)
+    returns = grid[["strumento", "benchmark"]].pct_change().replace([np.inf, -np.inf], np.nan).dropna()
     if len(returns) >= 10:
         corr = returns["strumento"].corr(returns["benchmark"])
         if pd.notna(corr):
@@ -247,8 +248,41 @@ def _aligned_return_metrics(aligned: pd.DataFrame) -> dict[str, Any]:
         diff = returns["strumento"] - returns["benchmark"]
         te = diff.std(ddof=1)
         if pd.notna(te):
-            out["tracking_error"] = float(te * np.sqrt(252.0))
+            out["tracking_error"] = float(te * np.sqrt(periods_per_year))
     return out
+
+
+def _return_grid(aligned: pd.DataFrame) -> tuple[pd.DataFrame, float]:
+    """Righe su cui misurare rendimenti, correlazione e tracking error, e periodi all'anno.
+
+    L'allineamento riempie con l'ultimo valore i giorni senza quotazione: se una delle due serie e'
+    molto piu' rada (benchmark settimanale, importazione manuale) i suoi rendimenti giornalieri sono
+    zero quasi sempre e la correlazione crolla anche per un tracciamento perfetto. In quel caso si
+    misura solo nei giorni in cui la serie rada ha una nuova osservazione, annualizzando con la sua
+    cadenza. Con serie di densita' simile il comportamento e' quello giornaliero (252)."""
+    cols = ("strumento", "benchmark")
+    # Misura principale: rendimenti settimanali (chiusura del venerdi), la stessa che ha scelto il benchmark
+    # (core/benchmark_discovery/scoring.py::weekly_returns). Evita l'effetto dei fusi orari fra borse
+    # (strumento a Milano, benchmark negli Stati Uniti) che abbassa la correlazione giornaliera.
+    weekly = (aligned.assign(_d=pd.to_datetime(aligned["date"], errors="coerce")).dropna(subset=["_d"])
+              .set_index("_d")[list(cols)].resample("W-FRI").last().dropna())
+    if len(weekly) >= 11:
+        return weekly, 52.0
+    changes = {c: int(aligned[c].ne(aligned[c].shift()).iloc[1:].sum()) for c in cols}
+    sparse = min(cols, key=lambda c: changes[c])
+    dense = max(cols, key=lambda c: changes[c])
+    if changes[dense] < 20 or changes[sparse] >= 0.6 * changes[dense]:
+        return aligned, 252.0
+    mask = aligned[sparse].ne(aligned[sparse].shift())
+    mask.iloc[0] = True
+    grid = aligned.loc[mask]
+    if len(grid) < 3:
+        return aligned, 252.0
+    gaps = pd.to_datetime(grid["date"]).diff().dt.days.dropna()
+    median_gap = float(gaps.median()) if not gaps.empty else 0.0
+    if median_gap <= 1.0:
+        return aligned, 252.0
+    return grid, float(min(252.0, 365.25 / median_gap))
 
 
 def _resolve_instrument_benchmark(
@@ -443,7 +477,7 @@ def build_benchmark_transparency_payload(
     bench=pd.DataFrame(columns=['date','indice'])
     diagnostic=[]
     if cfg.get('missing_components'):
-        diagnostic.append('Componenti non disponibili in SQLite: '+', '.join(x['family'] for x in cfg['missing_components']))
+        diagnostic.append('Componenti senza storico utilizzabile in archivio: '+', '.join(x['family'] for x in cfg['missing_components']))
     if not port.empty and not cfg.get('missing_components'):
         try:
             b=build_portfolio_benchmark_series(
@@ -506,13 +540,18 @@ def build_benchmark_transparency_payload(
     }
     matrix=build_instrument_benchmark_matrix(data,da_frame)
     last_cache_date=max((str(c.get('last_date') or '') for c in components),default='')
+    # Serie ferme da piu' di 10 giorni: restano nel confronto e sono dichiarate (BM-14), non nascoste.
+    from core.verified_benchmarks.freshness import age_days, MAX_REFERENCE_AGE_DAYS
+    stale_components=[{'ticker':str(c.get('ticker') or ''),'last_date':str(c.get('last_date') or ''),
+                       'age_days':age_days(c.get('last_date'))}
+                      for c in components if c.get('last_date') and (age_days(c.get('last_date')) or 0)>MAX_REFERENCE_AGE_DAYS]
     return {
        'config':{**cfg,'components':components},'period':period,
        'last_cache_date':last_cache_date,'history':aligned,
        'instrument_matrix':matrix,'metrics':metrics,
        'availability':{'portfolio_points':len(port),'benchmark_points':len(bench),
                        'aligned_points':len(available),'instrument_benchmark_rows':len(matrix),
-                       'has_benchmark':comparable,'problems':diagnostic},
+                       'has_benchmark':comparable,'problems':diagnostic,'stale':stale_components},
        'method_note':cfg.get('method_note',''),
        'data_revision':store.revision_token(),
     }

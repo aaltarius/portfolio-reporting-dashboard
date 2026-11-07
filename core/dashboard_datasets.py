@@ -294,6 +294,12 @@ def _get_runtime_normalized_benchmark_series(
         return cache[cache_key]
     os.makedirs(_BENCHMARK_NORMALIZED_CACHE_DIR, exist_ok=True)
     benchmark_latest = max(benchmark_data.keys(), default="") if isinstance(benchmark_data, dict) else ""
+    # BM-14: una serie ferma da piu' di 10 giorni resta disegnata, con la data dell'ultimo dato in legenda.
+    from core.verified_benchmarks.freshness import staleness as _staleness
+    _age = _staleness(benchmark_data if isinstance(benchmark_data, dict) else {})
+    benchmark_label_shown = benchmark_label
+    if _age["stale"] and _age["last_date"]:
+        benchmark_label_shown = f"{benchmark_label} · dati al {_age['last_date'][8:10]}/{_age['last_date'][5:7]}"
     # Task V-diciassettesima (2026-09-06): bug reale trovato dall'utente -
     # (points, latest) restava invariato mentre i VALORI della serie benchmark
     # cambiavano sotto (es. una riparazione che sostituisce lo stesso range di
@@ -319,6 +325,7 @@ def _get_runtime_normalized_benchmark_series(
                 "base": base_key,
                 "points": len(benchmark_data) if isinstance(benchmark_data, dict) else 0,
                 "latest": benchmark_latest,
+                "stale": bool(_age["stale"]),
                 "content_hash": content_hash,
             },
             sort_keys=True,
@@ -396,7 +403,7 @@ def _get_runtime_normalized_benchmark_series(
         return None
     normalized = sliced.divide(base_value).multiply(100.0)
     chart_series = downsample_for_display(normalized)
-    result = (benchmark_label, list(chart_series.index), list(chart_series.values))
+    result = (benchmark_label_shown, list(chart_series.index), list(chart_series.values))
     cache[cache_key] = result
     _persist({"cache_key": cache_key, "value": result})
     return result

@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from core.config import COLORS
 from ui.components import render_styled_table
 from ui.theme import get_theme_context, macro_color
 
@@ -22,11 +23,14 @@ def render_benchmark_table(
     tone_key: str | None = None,
     page_size: int | None = None,
     widths: list[int] | None = None,
+    col_widths: dict[str, int] | None = None,
 ) -> None:
     """Vista completa con st.dataframe/Stylers condivisi (height='content').
 
     key, page_size e widths sono conservati per compatibilita' con i chiamanti
     esistenti; non viene creato stato widget o un secondo scroll interno.
+    col_widths: larghezza in pixel per campo (stessa convenzione di cruscotti_accumuli); le colonne
+    senza larghezza si dividono lo spazio che resta, cosi' il testo lungo non viene troncato.
     """
     frame = records.copy() if isinstance(records, pd.DataFrame) else pd.DataFrame(records)
     if frame.empty:
@@ -56,6 +60,9 @@ def render_benchmark_table(
                     css = f'color:{ctx.color_green};font-weight:700;'
                 elif value.startswith('-') and value not in ('-', '—'):
                     css = f'color:{ctx.color_red};font-weight:700;'
+            elif col == 'Ptf':
+                # stessa colorazione di Quotazioni: ★ candidato in evidenza, - e ☆ in grigio
+                css = f"color:{COLORS['info'] if str(row[col]) == '★' else '#9CA3AF'};font-weight:700;"
             elif col == 'Stato':
                 state = str(row[col])
                 if state in ('Da aggiornare', 'Storico incerto', 'Dati mancanti'):
@@ -63,7 +70,12 @@ def render_benchmark_table(
             result.append(css)
         return result
 
-    styled = frame.style.format(na_rep='—', escape='html').apply(_style_row, axis=1)
+    # st.dataframe non interpreta HTML: con escape='html' un nome come «S&P 500» appariva come «S&amp;P 500».
+    styled = frame.style.format(na_rep='—').apply(_style_row, axis=1)
     # Identico punto di rendering usato in Quotazioni, Portafoglio e Cruscotti.
     # height='content' mostra l'intero numero di righe senza paginazione.
-    render_styled_table(styled, height='content')
+    config = {labels[f]: st.column_config.Column(width=w) for f, w in (col_widths or {}).items() if f in labels}
+    if config:
+        render_styled_table(styled, height='content', column_config=config)
+    else:
+        render_styled_table(styled, height='content')
