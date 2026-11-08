@@ -18,6 +18,14 @@ ON = {"mobile_sync": {"enabled": True}}  # accensione solo per questa chiamata e
 OK = {"bootstrapped", "updated", "in_sync", "adopted", "waiting", "would_bootstrap", "would_update"}
 
 
+def same_file(a, b) -> bool:
+    """Stesso file anche se uno dei due percorsi è relativo (data/portfolio/... oppure assoluto)."""
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except OSError:
+        return False
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ambiente", default="prova")
@@ -44,7 +52,7 @@ def main(argv=None) -> int:
     raw = path.read_bytes()
     data = json.loads(raw.decode("utf-8-sig"))
     try:
-        hist = load_storico_prezzi_hybrid(st.STORICO_PREZZI_FILE) if path == Path(st.DATA_FILE) else None
+        hist = load_storico_prezzi_hybrid(st.STORICO_PREZZI_FILE) if same_file(path, st.DATA_FILE) else None
     except Exception:  # noqa: BLE001
         hist = None
     try:
