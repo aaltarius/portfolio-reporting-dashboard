@@ -160,6 +160,61 @@ def _read_json_file(path, default):
     return json.loads(json.dumps(default))
 
 
+class DataFileUnreadableError(RuntimeError):
+    """Il file del portafoglio non e' leggibile (o manca ma esistono backup con dati).
+
+    Si ferma il caricamento invece di creare e salvare un portafoglio vuoto sopra i dati veri."""
+
+
+def _json_events_count(path) -> int:
+    """Numero di eventi nel file del portafoglio indicato; 0 se manca o non e' leggibile."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception:
+        return 0
+    events = payload.get("registro_eventi") if isinstance(payload, dict) else None
+    return len(events) if isinstance(events, list) else 0
+
+
+def _backup_has_events(folder) -> bool:
+    return _json_events_count(os.path.join(folder, os.path.basename(DATA_FILE))) > 0
+
+
+def _backups_hold_portfolio_events() -> bool:
+    try:
+        folders = [os.path.join(BACKUP_DIR, n) for n in os.listdir(BACKUP_DIR)]
+    except OSError:
+        return False
+    return any(os.path.isdir(p) and _backup_has_events(p) for p in folders)
+
+
+def _read_portfolio_file_strict(path, default):
+    """Legge il file del portafoglio. Mancante senza backup con dati = primo avvio (default);
+    illeggibile, non-oggetto, o mancante con backup che contengono eventi = errore, mai default."""
+    if not os.path.exists(path):
+        if _backups_hold_portfolio_events():
+            raise DataFileUnreadableError(
+                f"Il file del portafoglio manca ({path}) ma i backup contengono dati. "
+                "Non creo un portafoglio vuoto: ripristina l'ultimo backup da backups/."
+            )
+        return json.loads(json.dumps(default))
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception as exc:
+        logger.error("File del portafoglio non leggibile, caricamento fermato: %s", path, exc_info=True)
+        raise DataFileUnreadableError(
+            f"Il file del portafoglio non e' leggibile ({path}). Non lo sovrascrivo: "
+            "ripristina l'ultimo backup da backups/ o ripara il file."
+        ) from exc
+    if not isinstance(payload, dict):
+        raise DataFileUnreadableError(
+            f"Il file del portafoglio ha una struttura inattesa ({path}). Non lo sovrascrivo."
+        )
+    return payload
+
+
 def _write_json_file(path, payload):
     # Scrittura atomica: scrivi su tmp nella stessa dir, poi rinomina.
     # Evita file vuoti se il processo viene interrotto a metà write.
@@ -1201,8 +1256,17 @@ def _prune_backups(keep_last_n=None):
     ]
     entries.sort(key=lambda p: os.path.getmtime(p), reverse=True)
 
+    kept, doomed = entries[:keep_last_n], entries[keep_last_n:]
+    # Mai restare senza un backup con dati: se nessuno di quelli tenuti ha eventi (es. salvataggi ripetuti
+    # di un portafoglio svuotato per errore), si conserva il piu' recente tra i vecchi che li hanno.
+    if doomed and not any(_backup_has_events(p) for p in kept):
+        protected = next((p for p in doomed if _backup_has_events(p)), None)
+        if protected:
+            doomed.remove(protected)
+            logger.warning("Backup retention: conservato %s, l'ultimo con dati", protected)
+
     removed = 0
-    for old_folder in entries[keep_last_n:]:
+    for old_folder in doomed:
         try:
             shutil.rmtree(old_folder, ignore_errors=True)
             removed += 1
@@ -1601,7 +1665,7 @@ def load_data():
     from persistence.parquet_utils import load_storico_prezzi_hybrid
 
     _migrate_json_to_data_dir()
-    raw = _read_json_file(DATA_FILE, default_data_v33())
+    raw = _read_portfolio_file_strict(DATA_FILE, default_data_v33())
     needs_link_migration = _schema_older_than(raw, "3.4") and bool(raw.get("registro_eventi"))
     if needs_link_migration:
         _backup_before_schema_migration("3.4")
@@ -1832,7 +1896,10 @@ def _should_backup_before_save(settings, *, automatic: bool) -> bool:
     return (time.time() - newest) >= BACKUP_AUTO_MIN_INTERVAL_MINUTES * 60
 
 
-def save_data(data, *, include_storico: bool = True, automatic: bool = False):
+_WIPE_GUARD_MIN_EVENTS = 5  # sotto questa soglia si puo' cancellare tutto un evento alla volta senza falsi allarmi
+
+
+def save_data(data, *, include_storico: bool = True, automatic: bool = False, allow_empty: bool = False):
     from persistence.parquet_utils import save_storico_prezzi_hybrid
 
     # Bug reale trovato da /code-review ultra (2026-09-08): un dict passato
@@ -1854,6 +1921,18 @@ def save_data(data, *, include_storico: bool = True, automatic: bool = False):
             "strumenti nascosti da disco. Nessuna scrittura eseguita."
         )
         return
+
+    # Difesa dalla perdita dati: un salvataggio senza alcun evento sopra un portafoglio che ne ha molti e'
+    # quasi sempre un errore (caricamento fallito, dati non letti), mai una scelta. Nessuna scrittura, nemmeno
+    # il backup (che andrebbe a ruotare quelli buoni). Chi vuole davvero svuotare passa allow_empty=True.
+    if not allow_empty and not (data.get("registro_eventi") or []):
+        on_disk = _json_events_count(DATA_FILE)
+        if on_disk >= _WIPE_GUARD_MIN_EVENTS:
+            logger.error(
+                "save_data: rifiutato il salvataggio di un portafoglio senza eventi sopra uno con %s eventi. "
+                "Nessuna scrittura eseguita.", on_disk,
+            )
+            return
 
     settings = load_settings()
     if _should_backup_before_save(settings, automatic=automatic):

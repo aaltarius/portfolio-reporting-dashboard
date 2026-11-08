@@ -266,18 +266,26 @@ def get_state_manager(schema_version: str = _STATE_MANAGER_SCHEMA) -> StateManag
     return StateManager()
 
 
-with _logged_app_phase("state_load"):
-    state_manager = get_state_manager()
-    if st.session_state.pop("_force_reload", 0):
-        state_manager.force_reload()
-    else:
-        state_manager.reload_if_changed()
-    data = state_manager.get_data()
-    settings = state_manager.get_settings()
-    st.session_state["_settings_runtime"] = settings
-    runtime_ui_settings = get_runtime_ui_settings(settings)
-    snapshots_state = state_manager.get_snapshots()
-    meta_state = state_manager.get_meta()
+from persistence.storage import DataFileUnreadableError
+
+try:
+    with _logged_app_phase("state_load"):
+        state_manager = get_state_manager()
+        if st.session_state.pop("_force_reload", 0):
+            state_manager.force_reload()
+        else:
+            state_manager.reload_if_changed()
+        data = state_manager.get_data()
+        settings = state_manager.get_settings()
+        st.session_state["_settings_runtime"] = settings
+        runtime_ui_settings = get_runtime_ui_settings(settings)
+        snapshots_state = state_manager.get_snapshots()
+        meta_state = state_manager.get_meta()
+except DataFileUnreadableError as _data_error:
+    # Fail-closed: nessuna scrittura, nessun portafoglio vuoto creato al posto di quello vero.
+    st.error(f"⚠️ Dati non caricati: {_data_error}")
+    st.info("Non ho modificato nulla. I backup sono nella cartella `backups/`: ripristina l'ultimo e riavvia.")
+    st.stop()
 st.session_state["_plotly_profile_enabled"] = bool(
     runtime_ui_settings.get("debug_render_monitor", False)
     or runtime_ui_settings.get("debug_render_progress", False)
