@@ -55,6 +55,7 @@ test_enrichment_report.html
 
 # Configurazione (tutta, incluse impostazioni personali)
 data/config/
+data/segreti/
 
 # Piani e specifiche interne di sviluppo, e suite di test (mai nel repo pubblico)
 docs/

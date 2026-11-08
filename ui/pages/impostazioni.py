@@ -561,6 +561,28 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     disabled=not instrument_analysis_auto_refresh_enabled,
                     help="Intervallo tra un ciclo e il successivo (ogni ciclo rinnova al massimo pochi strumenti).",
                 )
+                st.markdown("**Sincronizzazione con il Mobile**")
+                mobile_sync_settings = settings.get("mobile_sync", {})
+                if not isinstance(mobile_sync_settings, dict):
+                    mobile_sync_settings = {}
+                mobile_sync_enabled = st.checkbox(
+                    "Sincronizza con il Mobile (ambiente di prova)",
+                    value=bool(mobile_sync_settings.get("enabled", False)),
+                    help="Acceso: all'avvio il Desktop controlla se il Mobile è allineato e, dopo ogni salvataggio dei dati, invia in background solo le novità. Spento: nessun invio e nessuna rete. Spegnerlo non cancella nulla sul Mobile.",
+                )
+                try:
+                    from core.sync.startup import get_status as _mobile_sync_status
+                    _mobile_now = _mobile_sync_status()
+                    _mobile_line = (
+                        f"Stato attuale: {_mobile_now.get('label', '')}" + (f" — {_mobile_now.get('detail')}" if _mobile_now.get("detail") else "")
+                        if _mobile_now.get("state") not in (None, "off") else "Stato attuale: spenta."
+                    )
+                except Exception:
+                    _mobile_line = ""
+                st.caption(
+                    "Usa solo l'ambiente di prova; la produzione resta bloccata. Indirizzi, nomi e chiavi si impostano con "
+                    "«configura_sincronizzazione_mobile.bat». " + _mobile_line
+                )
 
             _section_line()
             with st.container():
@@ -756,6 +778,11 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     "enabled": bool(instrument_analysis_auto_refresh_enabled),
                     "interval_minutes": int(instrument_analysis_auto_refresh_minutes),
                 }
+                settings["mobile_sync"] = {
+                    **(settings.get("mobile_sync") if isinstance(settings.get("mobile_sync"), dict) else {}),
+                    "enabled": bool(mobile_sync_enabled),
+                    "ambiente": str((settings.get("mobile_sync") or {}).get("ambiente") or "prova") if isinstance(settings.get("mobile_sync"), dict) else "prova",
+                }
                 # Appearance
                 settings["operativo_mode"] = "sidebar"
                 settings["sator_mode"] = "sidebar"
@@ -777,6 +804,11 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     ),
                 }
                 settings_changed = save_settings(settings)
+                try:
+                    from core.sync.startup import apply_setting_change as _apply_mobile_sync_change
+                    _apply_mobile_sync_change(settings)
+                except Exception:
+                    logger.exception("Sincronizzazione Mobile: applicazione dell'impostazione non riuscita")
                 logger.info(
                     "Impostazioni salvate: benchmark=%s changed=%s",
                     bench_default,

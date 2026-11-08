@@ -46,6 +46,15 @@ Prima di qualunque pubblicazione verificare l'assenza di credenziali, in partico
 | [`CHANGELOG.md`](CHANGELOG.md) | modifiche per versione, in forma sintetica |
 | [`docs/README.md`](docs/README.md) | mappa completa della documentazione |
 
+## Sincronizzazione con il Mobile (facoltativa, spenta di default)
+
+Il Desktop può inviare al Worker del Mobile i risultati già calcolati (posizioni, liquidità, storico, sedute): all'avvio controlla che il Mobile sia allineato e, dopo ogni salvataggio dei dati, invia in background solo le novità (circa 6 kB). Non partono operazioni, note né registro eventi. Per ora funziona **solo verso l'ambiente di prova**; la produzione è bloccata nel codice.
+
+1. Eseguire `configura_sincronizzazione_mobile.bat`: chiede nomi, indirizzo e chiave del Worker, li salva in `data/segreti/cloudflare.json` (cartella ignorata da git) e prova il collegamento.
+2. Accendere l'opzione **Setup → Aggiornamenti automatici in rete → Sincronizza con il Mobile**. La pastiglia «Mobile» nella barra in alto mostra lo stato (*off*, *controllo*, *allineato*, *invio*, *da verificare*, *offline*…); l'esito si legge anche in `data/logs/portafoglio.log`.
+
+La chiave e la configurazione non vanno mai copiate fuori dal PC né pubblicate. Dettagli e decisioni: [ADR-0025](docs/adr/0025-protocollo-v2-bootstrap-e-update.md) (documentazione interna).
+
 ## Aggiornamento dal 5.4
 
 L'aggiornamento diretto 5.4 → 5.6 è stato eseguito il 02/11/2026. La procedura storica (installer con `-DryRun`, ripristino dei sorgenti, gestione manuale degli storici) è conservata in [`docs/guide/benchmark-5.6-installazione-e-uso.md`](docs/guide/benchmark-5.6-installazione-e-uso.md). Il ripristino dei sorgenti non annulla le importazioni successive nell'archivio `data/indices/benchmarks.sqlite3`.

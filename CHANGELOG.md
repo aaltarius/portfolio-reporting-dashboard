@@ -11,6 +11,9 @@ Questo file è stato riscritto in forma sintetica il 02/11/2026. Il testo integr
 - Dipendenze: yfinance 1.7.0 → 1.8.0, che non usa più `inplace=True` e non emette più i `Pandas4Warning` con pandas 3.1.
 
 ### Aggiunto
+- Sincronizzazione Mobile (spenta di default, solo ambiente di prova): invio incrementale dei dati al Worker dopo ogni salvataggio, con `python -m tools.sync_v2_switch on|off`.
+- Sincronizzazione Mobile: controllo all'avvio con segnale «Mobile» nella barra in alto (sempre presente: «off» in grigio se la sincronizzazione è spenta) e configurazione guidata dei parametri Cloudflare (`configura_sincronizzazione_mobile.bat`).
+- Setup, «Aggiornamenti automatici in rete»: casella «Sincronizza con il Mobile» per accendere/spegnere la sincronizzazione (non invalida le cache).
 - Sincronizzazione Desktop/Mobile, modalità ombra: `core/sync/` calcola in memoria la fotografia per il Mobile (stessa del suo esportatore, verificata su una copia dei dati reali) e la regola di scelta del prezzo; `python -m tools.sync_shadow` ne stampa il riepilogo in sola lettura. Nulla viene inviato e l'interruttore `mobile_sync.enabled` è spento.
 - Benchmark, tabelle «Benchmark scelto dal web» e «Strumenti e benchmark»: colonna «Modifica» con la data (gg/mm) per gli strumenti il cui benchmark è stato sostituito negli ultimi 3 giorni, letta dalla storia delle assegnazioni; il benchmark precedente è nel dettaglio dello strumento.
 - Strumento `tools/realign_weekly_benchmarks.py` (dry-run di default, backup prima di scrivere, idempotente): porta al venerdì le barre settimanali salvate con la data del lunedì e ripristina i prezzi sovrascritti dai backup.

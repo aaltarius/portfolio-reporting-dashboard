@@ -736,6 +736,18 @@ else:
         app_logger.warning("Auto-refresh InstrumentAnalysis non avviato: %s", exc)
 
 
+# === MOBILE: controllo all'avvio (thread a parte, una volta per processo; spento di default) ===
+if os.getenv("PORTFOLIO_TESTING") == "1":
+    app_logger.info("Controllo Mobile disabilitato in modalita test.")
+else:
+    try:
+        from core.sync.startup import start_once as _start_mobile_startup_check
+        with _logged_app_phase("mobile_sync_check_start"):
+            _start_mobile_startup_check(settings)
+    except Exception as exc:
+        app_logger.warning("Controllo Mobile non avviato: %s", exc)
+
+
 # === DEBUG / PERFORMANCE UI FLAGS ===
 _ui_preferences = get_ui_preferences(settings)
 _RENDER_DEBUG_PROGRESS_ENABLED = bool(
@@ -752,13 +764,13 @@ _RENDER_ALWAYS_PROGRESS_ENABLED = True
 def _scenario_cache_badge_display(scenario: str) -> str:
     """Mappa lo scenario di cache a una label compatta per il banner."""
     badge_map = {
-        "cold_start": ("Cold start", "#0EA5E9"),
+        "cold_start": ("Avvio", "#0EA5E9"),
         "first_session_run": ("Primo run", "#6366F1"),
-        "post_data_change": ("Dati aggiornati", "#F97316"),
-        "warm_rerun": ("Cache calda", "#10B981"),
-        "quote_refresh": ("Quote refresh", "#F97316"),
-        "quote_refresh_noop": ("Quote invariate", "#64748B"),
-        "settings_update": ("Setup aggiornato", "#F97316"),
+        "post_data_change": ("Aggiornato", "#F97316"),
+        "warm_rerun": ("Calda", "#10B981"),
+        "quote_refresh": ("Refresh", "#F97316"),
+        "quote_refresh_noop": ("Invariato", "#64748B"),
+        "settings_update": ("Setup", "#F97316"),
     }
     label, color = badge_map.get(scenario, (str(scenario or "run"), "#6B7280"))
     return (
@@ -782,12 +794,19 @@ if _header_update_marker in _header_date_text:
 else:
     _header_today_text = _header_date_text.strip() or fmtd(date.today())
     _header_update_text = fmt_dt_it(getattr(ctx, "last_quotes_update", None))
-st.markdown(f"""<div class="header-panel header-executive">
+def _build_header_html(_mobile_status):
+    try:
+        from core.sync.startup import chip_html as _mobile_chip_html_for
+        _chip = _mobile_chip_html_for(_mobile_status)
+    except Exception:
+        _chip = ""
+    _cls = " has-mobile" if _chip else ""
+    return f"""<div class="header-panel header-executive{_cls}">
     <div class="header-brand header-brand-logo-wrap">
         <img class="header-brand-logo" src="{_header_logo_url}" alt="Sestante - Gestione Portafoglio Finanziario">
     </div>
     <div class="header-right">
-        <div class="header-meta">
+        <div class="header-meta{_cls}">
             <div class="header-chip">
                 <span class="header-chip-label">Versione</span>
                 <span class="header-chip-value accent">v{APP_VERSION}{_debug_badge}</span>
@@ -800,13 +819,24 @@ st.markdown(f"""<div class="header-panel header-executive">
                 <span class="header-chip-label">Cache</span>
                 <span class="header-chip-value">{_cache_strategy_label}</span>
             </div>
+            {_chip}
         </div>
         <div class="header-timeline">
             <span><strong>Data</strong> {_header_today_text}</span>
             <span><strong>Aggiornamento</strong> {_header_update_text}</span>
         </div>
     </div>
-</div>""", unsafe_allow_html=True)
+</div>"""
+
+
+try:
+    from core.sync.startup import get_status as _mobile_sync_status
+    _mobile_status_at_header = _mobile_sync_status()
+except Exception:
+    _mobile_status_at_header = None
+# Segnaposto: se all'avvio il controllo Mobile è ancora in corso, a fine script la pastiglia si aggiorna da sola (senza rerun).
+_header_host = st.empty()
+_header_host.markdown(_build_header_html(_mobile_status_at_header), unsafe_allow_html=True)
 _header_progress_host = st.empty()
 
 
@@ -885,3 +915,14 @@ try:
         flush_figure_cache_manifest()
 except Exception:
     app_logger.exception("Errore durante il flush del manifest figure cache")
+
+# Pastiglia «Mobile»: se all'avvio era «controllo», il risultato arriva mentre le pagine si disegnano; qui si aggiorna
+# l'intestazione sul posto (nessun rerun, nessun ritardo se il controllo è già finito).
+try:
+    if _mobile_status_at_header and _mobile_status_at_header.get("state") == "checking":
+        from core.sync.startup import wait_until_done as _mobile_wait_until_done
+        _mobile_status_final = _mobile_wait_until_done(timeout=8.0)
+        if _mobile_status_final != _mobile_status_at_header:
+            _header_host.markdown(_build_header_html(_mobile_status_final), unsafe_allow_html=True)
+except Exception as exc:
+    app_logger.warning("Aggiornamento della pastiglia Mobile non riuscito: %s", exc)

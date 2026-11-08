@@ -256,7 +256,7 @@ DIAGNOSTIC_UI_KEYS = frozenset(
         "log_level",
     }
 )
-_DIAGNOSTIC_TOP_LEVEL_KEYS = frozenset({"ui_debug_render_monitor"})
+_DIAGNOSTIC_TOP_LEVEL_KEYS = frozenset({"ui_debug_render_monitor", "mobile_sync"})   # nessun calcolo dipende da questi
 
 
 def without_diagnostic_keys(values: Mapping[str, Any] | None) -> dict[str, Any]:

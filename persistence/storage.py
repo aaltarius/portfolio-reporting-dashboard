@@ -2021,6 +2021,12 @@ def save_data(data, *, include_storico: bool = True, automatic: bool = False, al
         len(core.get("proventi", [])),
         len(storico_prezzi),
     )
+    # Sincronizzazione Mobile (spenta di default): il gancio non blocca e non fa mai fallire il salvataggio.
+    try:
+        from core.sync import auto as _sync_auto
+        _sync_auto.notify_saved(settings)
+    except Exception:  # noqa: BLE001
+        logger.exception("Sincronizzazione Mobile: gancio dopo il salvataggio non eseguito")
 
 
 def _strip_benchmark_instruments(instruments):

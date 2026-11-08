@@ -984,6 +984,14 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
   box-shadow:0 0 0 3px color-mix(in srgb, var(--status-color) 18%, transparent);
   flex:none;
 }
+/* Con il segnale «Mobile» le pastiglie sono 4, uguali, e i loro bordi cadono sotto le due pillole della riga Data/Aggiornamento:
+   stessa spaziatura (6px) e colonna destra a larghezza fissa. */
+.header-executive.has-mobile{grid-template-columns:minmax(340px,1fr) 400px}
+.header-meta.has-mobile{grid-template-columns:repeat(4,minmax(0,1fr))}
+.header-meta.has-mobile .header-chip{padding:7px 5px}
+.header-meta.has-mobile .header-chip-value{font-size:0.74rem;gap:5px;min-width:0}
+.header-meta.has-mobile .header-chip-label,
+.header-meta.has-mobile .header-chip-value > span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .header-timeline{
   display:grid;
   grid-template-columns:repeat(2,minmax(0,1fr));
@@ -1008,7 +1016,8 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
   font-weight:850;
 }
 @media (max-width: 920px){
-  .header-executive{grid-template-columns:1fr;padding:13px 14px;gap:10px}
+  .header-executive,.header-executive.has-mobile{grid-template-columns:1fr;padding:13px 14px;gap:10px}
+  .header-meta.has-mobile{grid-template-columns:repeat(4,minmax(0,1fr))}
   .header-right{width:100%}
   .header-meta{grid-template-columns:repeat(3,minmax(0,1fr))}
   .header-chip{padding:7px 8px}
@@ -1018,6 +1027,7 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
 }
 @media (max-width: 560px){
   .header-meta{grid-template-columns:1fr}
+  .header-meta.has-mobile{grid-template-columns:repeat(2,minmax(0,1fr))}
   .header-brand-mark{width:40px;height:40px}
   .header-brand-logo-wrap{min-height:66px;padding:0}
   .header-brand-logo{height:auto;width:100%;max-height:80px}
