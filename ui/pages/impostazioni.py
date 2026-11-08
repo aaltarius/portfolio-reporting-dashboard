@@ -570,6 +570,11 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                     value=bool(mobile_sync_settings.get("enabled", False)),
                     help="Acceso: all'avvio il Desktop controlla se il Mobile è allineato e, dopo ogni salvataggio dei dati, invia in background solo le novità. Spento: nessun invio e nessuna rete. Spegnerlo non cancella nulla sul Mobile.",
                 )
+                mobile_import_enabled = st.checkbox(
+                    "Importa all'avvio i prezzi più recenti trovati dal Mobile",
+                    value=bool(mobile_sync_settings.get("importa_prezzi", True)),
+                    help="Vale solo con la sincronizzazione accesa. Se il Mobile ha un prezzo con data di mercato più recente di quella del Desktop (stessa valuta e unità, scostamento entro il 10%, o 3 punti per i titoli di Stato), il Desktop lo adotta. Cambiano solo prezzo e data; ogni decisione è registrata. Spento: i prezzi restano solo segnalati.",
+                )
                 try:
                     from core.sync.startup import get_status as _mobile_sync_status
                     _mobile_now = _mobile_sync_status()
@@ -781,6 +786,7 @@ def render_impostazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 settings["mobile_sync"] = {
                     **(settings.get("mobile_sync") if isinstance(settings.get("mobile_sync"), dict) else {}),
                     "enabled": bool(mobile_sync_enabled),
+                    "importa_prezzi": bool(mobile_import_enabled),
                     "ambiente": str((settings.get("mobile_sync") or {}).get("ambiente") or "prova") if isinstance(settings.get("mobile_sync"), dict) else "prova",
                 }
                 # Appearance

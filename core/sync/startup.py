@@ -53,7 +53,12 @@ def _real_context(settings):
     return transport, env.endpoints, ds, data, Path(st.DATA_DIR) / "cache" / "sync_v2", lambda: auto.get_auto().notify(settings)
 
 
-def check_now(settings, *, context=None, now=None) -> dict:
+def _default_apply(found, **kwargs):
+    from core.sync import apply_prices
+    return apply_prices.apply(found, **kwargs)
+
+
+def check_now(settings, *, context=None, now=None, apply_fn=None) -> dict:
     """Esegue il controllo e restituisce l'esito (non solleva mai)."""
     if not is_enabled(settings):
         return _status("off", "off", "idle", OFF_DETAIL, now)
@@ -102,8 +107,17 @@ def check_now(settings, *, context=None, now=None) -> dict:
             newer = [i for i in items if i["decision"] == "newer_on_mobile"]
             if newer and result["state"] in ("aligned", "sending"):
                 n = len(newer)
-                result = _status("mobile_newer", "nuovi prezzi", "info",
-                                 f"{n} {'prezzo' if n == 1 else 'prezzi'} in quarantena, non ancora applicati al Desktop", now)
+                mobile_cfg = settings.get("mobile_sync") if isinstance(settings.get("mobile_sync"), dict) else {}
+                if mobile_cfg.get("importa_prezzi", True):
+                    done = (apply_fn or _default_apply)(found, log_path=state_dir / "observations_log.jsonl", now=now)
+                    k = len(done.get("applied") or [])
+                    if done.get("error"):
+                        result = _status("import_error", "import fallito", "warn", f"prezzi del Mobile non importati: {done['error']}", now)
+                    elif k:
+                        result = _status("imported", f"importati {k}", "ok", f"{k} {'prezzo' if k == 1 else 'prezzi'} più recenti dal Mobile applicati al Desktop", now)
+                else:
+                    result = _status("mobile_newer", "nuovi prezzi", "info",
+                                     f"{n} {'prezzo' if n == 1 else 'prezzi'} più recenti sul Mobile; importazione spenta nel Setup", now)
     except Exception:  # noqa: BLE001 - le osservazioni sono un di più: non devono rovinare l'esito principale
         logger.exception("Controllo avvio: osservazioni del Mobile non valutabili")
     return result

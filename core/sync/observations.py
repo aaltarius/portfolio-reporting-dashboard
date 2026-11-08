@@ -31,7 +31,9 @@ def fetch(transport, path: str = ENDPOINT) -> list[dict] | None:
 def _desktop_observation(instrument: dict, fallback_symbol: str = "") -> policy.Observation | None:
     """Prezzo del Desktop come osservazione. I titoli di Stato non hanno un simbolo di quotazione sul Desktop: in quel
     caso il simbolo atteso è quello dichiarato dal Mobile (la coerenza di simbolo non è verificabile)."""
-    when = to_iso(instrument.get("aggiornato"))
+    raw = str(instrument.get("aggiornato") or "").strip()
+    # Il Desktop conosce la sola DATA di mercato: un prezzo del Mobile della stessa data non lo sostituisce (fine giornata).
+    when = to_iso(raw + "T23:59:59" if len(raw) == 10 else raw)
     try:
         symbol = quote_symbol(instrument) or fallback_symbol
         price = float(instrument.get("prezzo"))
@@ -54,8 +56,12 @@ def evaluate(data: dict, observations: list[dict]) -> list[dict]:
         desk = _desktop_observation(instrument, first if ticker.startswith("BTP-") else "")
         if desk is None:
             continue
-        cloud = []
+        cloud, bad_unit = [], 0
+        want_unit = "PCT_NOMINALE" if ticker.startswith("BTP-") else "EUR"
         for o in (o for o in observations if str(o.get("ticker")) == ticker):
+            if str(o.get("unit") or "") != want_unit:          # euro per quota / percentuale del nominale: mai confonderle
+                bad_unit += 1
+                continue
             try:
                 cloud.append(policy.Observation("cloud", str(o.get("symbol") or ""), float(o.get("price")),
                                                 str(o.get("currency") or ""), to_iso(o.get("marketTime")) or "",
@@ -69,7 +75,8 @@ def evaluate(data: dict, observations: list[dict]) -> list[dict]:
                         "cloudMarketTime": choice.applied.market_time, "desktopPrice": desk.price,
                         "desktopMarketTime": desk.market_time, "kind": kind})
         else:
-            reasons = sorted({r.reason for r in choice.rejected_with_reason if r.observation.source == "cloud"})
+            reasons = sorted({r.reason for r in choice.rejected_with_reason if r.observation.source == "cloud"} |
+                             ({"unit_mismatch"} if bad_unit else set()))
             out.append({"ticker": ticker, "decision": "not_newer", "reasons": reasons, "kind": kind})
     return out
 
