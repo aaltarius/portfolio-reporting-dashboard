@@ -10,13 +10,14 @@ decisioni dell'utente sulle soglie (provvisorie: 10% e 3 punti per i titoli di S
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from core.sync import policy
 from core.sync.transport import TransportRefused
 from core.sync.snapshot import quote_symbol, to_iso
 
 ENDPOINT = "/api/v2/observations"
+SAME_QUOTE_MARGIN = timedelta(minutes=10)   # il Desktop salva l'ora al minuto: una rilevazione più recente di pochi minuti è la stessa quotazione
 
 
 def fetch(transport, path: str = ENDPOINT) -> list[dict] | None:
@@ -29,7 +30,7 @@ def fetch(transport, path: str = ENDPOINT) -> list[dict] | None:
     return [o for o in items if isinstance(o, dict)] if isinstance(items, list) else None
 
 
-def _desktop_observation(instrument: dict) -> policy.Observation | None:
+def _desktop_observation(instrument: dict) -> tuple[policy.Observation, str] | None:
     """Prezzo del Desktop come osservazione. Simbolo atteso: il simbolo di quotazione per azioni/ETF/fondi, l'ISIN per i titoli
     di Stato (il Mobile li interroga per ISIN e dichiara l'ISIN reale in `symbol`)."""
     raw = str(instrument.get("aggiornato") or "").strip()
@@ -45,7 +46,21 @@ def _desktop_observation(instrument: dict) -> policy.Observation | None:
         return None
     if not symbol or not when:
         return None
-    return policy.Observation("desktop", symbol, price, "EUR", when, when)
+    base = when
+    if when:
+        when = (datetime.fromisoformat(when.replace("Z", "+00:00")) + (timedelta() if len(raw) == 10 else SAME_QUOTE_MARGIN)).astimezone(
+            timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return policy.Observation("desktop", symbol, price, "EUR", when, when), base
+
+
+def _rome_day(iso: str) -> str:
+    when = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+    try:
+        from zoneinfo import ZoneInfo
+        when = when.astimezone(ZoneInfo("Europe/Rome"))
+    except Exception:  # noqa: BLE001
+        pass
+    return when.strftime("%Y-%m-%d")
 
 
 def evaluate(data: dict, observations: list[dict]) -> list[dict]:
@@ -56,11 +71,12 @@ def evaluate(data: dict, observations: list[dict]) -> list[dict]:
         instrument = by_ticker.get(ticker)
         if instrument is None:
             continue
-        desk = _desktop_observation(instrument)
-        if desk is None:
+        built = _desktop_observation(instrument)
+        if built is None:
             if ticker.startswith("BTP-") and not str(instrument.get("isin") or "").strip():
                 out.append({"ticker": ticker, "decision": "not_newer", "reasons": ["isin_missing"], "kind": "bond"})
             continue
+        desk, desk_base = built
         cloud, bad_unit = [], 0
         want_unit = "PCT_NOMINALE" if ticker.startswith("BTP-") else "EUR"
         for o in (o for o in observations if str(o.get("ticker")) == ticker):
@@ -75,7 +91,10 @@ def evaluate(data: dict, observations: list[dict]) -> list[dict]:
                 continue
         kind = "bond" if ticker.startswith("BTP-") else "equity"
         choice = policy.choose_price(cloud + [desk], expected_symbol=desk.symbol, kind=kind)
-        if choice.applied is not None and choice.applied.source == "cloud":
+        if (choice.applied is not None and choice.applied.source == "cloud"
+                and abs(choice.applied.price - desk.price) < 1e-9 and _rome_day(choice.applied.market_time) == _rome_day(desk_base)):
+            out.append({"ticker": ticker, "decision": "not_newer", "reasons": ["no_change"], "kind": kind})
+        elif choice.applied is not None and choice.applied.source == "cloud":
             out.append({"ticker": ticker, "decision": "newer_on_mobile", "cloudPrice": choice.applied.price,
                         "cloudMarketTime": choice.applied.market_time, "desktopPrice": desk.price,
                         "desktopMarketTime": desk.market_time, "kind": kind})

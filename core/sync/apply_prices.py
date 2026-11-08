@@ -18,14 +18,15 @@ from core.sync import observations as obs
 logger = logging.getLogger("portafoglio.sync")
 
 
-def _market_day(iso: str) -> str:
+def _market_stamp(iso: str, like: object) -> str:
+    """Data (e ora, ora di Roma) di mercato nello stesso formato che il Desktop usa già in `aggiornato`."""
     when = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
     try:
         from zoneinfo import ZoneInfo
         when = when.astimezone(ZoneInfo("Europe/Rome"))
     except Exception:  # noqa: BLE001
         pass
-    return when.strftime("%Y-%m-%d")
+    return when.strftime("%Y-%m-%d %H:%M") if len(str(like or "").strip()) > 10 else when.strftime("%Y-%m-%d")
 
 
 def apply(observations: list[dict], *, load=None, save=None, log_path=None, now: datetime | None = None) -> dict:
@@ -50,8 +51,8 @@ def apply(observations: list[dict], *, load=None, save=None, log_path=None, now:
             record["observed"] = {k: src.get(k) for k in ("symbol", "price", "currency", "unit", "marketTime", "fetchedAt")}
             if item["decision"] == "newer_on_mobile":
                 inst = by_ticker[item["ticker"]]
-                new_day = _market_day(item["cloudMarketTime"])
                 old_price, old_day = inst.get("prezzo"), inst.get("aggiornato")
+                new_day = _market_stamp(item["cloudMarketTime"], old_day)
                 inst["prezzo"], inst["aggiornato"] = item["cloudPrice"], new_day
                 applied.append({"ticker": item["ticker"], "old": old_price, "new": item["cloudPrice"], "date": new_day})
                 record.update(decision="applied", oldPrice=old_price, oldDate=old_day, newPrice=item["cloudPrice"], newDate=new_day,
