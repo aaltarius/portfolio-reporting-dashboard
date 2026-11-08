@@ -86,7 +86,8 @@ class AutoSync:
                     self._first_request = self._now()
                     self._arm(self._debounce)
         level = logging.INFO if result.get("status") in ("in_sync", "updated", "bootstrapped", "adopted", "waiting", "disabled") else logging.WARNING
-        logger.log(level, "Invio automatico: %s %s", result.get("status"), result.get("reason", ""))
+        logger.log(level, "Invio automatico: %s seq=%s byte=%s parti=%s %s", result.get("status"), result.get("seq", "-"),
+                   result.get("bytes", 0), result.get("parts", 0), result.get("reason", ""))
 
 
 def _start_timer(delay, fn):
