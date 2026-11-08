@@ -47,6 +47,7 @@ def apply(observations: list[dict], *, load=None, save=None, log_path=None, now:
             record = {"at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "ticker": item["ticker"], "kind": item.get("kind")}
             src = by_obs.get(item["ticker"], {})
             record["provider"] = src.get("provider")
+            record["observed"] = {k: src.get(k) for k in ("symbol", "price", "currency", "unit", "marketTime", "fetchedAt")}
             if item["decision"] == "newer_on_mobile":
                 inst = by_ticker[item["ticker"]]
                 new_day = _market_day(item["cloudMarketTime"])

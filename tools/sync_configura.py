@@ -102,9 +102,13 @@ def check_connection(cfg_path: Path, env_name: str = "prova", transport_factory=
     except RuntimeError as exc:
         text = str(exc)
         return False, _HINTS.get(text, "Il Worker non è raggiungibile: controlla l'indirizzo e la connessione." if "raggiungibile" in text else text)
-    if state.get("bootstrapped"):
-        return True, f"Collegamento riuscito. Il Mobile ha già dati (invio n. {state.get('seq')})."
-    return True, "Collegamento riuscito. Il Mobile non ha ancora dati: il primo invio partirà da solo."
+    base = (f"Collegamento riuscito. Il Mobile ha già dati (invio n. {state.get('seq')})." if state.get("bootstrapped")
+            else "Collegamento riuscito. Il Mobile non ha ancora dati: il primo invio partirà da solo.")
+    from core.sync import observations as obs
+    found = obs.fetch(transport, env.endpoints.get("v2_observations", obs.ENDPOINT))
+    if found is None:
+        return True, base + " Prezzi del Mobile: non disponibili (serve il Worker 1.5.1 o successivo)."
+    return True, base + f" Prezzi del Mobile: disponibili ({len(found)})."
 
 
 def main(argv=None, *, ask=input, ask_secret=getpass.getpass, out=print, root: Path | None = None, transport_factory=None) -> int:

@@ -13,6 +13,7 @@ import json
 from datetime import datetime, timezone
 
 from core.sync import policy
+from core.sync.transport import TransportRefused
 from core.sync.snapshot import quote_symbol, to_iso
 
 ENDPOINT = "/api/v2/observations"
@@ -22,7 +23,7 @@ def fetch(transport, path: str = ENDPOINT) -> list[dict] | None:
     """Elenco delle osservazioni del Mobile, oppure None se il Worker non offre ancora l'endpoint."""
     try:
         payload = transport.get_json(path)
-    except RuntimeError:
+    except (RuntimeError, TransportRefused):          # endpoint assente, rifiutato (es. catalogo oltre il limite) o guasto: nessun prezzo
         return None
     items = payload.get("observations")
     return [o for o in items if isinstance(o, dict)] if isinstance(items, list) else None
