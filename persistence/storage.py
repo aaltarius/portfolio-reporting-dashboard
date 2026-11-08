@@ -1118,7 +1118,9 @@ def _normalize_event_record(ev):
             out["importo_netto"] = 0.0
     out["importo_netto"] = _safe_float(out["importo_netto"], 0.0)
     if not out["event_id"]:
-        out["event_id"] = f"ev_{out['data'].replace('-', '')}_{abs(hash((out['tipo_evento'], out['ticker'], out['quantita'], out['prezzo_unitario'], out['importo_netto']))) % 1000000:06d}"
+        # hashlib e non hash(): hash() di una stringa cambia a ogni avvio del processo (PYTHONHASHSEED).
+        _fp = repr((out['tipo_evento'], out['ticker'], out['quantita'], out['prezzo_unitario'], out['importo_netto']))
+        out["event_id"] = f"ev_{out['data'].replace('-', '')}_{int(hashlib.sha1(_fp.encode('utf-8')).hexdigest(), 16) % 1000000:06d}"
     return out
 
 
@@ -1137,6 +1139,30 @@ def _rebuild_cash_ledger_from_events(eventi):
             "descrizione": ev.get("note") or f"{ev.get('tipo_evento')} {ev.get('ticker','')}`".replace('`','').strip(),
         })
     return ledger
+
+
+def rebuild_derived_registers(data: dict) -> None:
+    """Ricostruisce operazioni, proventi e registro_liquidita dal registro eventi (unica autorita')."""
+    rebuilt_op, rebuilt_pr = [], []
+    for ev in get_registro_eventi(data):
+        tipo = ev.get("tipo_evento")
+        if tipo in {"ACQUISTO", "VENDITA"}:
+            rebuilt_op.append({
+                "data": ev.get("data"), "ticker": ev.get("ticker", ""), "tipo": tipo,
+                "qty": _safe_float(ev.get("quantita", 0)), "price": _safe_float(ev.get("prezzo_unitario", 0)),
+                "comm": _safe_float(ev.get("commissioni", 0)), "note": ev.get("note", ""),
+            })
+        elif tipo in {"CEDOLA", "DIVIDENDO"}:
+            lordo = _safe_float(ev.get("importo_lordo", 0))
+            aliquota = (_safe_float(ev.get("imposte", 0)) / lordo) if lordo > 0 else _safe_float(ev.get("aliquota", 0))
+            rebuilt_pr.append({
+                "data": ev.get("data"), "ticker": ev.get("ticker", ""), "tipo": tipo,
+                "importo_lordo": lordo, "aliquota": aliquota,
+                "importo_netto": _safe_float(ev.get("importo_netto", 0)), "note": ev.get("note", ""),
+            })
+    data["operazioni"] = rebuilt_op
+    data["proventi"] = rebuilt_pr
+    data["registro_liquidita"] = _rebuild_cash_ledger_from_events(get_registro_eventi(data))
 
 
 def get_registro_eventi(data):
@@ -1699,7 +1725,10 @@ def load_data():
     cleaned={k:d.get(k) for k in default_data_v33()}
     cleaned['instrument_master']=_strip_benchmark_master(cleaned.get('instrument_master',{}))
     cleaned['strumenti']=_strip_benchmark_instruments(cleaned.get('strumenti',[]))
-    if raw != cleaned:
+    # Lo storico prezzi vive in parquet e le cache sono derivate: una differenza solo li' non giustifica di
+    # riscrivere il file di produzione a ogni avvio (rischio di scritture concorrenti senza alcun beneficio).
+    _derived = ("storico_prezzi", "cache_posizioni", "cache_storico_portafoglio", "cache_lookup_strumenti")
+    if {k: v for k, v in raw.items() if k not in _derived} != {k: v for k, v in cleaned.items() if k not in _derived}:
         _write_json_file(DATA_FILE, cleaned)
     logger.debug("Dati caricati: strumenti=%s eventi=%s storico_prezzi=%s", len(d.get("strumenti", [])), len(d.get("registro_eventi", [])), len(d.get("storico_prezzi", {})))
     # Istantanea "base" per il merge a 3 vie in save_data() (vedi
@@ -1945,17 +1974,35 @@ def save_data(data, *, include_storico: bool = True, automatic: bool = False, al
 
     merged_strumenti, merged_eventi, merged_master = _merge_concurrent_writes(data)
 
+    derived = {
+        "operazioni": data.get("operazioni", []),
+        "proventi": data.get("proventi", []),
+        "registro_liquidita": data.get("registro_liquidita", []),
+    }
+    ours_ids = {str(e.get("event_id") or "") for e in (data.get("registro_eventi") or []) if isinstance(e, dict)}
+    merged_ids = {str(e.get("event_id") or "") for e in merged_eventi if isinstance(e, dict)}
+    if ours_ids != merged_ids:
+        # L'unione ha aggiunto/tolto eventi di un altro processo: i registri derivati della sessione sono
+        # vecchi. Si rigenerano dagli eventi uniti, mai dalla vista in memoria.
+        tmp = {"registro_eventi": merged_eventi}
+        rebuild_derived_registers(tmp)
+        derived = {k: tmp[k] for k in derived}
+    last_quotes = data.get("last_quotes_update")
+    on_disk_quotes = _read_json_file(DATA_FILE, {}).get("last_quotes_update") if os.path.exists(DATA_FILE) else None
+    if isinstance(on_disk_quotes, str) and (not isinstance(last_quotes, str) or on_disk_quotes > last_quotes):
+        last_quotes = on_disk_quotes
+
     core = {
         "schema_version": SCHEMA_VERSION,
         "portfolio_id": data.get("portfolio_id", "main"),
         "strumenti": _strip_benchmark_instruments(merged_strumenti),
-        "operazioni": data.get("operazioni", []),
+        "operazioni": derived["operazioni"],
         "storico_prezzi": {},  # Empty reference (loaded separately from Parquet/JSON)
-        "proventi": data.get("proventi", []),
-        "last_quotes_update": data.get("last_quotes_update"),
+        "proventi": derived["proventi"],
+        "last_quotes_update": last_quotes,
         "instrument_master": _strip_benchmark_master(merged_master or _build_instrument_master(merged_strumenti)),
         "registro_eventi": merged_eventi,
-        "registro_liquidita": data.get("registro_liquidita", []),
+        "registro_liquidita": derived["registro_liquidita"],
         "cache_posizioni": data.get("cache_posizioni", {}),
         "cache_storico_portafoglio": data.get("cache_storico_portafoglio", {}),
         "cache_lookup_strumenti": data.get("cache_lookup_strumenti", {}),

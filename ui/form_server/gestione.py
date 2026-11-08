@@ -31,39 +31,8 @@ _FS_CASH_EVENT_TYPES = {"VERSAMENTO", "PRELIEVO", "COMMISSIONE", "IMPOSTA"}
 # ─── Helpers dominio ──────────────────────────────────────────────────────────
 
 def _fs_rebuild_registers(data: dict) -> None:
-    from persistence.storage import get_registro_eventi, _rebuild_cash_ledger_from_events, _safe_float
-    rebuilt_op, rebuilt_pr = [], []
-    for ev in get_registro_eventi(data):
-        tipo = ev.get("tipo_evento")
-        if tipo in {"ACQUISTO", "VENDITA"}:
-            rebuilt_op.append({
-                "data": ev.get("data"),
-                "ticker": ev.get("ticker", ""),
-                "tipo": tipo,
-                "qty": _safe_float(ev.get("quantita", 0)),
-                "price": _safe_float(ev.get("prezzo_unitario", 0)),
-                "comm": _safe_float(ev.get("commissioni", 0)),
-                "note": ev.get("note", ""),
-            })
-        elif tipo in {"CEDOLA", "DIVIDENDO"}:
-            lordo = _safe_float(ev.get("importo_lordo", 0))
-            netto = _safe_float(ev.get("importo_netto", 0))
-            aliquota = (
-                (_safe_float(ev.get("imposte", 0)) / lordo)
-                if lordo > 0 else _safe_float(ev.get("aliquota", 0))
-            )
-            rebuilt_pr.append({
-                "data": ev.get("data"),
-                "ticker": ev.get("ticker", ""),
-                "tipo": tipo,
-                "importo_lordo": lordo,
-                "aliquota": aliquota,
-                "importo_netto": netto,
-                "note": ev.get("note", ""),
-            })
-    data["operazioni"] = rebuilt_op
-    data["proventi"] = rebuilt_pr
-    data["registro_liquidita"] = _rebuild_cash_ledger_from_events(get_registro_eventi(data))
+    from persistence.storage import rebuild_derived_registers
+    rebuild_derived_registers(data)
 
 
 def _fs_linked_event_id(data: dict, event_id: str) -> str:
