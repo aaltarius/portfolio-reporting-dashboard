@@ -61,7 +61,8 @@ class V2Client:
     def _refused(self, exc: TransportRefused, **extra) -> dict:
         code = exc.code or "rejected"
         status = {"busy": "busy", "resync": "resync_needed", "conflict": "conflict", "regression": "regression",
-                  "event_regression": "regression", "expired": "expired"}.get(code, "rejected")
+                  "event_regression": "regression", "expired": "expired", "maintenance": "maintenance",
+                  "maintenance_required": "maintenance"}.get(code, "rejected")
         return {"status": status, "reason": str(exc), **extra}
 
     # ---- pendente ------------------------------------------------------------------------------------------
@@ -132,8 +133,12 @@ class V2Client:
                     return {"status": "unknown_remote", "reason": "il Worker ha uno stato che il Desktop non riconosce: serve un bootstrap esplicito"}
                 return self._do_bootstrap(ds, new_rev, now, reason="resync", previous=remote.get("epochId"), dry_run=dry_run)
             if remote["epochId"] != conf["epochId"]:
+                if allow_rebootstrap:      # decisione esplicita dell'utente: il Desktop è l'autorità e riparte con una nuova epoca
+                    return self._do_bootstrap(ds, new_rev, now, reason="resync", previous=remote["epochId"], dry_run=dry_run)
                 return {"status": "stopped_epoch", "reason": "epoca del Worker diversa da quella del Desktop (rollback o altro Desktop): nessun invio automatico"}
             if remote["seq"] != conf["seq"] or remote["datasetRevision"] != conf["datasetRevision"]:
+                if allow_rebootstrap:
+                    return self._do_bootstrap(ds, new_rev, now, reason="resync", previous=remote["epochId"], dry_run=dry_run)
                 return {"status": "diverged", "reason": "il Worker non è allo stesso punto dell'ultimo invio confermato"}
             if new_rev == conf["datasetRevision"]:
                 return {"status": "in_sync", "seq": conf["seq"]}
@@ -159,7 +164,7 @@ class V2Client:
                 if exc.code == "busy" and attempt < MAX_BUSY_RETRIES:
                     continue                                   # il puntatore è cambiato in parallelo: si rilegge lo stato
                 res = self._refused(exc)
-                if res["status"] in ("conflict", "regression", "rejected", "resync_needed", "expired"):
+                if res["status"] in ("conflict", "regression", "rejected", "resync_needed", "expired", "maintenance"):
                     self.store.clear_pending()                  # rifiutato: non è applicato, non resta in sospeso
                 return res
             except RuntimeError as exc:
@@ -181,7 +186,7 @@ class V2Client:
             self._send_bootstrap(parts)
         except TransportRefused as exc:
             res = self._refused(exc)
-            if res["status"] in ("conflict", "regression", "rejected", "expired"):
+            if res["status"] in ("conflict", "regression", "rejected", "expired", "maintenance"):
                 self.store.clear_pending()
             return res
         except RuntimeError as exc:

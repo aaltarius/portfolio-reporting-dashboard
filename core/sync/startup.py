@@ -91,9 +91,9 @@ def check_now(settings, *, context=None, now=None, apply_fn=None) -> dict:
         else:
             result = _status("check", "da verificare", "bad", "il Mobile ha dati che il Desktop non riconosce", now)
     elif remote.get("epochId") != conf["epochId"]:
-        result = _status("check", "da verificare", "bad", "il Mobile è stato ripristinato o usa un'altra epoca: nessun invio automatico", now)
+        result = _status("check", "da verificare", "bad", "il Mobile è stato ripristinato o usa un'altra epoca: nessun invio automatico. Per riprendere: sync_v2 --allow-rebootstrap", now)
     elif remote.get("seq") != conf["seq"] or remote.get("datasetRevision") != conf["datasetRevision"]:
-        result = _status("check", "da verificare", "bad", "il Mobile non è all'ultimo invio confermato dal Desktop", now)
+        result = _status("check", "da verificare", "bad", "il Mobile non è all'ultimo invio confermato dal Desktop. Per riprendere: sync_v2 --allow-rebootstrap", now)
     elif ds_rev != conf["datasetRevision"]:
         notify()
         result = _status("sending", "invio", "info", "il Desktop ha dati più recenti del Mobile", now)
