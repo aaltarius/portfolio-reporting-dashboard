@@ -1,28 +1,19 @@
 """Trasporti dell'invio Desktop -> Mobile.
 
-- `LocalDirTransport`: scrive in una cartella locale ("cloud finto" per i collaudi).
 - `HttpTransport`: POST verso il Worker. Per costruzione parla SOLO con gli host passati in `allowed_hosts`
   (di fatto: quello dell'ambiente di PROVA scelto in `cloudflare.json`); senza elenco rifiuta ogni host. Solo HTTPS, nessun reindirizzamento, il token non compare mai
   in messaggi di errore o log.
-
-Struttura nella cartella:  head.json  (puntatore alla versione corrente)  +  snapshots/<revisione>.json
-(versioni immutabili, mai sovrascritte né cancellate da questo modulo)."""
+"""
 from __future__ import annotations
 
 import gzip
 import json
-import os
-import re
-import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
-from pathlib import Path
-
-_REVISION = re.compile(r"[0-9a-f]{64}")
 
 ALLOWED_HOSTS = frozenset()   # vuoto di proposito: i server consentiti li indica chi chiama (dalla configurazione personale)
-MAX_BODY_CHARS = 200_000  # limite del Worker per /api/sync
+MAX_BODY_CHARS = 200_000  # limite per corpo del Worker (richiesta singola: ×3 per le parti Base64)
 MIN_TOKEN_CHARS = 32
 USER_AGENT = "Sestante-Desktop-Sync/1.0"  # senza, Cloudflare risponde 403 (errore 1010) allo stile di richiesta di Python
 
@@ -36,68 +27,9 @@ class TransportRefused(Exception):
         self.status, self.code = status, code
 
 
-def load_token(path) -> str:
-    """Legge il token da un file locale (fuori dal repository). Non lo stampa e non lo conserva altrove."""
-    p = Path(path)
-    if not p.is_file():
-        raise ValueError("file del token non trovato")
-    token = p.read_text(encoding="utf-8").strip()
-    if len(token) < MIN_TOKEN_CHARS:
-        raise ValueError("token troppo corto")
-    return token
-
-
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *a, **k):
         return None
-
-
-class LocalDirTransport:
-    def __init__(self, root):
-        self.root = Path(root)
-
-    @property
-    def _head_path(self) -> Path:
-        return self.root / "head.json"
-
-    def _write_atomic(self, path: Path, text: str) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(text)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp, path)
-        except BaseException:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
-
-    def get_head(self) -> dict | None:
-        """Versione corrente, o None se non è mai stato inviato nulla. Solleva se head.json è illeggibile."""
-        if not self._head_path.exists():
-            return None
-        head = json.loads(self._head_path.read_text(encoding="utf-8"))
-        if not isinstance(head, dict) or not _REVISION.fullmatch(str(head.get("revision", ""))):
-            raise ValueError("head.json non valido")
-        return head
-
-    def put_snapshot(self, snap: dict) -> dict:
-        """Scrive la versione (immutabile) e poi sposta il puntatore. Ordine voluto: un guasto a metà lascia
-        al massimo una versione in più, mai un puntatore che indica un file inesistente."""
-        revision = str(snap.get("revision", ""))
-        if not _REVISION.fullmatch(revision):
-            raise ValueError("revisione non valida")
-        target = self.root / "snapshots" / f"{revision}.json"
-        if not target.exists():
-            self._write_atomic(target, json.dumps(snap, ensure_ascii=False, sort_keys=True))
-        head = {"revision": revision, "eventCount": int(snap.get("sourceEventCount", 0)),
-                "sourceUpdatedAt": snap.get("sourceUpdatedAt")}
-        self._write_atomic(self._head_path, json.dumps(head, ensure_ascii=False, sort_keys=True))
-        return head
 
 
 class HttpTransport:
@@ -119,16 +51,6 @@ class HttpTransport:
         self.gzip = bool(gzip_body)
         netloc = host if parsed.port is None else f"{host}:{parsed.port}"
         self.endpoint = f"{parsed.scheme}://{netloc}/api/sync"
-
-    def get_head(self):
-        return None  # lo stato lo giudica il server (unchanged / 409): nessuna lettura con il token di invio
-
-    def put_snapshot(self, snap: dict) -> dict:
-        body = json.dumps(snap, ensure_ascii=False, sort_keys=True).encode("utf-8")
-        if len(body) > MAX_BODY_CHARS:
-            raise TransportRefused("fotografia oltre il limite del Worker")
-        payload = self.post("/api/sync", body)
-        return {"revision": payload.get("revision", snap.get("revision")), "unchanged": bool(payload.get("unchanged"))}
 
     def _url(self, path: str) -> str:
         if not str(path).startswith("/api/") or "?" in path or ".." in path:
