@@ -28,14 +28,17 @@ def fetch(transport, path: str = ENDPOINT) -> list[dict] | None:
     return [o for o in items if isinstance(o, dict)] if isinstance(items, list) else None
 
 
-def _desktop_observation(instrument: dict, fallback_symbol: str = "") -> policy.Observation | None:
-    """Prezzo del Desktop come osservazione. I titoli di Stato non hanno un simbolo di quotazione sul Desktop: in quel
-    caso il simbolo atteso è quello dichiarato dal Mobile (la coerenza di simbolo non è verificabile)."""
+def _desktop_observation(instrument: dict) -> policy.Observation | None:
+    """Prezzo del Desktop come osservazione. Simbolo atteso: il simbolo di quotazione per azioni/ETF/fondi, l'ISIN per i titoli
+    di Stato (il Mobile li interroga per ISIN e dichiara l'ISIN reale in `symbol`)."""
     raw = str(instrument.get("aggiornato") or "").strip()
     # Il Desktop conosce la sola DATA di mercato: un prezzo del Mobile della stessa data non lo sostituisce (fine giornata).
     when = to_iso(raw + "T23:59:59" if len(raw) == 10 else raw)
     try:
-        symbol = quote_symbol(instrument) or fallback_symbol
+        if str(instrument.get("ticker") or "").startswith("BTP-"):
+            symbol = str(instrument.get("isin") or "").strip().upper()
+        else:
+            symbol = quote_symbol(instrument)
         price = float(instrument.get("prezzo"))
     except (TypeError, ValueError):
         return None
@@ -52,9 +55,10 @@ def evaluate(data: dict, observations: list[dict]) -> list[dict]:
         instrument = by_ticker.get(ticker)
         if instrument is None:
             continue
-        first = next((str(o.get("symbol") or "") for o in observations if str(o.get("ticker")) == ticker), "")
-        desk = _desktop_observation(instrument, first if ticker.startswith("BTP-") else "")
+        desk = _desktop_observation(instrument)
         if desk is None:
+            if ticker.startswith("BTP-") and not str(instrument.get("isin") or "").strip():
+                out.append({"ticker": ticker, "decision": "not_newer", "reasons": ["isin_missing"], "kind": "bond"})
             continue
         cloud, bad_unit = [], 0
         want_unit = "PCT_NOMINALE" if ticker.startswith("BTP-") else "EUR"
@@ -63,7 +67,7 @@ def evaluate(data: dict, observations: list[dict]) -> list[dict]:
                 bad_unit += 1
                 continue
             try:
-                cloud.append(policy.Observation("cloud", str(o.get("symbol") or ""), float(o.get("price")),
+                cloud.append(policy.Observation("cloud", str(o.get("symbol") or "").strip().upper(), float(o.get("price")),
                                                 str(o.get("currency") or ""), to_iso(o.get("marketTime")) or "",
                                                 to_iso(o.get("fetchedAt")) or ""))
             except (TypeError, ValueError):
