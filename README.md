@@ -53,7 +53,13 @@ Il Desktop può inviare al Worker del Mobile i risultati già calcolati (posizio
 1. Eseguire `configura_sincronizzazione_mobile.bat`: chiede nomi, indirizzo e chiave del Worker, li salva in `data/segreti/cloudflare.json` (cartella ignorata da git) e prova il collegamento.
 2. Accendere l'opzione **Setup → Aggiornamenti automatici in rete → Sincronizza con il Mobile**. La pastiglia «Mobile» nella barra in alto mostra lo stato (*off*, *controllo*, *allineato*, *invio*, *da verificare*, *offline*…); l'esito si legge anche in `data/logs/portafoglio.log`.
 
-La chiave e la configurazione non vanno mai copiate fuori dal PC né pubblicate. Dettagli e decisioni: [ADR-0025](docs/adr/0025-protocollo-v2-bootstrap-e-update.md) (documentazione interna).
+Altre funzioni, tutte spegnibili dal Setup:
+
+- **Prezzi dal Mobile:** all'avvio il Desktop legge i prezzi che il Mobile ha rilevato e adotta quelli con data di mercato successiva (stessa valuta, unità e simbolo coerenti, scostamento entro il 10%, o 3 punti per i titoli di Stato); cambiano solo prezzo e data e ogni decisione è registrata in `data/cache/sync_v2/observations_log.jsonl`.
+- **Ripresa esplicita:** se il Mobile viene ripristinato o cambia epoca, il Desktop si ferma e non reinvia da solo; si riprende con `python -m tools.sync_v2 --ambiente prova --data data/portfolio/portafoglio_data.json --gzip --allow-rebootstrap`.
+- **Controlli:** `python -m tools.sync_configura --verifica` (collegamento), `python -m tools.sync_consumi` (invii, byte e richieste stimate per giorno), `python -m tools.sync_identifica_worker <file>` (versione di un Worker esportato).
+
+La chiave e la configurazione non vanno mai copiate fuori dal PC né pubblicate. Dettagli e decisioni: [ADR-0025](docs/adr/0025-protocollo-v2-bootstrap-e-update.md) e [ADR-0026](docs/adr/0026-sblocco-della-produzione-condizioni.md) (documentazione interna).
 
 ## Aggiornamento dal 5.4
 
