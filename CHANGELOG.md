@@ -14,6 +14,7 @@ Questo file è stato riscritto in forma sintetica il 02/11/2026. Il testo integr
 - Dipendenze: yfinance 1.7.0 → 1.8.0, che non usa più `inplace=True` e non emette più i `Pandas4Warning` con pandas 3.1.
 
 ### Aggiunto
+- Sidebar: tasto «Allinea dal Mobile» (controllo e importazione dei prezzi su richiesta); pagina Dati: riquadro «Sincronizzazione Mobile — ultimo controllo» con importati, scartati e motivi.
 - Sincronizzazione Mobile (spenta di default, solo ambiente di prova): invio incrementale dei dati al Worker dopo ogni salvataggio, con `python -m tools.sync_v2_switch on|off`.
 - Sincronizzazione Mobile: controllo all'avvio con segnale «Mobile» nella barra in alto (sempre presente: «off» in grigio se la sincronizzazione è spenta) e configurazione guidata dei parametri Cloudflare (`configura_sincronizzazione_mobile.bat`).
 - Setup, «Aggiornamenti automatici in rete»: casella «Sincronizza con il Mobile» per accendere/spegnere la sincronizzazione (non invalida le cache).

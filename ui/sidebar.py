@@ -359,6 +359,33 @@ def render_sidebar(data: dict) -> None:
             st.rerun()
 
     with _btn_area:
+        # --- Allinea dal Mobile (su richiesta: nessuna rete finché non lo premi) ---
+        if st.button("📱 Allinea dal Mobile", width="stretch", key="sidebar_mobile_align",
+                     help="Controlla ora il Mobile, importa i prezzi più recenti e completa lo storico dell'ultimo giorno. Il dettaglio è in Dati."):
+            try:
+                from core.cache import invalidate_portfolio_cache
+                from core.sync import startup as _mobile_startup
+                with st.spinner("Controllo del Mobile in corso..."):
+                    _mobile_res = _mobile_startup.manual_check(load_settings())
+                _mobile_rep = _mobile_startup.get_last_report()
+                if _mobile_res.get("state") in ("off", "not_configured"):
+                    queue_info(str(_mobile_res.get("detail") or "Sincronizzazione con il Mobile spenta."))
+                elif _mobile_res.get("state") in ("unreachable", "error", "import_error", "not_built", "check"):
+                    queue_info(f"Mobile: {_mobile_res.get('label')} — {_mobile_res.get('detail')}")
+                else:
+                    _n_app, _n_fill = int(_mobile_rep.get("applied") or 0), len(_mobile_rep.get("filled") or [])
+                    if _n_app or _n_fill:
+                        invalidate_portfolio_cache("allineamento dal Mobile")
+                        queue_success(f"Allineato dal Mobile: {_n_app} prezzi importati, {_n_fill} righe di storico completate.")
+                    else:
+                        queue_info("Mobile già allineato: nessun prezzo più recente da importare.")
+                st.rerun()
+            except Exception as _mobile_exc:
+                if type(_mobile_exc).__name__ in ("RerunException", "RerunData"):
+                    raise
+                logger.exception("Allinea dal Mobile non riuscito")
+                queue_info(f"Allineamento dal Mobile non riuscito: {_mobile_exc}")
+
         # --- Aggiorna Quotazioni ---
         if st.button("🔄 Aggiorna Quotazioni", width="stretch"):
             refresh_started_at = time.perf_counter()

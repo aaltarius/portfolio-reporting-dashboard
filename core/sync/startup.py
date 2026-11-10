@@ -19,6 +19,11 @@ COLORS = {"ok": "#10B981", "warn": "#F97316", "bad": "#EF4444", "idle": "#64748B
 _LOCK = threading.Lock()
 _STATUS: dict = {"state": "off"}
 _STARTED = False
+_LAST_REPORT: dict = {}   # esito dell'ultimo controllo dei prezzi (solo in memoria, mai su disco né in rete)
+REASON_LABELS = {"no_change": "prezzo invariato", "older_than_desktop": "più vecchio di quello del Desktop",
+                 "anomalous_move": "variazione anomala (oltre soglia)", "currency_not_eur": "valuta non in euro",
+                 "symbol_mismatch": "simbolo non coerente", "unit_mismatch": "unità del prezzo non coerente",
+                 "invalid_price": "prezzo non valido", "isin_missing": "ISIN mancante sul Desktop"}
 _GEN = 0   # cresce a ogni stop: un controllo avviato prima non sovrascrive l'esito di quello dopo
 
 
@@ -51,6 +56,29 @@ def _real_context(settings):
     snap = build_snapshot(data, source_bytes=raw)
     ds = v2.build_dataset(data, snap, load_storico_prezzi_hybrid(st.STORICO_PREZZI_FILE))
     return transport, env.endpoints, ds, data, Path(st.DATA_DIR) / "cache" / "sync_v2", lambda: auto.get_auto().notify(settings)
+
+
+def get_last_report() -> dict:
+    """Ultimo controllo dei prezzi del Mobile: {at, rows:[{ticker, esito, motivo}], applied, kept, filled}; vuoto se mai eseguito."""
+    with _LOCK:
+        return dict(_LAST_REPORT)
+
+
+def _store_report(items, applied_tickers, filled) -> None:
+    rows = []
+    for item in items or []:
+        if item.get("decision") == "newer_on_mobile" and item.get("ticker") in applied_tickers:
+            rows.append({"ticker": item.get("ticker"), "esito": "Importato", "motivo": "prezzo più recente del Mobile"})
+        else:
+            reasons = item.get("reasons") or (["prezzo più recente non applicato"] if item.get("decision") == "newer_on_mobile" else [])
+            rows.append({"ticker": item.get("ticker"), "esito": "Non importato",
+                         "motivo": ", ".join(REASON_LABELS.get(r, str(r)) for r in reasons) or "n/d"})
+    rows.sort(key=lambda r: (r["esito"] != "Importato", str(r["ticker"])))
+    with _LOCK:
+        _LAST_REPORT.clear()
+        _LAST_REPORT.update({"at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "rows": rows,
+                             "applied": sum(1 for r in rows if r["esito"] == "Importato"),
+                             "kept": sum(1 for r in rows if r["esito"] != "Importato"), "filled": list(filled or [])})
 
 
 def _default_apply(found, **kwargs):
@@ -105,12 +133,14 @@ def check_now(settings, *, context=None, now=None, apply_fn=None) -> dict:
             items = obs.evaluate(data, found)
             obs.quarantine(state_dir / "observations.json", items, now=now)
             newer = [i for i in items if i["decision"] == "newer_on_mobile"]
+            report_items, report_applied = items, set()
             if newer and result["state"] in ("aligned", "sending"):
                 n = len(newer)
                 mobile_cfg = settings.get("mobile_sync") if isinstance(settings.get("mobile_sync"), dict) else {}
                 if mobile_cfg.get("importa_prezzi", True):
                     done = (apply_fn or _default_apply)(found, log_path=state_dir / "observations_log.jsonl", now=now)
                     k = len(done.get("applied") or [])
+                    report_items, report_applied = (done.get("items") or items), {a["ticker"] for a in (done.get("applied") or [])}
                     if done.get("error"):
                         result = _status("import_error", "import fallito", "warn", f"prezzi del Mobile non importati: {done['error']}", now)
                     elif k:
@@ -120,9 +150,25 @@ def check_now(settings, *, context=None, now=None, apply_fn=None) -> dict:
                                      f"{n} {'prezzo' if n == 1 else 'prezzi'} più recenti sul Mobile; importazione spenta nel Setup", now)
         if context is None and apply_fn is None and (settings.get("mobile_sync") or {}).get("importa_prezzi", True):
             from core.sync import apply_prices
-            apply_prices.reconcile_now()      # prezzi correnti senza riga nello storico: stessa «ultima seduta» su Desktop e Mobile
+            filled = apply_prices.reconcile_now()      # prezzi correnti senza riga nello storico: stessa «ultima seduta» su Desktop e Mobile
+            if found is not None:
+                _store_report(report_items, report_applied, filled)
     except Exception:  # noqa: BLE001 - le osservazioni sono un di più: non devono rovinare l'esito principale
         logger.exception("Controllo avvio: osservazioni del Mobile non valutabili")
+    return result
+
+
+def manual_check(settings) -> dict:
+    """Tasto «Allinea dal Mobile»: stesso controllo dell'avvio, su richiesta, con attesa dell'esito. Non solleva mai."""
+    try:
+        result = check_now(settings)
+    except BaseException as exc:  # noqa: BLE001
+        logger.exception("Allineamento manuale dal Mobile fallito")
+        result = _status("error", "errore", "warn", f"{type(exc).__name__}: {exc}")
+    with _LOCK:
+        _STATUS.clear()
+        _STATUS.update(result)
+    logger.info("Allineamento manuale dal Mobile: %s - %s", result.get("state"), result.get("detail", ""))
     return result
 
 

@@ -966,6 +966,27 @@ def _render_data_health(health: dict) -> None:
         st.caption(f"... e altre {hidden} segnalazioni minori nelle tabelle qui sotto.")
 
 
+def _render_mobile_last_check() -> None:
+    """Esito dell'ultimo controllo dei prezzi del Mobile (all'avvio o con «Allinea dal Mobile»): solo in memoria, nessuna rete."""
+    try:
+        from core.sync.startup import get_last_report
+        report = get_last_report()
+    except Exception:  # noqa: BLE001
+        return
+    if not report:
+        return
+    render_section_title(
+        "Sincronizzazione Mobile — ultimo controllo",
+        comment=f"Controllo del {report.get('at')}: {report.get('applied', 0)} prezzi importati, {report.get('kept', 0)} lasciati come sul Desktop, "
+                f"{len(report.get('filled') or [])} righe di storico completate. Il motivo di ogni scarto è qui sotto.",
+        icon="data",
+        gap_after="xs",
+    )
+    rows = report.get("rows") or []
+    if rows:
+        _render_diagnostic_table(pd.DataFrame(rows).rename(columns={"ticker": "Ticker", "esito": "Esito", "motivo": "Motivo"}))
+
+
 def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
     theme = get_theme_context()
     data = ctx.data
@@ -1021,6 +1042,7 @@ def render_gestione_dati(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         with profile_step("Dati", "sintesi salute dati"):
             health = build_data_health(integrity_checks, quality_df, quote_age_days=quote_age_days, backup_age_days=backup_age_days)
         _render_data_health(health)
+        _render_mobile_last_check()
 
         _section_line()
         render_section_title(
