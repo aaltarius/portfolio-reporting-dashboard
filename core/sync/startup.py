@@ -118,6 +118,9 @@ def check_now(settings, *, context=None, now=None, apply_fn=None) -> dict:
                 else:
                     result = _status("mobile_newer", "nuovi prezzi", "info",
                                      f"{n} {'prezzo' if n == 1 else 'prezzi'} più recenti sul Mobile; importazione spenta nel Setup", now)
+        if context is None and apply_fn is None and (settings.get("mobile_sync") or {}).get("importa_prezzi", True):
+            from core.sync import apply_prices
+            apply_prices.reconcile_now()      # prezzi correnti senza riga nello storico: stessa «ultima seduta» su Desktop e Mobile
     except Exception:  # noqa: BLE001 - le osservazioni sono un di più: non devono rovinare l'esito principale
         logger.exception("Controllo avvio: osservazioni del Mobile non valutabili")
     return result

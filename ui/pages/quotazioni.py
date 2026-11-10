@@ -291,7 +291,7 @@ def render_quotazioni(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             k1, k2, k3, k4 = st.columns(4)
             with k1:
                 badge = _get_freshness_badge(quotes_log.get("last_refresh"))
-                kpi_card(f"{t(settings, 'quotes.last_refresh', 'Ultimo refresh')} {badge}", fmt_dt_it(quotes_log.get("last_refresh")), t(settings, "quotes.last_refresh_note", "Data e ora dell'ultima lettura"), accent=theme.color_blue)
+                kpi_card(f"{t(settings, 'quotes.last_refresh', 'Ultimo refresh')} {badge}", fmt_dt_it(quotes_log.get("last_refresh")), (f"Fonte: {quotes_log.get('last_refresh_source')}" if quotes_log.get("last_refresh_source") else t(settings, "quotes.last_refresh_note", "Data e ora dell'ultima lettura")), accent=theme.color_blue)
             with k2:
                 kpi_card(t(settings, "quotes.ok", "Letture OK"), fmt_num_it(q_stats["ok"], 0), t(settings, "quotes.ok_note", "Strumenti aggiornati correttamente"), accent=theme.color_green)
             with k3:

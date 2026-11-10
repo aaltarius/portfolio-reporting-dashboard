@@ -705,6 +705,7 @@ def render_sidebar(data: dict) -> None:
             pg.empty()
             quotes_log = load_quotes_log()
             quotes_log["last_refresh"] = ts_full
+            quotes_log.pop("last_refresh_source", None)      # il refresh manuale non è più un import dal Mobile
             retain = int(load_settings().get("quote_log_retention", 20) or 20)
             quotes_log["items"] = (
                 quote_items

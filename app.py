@@ -242,6 +242,22 @@ with _logged_app_phase("form_server_start"):
     _start_form_server()
 
 
+# === MOBILE: controllo all'avvio, PRIMA di caricare i dati (una volta per processo; spento di default) ===
+# Se il Mobile ha prezzi più recenti vengono importati e salvati subito, così lo stato che segue parte già aggiornato
+# e non si disegnano pagine con dati vecchi. Se non ci sono novità (o il Mobile non risponde entro il tempo massimo)
+# l'avvio prosegue come sempre.
+if os.getenv("PORTFOLIO_TESTING") == "1":
+    app_logger.info("Controllo Mobile disabilitato in modalita test.")
+else:
+    try:
+        from core.sync.startup import start_once as _start_mobile_startup_check, wait_until_done as _mobile_wait_until_done
+        with _logged_app_phase("mobile_sync_check_start"):
+            if _start_mobile_startup_check(settings):
+                _mobile_wait_until_done(timeout=12.0)
+    except Exception as exc:
+        app_logger.warning("Controllo Mobile non avviato: %s", exc)
+
+
 # === INITIALIZE STATE ===
 # Bump obbligatorio ad ogni cambio di schema/logica nella pipeline
 # derived-runtime (core/state.py, core/finance.py e chiamanti a valle):
@@ -734,18 +750,6 @@ else:
             start_instrument_analysis_auto_refresh_scheduler(settings)
     except Exception as exc:
         app_logger.warning("Auto-refresh InstrumentAnalysis non avviato: %s", exc)
-
-
-# === MOBILE: controllo all'avvio (thread a parte, una volta per processo; spento di default) ===
-if os.getenv("PORTFOLIO_TESTING") == "1":
-    app_logger.info("Controllo Mobile disabilitato in modalita test.")
-else:
-    try:
-        from core.sync.startup import start_once as _start_mobile_startup_check
-        with _logged_app_phase("mobile_sync_check_start"):
-            _start_mobile_startup_check(settings)
-    except Exception as exc:
-        app_logger.warning("Controllo Mobile non avviato: %s", exc)
 
 
 # === DEBUG / PERFORMANCE UI FLAGS ===

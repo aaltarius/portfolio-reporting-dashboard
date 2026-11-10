@@ -7,6 +7,9 @@ Questo file è stato riscritto in forma sintetica il 02/11/2026. Il testo integr
 ## [Non rilasciato]
 
 ### Modificato
+- Sincronizzazione Mobile: l'«ultima seduta» coincide su Desktop e Mobile (lo storico dell'ultimo giorno viene completato con i prezzi correnti mancanti).
+- Quotazioni: le righe importate dal Mobile mostrano data e ora, variazione e frecce corrette e fonte «Mobile»; il box «Ultimo refresh» indica la fonte sotto data e ora.
+- Sincronizzazione Mobile: i prezzi importati dal Mobile entrano nello storico alla data di mercato, aggiornano «Ultimo refresh» (fonte «Mobile») e l'avvio attende l'importazione prima di disegnare le pagine.
 - Portafoglio, grafico «P/L per Categoria»: linea dello zero marcata (2,5 px, scura, sopra le aree impilate).
 - Dipendenze: yfinance 1.7.0 → 1.8.0, che non usa più `inplace=True` e non emette più i `Pandas4Warning` con pandas 3.1.
 
