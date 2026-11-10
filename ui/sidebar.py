@@ -363,7 +363,6 @@ def render_sidebar(data: dict) -> None:
         if st.button("📱 Allinea dal Mobile", width="stretch", key="sidebar_mobile_align",
                      help="Controlla ora il Mobile, importa i prezzi più recenti e completa lo storico dell'ultimo giorno. Il dettaglio è in Dati."):
             try:
-                from core.cache import invalidate_portfolio_cache
                 from core.sync import startup as _mobile_startup
                 with st.spinner("Controllo del Mobile in corso..."):
                     _mobile_res = _mobile_startup.manual_check(load_settings())
