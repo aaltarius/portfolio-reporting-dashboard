@@ -204,14 +204,32 @@ def _month_contributors(work: pd.DataFrame, ref_pos: int, last_pos: int) -> dict
     }
 
 
+def _value_line(work: pd.DataFrame, max_days: int = 30) -> list[dict[str, Any]]:
+    """P/L delle posizioni aperte (valore di mercato - costo) a fine giornata, ultimi giorni: la linea che collega le
+    candele e che le sostituisce nei giorni senza letture intraday. Neutro rispetto agli acquisti."""
+    if not {"ValoreAperto", "Costo"}.issubset(work.columns):
+        return []
+    series = pd.to_numeric(work["ValoreAperto"], errors="coerce") - pd.to_numeric(work["Costo"], errors="coerce")
+    out = []
+    for date, value in zip(work["Data"].tail(max_days), series.tail(max_days)):
+        v = _finite(value)
+        if v is not None:
+            out.append({"day": pd.Timestamp(date).strftime("%Y-%m-%d"), "value": v})
+    return out
+
+
 def build_portfolio_pulse(
     dfh: pd.DataFrame | None,
     data: dict[str, Any] | None,
     *,
     categories: list[str],
     price_frame: pd.DataFrame | None = None,
+    candles: list[dict[str, Any]] | None = None,
+    readings_gap: str | None = None,
 ) -> dict[str, Any] | None:
-    """Ritorna il payload del Termometro, o None se lo storico e' troppo corto."""
+    """Ritorna il payload del Termometro, o None se lo storico e' troppo corto.
+
+    `candles`: candele giornaliere gia' costruite (`core.services.portfolio_candles`), solo da riportare nel payload."""
     from persistence.storage import macro_cat  # import locale: stesso uso di core.services.analysis
 
     data = data or {}
@@ -299,4 +317,7 @@ def build_portfolio_pulse(
         "year_range": _year_range(index_by_date),
         "volatility": _recent_volatility(index_by_date),
         "contributors": _month_contributors(work, refs["1m"][0], last_pos),
+        "candles": list(candles or []),
+        "readings_gap": readings_gap,
+        "value_line": _value_line(work),
     }

@@ -7,6 +7,11 @@ Questo file è stato riscritto in forma sintetica il 02/11/2026. Il testo integr
 ## [Non rilasciato]
 
 ### Modificato
+- Sincronizzazione Mobile: la pastiglia «Mobile» in alto mostra «Letture N» (totale cumulativo dall'avvio) quando arrivano letture di giornata; in Dati l'ultimo controllo riporta quante sono state archiviate o scartate.
+- Sincronizzazione Mobile: il Desktop scarica le letture intraday del Mobile (Worker 1.5.9, solo ambiente di prova) nell'archivio delle candele e le conferma al Mobile solo dopo averle salvate; un Worker precedente continua a funzionare come prima. Se il Mobile dichiara letture perse, il Termometro lo segnala.
+- Portafoglio, Termometro: candele giornaliere del P/L delle posizioni aperte (apertura, massimo, minimo, chiusura; gli acquisti non lo spostano), con linea di fine giornata e alone, costruite dalle letture di prezzo di ogni aggiornamento, anche quelle importate dal Mobile. Le letture si conservano in un archivio locale che cresce a ogni aggiornamento (400 giorni); all'inizio il grafico mostra solo i giorni già presenti nel registro quotazioni.
+- Dati: la colonna «Arricchimento» si aggiorna subito dopo aver completato i dati di uno strumento (prima restava sul valore vecchio).
+- Dati: l'avviso «Buchi nello storico» non conta più come mancanti i giorni in cui la Borsa era chiusa o ferma per quasi tutti gli strumenti (festivi, Pasqua, 24/31 dicembre), che non hanno un prezzo da recuperare.
 - Sincronizzazione Mobile: l'«ultima seduta» coincide su Desktop e Mobile (lo storico dell'ultimo giorno viene completato con i prezzi correnti mancanti).
 - Quotazioni: le righe importate dal Mobile mostrano data e ora, variazione e frecce corrette e fonte «Mobile»; il box «Ultimo refresh» indica la fonte sotto data e ora.
 - Sincronizzazione Mobile: i prezzi importati dal Mobile entrano nello storico alla data di mercato, aggiornano «Ultimo refresh» (fonte «Mobile») e l'avvio attende l'importazione prima di disegnare le pagine.
@@ -26,6 +31,7 @@ Questo file è stato riscritto in forma sintetica il 02/11/2026. Il testo integr
 - Strumento `tools/realign_weekly_benchmarks.py` (dry-run di default, backup prima di scrivere, idempotente): porta al venerdì le barre settimanali salvate con la data del lunedì e ripristina i prezzi sovrascritti dai backup.
 
 ### Corretto
+- Inserisci operazione: un invio doppio dello stesso modulo (doppio clic o invio ripetuto dal browser) non registra più due volte lo stesso acquisto e versamento; il secondo invio mostra «già registrato».
 - Dati, salvataggio: se un altro processo ha aggiunto eventi dopo il caricamento della sessione, operazioni, proventi e liquidità vengono rigenerati dagli eventi uniti (prima restavano quelli vecchi della sessione); `last_quotes_update` non torna mai indietro.
 - Dati, avvio: il file del portafoglio non viene più riscritto quando differiscono solo le cache o lo storico prezzi.
 - Dati, eventi senza identificativo: l'identificativo di ripiego è stabile fra un avvio e l'altro (prima cambiava a ogni avvio).

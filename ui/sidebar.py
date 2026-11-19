@@ -738,6 +738,12 @@ def render_sidebar(data: dict) -> None:
                 + list(quotes_log.get("items", []))[: max(retain * max(n, 1), 0)]
             )
             save_quotes_log(quotes_log)
+            try:  # TM-01: le letture di questo aggiornamento entrano nell'archivio incrementale (candele del Termometro)
+                from core import readings_store
+                readings_store.add_from_quotes_log_items(quote_items)
+                readings_store.prune()
+            except Exception:  # noqa: BLE001 - archivio di contorno, non deve rompere l'aggiornamento
+                logger.exception("Archivio letture non aggiornato")
             # Il run corrente prosegue dopo la sidebar: passiamo il log appena
             # salvato ad app.py senza forzare un secondo riavvio dello script.
             st.session_state["_portfolio_quotes_log_override"] = quotes_log

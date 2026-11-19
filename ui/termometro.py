@@ -202,6 +202,140 @@ def _contributors_row(contrib: dict[str, Any] | None) -> str:
     )
 
 
+_CANDLE_W, _CANDLE_H, _CANDLE_PAD = 680.0, 200.0, 14.0
+_AXIS_L, _AXIS_B, _AXIS_R = 54.0, 22.0, 64.0   # margini: importi a sinistra, date in basso, etichetta dell'ultimo valore a destra
+
+
+def _chart_points(candles: list[dict[str, Any]], line: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Un punto per giorno: candela dove ci sono letture, P/L di fine giornata altrove."""
+    by_day = {str(c["day"]): c for c in candles}
+    values = {str(p["day"]): float(p["value"]) for p in line}
+    for day, candle in by_day.items():
+        values[day] = float(candle["close"])
+    return [{"day": d, "value": values[d], "candle": by_day.get(d)} for d in sorted(values)]
+
+
+def _nice_step(raw: float) -> float:
+    """Passo «tondo» (1, 2, 2,5, 5 × 10^n) per le tacche dell'asse verticale."""
+    import math
+    if raw <= 0:
+        return 1.0
+    exp = math.floor(math.log10(raw))
+    for mult in (1, 2, 2.5, 5, 10):
+        if raw <= mult * 10 ** exp:
+            return mult * 10 ** exp
+    return 10 ** (exp + 1)
+
+
+def _axes_svg(points: list[dict[str, Any]], lo: float, hi: float, y, xc) -> str:
+    """Assi leggeri, senza linee di base: guide orizzontali tratteggiate con l'importo (P/L in euro) e le date in basso."""
+    import math
+    step = _nice_step((hi - lo) / 4)
+    out = []
+    value = math.ceil(lo / step) * step
+    while value <= hi + 1e-9:
+        yy = y(value)
+        out.append(f"<line class='gr' x1='{_AXIS_L:.0f}' x2='{_CANDLE_W - _AXIS_R:.0f}' y1='{yy:.1f}' y2='{yy:.1f}'/>"
+                   f"<text class='ax' x='{_AXIS_L - 8:.0f}' y='{yy + 3.5:.1f}' text-anchor='end'>{html.escape(fmt_eur_it(value, 0, signed=True))}</text>")
+        value += step
+    every = max(1, math.ceil(len(points) / 7))
+    base = _CANDLE_H - _AXIS_B
+    for i in range(0, len(points), every):
+        out.append(f"<text class='ax' x='{xc(i):.1f}' y='{base + 16:.0f}' text-anchor='middle'>{html.escape(_date_it(points[i]['day']))}</text>")
+    return "".join(out)
+
+
+def _smooth_path(coords: list[tuple[float, float]]) -> str:
+    """Linea morbida fra i punti (tangenti orizzontali: nessun overshoot, i valori non superano mai quelli reali)."""
+    if not coords:
+        return ""
+    d = [f"M{coords[0][0]:.1f},{coords[0][1]:.1f}"]
+    for (x0, y0), (x1, y1) in zip(coords, coords[1:]):
+        mid = (x0 + x1) / 2
+        d.append(f"C{mid:.1f},{y0:.1f} {mid:.1f},{y1:.1f} {x1:.1f},{y1:.1f}")
+    return " ".join(d)
+
+
+def _candles_block(candles: list[dict[str, Any]] | None, line: list[dict[str, Any]] | None = None, gap: str | None = None) -> str:
+    """Candele giornaliere del P/L delle posizioni aperte (letture archiviate, TM-01) collegate da una linea morbida; dove mancano le
+    letture, il solo P/L di fine giornata. Un alone sfumato avvolge le candele. SVG inline, colori dai token del tema."""
+    ok = [c for c in (candles or []) if all(isinstance(c.get(k), (int, float)) for k in ("open", "high", "low", "close"))]
+    points = _chart_points(ok, line or [])
+    head = "<span class='ptf-insights-eyebrow'>P/L delle posizioni: candele delle letture</span>"
+    if len(points) < 2 or not ok:
+        return (
+            f"<div class='ptf-pulse-candles'>{head}"
+            "<div class='ptf-pulse-note'>Servono letture di almeno un giorno: il grafico si riempie a ogni aggiornamento delle quotazioni.</div></div>"
+        )
+    lows = [float(p["candle"]["low"]) if p["candle"] else p["value"] for p in points]
+    highs = [float(p["candle"]["high"]) if p["candle"] else p["value"] for p in points]
+    lo, hi = min(lows), max(highs)
+    span = (hi - lo) or max(abs(hi) * 0.001, 1.0)
+    lo, hi, span = lo - span * 0.10, hi + span * 0.10, span * 1.20
+    plot_w, plot_h = _CANDLE_W - _AXIS_L - _AXIS_R, _CANDLE_H - _AXIS_B - 2 * _CANDLE_PAD
+    y = lambda v: _CANDLE_PAD + (hi - float(v)) / span * plot_h  # noqa: E731
+    slot = plot_w / len(points)
+    xc = lambda i: _AXIS_L + slot * (i + 0.5)  # noqa: E731
+    body = min(slot * 0.56, 20.0)
+    right = _CANDLE_W - _AXIS_R
+    zero = (f"<line class='zero' x1='{_AXIS_L:.0f}' x2='{right:.0f}' y1='{y(0):.1f}' y2='{y(0):.1f}'/>" if lo < 0 < hi else "")
+    axes = _axes_svg(points, lo, hi, y, xc)
+
+    candle_idx = [i for i, p in enumerate(points) if p["candle"]]
+    envelope = list(range(candle_idx[0], candle_idx[-1] + 1))      # un unico alone dalla prima all'ultima candela
+    margin = 9.0   # margine dell'alone attorno alle candele, ottenuto allargando la forma (niente bordo: un solo colore uniforme)
+    top_edge = [(xc(i), y(points[i]["candle"]["high"] if points[i]["candle"] else points[i]["value"]) - margin) for i in envelope]
+    bottom_edge = [(xc(i), y(points[i]["candle"]["low"] if points[i]["candle"] else points[i]["value"]) + margin) for i in reversed(envelope)]
+    left_x, right_x = top_edge[0][0] - body / 2 - 4, top_edge[-1][0] + body / 2 + 4
+    halo_d = (_smooth_path([(left_x, top_edge[0][1])] + top_edge + [(right_x, top_edge[-1][1])])
+              + f" L{right_x:.1f},{bottom_edge[0][1]:.1f} "
+              + _smooth_path([(right_x, bottom_edge[0][1])] + bottom_edge + [(left_x, bottom_edge[-1][1])]).replace("M", "L", 1) + " Z")
+    halo = f"<path class='cd-halo' d='{halo_d}'/>"
+    line_path = _smooth_path([(xc(i), y(p["value"])) for i, p in enumerate(points)])
+
+    marks = []
+    for i, p in enumerate(points):
+        x, c = xc(i), p["candle"]
+        if not c:
+            marks.append(f"<circle class='ln-dot' cx='{x:.1f}' cy='{y(p['value']):.1f}' r='3'><title>"
+                         f"{html.escape(_date_it(p['day']))} · fine giornata {html.escape(fmt_eur_it(p['value'], 0, signed=True))}</title></circle>")
+            continue
+        tone = "up" if float(c["close"]) >= float(c["open"]) else "down"
+        top, bottom = y(max(c["open"], c["close"])), y(min(c["open"], c["close"]))
+        title = (f"{_date_it(c['day'])} · apertura {fmt_eur_it(c['open'], 0, signed=True)} · massimo {fmt_eur_it(c['high'], 0, signed=True)} · "
+                 f"minimo {fmt_eur_it(c['low'], 0, signed=True)} · chiusura {fmt_eur_it(c['close'], 0, signed=True)} · {int(c.get('n') or 0)} letture")
+        marks.append(
+            f"<g class='cd-{tone}'><title>{html.escape(title)}</title>"
+            f"<line x1='{x:.1f}' x2='{x:.1f}' y1='{y(c['high']):.1f}' y2='{y(c['low']):.1f}'/>"
+            f"<rect x='{x - body / 2:.1f}' y='{top:.1f}' width='{body:.1f}' height='{max(bottom - top, 4.0):.1f}'/></g>"
+        )
+    last = ok[-1]
+    last_x, last_y = xc(len(points) - 1), y(last["close"])
+    change = float(last["close"]) - float(last["open"])
+    tone = "is-up" if change > 0.005 else "is-down" if change < -0.005 else "is-flat"
+    pill = (f"<g class='lastpill {'up' if change >= 0 else 'down'}'><line class='lastguide' x1='{last_x + body / 2 + 2:.1f}' x2='{right + 4:.0f}' y1='{last_y:.1f}' y2='{last_y:.1f}'/>"
+            f"<rect x='{right + 4:.0f}' y='{last_y - 10:.1f}' width='{_AXIS_R - 8:.0f}' height='20' rx='10'/>"
+            f"<text x='{right + 4 + (_AXIS_R - 8) / 2:.1f}' y='{last_y + 3.8:.1f}' text-anchor='middle'>{html.escape(fmt_eur_it(last['close'], 0, signed=True))}</text></g>")
+    summary = (
+        f"{html.escape(_date_it(last['day']))}: apertura {html.escape(fmt_eur_it(last['open'], 0, signed=True))} · "
+        f"massimo {html.escape(fmt_eur_it(last['high'], 0, signed=True))} · minimo {html.escape(fmt_eur_it(last['low'], 0, signed=True))} · "
+        f"chiusura <b class='{tone}'>{html.escape(fmt_eur_it(last['close'], 0, signed=True))}</b> · {int(last.get('n') or 0)} letture"
+    )
+    gap_note = (f"<div class='ptf-pulse-note ptf-pulse-center'>Attenzione: il {html.escape(_date_it(gap))} il Mobile ha segnalato letture perse "
+                "(troppi giorni senza collegamento al Desktop): le candele di quei giorni possono avere buchi, i prezzi mancanti non sono ricostruiti</div>") if gap else ""
+    defs = ""
+    return (
+        f"<div class='ptf-pulse-candles'>{head}"
+        "<div class='ptf-candle-panel'>"
+        f"<svg viewBox='0 0 {_CANDLE_W:.0f} {_CANDLE_H:.0f}' role='img' aria-label='P/L delle posizioni: linea di fine giornata e candele'>"
+        f"{defs}{axes}{zero}{halo}<path class='ln' d='{line_path}'/>{''.join(marks)}{pill}</svg></div>"
+        f"<div class='ptf-pulse-note ptf-pulse-center'>{summary}</div>"
+        "<div class='ptf-pulse-note ptf-pulse-center'>P/L non realizzato delle posizioni aperte (valore − costo): gli acquisti non lo spostano; candela = giorno con letture, punto = solo fine giornata; "
+        "l'alone avvolge le candele (escursione fra minimo e massimo); i fondi a valore giornaliero restano fermi</div>"
+        f"{gap_note}</div>"
+    )
+
+
 def build_portfolio_termometro_html(pulse: dict[str, Any] | None) -> str:
     if not pulse:
         return ""
@@ -220,6 +354,7 @@ def build_portfolio_termometro_html(pulse: dict[str, Any] | None) -> str:
         f"{_category_tiles(pulse.get('categories') or [])}"
         f"{_breadth_row(pulse.get('breadth'))}"
         f"{_contributors_row(pulse.get('contributors'))}"
+        f"{_candles_block(pulse.get('candles'), pulse.get('value_line'), pulse.get('readings_gap'))}"
         "</div></div>"
     )
 

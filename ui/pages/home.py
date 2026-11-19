@@ -3,7 +3,9 @@ ui/pages/home.py — Tab Portafoglio (t1): tabella posizioni, KPI, grafici
 Pure rendering with service functions and centralized theme.
 """
 import html
+import logging
 import math
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -11,6 +13,8 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
+
+logger = logging.getLogger("portafoglio.ui.home")
 
 from core.asset_categories import get_selected_category_codes
 from core.cache_policy import build_cache_artifact_signature, get_cache_artifact_spec
@@ -904,11 +908,23 @@ def _build_positions_table_payload(
     pulse = None
     if include_pulse:
         with profile_step("Portafoglio", "build termometro portafoglio"):
+            candles: list[dict[str, Any]] = []
+            readings_gap = None
+            try:  # TM-01: candele dalle letture archiviate; un errore qui non deve togliere il resto del Termometro
+                from core import readings_store
+                from core.services.portfolio_candles import build_portfolio_candles
+                first_day = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
+                candles = build_portfolio_candles(readings_store.read_since(first_day), data, max_days=30)
+                readings_gap = readings_store.last_gap_day(first_day)
+            except Exception:  # noqa: BLE001
+                logger.exception("Candele del Termometro non costruite")
             pulse = build_portfolio_pulse(
                 dfh_top,
                 data,
                 categories=list(get_selected_category_codes(settings)),
                 price_frame=price_frame,
+                candles=candles,
+                readings_gap=readings_gap,
             )
     return {
         "da": table_df,
@@ -1436,6 +1452,12 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             _portfolio_daily_report: dict[str, Any] | None = None
             _portfolio_insights = []
             if not da.empty:
+                try:  # TM-01: la prima volta porta nell'archivio le letture già presenti nel registro quotazioni
+                    from core import readings_store as _readings_store
+                    _readings_store.ensure_initial_backfill(getattr(ctx, "quotes_log", None))
+                    _readings_rev = _readings_store.revision()
+                except Exception:  # noqa: BLE001
+                    _readings_rev = "err"
                 _ctx_portfolio_alerts = getattr(ctx, "portfolio_alerts", None) or []
                 _ctx_maturity_alerts = getattr(ctx, "maturity_alerts", None) or []
                 _positions_spec = get_cache_artifact_spec("portafoglio.positions_table")
@@ -1451,6 +1473,7 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
                         ],
                         "settings": _portfolio_table_settings_payload(settings),
                         "sator_decisions": _file_fingerprint(SATOR_DECISIONS_FILE),
+                        "readings_rev": _readings_rev,
                         "portfolio_alerts": [
                             (
                                 a.get("kind"),

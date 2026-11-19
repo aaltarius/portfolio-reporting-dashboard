@@ -24,6 +24,7 @@ REASON_LABELS = {"no_change": "prezzo invariato", "older_than_desktop": "più ve
                  "anomalous_move": "variazione anomala (oltre soglia)", "currency_not_eur": "valuta non in euro",
                  "symbol_mismatch": "simbolo non coerente", "unit_mismatch": "unità del prezzo non coerente",
                  "invalid_price": "prezzo non valido", "isin_missing": "ISIN mancante sul Desktop"}
+_READINGS_TOTAL = 0   # letture di giornata archiviate dal Mobile da quando l'app è avviata (solo in memoria)
 _GEN = 0   # cresce a ogni stop: un controllo avviato prima non sovrascrive l'esito di quello dopo
 
 
@@ -64,7 +65,7 @@ def get_last_report() -> dict:
         return dict(_LAST_REPORT)
 
 
-def _store_report(items, applied_tickers, filled) -> None:
+def _store_report(items, applied_tickers, filled, readings=None) -> None:
     rows = []
     for item in items or []:
         if item.get("decision") == "newer_on_mobile" and item.get("ticker") in applied_tickers:
@@ -78,7 +79,41 @@ def _store_report(items, applied_tickers, filled) -> None:
         _LAST_REPORT.clear()
         _LAST_REPORT.update({"at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "rows": rows,
                              "applied": sum(1 for r in rows if r["esito"] == "Importato"),
-                             "kept": sum(1 for r in rows if r["esito"] != "Importato"), "filled": list(filled or [])})
+                             "kept": sum(1 for r in rows if r["esito"] != "Importato"), "filled": list(filled or []),
+                             "readings": dict(readings or {})})
+
+
+def _readings_summary(out: dict | None) -> dict:
+    """Esito dello scarico delle letture per il riquadro in Dati (vuoto se il Worker non le offre)."""
+    if not out or not out.get("supported"):
+        return {}
+    with _LOCK:
+        total = _READINGS_TOTAL
+    return {"stored": int(out.get("stored") or 0), "rejected": int(out.get("rejected") or 0), "error": out.get("error"),
+            "truncated": bool(out.get("truncated")), "total": total}
+
+
+def _with_readings(result: dict, out: dict | None) -> dict:
+    """Pastiglia: se sono arrivate letture di giornata il testo diventa solo «Letture N» (N cumulativo dall'avvio dell'app),
+    il resto (prezzi importati, letture non valide) è nel suggerimento. Colore e stato non cambiano."""
+    global _READINGS_TOTAL
+    if not out or not out.get("supported"):
+        return result
+    stored = int(out.get("stored") or 0)
+    notes = []
+    if out.get("error"):
+        notes.append(f"letture non scaricate del tutto: {out['error']}")
+    if out.get("truncated"):
+        notes.append("il Mobile ha segnalato letture perse")
+    if stored:
+        with _LOCK:
+            _READINGS_TOTAL += stored
+            total = _READINGS_TOTAL
+        notes.insert(0, f"{stored} letture di giornata archiviate in questo controllo ({total} dall'avvio)")
+        result = {**result, "label": f"Letture {total}"}
+    if notes:
+        result = {**result, "detail": " · ".join(x for x in [str(result.get("detail") or ""), *notes] if x)}
+    return result
 
 
 def _default_apply(found, **kwargs):
@@ -127,8 +162,17 @@ def check_now(settings, *, context=None, now=None, apply_fn=None) -> dict:
         result = _status("sending", "invio", "info", "il Desktop ha dati più recenti del Mobile", now)
     else:
         result = _status("aligned", "allineato", "ok", f"Mobile aggiornato (invio n. {conf['seq']})", now)
+    readings_out: dict | None = None
     try:
-        found = obs.fetch(transport, endpoints.get("v2_observations", obs.ENDPOINT))
+        obs_path = endpoints.get("v2_observations", obs.ENDPOINT)
+        payload = obs.fetch_payload(transport, obs_path)
+        found = obs.observations_of(payload)
+        if payload is not None and result["state"] in ("aligned", "sending"):
+            try:   # TM-02: letture intraday del Mobile nell'archivio locale (solo candele del Termometro), poi conferma al Worker
+                from core.sync import readings_pull
+                readings_out = readings_pull.pull(transport, payload, data, observations_path=obs_path, log_path=state_dir / "readings_log.jsonl")
+            except Exception:  # noqa: BLE001 - mai a scapito dell'esito principale
+                logger.exception("Controllo avvio: letture del Mobile non archiviate")
         if found is not None:
             items = obs.evaluate(data, found)
             obs.quarantine(state_dir / "observations.json", items, now=now)
@@ -152,10 +196,10 @@ def check_now(settings, *, context=None, now=None, apply_fn=None) -> dict:
             from core.sync import apply_prices
             filled = apply_prices.reconcile_now()      # prezzi correnti senza riga nello storico: stessa «ultima seduta» su Desktop e Mobile
             if found is not None:
-                _store_report(report_items, report_applied, filled)
+                _store_report(report_items, report_applied, filled, _readings_summary(readings_out))
     except Exception:  # noqa: BLE001 - le osservazioni sono un di più: non devono rovinare l'esito principale
         logger.exception("Controllo avvio: osservazioni del Mobile non valutabili")
-    return result
+    return _with_readings(result, readings_out)
 
 
 def manual_check(settings) -> dict:
@@ -221,9 +265,10 @@ def start_once(settings, *, context=None) -> bool:
 
 
 def reset_for_tests() -> None:
-    global _STARTED
+    global _STARTED, _READINGS_TOTAL
     with _LOCK:
         _STARTED = False
+        _READINGS_TOTAL = 0
         _STATUS.clear()
         _STATUS.update({"state": "off"})
 

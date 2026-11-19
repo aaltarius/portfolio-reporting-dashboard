@@ -20,14 +20,22 @@ ENDPOINT = "/api/v2/observations"
 SAME_QUOTE_MARGIN = timedelta(minutes=10)   # il Desktop salva l'ora al minuto: una rilevazione più recente di pochi minuti è la stessa quotazione
 
 
-def fetch(transport, path: str = ENDPOINT) -> list[dict] | None:
-    """Elenco delle osservazioni del Mobile, oppure None se il Worker non offre ancora l'endpoint."""
+def fetch_payload(transport, path: str = ENDPOINT) -> dict | None:
+    """Risposta intera dell'endpoint (osservazioni ed eventuali `readings`), oppure None se il Worker non lo offre o non risponde."""
     try:
-        payload = transport.get_json(path)
+        return transport.get_json(path)
     except (RuntimeError, TransportRefused):          # endpoint assente, rifiutato (es. catalogo oltre il limite) o guasto: nessun prezzo
         return None
-    items = payload.get("observations")
+
+
+def observations_of(payload: dict | None) -> list[dict] | None:
+    items = payload.get("observations") if isinstance(payload, dict) else None
     return [o for o in items if isinstance(o, dict)] if isinstance(items, list) else None
+
+
+def fetch(transport, path: str = ENDPOINT) -> list[dict] | None:
+    """Elenco delle osservazioni del Mobile, oppure None se il Worker non offre ancora l'endpoint."""
+    return observations_of(fetch_payload(transport, path))
 
 
 def _desktop_observation(instrument: dict) -> tuple[policy.Observation, str] | None:

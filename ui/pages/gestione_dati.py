@@ -249,6 +249,21 @@ def _get_remote_quotes_php(remote_sig: str, data: dict) -> tuple[str, str]:
     return str(artifact.value or ""), artifact.source
 
 
+def _enrichment_digest(raw_data: dict) -> str:
+    """Impronta dei campi di arricchimento: la firma dati generale non li include, quindi senza questa la
+    colonna «Arricchimento» restava ferma sul valore vecchio dopo aver completato un'anagrafica (bug 2026-11-12)."""
+    import hashlib
+    import json
+    from core.services.instrument_quality import ENRICHMENT_REQUIRED_FIELDS
+
+    fields = sorted({f for names in ENRICHMENT_REQUIRED_FIELDS.values() for f in names})
+    rows = [
+        [str(s.get("ticker") or ""), str(s.get("enriched_at") or ""), *[str(s.get(f) or "") for f in fields]]
+        for s in (raw_data.get("strumenti", []) or []) if isinstance(s, dict)
+    ]
+    return hashlib.sha1(json.dumps(sorted(rows), ensure_ascii=False).encode("utf-8")).hexdigest()[:10]
+
+
 def _build_instrument_quality_dataset_light(quality_sig: str, raw_data: dict) -> pd.DataFrame:
     """Builder leggero: la logica finanziaria resta nel servizio core."""
     _ = quality_sig
@@ -577,7 +592,7 @@ def _load_quality(data: dict, ctx) -> pd.DataFrame:
         )
         # v4: aggiunte le colonne "lifecycle" e "closed_date" e l'azione «Chiuso»
         # (stesso motivo del bump in core/cache_policy.py: la firma non include il codice).
-        + f"|quality_light_v4|asof={date.today().isoformat()}"
+        + f"|quality_light_v4|asof={date.today().isoformat()}|enr={_enrichment_digest(raw_data)}"
     )
     quality_sig_label = quality_sig.replace("|", "/")[-48:]
     with profile_step("Dati", "load/build qualita dati dataset", detail=f"sig={quality_sig_label}"):
@@ -966,6 +981,21 @@ def _render_data_health(health: dict) -> None:
         st.caption(f"... e altre {hidden} segnalazioni minori nelle tabelle qui sotto.")
 
 
+def _mobile_readings_phrase(readings: dict | None) -> str:
+    """Frase sulle letture di giornata scaricate dal Mobile (vuota se il Worker non le offre): stessa riga del commento, nessuna dimensione cambia."""
+    if not readings:
+        return ""
+    text = f" Letture di giornata: {int(readings.get('stored') or 0)} archiviate"
+    if readings.get("rejected"):
+        text += f", {int(readings['rejected'])} scartate perché non valide"
+    text += f" ({int(readings.get('total') or 0)} dall'avvio)."
+    if readings.get("error"):
+        text += " Scarico non completato: " + str(readings["error"]) + "."
+    if readings.get("truncated"):
+        text += " Il Mobile ha segnalato letture perse."
+    return text
+
+
 def _render_mobile_last_check() -> None:
     """Esito dell'ultimo controllo dei prezzi del Mobile (all'avvio o con «Allinea dal Mobile»): solo in memoria, nessuna rete."""
     try:
@@ -978,7 +1008,9 @@ def _render_mobile_last_check() -> None:
     render_section_title(
         "Sincronizzazione Mobile — ultimo controllo",
         comment=f"Controllo del {report.get('at')}: {report.get('applied', 0)} prezzi importati, {report.get('kept', 0)} lasciati come sul Desktop, "
-                f"{len(report.get('filled') or [])} righe di storico completate. Il motivo di ogni scarto è qui sotto.",
+                f"{len(report.get('filled') or [])} righe di storico completate."
+                + _mobile_readings_phrase(report.get("readings"))
+                + " Il motivo di ogni scarto è qui sotto.",
         icon="data",
         gap_after="xs",
     )
