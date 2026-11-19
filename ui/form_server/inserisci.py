@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
+import threading
+import time
 from datetime import date
 from html import escape
 
@@ -289,6 +292,41 @@ _JS = (
 )
 
 
+# ─── Protezione contro l'invio doppio ─────────────────────────────────────────
+
+_DUPLICATE_MSG = "Questo carrello era già stato registrato: non è stato aggiunto nulla."
+_SUBMISSION_TTL_S = 6 * 3600
+_SUBMISSION_MAX = 500
+_submissions: dict[str, float] = {}
+_submissions_lock = threading.Lock()
+
+
+def _claim_submission(sid: str) -> bool:
+    """True se il codice e' nuovo (e lo riserva); False se gia' usato.
+
+    Un codice vuoto (pagina vecchia rimasta aperta nel browser) non e' protetto.
+    """
+    if not sid:
+        return True
+    now = time.time()
+    with _submissions_lock:
+        for key in [k for k, t in _submissions.items() if now - t > _SUBMISSION_TTL_S]:
+            del _submissions[key]
+        if sid in _submissions:
+            return False
+        if len(_submissions) >= _SUBMISSION_MAX:
+            del _submissions[min(_submissions, key=_submissions.get)]
+        _submissions[sid] = now
+        return True
+
+
+def _release_submission(sid: str) -> None:
+    """Libera il codice se il salvataggio non e' avvenuto, cosi' si puo' riprovare."""
+    if sid:
+        with _submissions_lock:
+            _submissions.pop(sid, None)
+
+
 def _render_form(tickers: list[dict], error: str = "", prefill: dict | None = None) -> str:
     today = date.today().isoformat()
     prefill_ticker = str(prefill.get("ticker") or "") if prefill else ""
@@ -327,6 +365,7 @@ def _render_form(tickers: list[dict], error: str = "", prefill: dict | None = No
   {err_html}
   <form method="POST" action="/operazioni" id="opform" autocomplete="off">
     <input type="hidden" id="cart_data" name="cart_data" value="[]">
+    <input type="hidden" name="submission_id" value="{secrets.token_hex(16)}">
 
     <!-- ── Sezione input ── -->
     <div class="area-group">
@@ -514,8 +553,8 @@ async def get_form(cedola_ticker: str = "", cedola_data: str = "", cedola_lordo:
     return HTMLResponse(_render_form(tickers, prefill=prefill))
 
 
-@router.post("/operazioni", response_class=HTMLResponse)
-async def post_form(cart_data: str = Form("[]")):
+def _registra_carrello(cart_data: str) -> tuple[HTMLResponse, bool]:
+    """Valida e salva il carrello. Restituisce (pagina, salvato)."""
     from persistence.storage import load_data, save_data, _new_event_id
     from core.finance import append_evento_portafoglio
 
@@ -530,15 +569,15 @@ async def post_form(cart_data: str = Form("[]")):
     try:
         items = json.loads(cart_data)
     except Exception:
-        return show_error("Carrello non valido.")
+        return show_error("Carrello non valido."), False
 
     if not items:
-        return show_error("Carrello vuoto — aggiungi almeno una voce prima di confermare.")
+        return show_error("Carrello vuoto — aggiungi almeno una voce prima di confermare."), False
 
     try:
         data = load_data()  # NON filtrato: qui finisce in save_data() più sotto
     except Exception as exc:
-        return show_error(f"Impossibile caricare i dati: {exc}")
+        return show_error(f"Impossibile caricare i dati: {exc}"), False
 
     TRADE_EV = {"ACQUISTO", "VENDITA", "RIMBORSO A SCADENZA"}
     PROVENTO_EV = {"CEDOLA", "DIVIDENDO"}
@@ -659,10 +698,10 @@ async def post_form(cart_data: str = Form("[]")):
                 raise ValueError(f"Tipo non riconosciuto: {tipo}")
 
         except ValueError as exc:
-            return show_error(f"Voce {i}: {exc}")
+            return show_error(f"Voce {i}: {exc}"), False
         except Exception as exc:
             logger.error("Errore validazione voce %d: %s", i, exc, exc_info=True)
-            return show_error(f"Voce {i}: errore interno — {exc}")
+            return show_error(f"Voce {i}: errore interno — {exc}"), False
 
     # Salva tutto atomicamente
     try:
@@ -671,14 +710,37 @@ async def post_form(cart_data: str = Form("[]")):
             append_evento_portafoglio(data, ev)
         save_data(data)
     except ValueError as exc:
-        return show_error(str(exc))
+        return show_error(str(exc)), False
     except Exception as exc:
         logger.error("Errore salvataggio carrello: %s", exc, exc_info=True)
-        return show_error(f"Errore salvataggio: {exc}")
+        return show_error(f"Errore salvataggio: {exc}"), False
 
     count = len([e for e in events_to_append if e.get("tipo_evento") not in {"VERSAMENTO"} or not any(
         x in str(e.get("note", "")) for x in ["automatico"]
     )])
     summary_text = "\n".join(summaries)
     logger.info("Carrello registrato via form server: %d voci\n%s", len(summaries), summary_text)
-    return HTMLResponse(_render_success(summary_text))
+    return HTMLResponse(_render_success(summary_text)), True
+
+
+@router.post("/operazioni", response_class=HTMLResponse)
+async def post_form(cart_data: str = Form("[]"), submission_id: str = Form("")):
+    """Registra il carrello una sola volta per ogni modulo mostrato.
+
+    Ogni modulo porta un codice univoco (``submission_id``). Un secondo invio con
+    lo stesso codice (doppio clic, invio ripetuto dal browser) non salva nulla e
+    mostra la conferma. La funzione non ha ``await``: le richieste sono gestite
+    una alla volta, quindi quando arriva la seconda l'esito della prima e' noto.
+    """
+    sid = submission_id if isinstance(submission_id, str) else ""
+    if not _claim_submission(sid):
+        logger.warning("Invio duplicato ignorato (submission_id=%s)", sid)
+        return HTMLResponse(_render_success(_DUPLICATE_MSG))
+    try:
+        response, saved = _registra_carrello(cart_data)
+    except BaseException:
+        _release_submission(sid)
+        raise
+    if not saved:
+        _release_submission(sid)
+    return response

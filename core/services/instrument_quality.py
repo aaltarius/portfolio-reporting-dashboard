@@ -336,12 +336,37 @@ def compute_trailing_risk_return_metrics(
     return result
 
 
-def _series_gap_stats(series: pd.Series) -> tuple[int, float]:
+def _market_closed_days(price_frame: pd.DataFrame, min_instruments: int = 3, share: float = 0.5) -> pd.DatetimeIndex:
+    """Giorni feriali in cui la maggioranza degli strumenti non ha prezzo (festivi, Borsa chiusa o ferma).
+
+    Un prezzo che non esiste per quasi nessuno non e' un "buco" da riparare: non va contato come mancante.
+    Considera, per ogni giorno, solo gli strumenti con storico gia' iniziato e non ancora finito."""
+    if price_frame is None or price_frame.empty or price_frame.shape[1] < min_instruments:
+        return pd.DatetimeIndex([])
+    frame = price_frame.copy()
+    frame.index = pd.DatetimeIndex(frame.index).normalize()
+    frame = frame[~frame.index.duplicated(keep="last")]
+    first = frame.apply(lambda col: col.first_valid_index())
+    last = frame.apply(lambda col: col.last_valid_index())
+    active = pd.DataFrame(False, index=frame.index, columns=frame.columns)
+    for col in frame.columns:
+        if pd.isna(first[col]) or pd.isna(last[col]):
+            continue
+        active[col] = (frame.index >= first[col]) & (frame.index <= last[col])
+    n_active = active.sum(axis=1)
+    n_missing = (active & frame.isna()).sum(axis=1)
+    closed = (n_active >= min_instruments) & (n_missing >= share * n_active)
+    return frame.index[closed.to_numpy()]
+
+
+def _series_gap_stats(series: pd.Series, closed_days: pd.DatetimeIndex | None = None) -> tuple[int, float]:
     clean = pd.Series(series).dropna()
     if len(clean) < 2:
         return 0, 0.0
     dates = pd.DatetimeIndex(clean.index).normalize().unique().sort_values()
     expected = pd.bdate_range(dates[0], dates[-1])
+    if closed_days is not None and len(closed_days):
+        expected = expected.difference(pd.DatetimeIndex(closed_days))
     missing = len([dt for dt in expected if dt not in dates])
     denominator = max(len(expected), 1)
     return int(missing), float(missing / denominator)
@@ -481,6 +506,11 @@ def build_instrument_quality_dataset(
     trailing = compute_trailing_risk_return_metrics(tickers, price_frame) if include_financial_metrics else {}
     as_of_ts = _coerce_date(as_of) or pd.Timestamp(date.today())
 
+    try:
+        closed_days = _market_closed_days(price_frame)
+    except Exception:  # noqa: BLE001 - la qualita' non deve mai bloccarsi per questo
+        closed_days = pd.DatetimeIndex([])
+
     rows: list[dict[str, Any]] = []
     for instrument in source:
         ticker = str(instrument.get("ticker") or "").strip()
@@ -492,7 +522,7 @@ def build_instrument_quality_dataset(
         first_date = pd.Timestamp(series.index[0]).normalize() if not series.empty else None
         history_days = int((last_date - first_date).days) if first_date is not None and last_date is not None else 0
         stale_days = int(max((as_of_ts - last_date).days, 0)) if last_date is not None else None
-        missing_days, gap_ratio = _series_gap_stats(series)
+        missing_days, gap_ratio = _series_gap_stats(series, closed_days)
         stagnant_days = _days_since_last_change(series)
         stats = compute_instrument_stats(series) if include_financial_metrics and len(series) >= 3 else None
         if include_financial_metrics:
