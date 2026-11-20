@@ -37,7 +37,6 @@ from core.services import (
     build_weekly_pl_table,
 )
 from core.services.portfolio_insights import build_maturity_only_insights, build_portfolio_insights
-from core.services.pl_balance import build_pl_balance
 from core.services.pl_calendar import build_pl_calendar
 from core.services.portfolio_pulse import build_portfolio_pulse
 from persistence.storage import SATOR_DECISIONS_FILE, macro_cat
@@ -928,7 +927,6 @@ def _build_positions_table_payload(
                 price_frame=price_frame,
                 candles=candles,
                 readings_gap=readings_gap,
-                balance=build_pl_balance(table_df),
                 line_days=int(get_chart_setting("termometro_candele", "max_days", 30)),
             )
     return {

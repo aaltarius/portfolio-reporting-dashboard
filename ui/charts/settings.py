@@ -608,9 +608,8 @@ CHARTS: dict[str, dict[str, Any]] = {
      # Aree impilate con segno (ui/charts/signed_stack.py): guadagni sopra lo zero, perdite sotto, linea del totale netto.
      'stack_opacity': 0.82,
      'stack_line_width': 1.0,
-     # Linea del totale netto: linea piena nera larga 2 su una fascia grigio chiaro larga 4 (scelta finale dell'utente il 2026-11-20,
-     # dopo fucsia, rosso bruno, rubino, oro e verde; i colori accesi provati sono in `python -m tools.prova_linea_totale`).
-     # Alternative provate con `python -m tools.prova_linea_totale`: tratteggio con punti, antracite, oro con contorno, ...
+     # Linea del totale netto: linea piena nera larga 2 su una fascia grigio chiaro larga 4 (scelta dell'utente il 2026-11-20).
+     # Per cambiare stile: colore/spessore/tratto/punti della linea (net_line_*, net_marker_size) e fascia (net_halo_*; larghezza 0 = nessuna fascia).
      'net_line_width': 2,
      'net_line_color': '#111111',
      'net_line_color_dark': '#f3f4f6',
@@ -657,7 +656,8 @@ CHARTS: dict[str, dict[str, Any]] = {
      # testi in pixel reali (la bilancia è HTML, non scala con la larghezza)
      'font_head_px': 13,
      'font_seg_px': 10,
-     'font_net_px': 13},
+     'font_net_px': 13,
+     'day_gap_px': 14},
 
     # Portafoglio: calendario del P/L giornaliero (ui/pl_calendar.py)
     'portafoglio_calendario_pl': {'type': 'custom',
@@ -1015,9 +1015,8 @@ CHARTS: dict[str, dict[str, Any]] = {
      # Aree impilate con segno (ui/charts/signed_stack.py): guadagni sopra lo zero, perdite sotto, linea del totale netto.
      'stack_opacity': 0.85,
      'stack_line_width': 0.8,
-     # Linea del totale netto: linea piena nera larga 2 su una fascia grigio chiaro larga 4 (scelta finale dell'utente il 2026-11-20,
-     # dopo fucsia, rosso bruno, rubino, oro e verde; i colori accesi provati sono in `python -m tools.prova_linea_totale`).
-     # Alternative provate con `python -m tools.prova_linea_totale`: tratteggio con punti, antracite, oro con contorno, ...
+     # Linea del totale netto: linea piena nera larga 2 su una fascia grigio chiaro larga 4 (scelta dell'utente il 2026-11-20).
+     # Per cambiare stile: colore/spessore/tratto/punti della linea (net_line_*, net_marker_size) e fascia (net_halo_*; larghezza 0 = nessuna fascia).
      'net_line_width': 2,
      'net_line_color': '#111111',
      'net_line_color_dark': '#f3f4f6',

@@ -354,22 +354,22 @@ def _candles_block(candles: list[dict[str, Any]] | None, line: list[dict[str, An
 
 
 def _balance_block(balance: dict[str, Any] | None) -> str:
-    """Bilancia guadagni/perdite per strumento, in HTML/CSS: i guadagni a destra, le perdite a sinistra, il rombo del netto.
+    """Bilance guadagni/perdite per strumento, ieri sopra e oggi sotto, **sulla stessa scala** per un confronto diretto.
 
-    HTML e non SVG perché i suggerimenti al passaggio del mouse (attributo `title`) funzionano ovunque e i testi hanno dimensione
-    reale in pixel (non scalata con la larghezza). Il nome nel segmento si accorcia da solo con i puntini se non entra (CSS).
-    Dimensioni e testi da `ui/charts/settings.py` (voce `termometro_bilancia`), colori dai token del tema (classi .bal-*)."""
-    if not balance or not (balance.get("gains") or balance.get("losses")):
+    Per ogni giorno: i guadagni a destra, le perdite a sinistra, il rombo del netto. HTML/CSS (non SVG) perché i suggerimenti al
+    mouse (attributo `title`) funzionano ovunque e i testi hanno dimensione reale in pixel; il nome nel segmento si accorcia da
+    solo con i puntini. Dimensioni e testi da `ui/charts/settings.py` (voce `termometro_bilancia`), colori dai token del tema."""
+    days = [d for d in (balance or {}).get("days", []) if d.get("gains") or d.get("losses")]
+    if not days:
         return ""
     from ui.charts.settings import get_chart_setting as cfg
 
     def num(key, default):
         return float(cfg("termometro_bilancia", key, default))
     bar_h, min_op = num("bar_height", 40), num("shade_min_opacity", 0.55)
-    gains, losses = balance.get("gains") or [], balance.get("losses") or []
-    gain_total, loss_total = float(balance.get("gain_total") or 0.0), float(balance.get("loss_total") or 0.0)
-    net = float(balance.get("net") or 0.0)
-    span = max(gain_total, -loss_total, 1.0)           # scala unica: i due lati si confrontano alla pari
+    # scala unica fra i giorni mostrati: la stessa larghezza vale lo stesso importo, ieri e oggi si confrontano a occhio
+    span = max(max(float(d.get("gain_total") or 0.0), -float(d.get("loss_total") or 0.0)) for d in days)
+    span = max(span, 1.0)
 
     def segments(items: list[dict[str, Any]], cls: str) -> str:
         n, out = len(items), []
@@ -380,21 +380,32 @@ def _balance_block(balance: dict[str, Any] | None) -> str:
             out.append(f"<div class='bal-seg {cls}' style='flex:{abs(eur):.4f} 1 0;--op:{op:.2f}' title='{html.escape(tip)}'>"
                        f"<span>{html.escape(str(it['ticker']))}</span></div>")
         return "".join(out)
-    left_w, right_w = -loss_total / span * 50.0, gain_total / span * 50.0
-    net_pos = min(max(50.0 + net / span * 50.0, 4.0), 96.0)
-    tone = "is-up" if net > 0.005 else "is-down" if net < -0.005 else "is-flat"
+
+    def one_day(d: dict[str, Any]) -> str:
+        gain_total, loss_total, net = float(d.get("gain_total") or 0.0), float(d.get("loss_total") or 0.0), float(d.get("net") or 0.0)
+        left_w, right_w = -loss_total / span * 100.0, gain_total / span * 100.0       # % della metà (la metà = 50% della barra)
+        net_pos = min(max(50.0 + net / span * 50.0, 4.0), 96.0)
+        tone = "is-up" if net > 0.005 else "is-down" if net < -0.005 else "is-flat"
+        label = ("Ieri" if d.get("key") == "yesterday" else "Oggi") + f" · {_date_it(d.get('date', ''))}"
+        return (
+            "<div class='bal-day'>"
+            f"<div class='bal-heads'><b class='bal-hl'>Perdite {html.escape(fmt_eur_it(loss_total, 0, signed=True))}</b>"
+            f"<span class='bal-day-t'>{html.escape(label)}</span>"
+            f"<b class='bal-hg'>Guadagni {html.escape(fmt_eur_it(gain_total, 0, signed=True))}</b></div>"
+            "<div class='bal-bar'>"
+            f"<div class='bal-half bal-l'><div class='bal-stack' style='width:{left_w:.3f}%'>{segments(d.get('losses') or [], 'bal-loss')}</div></div>"
+            f"<div class='bal-half bal-r'><div class='bal-stack' style='width:{right_w:.3f}%'>{segments(d.get('gains') or [], 'bal-gain')}</div></div>"
+            f"<i class='bal-net' style='left:{net_pos:.2f}%' title='Totale netto: {html.escape(fmt_eur_it(net, 0, signed=True))}'></i></div>"
+            f"<div class='bal-net-t {tone}' style='left:{net_pos:.2f}%'>Netto {html.escape(fmt_eur_it(net, 0, signed=True))}</div>"
+            "</div>"
+        )
     return (
-        f"<div class='ptf-pulse-balance' style='--fs-head:{num('font_head_px', 13):g}px;--fs-seg:{num('font_seg_px', 10):g}px;--fs-net:{num('font_net_px', 13):g}px;--bar-h:{bar_h:g}px'>"
+        f"<div class='ptf-pulse-balance' style='--fs-head:{num('font_head_px', 13):g}px;--fs-seg:{num('font_seg_px', 10):g}px;--fs-net:{num('font_net_px', 13):g}px;"
+        f"--bar-h:{bar_h:g}px;--day-gap:{num('day_gap_px', 10):g}px'>"
         "<span class='ptf-insights-eyebrow'>Guadagni contro perdite</span>"
-        f"<div class='bal-heads'><b class='bal-hl'>Perdite {html.escape(fmt_eur_it(loss_total, 0, signed=True))}</b>"
-        f"<b class='bal-hg'>Guadagni {html.escape(fmt_eur_it(gain_total, 0, signed=True))}</b></div>"
-        "<div class='bal-bar'>"
-        f"<div class='bal-half bal-l'><div class='bal-stack' style='width:{left_w * 2:.3f}%'>{segments(losses, 'bal-loss')}</div></div>"
-        f"<div class='bal-half bal-r'><div class='bal-stack' style='width:{right_w * 2:.3f}%'>{segments(gains, 'bal-gain')}</div></div>"
-        f"<i class='bal-net' style='left:{net_pos:.2f}%' title='Totale netto: {html.escape(fmt_eur_it(net, 0, signed=True))}'></i></div>"
-        f"<div class='bal-net-t {tone}' style='left:{net_pos:.2f}%'>Netto {html.escape(fmt_eur_it(net, 0, signed=True))}</div>"
-        "<div class='ptf-pulse-note ptf-pulse-center'>P/L non realizzato delle posizioni aperte, strumento per strumento: più il segmento è largo più pesa; "
-        "il rombo è il totale netto. Passa il mouse su un segmento per vedere lo strumento e l'importo</div></div>"
+        f"{''.join(one_day(d) for d in days)}"
+        "<div class='ptf-pulse-note ptf-pulse-center'>P/L non realizzato delle posizioni aperte, strumento per strumento; ieri e oggi sulla stessa scala: "
+        "più il segmento è largo più pesa, il rombo è il totale netto. Passa il mouse su un segmento per vedere lo strumento e l'importo</div></div>"
     )
 
 

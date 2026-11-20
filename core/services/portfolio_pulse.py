@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 
 from core.domain.returns import build_portfolio_return_curve
+from core.services.pl_balance import build_pl_balance_days
 from core.domain.risk import rolling_volatility_annualized
 
 _FLAT_EPS = 0.005  # sotto mezzo centesimo di EUR uno strumento e' "invariato"
@@ -226,7 +227,6 @@ def build_portfolio_pulse(
     price_frame: pd.DataFrame | None = None,
     candles: list[dict[str, Any]] | None = None,
     readings_gap: str | None = None,
-    balance: dict[str, Any] | None = None,
     line_days: int = 30,
 ) -> dict[str, Any] | None:
     """Ritorna il payload del Termometro, o None se lo storico e' troppo corto.
@@ -321,6 +321,6 @@ def build_portfolio_pulse(
         "contributors": _month_contributors(work, refs["1m"][0], last_pos),
         "candles": list(candles or []),
         "readings_gap": readings_gap,
-        "balance": balance,
+        "balance": build_pl_balance_days(work),
         "value_line": _value_line(work, line_days),
     }

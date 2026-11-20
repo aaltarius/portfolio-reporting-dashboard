@@ -1087,7 +1087,10 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
 .ptf-plcal b.is-up{color:var(--ptf-success, #16a34a)}.ptf-plcal b.is-down{color:var(--ptf-danger, #dc2626)}
 .ptf-pulse-balance{margin-top:16px}
 .ptf-pulse-balance{position:relative}
-.ptf-pulse-balance .bal-heads{display:flex;justify-content:space-between;margin:6px 2px 4px 2px}
+.ptf-pulse-balance .bal-day{margin-top:var(--day-gap,10px)}
+.ptf-pulse-balance .bal-heads{display:grid;grid-template-columns:1fr auto 1fr;align-items:baseline;margin:6px 2px 4px 2px}
+.ptf-pulse-balance .bal-heads .bal-hg{text-align:right}
+.ptf-pulse-balance .bal-day-t{font-size:calc(var(--fs-head,13px) - 2px);font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--ptf-muted);padding:0 10px;white-space:nowrap}
 .ptf-pulse-balance .bal-h,.ptf-pulse-balance .bal-heads b{font-size:var(--fs-head,13px);font-weight:800}
 .ptf-pulse-balance .bal-hl{color:var(--ptf-danger, #dc2626)}.ptf-pulse-balance .bal-hg{color:var(--ptf-success, #16a34a)}
 .ptf-pulse-balance .bal-bar{position:relative;display:flex;height:var(--bar-h,40px);border-radius:8px;overflow:visible}
