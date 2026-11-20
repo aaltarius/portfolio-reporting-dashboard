@@ -7,15 +7,13 @@ Questo file è stato riscritto in forma sintetica il 02/11/2026. Il testo integr
 ## [Non rilasciato]
 
 ### Modificato
-- Grafici con aree con segno: la linea del «Totale netto» è una linea piena nera (spessore 2) su una fascia grigio chiaro larga 4, senza punti (stile scelto dall'utente); sparisce il fucsia.
+- Grafici con aree con segno: la linea del «Totale netto» è nera (spessore 2) su una fascia grigio chiaro larga 4, e la linea dello zero è grigio scuro; stile e colori sono in `ui/charts/settings.py`.
 - Strumento `tools/prova_linea_totale.py`: anteprima, in sola lettura e fuori dall'app, di sei stili per la linea «Totale netto» sui due grafici a aree con segno.
 - Termometro, bilancia: ora si vedono molti più nomi di strumento (il testo si accorcia con i puntini nei segmenti stretti) e passando il mouse su un segmento compare lo strumento con l'importo; lo stesso suggerimento è nelle candele (apertura, massimo, minimo, chiusura, letture).
-- Grafici con aree con segno: la linea del «Totale netto» è fucsia (con alone) e la linea dello zero grigio scuro; i colori sono in `ui/charts/settings.py` (alternative provate: blu reale, verde petrolio, rosso mattone).
 - Termometro: testi di candele e bilancia più piccoli (dimensioni in `ui/charts/settings.py`).
 - Portafoglio, Termometro: sotto le candele c'è ora la «bilancia» guadagni contro perdite, strumento per strumento, con il rombo del totale netto.
 - Portafoglio: nuova sezione nascondibile «Calendario del P/L» (sopra «P/L per Categoria»), un riquadro per giorno di Borsa degli ultimi tre mesi, verde o rosso con l'importo.
 - Grafici nuovi e ritoccati (candele, bilancia, calendario, aree con segno): dimensioni, spessori, opacità, colore della linea del totale e giorni mostrati stanno in `ui/charts/settings.py`.
-- Grafici «Contributo al P/L (Area Stacked)» e «P/L cumulativo per Categoria»: la linea «Totale netto» è grigio ardesia con un alone nel colore dello sfondo (chiara sui temi scuri) al posto del nero.
 - Strumento `tools/prova_grafici_pl.py`: genera in sola lettura due pagine HTML di prove (classifica dei contributi, cascata, mappa di calore, variazione giornaliera; bilancia guadagni/perdite, mappa del portafoglio, quadranti, calendario) in `data/cache/prove_grafici/`, senza toccare i grafici dell'app.
 - Grafici «Contributo al P/L (Area Stacked)» e «P/L cumulativo per Categoria»: i guadagni si impilano sopra lo zero e le perdite sotto, con una linea del totale netto (prima, con guadagni e perdite insieme, le aree mostravano un P/L di centinaia di euro anche quando il totale era nullo e nascondevano le perdite).
 - Sincronizzazione Mobile: la pastiglia «Mobile» in alto mostra «Letture N» (totale cumulativo dall'avvio) quando arrivano letture di giornata; in Dati l'ultimo controllo riporta quante sono state archiviate o scartate.
