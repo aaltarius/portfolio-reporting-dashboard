@@ -36,6 +36,15 @@ def build_pl_calendar(dfh: pd.DataFrame | None, *, weeks: int = 13) -> dict[str,
              for d, v in daily.items() if d - pd.Timedelta(days=d.weekday()) >= first]
     if not cells:
         return None
+    week_stats = []
+    for wi in range(len(starts)):
+        vals = [c["eur"] for c in cells if c["week"] == wi]
+        week_stats.append({"total": sum(vals), "best": max(vals), "worst": min(vals), "n_days": len(vals)} if vals
+                          else {"total": 0.0, "best": 0.0, "worst": 0.0, "n_days": 0})
+    totals = [w["total"] for w in week_stats]
+    best_week = worst_week = None
+    if len(totals) > 1 and max(totals) != min(totals):                 # con una sola settimana (o tutte uguali) nessun segno
+        best_week, worst_week = totals.index(max(totals)), totals.index(min(totals))
     return {
         "weeks": [s.strftime("%Y-%m-%d") for s in starts],
         "cells": cells,
@@ -43,4 +52,10 @@ def build_pl_calendar(dfh: pd.DataFrame | None, *, weeks: int = 13) -> dict[str,
         "total": sum(c["eur"] for c in cells),
         "up_days": sum(1 for c in cells if c["eur"] > 0.005),
         "down_days": sum(1 for c in cells if c["eur"] < -0.005),
+        "week_stats": week_stats,
+        "best_week": best_week,
+        "worst_week": worst_week,
+        "max_total_abs": max(abs(t) for t in totals) or 1.0,
+        "scale_min": min(0.0, min(w["worst"] for w in week_stats)),        # scala unica del mini grafico: include sempre lo zero
+        "scale_max": max(0.0, max(w["best"] for w in week_stats)),
     }

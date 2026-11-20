@@ -1073,7 +1073,7 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
 .ptf-pulse-dots b{width:10px;height:10px;border-radius:3px;display:inline-block}
 .ptf-pulse-dots b.d{background:var(--ptf-danger, #dc2626)}.ptf-pulse-dots b.u{background:var(--ptf-success, #16a34a)}.ptf-pulse-dots b.f{background:color-mix(in srgb, var(--ptf-muted) 45%, transparent)}
 .ptf-plcal{overflow-x:auto;padding:4px 2px 2px 2px}
-.ptf-plcal-grid{display:grid;grid-template-columns:34px repeat(var(--cols,13),minmax(var(--minw,54px),1fr));gap:var(--gap,4px);min-width:calc(34px + var(--cols,13) * var(--minw,54px))}
+.ptf-plcal-grid{display:grid;grid-template-columns:50px repeat(var(--cols,13),minmax(var(--minw,54px),1fr));gap:var(--gap,4px);min-width:calc(50px + var(--cols,13) * var(--minw,54px))}
 .ptf-plcal-wk{font-size:.70rem;font-weight:700;color:var(--ptf-muted);text-align:center;white-space:nowrap}
 .ptf-plcal-lbl{font-size:.72rem;font-weight:700;color:var(--ptf-muted);display:flex;align-items:center}
 .ptf-plcal-cell{border-radius:8px;padding:4px 2px;text-align:center;line-height:1.15;border:1px solid var(--ptf-border);background:var(--ptf-surface);min-height:42px;display:flex;flex-direction:column;justify-content:center}
@@ -1084,6 +1084,21 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
 .ptf-plcal-cell.is-down{background:color-mix(in srgb, var(--ptf-danger, #dc2626) calc(var(--i, .3) * 100%), var(--ptf-surface));border-color:transparent}
 .ptf-plcal-cell.is-strong b,.ptf-plcal-cell.is-strong .d{color:#fff}
 .ptf-plcal-cell.is-flat{background:var(--ptf-surface)}
+.ptf-plcal-mini{position:relative;border-radius:8px;border:1px solid var(--ptf-border);background:var(--ptf-surface)}
+.ptf-plcal-mini.is-empty{background:transparent;border-color:transparent}
+.ptf-plcal-mini .plot{position:absolute;left:0;right:0;top:15px;bottom:15px}
+.ptf-plcal-mini .zero{position:absolute;left:0;right:0;border-top:1px dashed var(--ptf-muted);opacity:.7}
+.ptf-plcal-mini .bar{position:absolute;left:40%;width:20%;border-radius:3px;background:var(--ptf-muted)}
+.ptf-plcal-mini .hi,.ptf-plcal-mini .lo{position:absolute;left:0;right:0;text-align:center;font-size:.62rem;font-weight:700;line-height:14px;color:var(--ptf-muted)}
+.ptf-plcal-mini .hi{top:0}.ptf-plcal-mini .lo{bottom:0}
+.ptf-plcal-mini .is-up{color:var(--ptf-success, #16a34a)}.ptf-plcal-mini .is-down{color:var(--ptf-danger, #dc2626)}
+.ptf-plcal-tot{border-radius:10px;padding:9px 2px;text-align:center;border:1px solid var(--ptf-border);background:var(--ptf-surface);margin-top:var(--gap,4px)}
+.ptf-plcal-tot b{font-size:.82rem;color:var(--ptf-text)}
+.ptf-plcal-tot.is-up{background:color-mix(in srgb, var(--ptf-success, #16a34a) calc(var(--i, .3) * 100%), var(--ptf-surface));border-color:transparent}
+.ptf-plcal-tot.is-down{background:color-mix(in srgb, var(--ptf-danger, #dc2626) calc(var(--i, .3) * 100%), var(--ptf-surface));border-color:transparent}
+.ptf-plcal-tot.is-strong b{color:#fff}
+.ptf-plcal-tot.is-best{outline:var(--mark,3px) solid var(--ptf-success, #16a34a);outline-offset:1px}
+.ptf-plcal-tot.is-worst{outline:var(--mark,3px) solid var(--ptf-danger, #dc2626);outline-offset:1px}
 .ptf-plcal b.is-up{color:var(--ptf-success, #16a34a)}.ptf-plcal b.is-down{color:var(--ptf-danger, #dc2626)}
 .ptf-pulse-balance{margin-top:16px}
 .ptf-pulse-balance{position:relative}

@@ -666,7 +666,10 @@ CHARTS: dict[str, dict[str, Any]] = {
      'cell_min_width_px': 54,
      'intensity_min': 0.10,
      'intensity_max': 0.85,
-     'strong_from': 0.6},
+     'strong_from': 0.6,
+     'mini_height_px': 84,          # altezza del mini grafico giorno peggiore / migliore per settimana
+     'total_gap_px': 10,            # spazio fra il mini grafico e la riga del totale settimanale
+     'mark_outline_px': 3},         # spessore del bordo della settimana migliore (▲) e peggiore (▼)
 
     # ------------------------------------------------------------------
     # QUOTAZIONI
