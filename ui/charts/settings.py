@@ -605,7 +605,60 @@ CHARTS: dict[str, dict[str, Any]] = {
      'y_nticks': 10,
      'x_nticks': 15,
      'title': '<b>P/L cumulativo per Categoria</b>',
+     # Aree impilate con segno (ui/charts/signed_stack.py): guadagni sopra lo zero, perdite sotto, linea del totale netto.
+     'stack_opacity': 0.82,
+     'stack_line_width': 1.0,
+     'net_line_width': 2.2,
+     'net_line_color': '#c026d3',        # fucsia (alternative provate: blu reale #1d4ed8, verde petrolio #0f766e, rosso mattone #9a3412)
+     'net_line_color_dark': '#e879f9',
+     'net_halo_width': 5.5,
+     'net_halo_opacity': 0.9,
+     'zero_line_width': 2.0,
+     'zero_line_color_strong': '#4b5563',
+     'zero_line_color_strong_dark': '#9ca3af',
      'show_extrema': True},
+
+    # ------------------------------------------------------------------
+    # PORTAFOGLIO — blocchi SVG/HTML (non Plotly): qui dimensioni e parametri,
+    # i colori vengono dai token CSS del tema (ui/styles.py, classi .ptf-pulse-*, .ptf-plcal-*)
+    # ------------------------------------------------------------------
+
+    # Termometro: candele giornaliere del P/L delle posizioni aperte (ui/termometro.py)
+    'termometro_candele': {'type': 'custom',
+     'width': 680,
+     'height': 200,
+     'pad': 14,
+     'axis_left': 54,
+     'axis_bottom': 22,
+     'axis_right': 64,
+     'max_days': 30,
+     'body_max_px': 20,
+     'body_slot_ratio': 0.56,
+     'min_body_px': 4,
+     'halo_margin_px': 9,
+     'y_ticks_target': 4,
+     'x_labels_max': 7,
+     # dimensioni dei testi, in unità del disegno (il disegno si adatta alla larghezza: ~1,4 volte in pixel)
+     'font_axis_px': 8.5,
+     'font_pill_px': 8.5},
+
+    # Termometro: bilancia guadagni/perdite per strumento (ui/termometro.py)
+    'termometro_bilancia': {'type': 'custom',
+     'bar_height': 40,
+     'shade_min_opacity': 0.55,
+     # testi in pixel reali (la bilancia è HTML, non scala con la larghezza)
+     'font_head_px': 13,
+     'font_seg_px': 10,
+     'font_net_px': 13},
+
+    # Portafoglio: calendario del P/L giornaliero (ui/pl_calendar.py)
+    'portafoglio_calendario_pl': {'type': 'custom',
+     'weeks': 13,
+     'cell_gap_px': 4,
+     'cell_min_width_px': 54,
+     'intensity_min': 0.10,
+     'intensity_max': 0.85,
+     'strong_from': 0.6},
 
     # ------------------------------------------------------------------
     # QUOTAZIONI
@@ -951,6 +1004,17 @@ CHARTS: dict[str, dict[str, Any]] = {
      'money_axis': 'auto',
      'y_nticks': 15,
      'title': '<b>Contributo al P/L (Area Stacked)</b>',
+     # Aree impilate con segno (ui/charts/signed_stack.py): guadagni sopra lo zero, perdite sotto, linea del totale netto.
+     'stack_opacity': 0.85,
+     'stack_line_width': 0.8,
+     'net_line_width': 2.2,
+     'net_line_color': '#c026d3',        # fucsia (alternative provate: blu reale #1d4ed8, verde petrolio #0f766e, rosso mattone #9a3412)
+     'net_line_color_dark': '#e879f9',
+     'net_halo_width': 5.5,
+     'net_halo_opacity': 0.9,
+     'zero_line_width': 2.0,
+     'zero_line_color_strong': '#4b5563',
+     'zero_line_color_strong_dark': '#9ca3af',
      'show_extrema': True},
 
     'andamento_percentage_return': {'type': 'time',

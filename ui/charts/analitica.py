@@ -9,6 +9,7 @@ from core.config import COLORS
 from ui.charts.extrema import add_extrema_markers
 from ui.charts.runtime import empty_chart, finalize_chart
 from ui.charts.settings import apply_settings
+from ui.charts.signed_stack import add_signed_stack, zero_line_style
 from ui.components import wrap_radar_label
 from ui.formatting import fmt_eur_it, fmt_num_it, fmt_pct_it, hex_to_rgba
 from ui.theme import P, instrument_color, macro_color
@@ -121,20 +122,26 @@ def build_pl_decomposition_time_chart(dfh, pl_cols, viz_mode, dfmt, theme):
 		chart_id = "andamento_pl_decomp_stacked" if viz_mode == "Stacked" else "andamento_pl_decomp_grouped"
 		return empty_chart(chart_id)
 	fig = go.Figure()
-	for col in pl_cols:
-		tk = col[3:]
-		stackgroup = "pl" if viz_mode == "Stacked" else None
-		fig.add_trace(
-			go.Scatter(
-				x=dfh["Data"],
-				y=dfh[col].fillna(0),
-				name=tk,
-				mode="lines",
-				stackgroup=stackgroup,
-				line=dict(width=0.7, color=instrument_color(tk)),
-				fillcolor=instrument_color(tk),
+	if viz_mode == "Stacked":
+		# Guadagni sopra lo zero, perdite sotto, linea del totale netto (TM-03): con segni misti la pila cumulata di Plotly
+		# nascondeva le perdite e mostrava una «montagna» di P/L anche quando il totale era nullo.
+		add_signed_stack(fig, dfh["Data"], [(col[3:], dfh[col], instrument_color(col[3:])) for col in pl_cols],
+		                 prefix="pl", chart_id="andamento_pl_decomp_stacked", theme=theme)
+		_zw, _zc = zero_line_style(theme, "andamento_pl_decomp_stacked")
+		fig.add_hline(y=0, line_width=_zw, line_color=_zc, layer="above")
+	else:
+		for col in pl_cols:
+			tk = col[3:]
+			fig.add_trace(
+				go.Scatter(
+					x=dfh["Data"],
+					y=dfh[col].fillna(0),
+					name=tk,
+					mode="lines",
+					line=dict(width=0.7, color=instrument_color(tk)),
+					fillcolor=instrument_color(tk),
+				)
 			)
-		)
 	chart_id = "andamento_pl_decomp_stacked" if viz_mode == "Stacked" else "andamento_pl_decomp_grouped"
 	if viz_mode == "Stacked" and pl_cols:
 		# Il marker deve riflettere il totale che lo stack mostra davvero (somma

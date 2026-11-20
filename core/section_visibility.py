@@ -20,6 +20,7 @@ PAGE_SECTIONS: dict[str, list[str]] = {
         "Sintesi allocazione",
         "Controvalore del Portafoglio",
         "Andamento dell'ultima settimana",
+        "Calendario del P/L",
         "Proventi per strumento",
         "P/L per Categoria",
         "Analisi per Macro-Categoria",

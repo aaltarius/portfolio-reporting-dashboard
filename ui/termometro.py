@@ -202,8 +202,19 @@ def _contributors_row(contrib: dict[str, Any] | None) -> str:
     )
 
 
-_CANDLE_W, _CANDLE_H, _CANDLE_PAD = 680.0, 200.0, 14.0
-_AXIS_L, _AXIS_B, _AXIS_R = 54.0, 22.0, 64.0   # margini: importi a sinistra, date in basso, etichetta dell'ultimo valore a destra
+
+
+def _geometry():
+    """Dimensioni del grafico a candele: tutte da `ui/charts/settings.py` (voce `termometro_candele`), nessun numero qui."""
+    from types import SimpleNamespace
+    from ui.charts.settings import get_chart_setting as cfg
+
+    def num(key, default):
+        return float(cfg("termometro_candele", key, default))
+    return SimpleNamespace(w=num("width", 680), h=num("height", 200), pad=num("pad", 14), left=num("axis_left", 54), bottom=num("axis_bottom", 22),
+                           right=num("axis_right", 64), body_max=num("body_max_px", 20), body_ratio=num("body_slot_ratio", 0.56),
+                           min_body=num("min_body_px", 4), halo_margin=num("halo_margin_px", 9), y_ticks=max(1.0, num("y_ticks_target", 4)),
+                           x_labels=max(1, int(num("x_labels_max", 7))), font_axis=num("font_axis_px", 8.5), font_pill=num("font_pill_px", 8.5))
 
 
 def _chart_points(candles: list[dict[str, Any]], line: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -227,19 +238,19 @@ def _nice_step(raw: float) -> float:
     return 10 ** (exp + 1)
 
 
-def _axes_svg(points: list[dict[str, Any]], lo: float, hi: float, y, xc) -> str:
+def _axes_svg(points: list[dict[str, Any]], lo: float, hi: float, y, xc, g) -> str:
     """Assi leggeri, senza linee di base: guide orizzontali tratteggiate con l'importo (P/L in euro) e le date in basso."""
     import math
-    step = _nice_step((hi - lo) / 4)
+    step = _nice_step((hi - lo) / g.y_ticks)
     out = []
     value = math.ceil(lo / step) * step
     while value <= hi + 1e-9:
         yy = y(value)
-        out.append(f"<line class='gr' x1='{_AXIS_L:.0f}' x2='{_CANDLE_W - _AXIS_R:.0f}' y1='{yy:.1f}' y2='{yy:.1f}'/>"
-                   f"<text class='ax' x='{_AXIS_L - 8:.0f}' y='{yy + 3.5:.1f}' text-anchor='end'>{html.escape(fmt_eur_it(value, 0, signed=True))}</text>")
+        out.append(f"<line class='gr' x1='{g.left:.0f}' x2='{g.w - g.right:.0f}' y1='{yy:.1f}' y2='{yy:.1f}'/>"
+                   f"<text class='ax' x='{g.left - 8:.0f}' y='{yy + 3.5:.1f}' text-anchor='end'>{html.escape(fmt_eur_it(value, 0, signed=True))}</text>")
         value += step
-    every = max(1, math.ceil(len(points) / 7))
-    base = _CANDLE_H - _AXIS_B
+    every = max(1, math.ceil(len(points) / g.x_labels))
+    base = g.h - g.bottom
     for i in range(0, len(points), every):
         out.append(f"<text class='ax' x='{xc(i):.1f}' y='{base + 16:.0f}' text-anchor='middle'>{html.escape(_date_it(points[i]['day']))}</text>")
     return "".join(out)
@@ -259,6 +270,7 @@ def _smooth_path(coords: list[tuple[float, float]]) -> str:
 def _candles_block(candles: list[dict[str, Any]] | None, line: list[dict[str, Any]] | None = None, gap: str | None = None) -> str:
     """Candele giornaliere del P/L delle posizioni aperte (letture archiviate, TM-01) collegate da una linea morbida; dove mancano le
     letture, il solo P/L di fine giornata. Un alone sfumato avvolge le candele. SVG inline, colori dai token del tema."""
+    g = _geometry()
     ok = [c for c in (candles or []) if all(isinstance(c.get(k), (int, float)) for k in ("open", "high", "low", "close"))]
     points = _chart_points(ok, line or [])
     head = "<span class='ptf-insights-eyebrow'>P/L delle posizioni: candele delle letture</span>"
@@ -272,18 +284,18 @@ def _candles_block(candles: list[dict[str, Any]] | None, line: list[dict[str, An
     lo, hi = min(lows), max(highs)
     span = (hi - lo) or max(abs(hi) * 0.001, 1.0)
     lo, hi, span = lo - span * 0.10, hi + span * 0.10, span * 1.20
-    plot_w, plot_h = _CANDLE_W - _AXIS_L - _AXIS_R, _CANDLE_H - _AXIS_B - 2 * _CANDLE_PAD
-    y = lambda v: _CANDLE_PAD + (hi - float(v)) / span * plot_h  # noqa: E731
+    plot_w, plot_h = g.w - g.left - g.right, g.h - g.bottom - 2 * g.pad
+    y = lambda v: g.pad + (hi - float(v)) / span * plot_h  # noqa: E731
     slot = plot_w / len(points)
-    xc = lambda i: _AXIS_L + slot * (i + 0.5)  # noqa: E731
-    body = min(slot * 0.56, 20.0)
-    right = _CANDLE_W - _AXIS_R
-    zero = (f"<line class='zero' x1='{_AXIS_L:.0f}' x2='{right:.0f}' y1='{y(0):.1f}' y2='{y(0):.1f}'/>" if lo < 0 < hi else "")
-    axes = _axes_svg(points, lo, hi, y, xc)
+    xc = lambda i: g.left + slot * (i + 0.5)  # noqa: E731
+    body = min(slot * g.body_ratio, g.body_max)
+    right = g.w - g.right
+    zero = (f"<line class='zero' x1='{g.left:.0f}' x2='{right:.0f}' y1='{y(0):.1f}' y2='{y(0):.1f}'/>" if lo < 0 < hi else "")
+    axes = _axes_svg(points, lo, hi, y, xc, g)
 
     candle_idx = [i for i, p in enumerate(points) if p["candle"]]
     envelope = list(range(candle_idx[0], candle_idx[-1] + 1))      # un unico alone dalla prima all'ultima candela
-    margin = 9.0   # margine dell'alone attorno alle candele, ottenuto allargando la forma (niente bordo: un solo colore uniforme)
+    margin = g.halo_margin   # margine dell'alone attorno alle candele, ottenuto allargando la forma (niente bordo: un solo colore uniforme)
     top_edge = [(xc(i), y(points[i]["candle"]["high"] if points[i]["candle"] else points[i]["value"]) - margin) for i in envelope]
     bottom_edge = [(xc(i), y(points[i]["candle"]["low"] if points[i]["candle"] else points[i]["value"]) + margin) for i in reversed(envelope)]
     left_x, right_x = top_edge[0][0] - body / 2 - 4, top_edge[-1][0] + body / 2 + 4
@@ -293,9 +305,13 @@ def _candles_block(candles: list[dict[str, Any]] | None, line: list[dict[str, An
     halo = f"<path class='cd-halo' d='{halo_d}'/>"
     line_path = _smooth_path([(xc(i), y(p["value"])) for i, p in enumerate(points)])
 
-    marks = []
+    marks, hits = [], []
     for i, p in enumerate(points):
         x, c = xc(i), p["candle"]
+        tip = (f"{_date_it(p['day'])}: fine giornata {fmt_eur_it(p['value'], 0, signed=True)}" if not c else
+               f"{_date_it(c['day'])} · apertura {fmt_eur_it(c['open'], 0, signed=True)} · massimo {fmt_eur_it(c['high'], 0, signed=True)} · "
+               f"minimo {fmt_eur_it(c['low'], 0, signed=True)} · chiusura {fmt_eur_it(c['close'], 0, signed=True)} · {int(c.get('n') or 0)} letture")
+        hits.append(f"<i style='left:{(x - slot / 2) / g.w * 100:.3f}%;width:{slot / g.w * 100:.3f}%' title='{html.escape(tip)}'></i>")
         if not c:
             marks.append(f"<circle class='ln-dot' cx='{x:.1f}' cy='{y(p['value']):.1f}' r='3'><title>"
                          f"{html.escape(_date_it(p['day']))} · fine giornata {html.escape(fmt_eur_it(p['value'], 0, signed=True))}</title></circle>")
@@ -307,15 +323,15 @@ def _candles_block(candles: list[dict[str, Any]] | None, line: list[dict[str, An
         marks.append(
             f"<g class='cd-{tone}'><title>{html.escape(title)}</title>"
             f"<line x1='{x:.1f}' x2='{x:.1f}' y1='{y(c['high']):.1f}' y2='{y(c['low']):.1f}'/>"
-            f"<rect x='{x - body / 2:.1f}' y='{top:.1f}' width='{body:.1f}' height='{max(bottom - top, 4.0):.1f}'/></g>"
+            f"<rect x='{x - body / 2:.1f}' y='{top:.1f}' width='{body:.1f}' height='{max(bottom - top, g.min_body):.1f}'/></g>"
         )
     last = ok[-1]
     last_x, last_y = xc(len(points) - 1), y(last["close"])
     change = float(last["close"]) - float(last["open"])
     tone = "is-up" if change > 0.005 else "is-down" if change < -0.005 else "is-flat"
     pill = (f"<g class='lastpill {'up' if change >= 0 else 'down'}'><line class='lastguide' x1='{last_x + body / 2 + 2:.1f}' x2='{right + 4:.0f}' y1='{last_y:.1f}' y2='{last_y:.1f}'/>"
-            f"<rect x='{right + 4:.0f}' y='{last_y - 10:.1f}' width='{_AXIS_R - 8:.0f}' height='20' rx='10'/>"
-            f"<text x='{right + 4 + (_AXIS_R - 8) / 2:.1f}' y='{last_y + 3.8:.1f}' text-anchor='middle'>{html.escape(fmt_eur_it(last['close'], 0, signed=True))}</text></g>")
+            f"<rect x='{right + 4:.0f}' y='{last_y - 8:.1f}' width='{g.right - 8:.0f}' height='16' rx='8'/>"
+            f"<text x='{right + 4 + (g.right - 8) / 2:.1f}' y='{last_y + 3.8:.1f}' text-anchor='middle'>{html.escape(fmt_eur_it(last['close'], 0, signed=True))}</text></g>")
     summary = (
         f"{html.escape(_date_it(last['day']))}: apertura {html.escape(fmt_eur_it(last['open'], 0, signed=True))} · "
         f"massimo {html.escape(fmt_eur_it(last['high'], 0, signed=True))} · minimo {html.escape(fmt_eur_it(last['low'], 0, signed=True))} · "
@@ -326,13 +342,59 @@ def _candles_block(candles: list[dict[str, Any]] | None, line: list[dict[str, An
     defs = ""
     return (
         f"<div class='ptf-pulse-candles'>{head}"
-        "<div class='ptf-candle-panel'>"
-        f"<svg viewBox='0 0 {_CANDLE_W:.0f} {_CANDLE_H:.0f}' role='img' aria-label='P/L delle posizioni: linea di fine giornata e candele'>"
-        f"{defs}{axes}{zero}{halo}<path class='ln' d='{line_path}'/>{''.join(marks)}{pill}</svg></div>"
+        "<div class='ptf-candle-panel'><div class='ptf-candle-stage'>"
+        f"<svg viewBox='0 0 {g.w:.0f} {g.h:.0f}' style='--fs-ax:{g.font_axis:g}px;--fs-pill:{g.font_pill:g}px' role='img' aria-label='P/L delle posizioni: linea di fine giornata e candele'>"
+        f"{defs}{axes}{zero}{halo}<path class='ln' d='{line_path}'/>{''.join(marks)}{pill}</svg>"
+        f"<div class='ptf-candle-hits'>{''.join(hits)}</div></div></div>"
         f"<div class='ptf-pulse-note ptf-pulse-center'>{summary}</div>"
         "<div class='ptf-pulse-note ptf-pulse-center'>P/L non realizzato delle posizioni aperte (valore − costo): gli acquisti non lo spostano; candela = giorno con letture, punto = solo fine giornata; "
         "l'alone avvolge le candele (escursione fra minimo e massimo); i fondi a valore giornaliero restano fermi</div>"
         f"{gap_note}</div>"
+    )
+
+
+def _balance_block(balance: dict[str, Any] | None) -> str:
+    """Bilancia guadagni/perdite per strumento, in HTML/CSS: i guadagni a destra, le perdite a sinistra, il rombo del netto.
+
+    HTML e non SVG perché i suggerimenti al passaggio del mouse (attributo `title`) funzionano ovunque e i testi hanno dimensione
+    reale in pixel (non scalata con la larghezza). Il nome nel segmento si accorcia da solo con i puntini se non entra (CSS).
+    Dimensioni e testi da `ui/charts/settings.py` (voce `termometro_bilancia`), colori dai token del tema (classi .bal-*)."""
+    if not balance or not (balance.get("gains") or balance.get("losses")):
+        return ""
+    from ui.charts.settings import get_chart_setting as cfg
+
+    def num(key, default):
+        return float(cfg("termometro_bilancia", key, default))
+    bar_h, min_op = num("bar_height", 40), num("shade_min_opacity", 0.55)
+    gains, losses = balance.get("gains") or [], balance.get("losses") or []
+    gain_total, loss_total = float(balance.get("gain_total") or 0.0), float(balance.get("loss_total") or 0.0)
+    net = float(balance.get("net") or 0.0)
+    span = max(gain_total, -loss_total, 1.0)           # scala unica: i due lati si confrontano alla pari
+
+    def segments(items: list[dict[str, Any]], cls: str) -> str:
+        n, out = len(items), []
+        for i, it in enumerate(items):
+            eur = float(it["eur"])
+            op = 1.0 - (1.0 - min_op) * (i / max(n - 1, 1))
+            tip = f"{it['ticker']}: {fmt_eur_it(eur, 0, signed=True)}"
+            out.append(f"<div class='bal-seg {cls}' style='flex:{abs(eur):.4f} 1 0;--op:{op:.2f}' title='{html.escape(tip)}'>"
+                       f"<span>{html.escape(str(it['ticker']))}</span></div>")
+        return "".join(out)
+    left_w, right_w = -loss_total / span * 50.0, gain_total / span * 50.0
+    net_pos = min(max(50.0 + net / span * 50.0, 4.0), 96.0)
+    tone = "is-up" if net > 0.005 else "is-down" if net < -0.005 else "is-flat"
+    return (
+        f"<div class='ptf-pulse-balance' style='--fs-head:{num('font_head_px', 13):g}px;--fs-seg:{num('font_seg_px', 10):g}px;--fs-net:{num('font_net_px', 13):g}px;--bar-h:{bar_h:g}px'>"
+        "<span class='ptf-insights-eyebrow'>Guadagni contro perdite</span>"
+        f"<div class='bal-heads'><b class='bal-hl'>Perdite {html.escape(fmt_eur_it(loss_total, 0, signed=True))}</b>"
+        f"<b class='bal-hg'>Guadagni {html.escape(fmt_eur_it(gain_total, 0, signed=True))}</b></div>"
+        "<div class='bal-bar'>"
+        f"<div class='bal-half bal-l'><div class='bal-stack' style='width:{left_w * 2:.3f}%'>{segments(losses, 'bal-loss')}</div></div>"
+        f"<div class='bal-half bal-r'><div class='bal-stack' style='width:{right_w * 2:.3f}%'>{segments(gains, 'bal-gain')}</div></div>"
+        f"<i class='bal-net' style='left:{net_pos:.2f}%' title='Totale netto: {html.escape(fmt_eur_it(net, 0, signed=True))}'></i></div>"
+        f"<div class='bal-net-t {tone}' style='left:{net_pos:.2f}%'>Netto {html.escape(fmt_eur_it(net, 0, signed=True))}</div>"
+        "<div class='ptf-pulse-note ptf-pulse-center'>P/L non realizzato delle posizioni aperte, strumento per strumento: più il segmento è largo più pesa; "
+        "il rombo è il totale netto. Passa il mouse su un segmento per vedere lo strumento e l'importo</div></div>"
     )
 
 
@@ -355,6 +417,7 @@ def build_portfolio_termometro_html(pulse: dict[str, Any] | None) -> str:
         f"{_breadth_row(pulse.get('breadth'))}"
         f"{_contributors_row(pulse.get('contributors'))}"
         f"{_candles_block(pulse.get('candles'), pulse.get('value_line'), pulse.get('readings_gap'))}"
+        f"{_balance_block(pulse.get('balance'))}"
         "</div></div>"
     )
 

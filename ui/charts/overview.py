@@ -8,6 +8,7 @@ from persistence.storage import macro_cat
 from ui.charts.extrema import add_extrema_markers
 from ui.charts.runtime import empty_chart, finalize_chart
 from ui.charts.settings import apply_settings, get_chart_setting
+from ui.charts.signed_stack import add_signed_stack, zero_line_style
 from ui.formatting import fmt_eur_it, hex_to_rgba
 from ui.theme import P, macro_color
 
@@ -91,6 +92,8 @@ def build_overview_time_chart(dfh_top, da_frame, view, pl_color, pl_total, chart
                     cat_map.setdefault(tk, macro_cat(str(s.get("tipo") or "")))
         pl_cols = [c for c in dfh_top.columns if c.startswith("PL_")]
         fig = go.Figure()
+        cat_series: list[tuple[str, pd.Series, str]] = []
+        chart_dates = dfh_top["Data"]
         for cat in visible_categories:
             ticker_cols = [c for c in pl_cols if cat_map.get(c[3:]) == cat]
             if ticker_cols:
@@ -99,19 +102,9 @@ def build_overview_time_chart(dfh_top, da_frame, view, pl_color, pl_total, chart
                 if da_frame is not None and not da_frame.empty and "Categoria" in da_frame.columns and "P/L €" in da_frame.columns:
                     current_cat_pl = float(pd.to_numeric(da_frame.loc[da_frame["Categoria"] == cat, "P/L €"], errors="coerce").fillna(0.0).sum())
                 chart_dates, chart_series = _with_current_point(dfh_top["Data"], series, current_cat_pl)
-                fig.add_trace(
-                    go.Scatter(
-                        x=chart_dates,
-                        y=chart_series,
-                        name=cat,
-                        mode="lines",
-                        stackgroup="one",
-                        line=dict(color=macro_color(cat), width=1.2),
-                        fillcolor=macro_color(cat),
-                        opacity=0.82,
-                        hovertemplate=f"{cat}: € %{{y:,.2f}}<extra></extra>",
-                    )
-                )
+                cat_series.append((cat, chart_series, macro_color(cat)))
+        # Guadagni sopra lo zero, perdite sotto, linea del totale netto (TM-03): vedi ui/charts/signed_stack.py.
+        add_signed_stack(fig, chart_dates, cat_series, prefix="cat", chart_id="overview_pl_categoria", theme=theme)
         total_all = pd.to_numeric(dfh_top[pl_cols].sum(axis=1), errors="coerce").dropna() if pl_cols else pd.Series(dtype=float)
         if len(total_all) >= 2:
             extrema_x = dfh_top.loc[total_all.index, "Data"]
@@ -125,17 +118,9 @@ def build_overview_time_chart(dfh_top, da_frame, view, pl_color, pl_total, chart
             )
         fig.update_layout(hovermode="x unified", uirevision="pl-cat-home")
         fig = apply_settings(fig, "overview_pl_categoria")
-        # Linea dello zero marcata: sopra le aree (layer="above"), altrimenti le aree impilate la coprono.
-        try:
-            default_zero_color = hex_to_rgba(theme.font_color, 0.85)
-        except Exception:
-            default_zero_color = "rgba(15,23,42,0.85)"
-        fig.add_hline(
-            y=0,
-            line_width=float(get_chart_setting("overview_pl_categoria", "zero_line_width", 2.5)),
-            line_color=get_chart_setting("overview_pl_categoria", "zero_line_color_strong", default_zero_color),
-            layer="above",
-        )
+        # Linea dello zero marcata in grigio scuro (settings.py): sopra le aree (layer="above"), altrimenti le aree la coprono.
+        zero_width, zero_color = zero_line_style(theme, "overview_pl_categoria")
+        fig.add_hline(y=0, line_width=zero_width, line_color=zero_color, layer="above")
         return fig
 
     fig = go.Figure()

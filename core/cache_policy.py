@@ -255,7 +255,7 @@ register_cache_artifact(
         level="L3",
         owner="ui.pages.home._build_positions_table_payload",
         storage="page_artifact",
-        version="positions-table-v2",
+        version="positions-table-v3",
         dependencies=(
             "portfolio_data_signature",
             "latest_quotes",

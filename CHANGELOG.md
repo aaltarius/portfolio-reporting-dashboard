@@ -7,6 +7,15 @@ Questo file è stato riscritto in forma sintetica il 02/11/2026. Il testo integr
 ## [Non rilasciato]
 
 ### Modificato
+- Termometro, bilancia: ora si vedono molti più nomi di strumento (il testo si accorcia con i puntini nei segmenti stretti) e passando il mouse su un segmento compare lo strumento con l'importo; lo stesso suggerimento è nelle candele (apertura, massimo, minimo, chiusura, letture).
+- Grafici con aree con segno: la linea del «Totale netto» è fucsia (con alone) e la linea dello zero grigio scuro; i colori sono in `ui/charts/settings.py` (alternative provate: blu reale, verde petrolio, rosso mattone).
+- Termometro: testi di candele e bilancia più piccoli (dimensioni in `ui/charts/settings.py`).
+- Portafoglio, Termometro: sotto le candele c'è ora la «bilancia» guadagni contro perdite, strumento per strumento, con il rombo del totale netto.
+- Portafoglio: nuova sezione nascondibile «Calendario del P/L» (sopra «P/L per Categoria»), un riquadro per giorno di Borsa degli ultimi tre mesi, verde o rosso con l'importo.
+- Grafici nuovi e ritoccati (candele, bilancia, calendario, aree con segno): dimensioni, spessori, opacità, colore della linea del totale e giorni mostrati stanno in `ui/charts/settings.py`.
+- Grafici «Contributo al P/L (Area Stacked)» e «P/L cumulativo per Categoria»: la linea «Totale netto» è grigio ardesia con un alone nel colore dello sfondo (chiara sui temi scuri) al posto del nero.
+- Strumento `tools/prova_grafici_pl.py`: genera in sola lettura due pagine HTML di prove (classifica dei contributi, cascata, mappa di calore, variazione giornaliera; bilancia guadagni/perdite, mappa del portafoglio, quadranti, calendario) in `data/cache/prove_grafici/`, senza toccare i grafici dell'app.
+- Grafici «Contributo al P/L (Area Stacked)» e «P/L cumulativo per Categoria»: i guadagni si impilano sopra lo zero e le perdite sotto, con una linea del totale netto (prima, con guadagni e perdite insieme, le aree mostravano un P/L di centinaia di euro anche quando il totale era nullo e nascondevano le perdite).
 - Sincronizzazione Mobile: la pastiglia «Mobile» in alto mostra «Letture N» (totale cumulativo dall'avvio) quando arrivano letture di giornata; in Dati l'ultimo controllo riporta quante sono state archiviate o scartate.
 - Sincronizzazione Mobile: il Desktop scarica le letture intraday del Mobile (Worker 1.5.9, solo ambiente di prova) nell'archivio delle candele e le conferma al Mobile solo dopo averle salvate; un Worker precedente continua a funzionare come prima. Se il Mobile dichiara letture perse, il Termometro lo segnala.
 - Portafoglio, Termometro: candele giornaliere del P/L delle posizioni aperte (apertura, massimo, minimo, chiusura; gli acquisti non lo spostano), con linea di fine giornata e alone, costruite dalle letture di prezzo di ogni aggiornamento, anche quelle importate dal Mobile. Le letture si conservano in un archivio locale che cresce a ogni aggiornamento (400 giorni); all'inizio il grafico mostra solo i giorni già presenti nel registro quotazioni.

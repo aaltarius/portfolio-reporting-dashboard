@@ -226,6 +226,8 @@ def build_portfolio_pulse(
     price_frame: pd.DataFrame | None = None,
     candles: list[dict[str, Any]] | None = None,
     readings_gap: str | None = None,
+    balance: dict[str, Any] | None = None,
+    line_days: int = 30,
 ) -> dict[str, Any] | None:
     """Ritorna il payload del Termometro, o None se lo storico e' troppo corto.
 
@@ -319,5 +321,6 @@ def build_portfolio_pulse(
         "contributors": _month_contributors(work, refs["1m"][0], last_pos),
         "candles": list(candles or []),
         "readings_gap": readings_gap,
-        "value_line": _value_line(work),
+        "balance": balance,
+        "value_line": _value_line(work, line_days),
     }

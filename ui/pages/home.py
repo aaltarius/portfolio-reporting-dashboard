@@ -37,6 +37,8 @@ from core.services import (
     build_weekly_pl_table,
 )
 from core.services.portfolio_insights import build_maturity_only_insights, build_portfolio_insights
+from core.services.pl_balance import build_pl_balance
+from core.services.pl_calendar import build_pl_calendar
 from core.services.portfolio_pulse import build_portfolio_pulse
 from persistence.storage import SATOR_DECISIONS_FILE, macro_cat
 from core.finance import build_proventi_summary
@@ -64,9 +66,10 @@ from ui.charts.portfolio_popup import render_portfolio_table_with_popup, render_
 from ui.charts.tables import color_pl, style_macro_cols
 from ui.insights import render_portfolio_insights
 from ui.market_tape import render_market_ticker_tape
+from ui.pl_calendar import render_pl_calendar
 from ui.termometro import render_portfolio_termometro
 from ui.page_chrome import render_page_intro as render_page_intro_shared
-from ui.charts.settings import apply_settings
+from ui.charts.settings import apply_settings, get_chart_setting
 
 _DAILY_EUR_DISPLAY_EPS = 0.005
 
@@ -914,7 +917,7 @@ def _build_positions_table_payload(
                 from core import readings_store
                 from core.services.portfolio_candles import build_portfolio_candles
                 first_day = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
-                candles = build_portfolio_candles(readings_store.read_since(first_day), data, max_days=30)
+                candles = build_portfolio_candles(readings_store.read_since(first_day), data, max_days=int(get_chart_setting("termometro_candele", "max_days", 30)))
                 readings_gap = readings_store.last_gap_day(first_day)
             except Exception:  # noqa: BLE001
                 logger.exception("Candele del Termometro non costruite")
@@ -925,6 +928,8 @@ def _build_positions_table_payload(
                 price_frame=price_frame,
                 candles=candles,
                 readings_gap=readings_gap,
+                balance=build_pl_balance(table_df),
+                line_days=int(get_chart_setting("termometro_candele", "max_days", 30)),
             )
     return {
         "da": table_df,
@@ -1022,6 +1027,24 @@ def _render_portfolio_table_section(
                         "più significativa (posizione chiusa)."
                     )
 
+        if should_render_section("Portafoglio", "Calendario del P/L", settings):
+            if not dfh_top.empty and len(dfh_top) > 1:
+                with profile_step("Portafoglio", "render calendario P/L", count=len(dfh_top)):
+                    _pl_cal = build_pl_calendar(dfh_top, weeks=int(get_chart_setting("portafoglio_calendario_pl", "weeks", 13)))
+                    if _pl_cal:
+                        render_section_title(
+                            "Calendario del P/L",
+                            icon="chart",
+                            gap_after="xs",
+                        )
+                        render_pl_calendar(_pl_cal)
+                        legend_block(
+                            "Un riquadro per ogni giorno di Borsa: verde se il P/L delle posizioni aperte è salito, rosso se è sceso "
+                            "(più intenso = variazione più grande rispetto al giorno migliore o peggiore del periodo). Conta solo il "
+                            "mercato: acquisti, vendite e liquidità non producono variazioni. Uno strumento entra nel conto dal giorno "
+                            "dopo il suo primo prezzo."
+                        )
+
         if should_render_section("Portafoglio", "P/L per Categoria", settings):
             if not dfh_top.empty and len(dfh_top) > 1:
                 with profile_step("Portafoglio", "render P/L per categoria", count=len(dfh_top)):
@@ -1040,13 +1063,13 @@ def _render_portfolio_table_section(
                             lambda: build_overview_time_chart(
                                 dfh_top, da, "P/L per Categoria", None, 0.0, None, None, theme, settings=settings, total_return=None, data=data
                             ),
-                            extra_params={"rows": len(dfh_top), "cats": "|".join(get_selected_category_codes(settings)), "cache_bust": "pl_cat_zero_line_v1"},
+                            extra_params={"rows": len(dfh_top), "cats": "|".join(get_selected_category_codes(settings)), "cache_bust": "pl_cat_signed_stack_v3"},
                         )
                     st.plotly_chart(fig_cat_history, width="stretch")
                     legend_block(
                         "Vista storica (non le sole posizioni aperte oggi): andamento del P/L delle categorie "
-                        "visibili nel tempo, sovrapposte (area impilata). Include il contributo di strumenti "
-                        "successivamente chiusi o rimborsati per il periodo in cui sono stati detenuti."
+                        "visibili nel tempo, con i guadagni impilati sopra lo zero e le perdite sotto; la linea è il totale netto. "
+                        "Include il contributo di strumenti successivamente chiusi o rimborsati per il periodo in cui sono stati detenuti."
                     )
 
         if should_render_section("Portafoglio", "Proventi per strumento", settings):
