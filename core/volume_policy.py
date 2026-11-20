@@ -35,7 +35,7 @@ FIGURE_CACHE_MAX_MB = 100
 # riusano piu'. Prima: 4.766 file per le sole figure per strumento.
 FIGURE_CACHE_MAX_VARIANTS_PER_CHART = 3
 
-# Archivio letture di prezzo (`data/cache/letture_intraday.sqlite3`, TM-01): giorni conservati, potatura per data.
+# Archivio letture di prezzo (`data/cache/letture_intraday.sqlite3`, TM-05): giorni conservati, potatura per data.
 READINGS_RETENTION_DAYS = 400
 
 # Artefatti pagina (`data/cache/page_artifacts`): versioni per (pagina, layer).

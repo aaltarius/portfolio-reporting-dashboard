@@ -738,7 +738,7 @@ def render_sidebar(data: dict) -> None:
                 + list(quotes_log.get("items", []))[: max(retain * max(n, 1), 0)]
             )
             save_quotes_log(quotes_log)
-            try:  # TM-01: le letture di questo aggiornamento entrano nell'archivio incrementale (candele del Termometro)
+            try:  # TM-05: le letture di questo aggiornamento entrano nell'archivio incrementale (candele del Termometro)
                 from core import readings_store
                 readings_store.add_from_quotes_log_items(quote_items)
                 readings_store.prune()

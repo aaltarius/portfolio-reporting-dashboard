@@ -49,7 +49,7 @@ def _log_import_in_quotes_log(applied: list[dict], stamp: str) -> None:
         log["last_refresh_source"] = f"Mobile · {len(applied)} {'prezzo' if len(applied) == 1 else 'prezzi'}"
         log["items"] = items + list(log.get("items", []))[:200]
         save_quotes_log(log)
-        from core import readings_store     # TM-01: anche le letture del Mobile alimentano le candele del Termometro
+        from core import readings_store     # TM-05: anche le letture del Mobile alimentano le candele del Termometro
         readings_store.add_from_quotes_log_items(items)
     except Exception:  # noqa: BLE001 - il registro è un di più
         logger.exception("Registro quotazioni non aggiornato dopo l'importazione dal Mobile")

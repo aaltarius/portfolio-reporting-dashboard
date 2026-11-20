@@ -123,7 +123,7 @@ def build_pl_decomposition_time_chart(dfh, pl_cols, viz_mode, dfmt, theme):
 		return empty_chart(chart_id)
 	fig = go.Figure()
 	if viz_mode == "Stacked":
-		# Guadagni sopra lo zero, perdite sotto, linea del totale netto (TM-03): con segni misti la pila cumulata di Plotly
+		# Guadagni sopra lo zero, perdite sotto, linea del totale netto (TM-07): con segni misti la pila cumulata di Plotly
 		# nascondeva le perdite e mostrava una «montagna» di P/L anche quando il totale era nullo.
 		add_signed_stack(fig, dfh["Data"], [(col[3:], dfh[col], instrument_color(col[3:])) for col in pl_cols],
 		                 prefix="pl", chart_id="andamento_pl_decomp_stacked", theme=theme)

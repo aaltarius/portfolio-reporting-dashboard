@@ -1,4 +1,4 @@
-"""Calendario del P/L giornaliero (TM-03): una cella per giorno di Borsa, con la variazione di P/L dovuta al mercato.
+"""Calendario del P/L giornaliero (TM-07): una cella per giorno di Borsa, con la variazione di P/L dovuta al mercato.
 
 Funzioni pure. La variazione del giorno è la somma, strumento per strumento, delle variazioni della colonna `PL_<ticker>`
 (P/L non realizzato = quantità × prezzo − costo) fra due giorni consecutivi **in cui lo strumento è posseduto**: uno

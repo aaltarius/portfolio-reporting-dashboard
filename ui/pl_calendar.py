@@ -1,4 +1,4 @@
-"""Calendario del P/L giornaliero del Portafoglio (TM-03): griglia di riquadri, uno per giorno di Borsa.
+"""Calendario del P/L giornaliero del Portafoglio (TM-07): griglia di riquadri, uno per giorno di Borsa.
 
 HTML/CSS puro, nessun Plotly. Parametri in `ui/charts/settings.py` (voce `portafoglio_calendario_pl`), colori dai token del tema
 (classi .ptf-plcal-* in `ui/styles.py`). I dati arrivano da `core.services.pl_calendar.build_pl_calendar`."""

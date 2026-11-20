@@ -912,7 +912,7 @@ def _build_positions_table_payload(
         with profile_step("Portafoglio", "build termometro portafoglio"):
             candles: list[dict[str, Any]] = []
             readings_gap = None
-            try:  # TM-01: candele dalle letture archiviate; un errore qui non deve togliere il resto del Termometro
+            try:  # TM-05: candele dalle letture archiviate; un errore qui non deve togliere il resto del Termometro
                 from core import readings_store
                 from core.services.portfolio_candles import build_portfolio_candles
                 first_day = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
@@ -1473,7 +1473,7 @@ def render_home(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
             _portfolio_daily_report: dict[str, Any] | None = None
             _portfolio_insights = []
             if not da.empty:
-                try:  # TM-01: la prima volta porta nell'archivio le letture già presenti nel registro quotazioni
+                try:  # TM-05: la prima volta porta nell'archivio le letture già presenti nel registro quotazioni
                     from core import readings_store as _readings_store
                     _readings_store.ensure_initial_backfill(getattr(ctx, "quotes_log", None))
                     _readings_rev = _readings_store.revision()

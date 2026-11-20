@@ -1,7 +1,7 @@
 """Aree impilate «con segno»: i contributi positivi si impilano sopra lo zero, quelli negativi sotto, più una linea del totale netto.
 
 Plotly impila le aree sommando i valori in ordine: con segni misti (guadagni e perdite insieme) i bordi cumulati non
-corrispondono a nulla di leggibile e le perdite finiscono nascoste sotto i guadagni (TM-03). Qui ogni serie si divide in
+corrispondono a nulla di leggibile e le perdite finiscono nascoste sotto i guadagni (TM-07). Qui ogni serie si divide in
 parte positiva (gruppo `<prefisso>_pos`, impilato verso l'alto) e parte negativa (`<prefisso>_neg`, verso il basso); la
 somma algebrica è la linea «Totale netto». Nessuna formula nuova: sono gli stessi valori, solo disegnati separando i segni.
 

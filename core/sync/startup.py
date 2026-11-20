@@ -168,7 +168,7 @@ def check_now(settings, *, context=None, now=None, apply_fn=None) -> dict:
         payload = obs.fetch_payload(transport, obs_path)
         found = obs.observations_of(payload)
         if payload is not None and result["state"] in ("aligned", "sending"):
-            try:   # TM-02: letture intraday del Mobile nell'archivio locale (solo candele del Termometro), poi conferma al Worker
+            try:   # TM-06: letture intraday del Mobile nell'archivio locale (solo candele del Termometro), poi conferma al Worker
                 from core.sync import readings_pull
                 readings_out = readings_pull.pull(transport, payload, data, observations_path=obs_path, log_path=state_dir / "readings_log.jsonl")
             except Exception:  # noqa: BLE001 - mai a scapito dell'esito principale

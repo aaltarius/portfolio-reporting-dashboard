@@ -1,4 +1,4 @@
-"""Bilancia del P/L (TM-03): guadagni contro perdite, per strumento, delle posizioni aperte, oggi e il giorno prima.
+"""Bilancia del P/L (TM-07): guadagni contro perdite, per strumento, delle posizioni aperte, oggi e il giorno prima.
 
 Funzioni pure. Nessuna formula nuova: il P/L di ogni strumento è la colonna `PL_<ticker>` dello storico del portafoglio
 (P/L non realizzato = quantità × prezzo − costo, la stessa del Termometro e delle candele); qui si dividono solo i positivi

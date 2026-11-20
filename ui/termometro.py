@@ -268,7 +268,7 @@ def _smooth_path(coords: list[tuple[float, float]]) -> str:
 
 
 def _candles_block(candles: list[dict[str, Any]] | None, line: list[dict[str, Any]] | None = None, gap: str | None = None) -> str:
-    """Candele giornaliere del P/L delle posizioni aperte (letture archiviate, TM-01) collegate da una linea morbida; dove mancano le
+    """Candele giornaliere del P/L delle posizioni aperte (letture archiviate, TM-05) collegate da una linea morbida; dove mancano le
     letture, il solo P/L di fine giornata. Un alone sfumato avvolge le candele. SVG inline, colori dai token del tema."""
     g = _geometry()
     ok = [c for c in (candles or []) if all(isinstance(c.get(k), (int, float)) for k in ("open", "high", "low", "close"))]

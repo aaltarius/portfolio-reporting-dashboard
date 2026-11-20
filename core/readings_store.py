@@ -1,4 +1,4 @@
-"""Archivio incrementale delle letture di prezzo (TM-01): una riga per strumento e istante di mercato.
+"""Archivio incrementale delle letture di prezzo (TM-05): una riga per strumento e istante di mercato.
 
 SQLite locale in `data/cache/` (dato personale: mai in git, mai online). Si aggiunge solo con
 «inserisci se non esiste» sulla chiave (strumento, istante di mercato): la stessa lettura vista dal Desktop e

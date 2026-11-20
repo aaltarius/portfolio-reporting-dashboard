@@ -103,7 +103,7 @@ def build_overview_time_chart(dfh_top, da_frame, view, pl_color, pl_total, chart
                     current_cat_pl = float(pd.to_numeric(da_frame.loc[da_frame["Categoria"] == cat, "P/L €"], errors="coerce").fillna(0.0).sum())
                 chart_dates, chart_series = _with_current_point(dfh_top["Data"], series, current_cat_pl)
                 cat_series.append((cat, chart_series, macro_color(cat)))
-        # Guadagni sopra lo zero, perdite sotto, linea del totale netto (TM-03): vedi ui/charts/signed_stack.py.
+        # Guadagni sopra lo zero, perdite sotto, linea del totale netto (TM-07): vedi ui/charts/signed_stack.py.
         add_signed_stack(fig, chart_dates, cat_series, prefix="cat", chart_id="overview_pl_categoria", theme=theme)
         total_all = pd.to_numeric(dfh_top[pl_cols].sum(axis=1), errors="coerce").dropna() if pl_cols else pd.Series(dtype=float)
         if len(total_all) >= 2:

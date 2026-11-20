@@ -1,4 +1,4 @@
-"""Candele giornaliere del P/L delle posizioni aperte dalle letture di prezzo (TM-01).
+"""Candele giornaliere del P/L delle posizioni aperte dalle letture di prezzo (TM-05).
 
 Funzione pura: nessuna dipendenza da Streamlit né dall'archivio (le letture si passano). Nessuna formula nuova:
 le quantità di ogni giorno si ricostruiscono con la stessa funzione di replay degli eventi usata dallo storico del

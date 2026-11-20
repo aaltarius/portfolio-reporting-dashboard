@@ -1,4 +1,4 @@
-"""Letture intraday del Mobile (TM-02): scarico nell'archivio locale e conferma al Worker.
+"""Letture intraday del Mobile (TM-06): scarico nell'archivio locale e conferma al Worker.
 
 Il Worker 1.5.9 aggiunge a `GET /api/v2/observations` il campo opzionale `readings` (tutte le letture della giornata, ordinate
 per `seq`, al massimo 500 per risposta) e offre `POST /api/v2/observations/ack` con `{"upTo": seq}`, che cancella dal Mobile
