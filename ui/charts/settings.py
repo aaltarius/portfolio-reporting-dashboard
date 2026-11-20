@@ -636,17 +636,18 @@ CHARTS: dict[str, dict[str, Any]] = {
      'height': 200,
      'pad': 14,
      'axis_left': 54,
-     'axis_bottom': 22,
+     'axis_bottom': 30,
      'axis_right': 64,
      'max_days': 30,
      'body_max_px': 20,
      'body_slot_ratio': 0.56,
      'min_body_px': 4,
      'halo_margin_px': 9,
-     'y_ticks_target': 4,
+     'y_ticks_target': 9,   # guide orizzontali più fitte: passi tondi da 50/100 euro (si adattano all'escursione)
      'x_labels_max': 7,
      # dimensioni dei testi, in unità del disegno (il disegno si adatta alla larghezza: ~1,4 volte in pixel)
      'font_axis_px': 8.5,
+     'font_axis_x_px': 7.5,   # giorni e mesi sull'asse orizzontale, appena più piccoli
      'font_pill_px': 8.5},
 
     # Termometro: bilancia guadagni/perdite per strumento (ui/termometro.py)

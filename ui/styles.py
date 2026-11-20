@@ -1133,6 +1133,8 @@ div[data-testid="stDataFrame"], div[data-testid="stDataEditor"], div[data-testid
 .ptf-pulse-candles .gr{stroke:var(--ptf-muted);stroke-width:.7;stroke-dasharray:2 5;opacity:.35}
 .ptf-pulse-candles .zero{stroke:var(--ptf-muted);stroke-width:1.1;stroke-dasharray:5 4;opacity:.7}
 .ptf-pulse-candles .ax{fill:var(--ptf-muted);font-size:var(--fs-ax,8.5px);font-family:inherit;font-weight:600;opacity:.9}
+.ptf-pulse-candles .axd{font-size:var(--fs-axd,7.5px)}
+.ptf-pulse-candles .axm{font-weight:800;opacity:1}
 .ptf-pulse-candles .cd-halo{fill:var(--ptf-primary, #5b8def);fill-opacity:.15;stroke:none}
 .ptf-pulse-candles .ln{fill:none;stroke:var(--ptf-primary, #5b8def);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;opacity:.55}
 .ptf-pulse-candles .ln-dot{fill:var(--ptf-surface);stroke:var(--ptf-primary, #5b8def);stroke-width:2}

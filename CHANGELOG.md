@@ -7,6 +7,8 @@ Questo file è stato riscritto in forma sintetica il 02/11/2026. Il testo integr
 ## [Non rilasciato]
 
 ### Modificato
+- Termometro, candele: l'asse orizzontale mostra tutti i giorni (solo il numero, font più piccolo) e il mese in grassetto sotto il primo giorno disponibile di ogni mese; dimensioni in `ui/charts/settings.py` (`font_axis_x_px`, `axis_bottom`).
+- Termometro, candele: le linee orizzontali dell'asse verticale sono più fitte, con passi tondi (50, 100, 200 euro… in base all'escursione del P/L); numero di linee in `ui/charts/settings.py` (`y_ticks_target`).
 - Portafoglio, Calendario del P/L: sotto i giorni c'è ora, per ogni settimana, un mini grafico dal giorno peggiore al giorno migliore e, più in basso, il totale della settimana (▲ la migliore, ▼ la peggiore); dimensioni in `ui/charts/settings.py`.
 - Grafici con aree con segno: la linea del «Totale netto» è nera (spessore 2) su una fascia grigio chiaro larga 4, e la linea dello zero è grigio scuro; stile e colori sono in `ui/charts/settings.py`.
 - Termometro, bilancia: ora si vedono molti più nomi di strumento (il testo si accorcia con i puntini nei segmenti stretti) e passando il mouse su un segmento compare lo strumento con l'importo; lo stesso suggerimento è nelle candele (apertura, massimo, minimo, chiusura, letture).

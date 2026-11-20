@@ -214,7 +214,7 @@ def _geometry():
     return SimpleNamespace(w=num("width", 680), h=num("height", 200), pad=num("pad", 14), left=num("axis_left", 54), bottom=num("axis_bottom", 22),
                            right=num("axis_right", 64), body_max=num("body_max_px", 20), body_ratio=num("body_slot_ratio", 0.56),
                            min_body=num("min_body_px", 4), halo_margin=num("halo_margin_px", 9), y_ticks=max(1.0, num("y_ticks_target", 4)),
-                           x_labels=max(1, int(num("x_labels_max", 7))), font_axis=num("font_axis_px", 8.5), font_pill=num("font_pill_px", 8.5))
+                           x_labels=max(1, int(num("x_labels_max", 7))), font_axis=num("font_axis_px", 8.5), font_axis_x=num("font_axis_x_px", 7.5), font_pill=num("font_pill_px", 8.5))
 
 
 def _chart_points(candles: list[dict[str, Any]], line: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -227,12 +227,12 @@ def _chart_points(candles: list[dict[str, Any]], line: list[dict[str, Any]]) -> 
 
 
 def _nice_step(raw: float) -> float:
-    """Passo «tondo» (1, 2, 2,5, 5 × 10^n) per le tacche dell'asse verticale."""
+    """Passo «tondo» (1, 2, 5 × 10^n: 10, 20, 50, 100, 200 euro…) per le tacche dell'asse verticale."""
     import math
     if raw <= 0:
         return 1.0
     exp = math.floor(math.log10(raw))
-    for mult in (1, 2, 2.5, 5, 10):
+    for mult in (1, 2, 5, 10):
         if raw <= mult * 10 ** exp:
             return mult * 10 ** exp
     return 10 ** (exp + 1)
@@ -249,10 +249,18 @@ def _axes_svg(points: list[dict[str, Any]], lo: float, hi: float, y, xc, g) -> s
         out.append(f"<line class='gr' x1='{g.left:.0f}' x2='{g.w - g.right:.0f}' y1='{yy:.1f}' y2='{yy:.1f}'/>"
                    f"<text class='ax' x='{g.left - 8:.0f}' y='{yy + 3.5:.1f}' text-anchor='end'>{html.escape(fmt_eur_it(value, 0, signed=True))}</text>")
         value += step
-    every = max(1, math.ceil(len(points) / g.x_labels))
     base = g.h - g.bottom
-    for i in range(0, len(points), every):
-        out.append(f"<text class='ax' x='{xc(i):.1f}' y='{base + 16:.0f}' text-anchor='middle'>{html.escape(_date_it(points[i]['day']))}</text>")
+    months = ("gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic")
+    prev_month = None
+    for i, p in enumerate(points):
+        try:
+            d = datetime.strptime(str(p["day"]), "%Y-%m-%d")
+        except ValueError:
+            continue
+        out.append(f"<text class='ax axd' x='{xc(i):.1f}' y='{base + 13:.0f}' text-anchor='middle'>{d.day}</text>")
+        if d.month != prev_month:   # il mese compare sotto il primo giorno disponibile di ogni mese (l'1 può mancare: festivo, nessuna lettura)
+            out.append(f"<text class='ax axd axm' x='{xc(i):.1f}' y='{base + 24:.0f}' text-anchor='middle'>{months[d.month - 1]}</text>")
+        prev_month = d.month
     return "".join(out)
 
 
@@ -343,7 +351,7 @@ def _candles_block(candles: list[dict[str, Any]] | None, line: list[dict[str, An
     return (
         f"<div class='ptf-pulse-candles'>{head}"
         "<div class='ptf-candle-panel'><div class='ptf-candle-stage'>"
-        f"<svg viewBox='0 0 {g.w:.0f} {g.h:.0f}' style='--fs-ax:{g.font_axis:g}px;--fs-pill:{g.font_pill:g}px' role='img' aria-label='P/L delle posizioni: linea di fine giornata e candele'>"
+        f"<svg viewBox='0 0 {g.w:.0f} {g.h:.0f}' style='--fs-ax:{g.font_axis:g}px;--fs-axd:{g.font_axis_x:g}px;--fs-pill:{g.font_pill:g}px' role='img' aria-label='P/L delle posizioni: linea di fine giornata e candele'>"
         f"{defs}{axes}{zero}{halo}<path class='ln' d='{line_path}'/>{''.join(marks)}{pill}</svg>"
         f"<div class='ptf-candle-hits'>{''.join(hits)}</div></div></div>"
         f"<div class='ptf-pulse-note ptf-pulse-center'>{summary}</div>"
