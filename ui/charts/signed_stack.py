@@ -22,7 +22,7 @@ NET_NAME = "Totale netto"
 
 
 def net_line_style(theme, chart_id: str | None = None) -> tuple[str, str]:
-    """(colore della linea, colore dell'alone): colori dal blocco del grafico in settings.py (chiaro/scuro) e alone nel colore dello sfondo."""
+    """(colore della linea, colore dell'alone): colori dal blocco del grafico in settings.py (chiaro/scuro); alone 'auto' = colore dello sfondo."""
     bg = str(getattr(theme, "bg_chart", None) or "#ffffff").lstrip("#")
     try:
         r, g, b = (int(bg[i:i + 2], 16) for i in (0, 2, 4))
@@ -31,7 +31,10 @@ def net_line_style(theme, chart_id: str | None = None) -> tuple[str, str]:
         dark = False
     key = "net_line_color_dark" if dark else "net_line_color"
     color = get_chart_setting(chart_id, key, "#cbd5e1" if dark else "#475569") if chart_id else ("#cbd5e1" if dark else "#475569")
-    return str(color), (f"#{bg}" if len(bg) == 6 else "#ffffff")
+    halo = str(get_chart_setting(chart_id, "net_halo_color_dark" if dark else "net_halo_color", "auto")) if chart_id else "auto"
+    if halo == "auto":
+        halo = f"#{bg}" if len(bg) == 6 else "#ffffff"
+    return str(color), halo
 
 
 def zero_line_style(theme, chart_id: str) -> tuple[float, str]:
@@ -65,6 +68,8 @@ def add_signed_stack(
     net_width = float(get_chart_setting(chart_id, "net_line_width", 2.2))
     halo_width = float(get_chart_setting(chart_id, "net_halo_width", 5.5))
     halo_opacity = float(get_chart_setting(chart_id, "net_halo_opacity", 0.9))
+    net_dash = str(get_chart_setting(chart_id, "net_line_dash", "solid"))
+    marker_size = float(get_chart_setting(chart_id, "net_marker_size", 0))
     net_color, halo_color = net_line_style(theme, chart_id)
 
     items = [(name, pd.to_numeric(pd.Series(values).reset_index(drop=True), errors="coerce").fillna(0.0), color)
@@ -84,12 +89,15 @@ def add_signed_stack(
                 hoverinfo="text", hovertext=hover,
             ))
     if show_net and items:
-        fig.add_trace(go.Scatter(     # alone: stacca la linea dalle aree colorate, senza voce in legenda né hover
-            x=x, y=net, mode="lines", line=dict(width=halo_width, color=halo_color), opacity=halo_opacity,
-            showlegend=False, hoverinfo="skip", name=f"{NET_NAME} (alone)",
-        ))
+        if halo_width > 0:                  # alone facoltativo: stacca la linea dalle aree colorate, senza voce in legenda né hover
+            fig.add_trace(go.Scatter(
+                x=x, y=net, mode="lines", line=dict(width=halo_width, color=halo_color), opacity=halo_opacity,
+                showlegend=False, hoverinfo="skip", name=f"{NET_NAME} (alone)",
+            ))
         fig.add_trace(go.Scatter(
-            x=x, y=net, name=NET_NAME, mode="lines", line=dict(width=net_width, color=net_color),
+            x=x, y=net, name=NET_NAME, mode="lines+markers" if marker_size > 0 else "lines",
+            line=dict(width=net_width, color=net_color, dash=net_dash),
+            marker=dict(size=marker_size, color=net_color) if marker_size > 0 else None,
             hoverinfo="text", hovertext=[f"{NET_NAME}: {fmt_eur_it(v, 2, signed=True)}" for v in net],
         ))
     return net

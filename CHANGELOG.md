@@ -7,6 +7,8 @@ Questo file è stato riscritto in forma sintetica il 02/11/2026. Il testo integr
 ## [Non rilasciato]
 
 ### Modificato
+- Grafici con aree con segno: la linea del «Totale netto» è una linea piena nera (spessore 2) su una fascia grigio chiaro larga 4, senza punti (stile scelto dall'utente); sparisce il fucsia.
+- Strumento `tools/prova_linea_totale.py`: anteprima, in sola lettura e fuori dall'app, di sei stili per la linea «Totale netto» sui due grafici a aree con segno.
 - Termometro, bilancia: ora si vedono molti più nomi di strumento (il testo si accorcia con i puntini nei segmenti stretti) e passando il mouse su un segmento compare lo strumento con l'importo; lo stesso suggerimento è nelle candele (apertura, massimo, minimo, chiusura, letture).
 - Grafici con aree con segno: la linea del «Totale netto» è fucsia (con alone) e la linea dello zero grigio scuro; i colori sono in `ui/charts/settings.py` (alternative provate: blu reale, verde petrolio, rosso mattone).
 - Termometro: testi di candele e bilancia più piccoli (dimensioni in `ui/charts/settings.py`).

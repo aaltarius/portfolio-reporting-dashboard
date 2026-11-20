@@ -608,11 +608,19 @@ CHARTS: dict[str, dict[str, Any]] = {
      # Aree impilate con segno (ui/charts/signed_stack.py): guadagni sopra lo zero, perdite sotto, linea del totale netto.
      'stack_opacity': 0.82,
      'stack_line_width': 1.0,
-     'net_line_width': 2.2,
-     'net_line_color': '#c026d3',        # fucsia (alternative provate: blu reale #1d4ed8, verde petrolio #0f766e, rosso mattone #9a3412)
-     'net_line_color_dark': '#e879f9',
-     'net_halo_width': 5.5,
-     'net_halo_opacity': 0.9,
+     # Linea del totale netto: linea piena nera larga 2 su una fascia grigio chiaro larga 4 (scelta finale dell'utente il 2026-11-20,
+     # dopo fucsia, rosso bruno, rubino, oro e verde; i colori accesi provati sono in `python -m tools.prova_linea_totale`).
+     # Alternative provate con `python -m tools.prova_linea_totale`: tratteggio con punti, antracite, oro con contorno, ...
+     'net_line_width': 2,
+     'net_line_color': '#111111',
+     'net_line_color_dark': '#f3f4f6',
+     'net_line_dash': 'solid',
+     'net_marker_size': 0,
+     # Alone: sottilissimo bordo grigio chiaro sopra e sotto la linea (0 = nessun alone; 'auto' = colore dello sfondo del grafico)
+     'net_halo_width': 4,
+     'net_halo_color': '#bcc2cb',
+     'net_halo_color_dark': '#4b5563',
+     'net_halo_opacity': 0.95,
      'zero_line_width': 2.0,
      'zero_line_color_strong': '#4b5563',
      'zero_line_color_strong_dark': '#9ca3af',
@@ -1007,11 +1015,19 @@ CHARTS: dict[str, dict[str, Any]] = {
      # Aree impilate con segno (ui/charts/signed_stack.py): guadagni sopra lo zero, perdite sotto, linea del totale netto.
      'stack_opacity': 0.85,
      'stack_line_width': 0.8,
-     'net_line_width': 2.2,
-     'net_line_color': '#c026d3',        # fucsia (alternative provate: blu reale #1d4ed8, verde petrolio #0f766e, rosso mattone #9a3412)
-     'net_line_color_dark': '#e879f9',
-     'net_halo_width': 5.5,
-     'net_halo_opacity': 0.9,
+     # Linea del totale netto: linea piena nera larga 2 su una fascia grigio chiaro larga 4 (scelta finale dell'utente il 2026-11-20,
+     # dopo fucsia, rosso bruno, rubino, oro e verde; i colori accesi provati sono in `python -m tools.prova_linea_totale`).
+     # Alternative provate con `python -m tools.prova_linea_totale`: tratteggio con punti, antracite, oro con contorno, ...
+     'net_line_width': 2,
+     'net_line_color': '#111111',
+     'net_line_color_dark': '#f3f4f6',
+     'net_line_dash': 'solid',
+     'net_marker_size': 0,
+     # Alone: sottilissimo bordo grigio chiaro sopra e sotto la linea (0 = nessun alone; 'auto' = colore dello sfondo del grafico)
+     'net_halo_width': 4,
+     'net_halo_color': '#bcc2cb',
+     'net_halo_color_dark': '#4b5563',
+     'net_halo_opacity': 0.95,
      'zero_line_width': 2.0,
      'zero_line_color_strong': '#4b5563',
      'zero_line_color_strong_dark': '#9ca3af',
