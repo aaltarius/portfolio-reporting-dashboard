@@ -57,6 +57,9 @@ def _build_fastapi_app():
     from ui.form_server.sator import router as _sator_router
     from ui.form_server.quote_interne import router as _quote_interne_router
     from ui.form_server.strumenti import router as _strumenti_router
+    from ui.form_server.parita import router as _parita_router
+    from ui.form_server.assets import router as _assets_router
+    from ui.form_server.pl_periodo import router as _pl_periodo_router
     _app.include_router(_privacy_router)
     _app.include_router(_export_pp_router)
     _app.include_router(_inserisci_router)
@@ -65,6 +68,9 @@ def _build_fastapi_app():
     _app.include_router(_sator_router)
     _app.include_router(_quote_interne_router)
     _app.include_router(_strumenti_router)
+    _app.include_router(_parita_router)
+    _app.include_router(_assets_router)
+    _app.include_router(_pl_periodo_router)
 
     return _app
 
