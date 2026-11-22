@@ -49,17 +49,17 @@ def _render_export_pp_page(data: dict, ok_msg: str = "", err_msg: str = "") -> s
   </div>
   <hr class="divider">
   <h2>Transazioni</h2>
-  <p style="font-size:.87rem;color:#475569;margin:0 0 10px">
+  <p style="font-size:.87rem;color:var(--slate-600);margin:0 0 10px">
     File CSV con tutte le operazioni (acquisto, vendita, cedole, dividendi) nel formato
     standard di Portfolio Performance.<br>
-    <small style="color:#94a3b8">Separatore: <code>;</code> &nbsp;|&nbsp; Decimale: <code>,</code> &nbsp;|&nbsp; Encoding: UTF-8 con BOM</small>
+    <small style="color:var(--slate-400)">Separatore: <code>;</code> &nbsp;|&nbsp; Decimale: <code>,</code> &nbsp;|&nbsp; Encoding: UTF-8 con BOM</small>
   </p>
   <a href="/export_pp/transazioni" class="btn-confirm" style="text-align:center;text-decoration:none;display:block">⬇ Scarica CSV transazioni</a>
   <hr class="divider">
   <h2>Prezzi storici</h2>
-  <p style="font-size:.87rem;color:#475569;margin:0 0 10px">
+  <p style="font-size:.87rem;color:var(--slate-600);margin:0 0 10px">
     Archivio ZIP con un CSV per strumento contenente lo storico prezzi.<br>
-    <small style="color:#94a3b8">In PP: seleziona strumento → Dati storici → ⋯ → Importa da file CSV</small>
+    <small style="color:var(--slate-400)">In PP: seleziona strumento → Dati storici → ⋯ → Importa da file CSV</small>
   </p>
   <a href="/export_pp/prezzi" class="btn-confirm" style="text-align:center;text-decoration:none;display:block">⬇ Scarica ZIP prezzi storici</a>
   <hr class="divider">

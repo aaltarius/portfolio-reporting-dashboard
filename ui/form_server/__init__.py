@@ -72,6 +72,27 @@ def _build_fastapi_app():
     _app.include_router(_assets_router)
     _app.include_router(_pl_periodo_router)
 
+    @_app.middleware("http")
+    async def _apply_setup_theme(request, call_next):
+        """Tutte le pagine HTML seguono palette e accento scelti in Setup (ui/form_server/setup_theme.py)."""
+        response = await call_next(request)
+        if "text/html" not in response.headers.get("content-type", ""):
+            return response
+        from fastapi.responses import HTMLResponse
+
+        from ui.form_server.setup_theme import theme_style_block
+
+        body = b"".join([chunk async for chunk in response.body_iterator]).decode("utf-8", "replace")
+        try:
+            block = theme_style_block()
+        except Exception:
+            logger.exception("Tema di Setup non applicabile: pagina lasciata con i colori di base")
+            block = ""
+        if block and "</head>" in body:
+            body = body.replace("</head>", block + "</head>", 1)
+        headers = {k: v for k, v in response.headers.items() if k.lower() not in ("content-length", "content-type")}
+        return HTMLResponse(body, status_code=response.status_code, headers=headers)
+
     return _app
 
 

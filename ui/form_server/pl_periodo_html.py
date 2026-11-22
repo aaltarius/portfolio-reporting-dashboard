@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 
 from ui.form_server.shell import CSS
-from ui.form_server.theme import FORM_COLORS as C
+from ui.form_server.setup_theme import resolve_form_colors
 
 _CSS = """<style>
 :root{--pl-shade:rgba(15,23,42,.14);--pl-shade-mk:rgba(15,23,42,.35);--pl-band:rgba(79,70,229,.13)}
@@ -373,6 +373,7 @@ def render_pl_periodo_page(payload: dict) -> str:
     if len(payload.get("dates") or []) < 2:
         return (head + '<div class="pl"><h1>📈 Andamento</h1><div class="pl-card"><div class="pl-empty">Nessun movimento '
                 'registrato: l\'andamento si calcola dagli acquisti e dalle vendite.</div></div></div></body></html>')
+    C = resolve_form_colors()
     data_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c")
     colors = json.dumps({"pos": C["emerald-600"], "neg": C["red-600"], "white": C["white"], "text": C["slate-700"],
                          "muted": C["slate-500"], "grid": C["slate-200"], "grid2": C["slate-100"],

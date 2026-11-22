@@ -176,7 +176,7 @@ function addToCart(){
       item={tipo:'trade',ticker,evento,data:dataVal,qty,prezzo:pr,importo:imp,commissioni:comm,imposte:tax,auto_liq:autoLiq,note:$('note_titolo').value};
       const segno=evento==='ACQUISTO'?'-':'+';
       const netto=evento==='ACQUISTO'?-(imp+comm+tax):(imp-comm-tax);
-      desc=`<b>${evento}</b> ${ticker} &nbsp;·&nbsp; ${fmtN(qty,4)} × ${fmtN(pr,4)} = <b>${fmtN(imp,2)} €</b>&nbsp;&nbsp;<span style="color:#64748b;font-size:.8rem">netto ${fmtN(netto,2)} €</span>`;
+      desc=`<b>${evento}</b> ${ticker} &nbsp;·&nbsp; ${fmtN(qty,4)} × ${fmtN(pr,4)} = <b>${fmtN(imp,2)} €</b>&nbsp;&nbsp;<span style="color:var(--slate-500);font-size:.8rem">netto ${fmtN(netto,2)} €</span>`;
     } else if(PROVENTO.includes(evento)){
       const lordo=qv('inp_lordo'),aliq=qv('inp_aliq');
       if(lordo<=0){showErr('Inserisci un importo lordo.');return;}
@@ -230,9 +230,9 @@ function renderCart(){
 
   tbody.innerHTML=cart.map((item,i)=>`
     <tr>
-      <td style="color:#94a3b8;width:24px;font-size:.78rem">${i+1}</td>
+      <td style="color:var(--slate-400);width:24px;font-size:.78rem">${i+1}</td>
       <td>${item._desc}</td>
-      <td style="color:#94a3b8;font-size:.78rem;white-space:nowrap">${item._date}</td>
+      <td style="color:var(--slate-400);font-size:.78rem;white-space:nowrap">${item._date}</td>
       <td><button type="button" class="rm-btn" onclick="removeFromCart(${i})">✕</button></td>
     </tr>`).join('');
 
@@ -444,7 +444,7 @@ def _render_form(tickers: list[dict], error: str = "", prefill: dict | None = No
         <input type="number" id="inp_lordo" step="0.01" min="0" placeholder="0.00"{lordo_value}>
         <label class="lbl">Aliquota imposta %</label>
         <input type="number" id="inp_aliq" step="0.5" min="0" max="100" value="{TAX_RATE_OTHER_PCT:g}">
-        <div id="provento_info" class="hint" style="display:none;color:#4338ca;margin-top:6px"></div>
+        <div id="provento_info" class="hint" style="display:none;color:var(--indigo-700);margin-top:6px"></div>
       </div>
 
       <label class="lbl">Note</label>
@@ -522,8 +522,8 @@ def _render_success(summary: str) -> str:
 <div class="card" style="text-align:center;padding-top:36px">
   <div class="success-icon">✅</div>
   <h1 style="margin-bottom:10px">Operazioni registrate</h1>
-  <p style="color:#475569;margin:0 0 6px;white-space:pre-line">{escape(summary)}</p>
-  <p style="color:#94a3b8;font-size:.82rem;margin-top:12px">
+  <p style="color:var(--slate-600);margin:0 0 6px;white-space:pre-line">{escape(summary)}</p>
+  <p style="color:var(--slate-400);font-size:.82rem;margin-top:12px">
     Streamlit aggiornerà i dati al prossimo click o interazione.
   </p>
   <hr class="divider">

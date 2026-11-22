@@ -10,9 +10,8 @@ from html import escape
 
 from ui.form_server.parita_charts import paths_figure, pl_bars_figure
 from ui.form_server.shell import CSS
-from ui.form_server.theme import FORM_COLORS
 
-_POS, _NEG = FORM_COLORS["emerald-600"], FORM_COLORS["red-600"]
+_POS, _NEG = "var(--emerald-600)", "var(--red-600)"  # variabili CSS: seguono il tema di Setup
 
 
 def mini_bar_html(ret: float, max_abs: float) -> str:

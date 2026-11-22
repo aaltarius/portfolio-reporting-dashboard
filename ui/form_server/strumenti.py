@@ -164,16 +164,16 @@ def _fs_render_dati_completi_fields(strumento: dict) -> str:
     from core.instrument_enrichment import _categoria
     cat = _categoria(strumento.get("tipo", ""))
     src = strumento.get("enrichment_source") or {}
-    colors = {"auto": "#0ea5e9", "pdf": "#8b5cf6", "manuale": "#f59e0b"}
+    colors = {"auto": "var(--blue-500)", "pdf": "var(--violet-600)", "manuale": "var(--amber-500)"}
     labels = {"auto": "Auto", "pdf": "PDF", "manuale": "Manuale"}
 
     def _badge(field: str) -> str:
         s = src.get(field, "")
         if not s:
             return ""
-        c = colors.get(s, "#94a3b8")
+        c = colors.get(s, "var(--slate-400)")
         lb = labels.get(s, s)
-        return f'<span style="font-size:10px;padding:1px 6px;border-radius:9px;background:{c};color:#fff;margin-left:6px;">{lb}</span>'
+        return f'<span style="font-size:10px;padding:1px 6px;border-radius:9px;background:{c};color:var(--white);margin-left:6px;">{lb}</span>'
 
     rows = []
     for label, name, placeholder in _fs_category_field_specs(cat):
@@ -182,11 +182,11 @@ def _fs_render_dati_completi_fields(strumento: dict) -> str:
             checked = "checked" if str(val).strip().lower() in ("true", "si", "sì", "1", "yes") else ""
             rows.append(
                 f'<div style="margin-bottom:10px;">'
-                f'<label style="font-size:12px;font-weight:600;color:#64748b;">{escape(label)}{_badge(name)}</label>'
-                f'<label style="display:flex;align-items:center;gap:8px;margin-top:5px;cursor:pointer;font-size:13px;color:#334155;">'
+                f'<label style="font-size:12px;font-weight:600;color:var(--slate-500);">{escape(label)}{_badge(name)}</label>'
+                f'<label style="display:flex;align-items:center;gap:8px;margin-top:5px;cursor:pointer;font-size:13px;color:var(--slate-700);">'
                 f'<input type="hidden" name="{name}" value="false">'
                 f'<input type="checkbox" name="{name}" value="true" {checked} '
-                f'style="width:16px;height:16px;accent-color:#6366f1;">'
+                f'style="width:16px;height:16px;accent-color:var(--indigo-500);">'
                 f'{escape(placeholder)}'
                 f'</label>'
                 f'</div>'
@@ -194,9 +194,9 @@ def _fs_render_dati_completi_fields(strumento: dict) -> str:
             continue
         rows.append(
             f'<div style="margin-bottom:10px;">'
-            f'<label style="font-size:12px;font-weight:600;color:#64748b;">{escape(label)}{_badge(name)}</label>'
+            f'<label style="font-size:12px;font-weight:600;color:var(--slate-500);">{escape(label)}{_badge(name)}</label>'
             f'<input name="{name}" value="{escape(str(val or ""))}" placeholder="{escape(placeholder)}" '
-            f'style="width:100%;padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;margin-top:3px;box-sizing:border-box;">'
+            f'style="width:100%;padding:6px 10px;border:1px solid var(--slate-200);border-radius:6px;font-size:13px;margin-top:3px;box-sizing:border-box;">'
             f'</div>'
         )
     return "".join(rows)
@@ -205,17 +205,17 @@ def _fs_render_dati_completi_fields(strumento: dict) -> str:
 def _fs_classif_badge(is_manual: bool, confidence: str = "") -> str:
     """Badge auto/manuale per i campi di classificazione (ruolo, benchmark),
     stessa palette gia' usata dal badge fonte in _fs_render_dati_completi_fields
-    (colors = {"auto": "#0ea5e9", ..., "manuale": "#f59e0b"}) per coerenza
+    (colors = {"auto": "var(--blue-500)", ..., "manuale": "var(--amber-500)"}) per coerenza
     visiva nella stessa pagina."""
     if is_manual:
         return (
             '<span style="font-size:10px;padding:1px 6px;border-radius:9px;'
-            'background:#f59e0b;color:#fff;margin-left:6px;">Impostato manualmente</span>'
+            'background:var(--amber-500);color:var(--white);margin-left:6px;">Impostato manualmente</span>'
         )
     label = f"Automatico (confidenza: {escape(str(confidence or 'n/d'))})"
     return (
         f'<span style="font-size:10px;padding:1px 6px;border-radius:9px;'
-        f'background:#0ea5e9;color:#fff;margin-left:6px;">{label}</span>'
+        f'background:var(--blue-500);color:var(--white);margin-left:6px;">{label}</span>'
     )
 
 
@@ -258,7 +258,7 @@ def _fs_render_classificazione_section(data: dict, strumento: dict, tk_escaped: 
     )
 
     field_style = (
-        "width:100%;padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;"
+        "width:100%;padding:6px 10px;border:1px solid var(--slate-200);border-radius:6px;"
         "font-size:13px;margin-top:3px;box-sizing:border-box;"
     )
 
@@ -268,32 +268,32 @@ def _fs_render_classificazione_section(data: dict, strumento: dict, tk_escaped: 
       <input type="hidden" name="azione" value="salva_classificazione">
       <input type="hidden" name="ticker" value="{tk_escaped}">
       <div style="margin-bottom:10px;">
-        <label style="font-size:12px;font-weight:600;color:#64748b;">Ruolo strategico{_fs_classif_badge(role_user_edited, confidence)}</label>
+        <label style="font-size:12px;font-weight:600;color:var(--slate-500);">Ruolo strategico{_fs_classif_badge(role_user_edited, confidence)}</label>
         <select name="role" style="{field_style}">
           {role_options}
         </select>
       </div>
       <div style="margin-bottom:10px;">
-        <label style="font-size:12px;font-weight:600;color:#64748b;">Benchmark automatico — codice (sola lettura)</label>
+        <label style="font-size:12px;font-weight:600;color:var(--slate-500);">Benchmark automatico — codice (sola lettura)</label>
         <input name="benchmark_code" value="{escape(bm.ticker)}" readonly title="Override manuali disabilitati durante audit V4" style="{field_style}">
       </div>
       <div style="margin-bottom:10px;">
-        <label style="font-size:12px;font-weight:600;color:#64748b;">Benchmark automatico — etichetta (sola lettura)</label>
+        <label style="font-size:12px;font-weight:600;color:var(--slate-500);">Benchmark automatico — etichetta (sola lettura)</label>
         <input name="benchmark_label" value="{escape(bm.label)}" readonly title="Override manuali disabilitati durante audit V4" style="{field_style}">
       </div>
       <button type="submit" class="btn-confirm" style="margin-top:6px">&#128190; Salva classificazione</button>
     </form>
     <h2>Esposizione tra bucket</h2>
-    <div style="font-size:12px;color:#64748b;margin-bottom:8px">Percentuale di questo strumento attribuita a ciascun bucket (somma 100%). Lascia 100% su un solo bucket se lo strumento non e' multi-asset.{_fs_classif_badge(exposure_user_edited, "100% nel bucket primario")}</div>
+    <div style="font-size:12px;color:var(--slate-500);margin-bottom:8px">Percentuale di questo strumento attribuita a ciascun bucket (somma 100%). Lascia 100% su un solo bucket se lo strumento non e' multi-asset.{_fs_classif_badge(exposure_user_edited, "100% nel bucket primario")}</div>
     <form method="POST" action="/strumenti" autocomplete="off" style="margin-bottom:26px">
       <input type="hidden" name="azione" value="salva_bucket_exposure">
       <input type="hidden" name="ticker" value="{tk_escaped}">
       <div style="display:flex;gap:10px;margin-bottom:10px;">
-        <div style="flex:1"><label style="font-size:12px;font-weight:600;color:#64748b;">Core %</label>
+        <div style="flex:1"><label style="font-size:12px;font-weight:600;color:var(--slate-500);">Core %</label>
           <input name="bucket_core" type="number" step="0.01" min="0" max="100" value="{core_pct}" style="{field_style}"></div>
-        <div style="flex:1"><label style="font-size:12px;font-weight:600;color:#64748b;">Difensivo %</label>
+        <div style="flex:1"><label style="font-size:12px;font-weight:600;color:var(--slate-500);">Difensivo %</label>
           <input name="bucket_difensivo" type="number" step="0.01" min="0" max="100" value="{dif_pct}" style="{field_style}"></div>
-        <div style="flex:1"><label style="font-size:12px;font-weight:600;color:#64748b;">Satellite %</label>
+        <div style="flex:1"><label style="font-size:12px;font-weight:600;color:var(--slate-500);">Satellite %</label>
           <input name="bucket_satellite" type="number" step="0.01" min="0" max="100" value="{sat_pct}" style="{field_style}"></div>
       </div>
       <button type="submit" class="btn-confirm" style="margin-top:6px">&#128190; Salva esposizione</button>
@@ -610,7 +610,7 @@ def _render_strumenti_page(
         pct = enrichment_completeness(s)
         cells = "".join(
             f'<tr><td>{escape(row["label"])}</td>'
-            f'<td style="text-align:center;color:{"#166534" if row["present"] else "#9CA3AF"};font-weight:700;">'
+            f'<td style="text-align:center;color:{"var(--green-800)" if row["present"] else "var(--slate-400)"};font-weight:700;">'
             f'{"✓" if row["present"] else "✗"}</td>'
             f'<td class="hint">{escape(row["hint"])}</td></tr>'
             for row in rows
@@ -857,7 +857,7 @@ def _render_strumenti_page(
 <body>
 <div class="card">
   <h1>📌 Strumenti</h1>
-  <p style="color:#64748b;font-size:.82rem;margin:-10px 0 16px">Gestisci l'anagrafica degli strumenti da un unico punto. Le eliminazioni sono protette se esistono eventi collegati.</p>
+  <p style="color:var(--slate-500);font-size:.82rem;margin:-10px 0 16px">Gestisci l'anagrafica degli strumenti da un unico punto. Le eliminazioni sono protette se esistono eventi collegati.</p>
   {feedback}
   <div class="tabs">
     {_tb("➕ Aggiungi","add")}

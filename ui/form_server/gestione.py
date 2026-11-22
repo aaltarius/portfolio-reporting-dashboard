@@ -360,7 +360,7 @@ function loadEv(){{
       ${{ev.commissioni>0?`<div class="dr"><div class="dk">Commissioni</div><div class="dv">${{fv(ev.commissioni,2)}} €</div></div>`:''}}
       ${{ev.imposte>0?`<div class="dr"><div class="dk">Imposte</div><div class="dv">${{fv(ev.imposte,2)}} €</div></div>`:''}}
       ${{ev.note?`<div class="dr"><div class="dk">Note</div><div class="dv">${{ev.note}}</div></div>`:''}}
-      <div class="dr"><div class="dk">ID evento</div><div class="dv" style="font-size:.75rem;color:#94a3b8">${{ev.event_id}}</div></div>
+      <div class="dr"><div class="dk">ID evento</div><div class="dv" style="font-size:.75rem;color:var(--slate-400)">${{ev.event_id}}</div></div>
     </div>`;
 
   // edit form populate

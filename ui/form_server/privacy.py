@@ -28,7 +28,7 @@ def _render_privacy_page(data: dict, settings: dict, ok_msg: str = "", err_msg: 
     strumenti = [s for s in (data.get("strumenti") or []) if s.get("ticker")]
     all_types = sorted({str(s.get("tipo") or "") for s in strumenti if s.get("tipo")})
 
-    ok_html = f'<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:9px;padding:10px 14px;margin-bottom:14px;color:#166534;font-size:.87rem">✓ {escape(ok_msg)}</div>' if ok_msg else ""
+    ok_html = f'<div style="background:var(--green-50);border:1px solid var(--green-300);border-radius:9px;padding:10px 14px;margin-bottom:14px;color:var(--green-800);font-size:.87rem">✓ {escape(ok_msg)}</div>' if ok_msg else ""
     err_html = f'<div class="alert-err">✗ {escape(err_msg)}</div>' if err_msg else ""
 
     instr_rows = ""
@@ -39,12 +39,12 @@ def _render_privacy_page(data: dict, settings: dict, ok_msg: str = "", err_msg: 
         chk = "checked" if tk in hidden_tickers else ""
         instr_rows += (
             f'<label style="display:flex;align-items:flex-start;gap:10px;padding:7px 0;'
-            f'border-bottom:1px solid #f1f5f9;cursor:pointer">'
+            f'border-bottom:1px solid var(--slate-100);cursor:pointer">'
             f'<input type="checkbox" name="hidden_tickers" value="{escape(tk)}" {chk} '
             f'style="margin-top:3px;width:15px;height:15px;flex-shrink:0">'
-            f'<span style="font-size:.87rem;color:#334155">{escape(tk)}'
-            f'<span style="color:#94a3b8"> — {escape(nome)}</span>'
-            f'<span style="color:#cbd5e1;font-size:.8rem"> ({escape(tipo)})</span></span></label>\n'
+            f'<span style="font-size:.87rem;color:var(--slate-700)">{escape(tk)}'
+            f'<span style="color:var(--slate-400)"> — {escape(nome)}</span>'
+            f'<span style="color:var(--slate-300);font-size:.8rem"> ({escape(tipo)})</span></span></label>\n'
         )
 
     cat_rows = ""
@@ -53,22 +53,22 @@ def _render_privacy_page(data: dict, settings: dict, ok_msg: str = "", err_msg: 
         count = sum(1 for s in strumenti if str(s.get("tipo") or "") == tipo)
         cat_rows += (
             f'<label style="display:flex;align-items:center;gap:10px;padding:8px 0;'
-            f'border-bottom:1px solid #f1f5f9;cursor:pointer">'
+            f'border-bottom:1px solid var(--slate-100);cursor:pointer">'
             f'<input type="checkbox" name="hidden_categories" value="{escape(tipo)}" {chk} '
             f'style="width:15px;height:15px;flex-shrink:0">'
-            f'<span style="font-size:.87rem;color:#334155;font-weight:600">{escape(tipo)}'
-            f'<span style="color:#94a3b8;font-weight:400"> — {count} strument{"o" if count==1 else "i"}</span>'
+            f'<span style="font-size:.87rem;color:var(--slate-700);font-weight:600">{escape(tipo)}'
+            f'<span style="color:var(--slate-400);font-weight:400"> — {count} strument{"o" if count==1 else "i"}</span>'
             f'</span></label>\n'
         )
 
     enabled_chk = "checked" if enabled else ""
     active_badge = (
-        ' <span style="background:#ef4444;color:#fff;padding:2px 10px;border-radius:6px;'
+        ' <span style="background:var(--red-500);color:var(--white);padding:2px 10px;border-radius:6px;'
         'font-size:.78rem;font-weight:700;vertical-align:middle">ATTIVA</span>'
         if enabled else ""
     )
     section_title = (
-        'style="font-size:.78rem;font-weight:700;color:#64748b;text-transform:uppercase;'
+        'style="font-size:.78rem;font-weight:700;color:var(--slate-500);text-transform:uppercase;'
         'letter-spacing:.05em;margin:20px 0 8px"'
     )
 
@@ -83,17 +83,17 @@ def _render_privacy_page(data: dict, settings: dict, ok_msg: str = "", err_msg: 
 <body>
 <div class="card">
   <h1>🔒 Modalità Privacy{active_badge}</h1>
-  <p style="color:#64748b;font-size:.88rem;margin:0 0 16px">Nascondi temporaneamente strumenti o categorie dal portafoglio visualizzato. I dati restano invariati su disco — la visibilità cambia solo nella dashboard, subito dopo aver ricaricato.</p>
+  <p style="color:var(--slate-500);font-size:.88rem;margin:0 0 16px">Nascondi temporaneamente strumenti o categorie dal portafoglio visualizzato. I dati restano invariati su disco — la visibilità cambia solo nella dashboard, subito dopo aver ricaricato.</p>
   {ok_html}{err_html}
   <form method="post" action="/privacy">
-    <label style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:2px solid #e2e8f0;margin-bottom:16px;cursor:pointer">
+    <label style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:2px solid var(--slate-200);margin-bottom:16px;cursor:pointer">
       <input type="checkbox" name="enabled" value="1" id="chk_en" {enabled_chk} style="width:18px;height:18px">
-      <span style="font-weight:700;font-size:1rem;color:#1e293b">Modalità privacy attiva</span>
+      <span style="font-weight:700;font-size:1rem;color:var(--slate-800)">Modalità privacy attiva</span>
     </label>
     <p {section_title}>Nascondi per categoria (intera famiglia)</p>
-    {cat_rows or '<p style="color:#94a3b8;font-size:.85rem">Nessuna categoria disponibile.</p>'}
+    {cat_rows or '<p style="color:var(--slate-400);font-size:.85rem">Nessuna categoria disponibile.</p>'}
     <p {section_title}>Nascondi per strumento</p>
-    {instr_rows or '<p style="color:#94a3b8;font-size:.85rem">Nessuno strumento disponibile.</p>'}
+    {instr_rows or '<p style="color:var(--slate-400);font-size:.85rem">Nessuno strumento disponibile.</p>'}
     <button type="submit" class="btn-confirm" style="margin-top:22px">💾 Salva configurazione privacy</button>
   </form>
   <div class="back-links">

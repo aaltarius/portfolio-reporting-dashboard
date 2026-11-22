@@ -8,16 +8,20 @@ from __future__ import annotations
 
 import plotly.graph_objects as go
 
-from ui.form_server.theme import FORM_COLORS as C
+from ui.form_server.setup_theme import resolve_form_colors
 
-_FONT = dict(family="system-ui,-apple-system,'Segoe UI',sans-serif", size=12, color=C["slate-700"])
+
+def _font(C: dict) -> dict:
+    return dict(family="system-ui,-apple-system,'Segoe UI',sans-serif", size=12, color=C["slate-700"])
+
+
 _LINES = ["emerald-600", "blue-500", "amber-500", "orange-500", "red-500", "green-500", "slate-500", "indigo-200"]
 
 
-def _base_layout(**extra) -> dict:
+def _base_layout(C: dict, **extra) -> dict:
     layout = dict(
-        font=_FONT, paper_bgcolor=C["white"], plot_bgcolor=C["white"], separators=",.",
-        margin=dict(l=70, r=20, t=16, b=60), hoverlabel=dict(font=_FONT, bgcolor=C["white"]),
+        font=_font(C), paper_bgcolor=C["white"], plot_bgcolor=C["white"], separators=",.",
+        margin=dict(l=70, r=20, t=16, b=60), hoverlabel=dict(font=_font(C), bgcolor=C["white"]),
     )
     layout.update(extra)
     return layout
@@ -29,6 +33,7 @@ def _safe(fig: go.Figure) -> str:
 
 def pl_bars_figure(rows) -> str:
     """Colonne verticali del P/L in euro per strumento (ticker sull'asse x), riferimento in indaco."""
+    C = resolve_form_colors()
     if not rows:
         return ""
     colors = [C["indigo-600"] if r.is_reference else (C["emerald-600"] if r.pl >= 0 else C["red-600"]) for r in rows]
@@ -37,7 +42,7 @@ def pl_bars_figure(rows) -> str:
         customdata=[[r.name, round(r.ret * 100, 2), "" if r.adv_eur is None else round(r.adv_eur, 2)] for r in rows],
         hovertemplate="<b>%{x}</b> · %{customdata[0]}<br>P/L: %{y:,.2f} €<br>Rendimento: %{customdata[1]:.2f}%"
                       "<extra></extra>"))
-    fig.update_layout(**_base_layout(
+    fig.update_layout(**_base_layout(C, 
         height=340, bargap=0.25, showlegend=False,
         xaxis=dict(title=dict(text="Strumento (ticker)"), tickangle=-55, automargin=True, tickfont=dict(size=10)),
         yaxis=dict(title=dict(text="Guadagno / perdita (€)"), gridcolor=C["slate-200"], zerolinecolor=C["slate-500"],
@@ -47,6 +52,7 @@ def pl_bars_figure(rows) -> str:
 
 def paths_figure(paths, capital: float, reference: str, names: dict[str, str]) -> str:
     """Valore giornaliero del capitale per strumento, ciascuno sulle proprie date; linea tratteggiata = capitale."""
+    C = resolve_form_colors()
     series = {tk: pts for tk, pts in (paths or {}).items() if pts}
     if not series:
         return ""
@@ -63,7 +69,7 @@ def paths_figure(paths, capital: float, reference: str, names: dict[str, str]) -
             line=dict(color=C["indigo-600"] if is_ref else C[_LINES[i % len(_LINES)]], width=3.2 if is_ref else 1.6),
             opacity=1 if is_ref else 0.8, customdata=[names.get(tk, tk)] * len(pts),
             hovertemplate="<b>" + tk + "</b> · %{customdata}<br>%{x|%d/%m/%Y}: %{y:,.2f} €<extra></extra>"))
-    fig.update_layout(**_base_layout(
+    fig.update_layout(**_base_layout(C, 
         height=420, hovermode="closest", margin=dict(l=70, r=10, t=16, b=60),
         legend=dict(orientation="v", x=1.01, y=1, font=dict(size=10), itemwidth=30),
         xaxis=dict(title=dict(text="Data"), gridcolor=C["slate-100"], tickformat="%d/%m"),
