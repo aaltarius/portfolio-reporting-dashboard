@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import plotly.graph_objects as go
 
-from ui.form_server.setup_theme import resolve_form_colors
+from ui.theme_tokens import resolve_form_colors
 
 
 def _font(C: dict) -> dict:

@@ -4,6 +4,8 @@ Nessun iframe/HTML statico, CSS locale, scrollbar verticale prefissata o
 paginazione: il tema, le righe e la tabella sono quelli di ui.components.
 """
 from __future__ import annotations
+
+from ui.theme_tokens import theme_color
 from typing import Any
 import pandas as pd
 import streamlit as st
@@ -62,7 +64,7 @@ def render_benchmark_table(
                     css = f'color:{ctx.color_red};font-weight:700;'
             elif col == 'Ptf':
                 # stessa colorazione di Quotazioni: ★ candidato in evidenza, - e ☆ in grigio
-                css = f"color:{COLORS['info'] if str(row[col]) == '★' else '#9CA3AF'};font-weight:700;"
+                css = f"color:{COLORS['info'] if str(row[col]) == '★' else theme_color("slate-400")};font-weight:700;"
             elif col == 'Stato':
                 state = str(row[col])
                 if state in ('Da aggiornare', 'Storico incerto', 'Dati mancanti'):

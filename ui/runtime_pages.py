@@ -79,8 +79,8 @@ def _render_copyable_render_log(render_log_text: str, *, key: str) -> None:
             min-height:38px;
             border:1px solid rgba(49,51,63,.22);
             border-radius:8px;
-            background:#fff;
-            color:#31333f;
+            background:var(--white);
+            color:var(--slate-800);
             font:600 14px/1.2 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
             padding:8px 12px;
             cursor:pointer;
@@ -88,13 +88,13 @@ def _render_copyable_render_log(render_log_text: str, *, key: str) -> None:
         }}
         .render-log-action-{safe_key}:hover{{
             border-color:rgba(49,51,63,.38);
-            background:#f8fafc;
+            background:var(--slate-50);
         }}
         .render-log-status-{safe_key}{{
             display:block;
             min-height:16px;
             margin-top:4px;
-            color:#64748b;
+            color:var(--slate-500);
             font:500 12px/1.2 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
             text-align:right;
         }}

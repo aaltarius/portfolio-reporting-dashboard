@@ -321,7 +321,7 @@ def _build_pl_horizon_table_html(table: pd.DataFrame, accent: str, category_df: 
         "<style>",
         ".cruscotti-pl-horizon-wrap{width:100%;overflow:hidden;}",
         ".cruscotti-pl-horizon-table{width:100%;table-layout:fixed;border-collapse:collapse;}",
-        ".cruscotti-pl-horizon-table th{font-size:.80rem;text-align:right;padding:.32rem .30rem;font-weight:750;color:var(--text-color,#31333f);}",
+        ".cruscotti-pl-horizon-table th{font-size:.80rem;text-align:right;padding:.32rem .30rem;font-weight:750;color:var(--text-color,var(--slate-800));}",
         ".cruscotti-pl-horizon-table th:first-child{text-align:left;}",
         ".cruscotti-pl-horizon-table th:nth-child(2){text-align:center;}",
         ".cruscotti-pl-horizon-table td{font-size:.84rem;text-align:right;padding:.30rem .35rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;border-top:1px solid rgba(148,163,184,.18);}",

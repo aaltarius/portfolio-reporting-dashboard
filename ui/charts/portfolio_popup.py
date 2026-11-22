@@ -583,7 +583,7 @@ def _mini_sparkline_svg(
         ref_y = to_y(ref)
         ref_line = (
             f'<line class="mini-spark-pmc" x1="{pad}" x2="{width - pad}" y1="{ref_y:.1f}" y2="{ref_y:.1f}" '
-            f'stroke="#6B7280" stroke-width="1" stroke-dasharray="4 3" opacity="0.72"></line>'
+            f'stroke="var(--slate-500)" stroke-width="1" stroke-dasharray="4 3" opacity="0.72"></line>'
         )
     svg = (
         f'<svg class="mini-spark" viewBox="0 0 {width} {height}" preserveAspectRatio="none" aria-hidden="true">'
@@ -601,35 +601,34 @@ a.tk-link{text-decoration:none;font-weight:700;cursor:pointer;border-bottom:1.5p
 a.tk-link:hover{opacity:0.65;}
 #mo{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center;}
 #mo.on{display:flex;}
-#mc{background:#fff;border-radius:18px;padding:20px 24px 18px;max-width:900px;width:97%;max-height:90vh;overflow-y:auto;box-shadow:0 12px 52px rgba(0,0,0,.26);position:relative;color:#1f2937;}
-#mc-close{position:absolute;top:10px;right:14px;cursor:pointer;font-size:1.3rem;color:#9ca3af;background:none;border:none;line-height:1;}
-#mc-close:hover{color:#374151;}
+#mc{background:var(--white);border-radius:18px;padding:20px 24px 18px;max-width:900px;width:97%;max-height:90vh;overflow-y:auto;box-shadow:0 12px 52px rgba(0,0,0,.26);position:relative;color:var(--slate-800);}
+#mc-close{position:absolute;top:10px;right:14px;cursor:pointer;font-size:1.3rem;color:var(--slate-400);background:none;border:none;line-height:1;}
+#mc-close:hover{color:var(--slate-700);}
 .mc-cols{display:grid;grid-template-columns:40% 60%;gap:18px;align-items:start;}
 .mc-left{min-width:0;}
 .mc-right{min-width:0;display:flex;flex-direction:column;gap:8px;}
 .mc-ticker{font-size:1.8rem;font-weight:900;letter-spacing:-.01em;margin-bottom:2px;}
-.mc-nome{font-size:1.0rem;color:#374151;font-weight:600;}
-.mc-meta{font-size:0.85rem;color:#9ca3af;margin:4px 0 12px;}
+.mc-nome{font-size:1.0rem;color:var(--slate-700);font-weight:600;}
+.mc-meta{font-size:0.85rem;color:var(--slate-400);margin:4px 0 12px;}
 .mc-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;}
-.mc-kpi{border:1px solid #e5e7eb;border-radius:8px;padding:8px 12px;}
-.mc-kpi-l{font-size:0.82rem;text-transform:uppercase;color:#9ca3af;font-weight:700;letter-spacing:.04em;margin-bottom:3px;}
+.mc-kpi{border:1px solid var(--slate-200);border-radius:8px;padding:8px 12px;}
+.mc-kpi-l{font-size:0.82rem;text-transform:uppercase;color:var(--slate-400);font-weight:700;letter-spacing:.04em;margin-bottom:3px;}
 .mc-kpi-v{font-size:1.15rem;font-weight:700;font-variant-numeric:tabular-nums;}
-.pos{color:#1E8449;} .neg{color:#FF4B4B;}
-.mc-price-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:11px;padding:10px 14px;display:flex;align-items:baseline;gap:12px;}
+.pos{color:var(--success);} .neg{color:var(--danger);}
+.mc-price-box{background:var(--slate-50);border:1px solid var(--slate-200);border-radius:11px;padding:10px 14px;display:flex;align-items:baseline;gap:12px;}
 .mc-price-val{font-size:2.0rem;font-weight:800;font-variant-numeric:tabular-nums;}
-.mc-price-sub{font-size:0.95rem;color:#6b7280;}
-.mc-spark-label{font-size:0.78rem;text-transform:uppercase;color:#9ca3af;font-weight:700;letter-spacing:.05em;}
+.mc-price-sub{font-size:0.95rem;color:var(--slate-500);}
+.mc-spark-label{font-size:0.78rem;text-transform:uppercase;color:var(--slate-400);font-weight:700;letter-spacing:.05em;}
 .spark-wrap{display:flex;align-items:stretch;}
-.spark-y{position:relative;flex:none;width:58px;font:600 10px system-ui;color:#6b7280;}
+.spark-y{position:relative;flex:none;width:58px;font:600 10px system-ui;color:var(--slate-500);}
 .spark-y span{position:absolute;right:5px;transform:translateY(-50%);white-space:nowrap;}
 .imp-row{display:flex;gap:10px;align-items:center;margin-top:8px;}
 .imp-row svg.ring{flex:none;width:92px;height:92px;}
 .imp-side{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;}
-svg.wf{width:100%;height:120px;display:block;border-radius:10px;background:#f9fafb;margin-top:3px;}
-svg.spark{flex:1;min-width:0;height:140px;display:block;border-radius:10px;background:#f9fafb;}
-.mc-footer{font-size:0.78rem;color:#9ca3af;}
+svg.wf{width:100%;height:120px;display:block;border-radius:10px;background:var(--slate-50);margin-top:3px;}
+svg.spark{flex:1;min-width:0;height:140px;display:block;border-radius:10px;background:var(--slate-50);}
+.mc-footer{font-size:0.78rem;color:var(--slate-400);}
 """
-_MODAL_CSS = _MODAL_CSS.replace("#1E8449", COLORS["success"]).replace("#FF4B4B", COLORS["danger"])
 
 _MODAL_HTML = """
 <div id="mo" onclick="if(event.target===this)closeM()">
@@ -648,7 +647,7 @@ _MODAL_HTML = """
     <div class="mc-right">
       <div class="mc-price-box">
         <div>
-          <div style="font-size:0.78rem;text-transform:uppercase;color:#9ca3af;font-weight:700;margin-bottom:2px;">Prezzo attuale</div>
+          <div style="font-size:0.78rem;text-transform:uppercase;color:var(--slate-400);font-weight:700;margin-bottom:2px;">Prezzo attuale</div>
           <div class="mc-price-val" id="m-px"></div>
         </div>
         <div id="m-delta" class="mc-price-sub"></div>
@@ -825,9 +824,9 @@ function impact(d){
   var h='',w=d.wf;
   if(d.peso!=null){
     var r=34,cf=2*Math.PI*r,pw=Math.max(0,Math.min(1,d.peso));
-    h+='<svg class="ring" viewBox="0 0 100 100" title="Peso sul portafoglio"><circle cx="50" cy="50" r="'+r+'" fill="none" stroke="#e5e7eb" stroke-width="14"/>'+
-       '<circle cx="50" cy="50" r="'+r+'" fill="none" stroke="#2563EB" stroke-width="14" stroke-dasharray="'+(cf*pw).toFixed(2)+' '+cf.toFixed(2)+'" transform="rotate(-90 50 50)"/>'+
-       '<text x="50" y="55" text-anchor="middle" font-size="16" font-weight="800" fill="#1f2937">'+fi(pw*100,1,false)+'%</text></svg>';
+    h+='<svg class="ring" viewBox="0 0 100 100" title="Peso sul portafoglio"><circle cx="50" cy="50" r="'+r+'" fill="none" stroke="var(--slate-200)" stroke-width="14"/>'+
+       '<circle cx="50" cy="50" r="'+r+'" fill="none" stroke="var(--blue-700)" stroke-width="14" stroke-dasharray="'+(cf*pw).toFixed(2)+' '+cf.toFixed(2)+'" transform="rotate(-90 50 50)"/>'+
+       '<text x="50" y="55" text-anchor="middle" font-size="16" font-weight="800" fill="var(--slate-800)">'+fi(pw*100,1,false)+'%</text></svg>';
   }
   var side='';
   if(d.peso!=null)side+=kpi('Peso sul portafoglio',fe(d.ctv,0,false)+' su '+fe(d.tot_ctv,0,false));
@@ -857,7 +856,7 @@ function showModal(tk){
     kpi('P/L %',fp(d.pl_p,2,true),plCls)+
     kpi('Commissioni',fe(d.comm,2,false))+
     kpi('Fonte / Agg.',d.fonte+' · '+fmtDateIt(d.aggiornato))+
-    (d.source_url?'<div class="mc-kpi" style="grid-column:1/-1;"><div class="mc-kpi-l">Link fonte</div><div class="mc-kpi-v"><a href="'+d.source_url+'" target="_blank" rel="noopener" style="color:#2563EB;text-decoration:underline;word-break:break-all;font-size:0.82rem;">'+d.source_url+'</a></div></div>':'');
+    (d.source_url?'<div class="mc-kpi" style="grid-column:1/-1;"><div class="mc-kpi-l">Link fonte</div><div class="mc-kpi-v"><a href="'+d.source_url+'" target="_blank" rel="noopener" style="color:var(--blue-700);text-decoration:underline;word-break:break-all;font-size:0.82rem;">'+d.source_url+'</a></div></div>':'');
   sparkline(d.spark,d.pl_e>=0,d.pmc);
   valueChart(d.value,d.buys);
   waterfall(d);impact(d);
@@ -1133,46 +1132,46 @@ def render_portfolio_table_with_popup(df, data, direction_map=None):
     html_content = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
 *{{box-sizing:border-box;margin:0;padding:0;}}
-html,body{{background:transparent;font-family:"Source Sans Pro",system-ui,-apple-system,sans-serif;font-size:13px;overflow:hidden;color:#262730;}}
-.tw{{border:1px solid #e6e9ef;border-radius:8px;overflow:hidden;background:#fff;width:100%;}}
+html,body{{background:transparent;font-family:"Source Sans Pro",system-ui,-apple-system,sans-serif;font-size:13px;overflow:hidden;color:var(--slate-800);}}
+.tw{{border:1px solid var(--slate-200);border-radius:8px;overflow:hidden;background:var(--white);width:100%;}}
 table{{width:100%;border-collapse:collapse;table-layout:fixed;}}
 thead th{{
-  background:#f0f2f6;font-size:11.5px;font-weight:600;letter-spacing:.01em;
-  color:#262730;padding:8px 7px;border-bottom:1px solid #e6e9ef;border-right:1px solid #e6e9ef;
+  background:var(--slate-100);font-size:11.5px;font-weight:600;letter-spacing:.01em;
+  color:var(--slate-800);padding:8px 7px;border-bottom:1px solid var(--slate-200);border-right:1px solid var(--slate-200);
   text-align:right;white-space:nowrap;position:relative;user-select:none;cursor:pointer;
 }}
 thead th:last-child{{border-right:none;}}
 thead th:nth-child(4),thead th:nth-child(5),thead th:nth-child(16){{text-align:center;cursor:default;padding:8px 4px;}}
 thead th:nth-child(1),thead th:nth-child(2),thead th:nth-child(3){{text-align:left;}}
-thead th:hover:not(:nth-child(4)):not(:nth-child(5)):not(:nth-child(16)){{background:#e3e6e9;}}
-thead th .sort-ind{{font-size:9px;margin-left:3px;color:#9094a3;}}
-thead th.asc .sort-ind::after{{content:'▲';color:#262730;}}
-thead th.desc .sort-ind::after{{content:'▼';color:#262730;}}
+thead th:hover:not(:nth-child(4)):not(:nth-child(5)):not(:nth-child(16)){{background:var(--slate-200);}}
+thead th .sort-ind{{font-size:9px;margin-left:3px;color:var(--slate-400);}}
+thead th.asc .sort-ind::after{{content:'▲';color:var(--slate-800);}}
+thead th.desc .sort-ind::after{{content:'▼';color:var(--slate-800);}}
 .rh{{position:absolute;right:0;top:0;height:100%;width:4px;cursor:col-resize;background:transparent;z-index:1;}}
-.rh:hover{{background:#9094a3;opacity:.4;}}
-tbody tr{{border-bottom:1px solid #f0f2f6;}}
+.rh:hover{{background:var(--slate-400);opacity:.4;}}
+tbody tr{{border-bottom:1px solid var(--slate-100);}}
 tbody tr:last-child{{border-bottom:none;}}
-tbody tr:hover{{background:#f0f2f6;}}
-tbody td{{padding:8px 7px;vertical-align:middle;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border-right:1px solid #f0f2f6;}}
+tbody tr:hover{{background:var(--slate-100);}}
+tbody td{{padding:8px 7px;vertical-align:middle;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border-right:1px solid var(--slate-100);}}
 tbody td:last-child{{border-right:none;}}
 tbody td:nth-child(4),tbody td:nth-child(5),tbody td:nth-child(16){{padding:8px 4px;text-align:center;}}
 .natura-cell svg{{width:15px;height:15px;}}
 {ISSUER_BADGE_CSS}
 .btp-info-cell{{text-align:center;overflow:visible;}}
 .btp-pill{{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:999px;font-size:10px;font-weight:900;line-height:1;cursor:help;border:1px solid rgba(15,23,42,.12);box-shadow:0 0 0 2px rgba(255,255,255,.9);}}
-.btp-pill.btp-info{{background:#EFF6FF;color:#2563EB;}}
-.btp-pill.btp-coupon{{background:#ECFDF3;color:#1E8449;}}
-.btp-pill.btp-maturity{{background:#FFF7ED;color:#F59E0B;border-radius:5px;}}
-.btp-pill.btp-new{{background:#FEF2F2;color:{COLORS['danger']};border-radius:5px;font-size:9px;}}
-.btp-pill.btp-sator{{background:#FEF3C7;color:#92400E;border-radius:5px;font-size:9px;}}
+.btp-pill.btp-info{{background:var(--blue-50);color:var(--blue-700);}}
+.btp-pill.btp-coupon{{background:var(--green-50);color:var(--success);}}
+.btp-pill.btp-maturity{{background:var(--orange-50);color:var(--amber-500);border-radius:5px;}}
+.btp-pill.btp-new{{background:var(--red-50);color:var(--danger);border-radius:5px;font-size:9px;}}
+.btp-pill.btp-sator{{background:var(--amber-100);color:var(--amber-800);border-radius:5px;font-size:9px;}}
 .mini-spark-cell{{text-align:center;padding:5px 4px;}}
 .mini-spark{{display:block;width:64px;height:28px;margin:0 auto;overflow:visible;max-width:100%;}}
-.mini-spark-empty{{color:#9CA3AF;font-weight:700;}}
+.mini-spark-empty{{color:var(--slate-400);font-weight:700;}}
 .pl-cell.pl-flip-pos{{background:rgba(30,132,73,0.11);box-shadow:inset 0 -2px 0 rgba(30,132,73,0.36);}}
 .pl-cell.pl-flip-neg{{background:rgba(255,75,75,0.10);box-shadow:inset 0 -2px 0 rgba(255,75,75,0.36);}}
-.pl-flip-marker{{display:inline-flex;align-items:center;justify-content:center;width:13px;height:13px;margin-left:4px;border-radius:999px;background:#374151;color:#fff;font-size:9px;font-weight:900;line-height:1;vertical-align:1px;}}
-tfoot tr{{border-top:2px solid #d1d5db;background:#f8f9fa;}}
-tfoot td{{vertical-align:middle;white-space:nowrap;border-right:1px solid #e6e9ef;}}
+.pl-flip-marker{{display:inline-flex;align-items:center;justify-content:center;width:13px;height:13px;margin-left:4px;border-radius:999px;background:var(--slate-700);color:var(--white);font-size:9px;font-weight:900;line-height:1;vertical-align:1px;}}
+tfoot tr{{border-top:2px solid var(--slate-300);background:var(--slate-50);}}
+tfoot td{{vertical-align:middle;white-space:nowrap;border-right:1px solid var(--slate-200);}}
 tfoot td:last-child{{border-right:none;}}
 .num{{text-align:right;font-variant-numeric:tabular-nums;}}
 {_MODAL_CSS}
@@ -1319,7 +1318,7 @@ def render_weekly_pl_table(result, da, data):
 
     day_ths = "".join(
         f'<th data-col="{5 + i}"'
-        + (' style="border-left:2px solid #d1d5db;"' if week_gap_before[i] else '')
+        + (' style="border-left:2px solid var(--slate-300);"' if week_gap_before[i] else '')
         + f'>{d}<span class="sort-ind"></span><span class="rh"></span></th>\n'
         for i, d in enumerate(days)
     )
@@ -1345,7 +1344,7 @@ def render_weekly_pl_table(result, da, data):
             day_max, day_min = day_extrema[i]
             is_extreme = v is not None and (v == day_max or v == day_min)
             weight = "700" if is_extreme else "400"
-            gap_style = "border-left:2px solid #d1d5db;" if week_gap_before[i] else ""
+            gap_style = "border-left:2px solid var(--slate-300);" if week_gap_before[i] else ""
             cells += f'<td class="num" data-sort="{_sort_val(v)}" style="color:{cell_col};font-weight:{weight};{gap_style}">{fmt_num_it(v, 2, signed=True)}</td>\n'
         totale = row["totale"]
         tot_col = COLORS["success"] if totale >= 0 else COLORS["danger"]
@@ -1360,7 +1359,7 @@ def render_weekly_pl_table(result, da, data):
         # segnalata come tale — niente Quote attuale, e' storia, non posizione.
         chiuso_badge = (
             '<span style="font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;'
-            'background:rgba(107,114,128,0.16);color:#6b7280;margin-left:4px;">chiuso</span>'
+            'background:rgba(107,114,128,0.16);color:var(--slate-500);margin-left:4px;">chiuso</span>'
             if row.get("chiuso") else ""
         )
         rows_html += (
@@ -1379,7 +1378,7 @@ def render_weekly_pl_table(result, da, data):
     total_cells = ""
     for i, v in enumerate(day_totals):
         cell_col = COLORS["success"] if v >= 0 else COLORS["danger"]
-        gap_style = "border-left:2px solid #d1d5db;" if week_gap_before[i] else ""
+        gap_style = "border-left:2px solid var(--slate-300);" if week_gap_before[i] else ""
         total_cells += f'<td class="num" style="color:{cell_col};font-weight:700;padding:9px 12px;{gap_style}">{fmt_num_it(v, 2, signed=True)}</td>\n'
     grand_col = COLORS["success"] if grand_total >= 0 else COLORS["danger"]
     tfoot_html = (
@@ -1399,31 +1398,31 @@ def render_weekly_pl_table(result, da, data):
     html_content = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
 *{{box-sizing:border-box;margin:0;padding:0;}}
-html,body{{background:transparent;font-family:"Source Sans Pro",system-ui,-apple-system,sans-serif;font-size:14px;overflow:hidden;color:#262730;}}
-.tw{{border:1px solid #e6e9ef;border-radius:8px;overflow:hidden;background:#fff;width:100%;}}
+html,body{{background:transparent;font-family:"Source Sans Pro",system-ui,-apple-system,sans-serif;font-size:14px;overflow:hidden;color:var(--slate-800);}}
+.tw{{border:1px solid var(--slate-200);border-radius:8px;overflow:hidden;background:var(--white);width:100%;}}
 table{{width:100%;border-collapse:collapse;table-layout:auto;}}
 thead th{{
-  background:#f0f2f6;font-size:12px;font-weight:600;letter-spacing:.01em;
-  color:#262730;padding:9px 12px;border-bottom:1px solid #e6e9ef;border-right:1px solid #e6e9ef;
+  background:var(--slate-100);font-size:12px;font-weight:600;letter-spacing:.01em;
+  color:var(--slate-800);padding:9px 12px;border-bottom:1px solid var(--slate-200);border-right:1px solid var(--slate-200);
   text-align:right;white-space:nowrap;position:relative;user-select:none;cursor:pointer;
 }}
 thead th:last-child{{border-right:none;}}
 thead th:nth-child(1),thead th:nth-child(2),thead th:nth-child(3){{text-align:left;}}
-thead th:hover{{background:#e3e6e9;}}
-thead th .sort-ind{{font-size:9px;margin-left:3px;color:#9094a3;}}
-thead th.asc .sort-ind::after{{content:'▲';color:#262730;}}
-thead th.desc .sort-ind::after{{content:'▼';color:#262730;}}
+thead th:hover{{background:var(--slate-200);}}
+thead th .sort-ind{{font-size:9px;margin-left:3px;color:var(--slate-400);}}
+thead th.asc .sort-ind::after{{content:'▲';color:var(--slate-800);}}
+thead th.desc .sort-ind::after{{content:'▼';color:var(--slate-800);}}
 .rh{{position:absolute;right:0;top:0;height:100%;width:4px;cursor:col-resize;background:transparent;z-index:1;}}
-.rh:hover{{background:#9094a3;opacity:.4;}}
-tbody tr{{border-bottom:1px solid #f0f2f6;}}
+.rh:hover{{background:var(--slate-400);opacity:.4;}}
+tbody tr{{border-bottom:1px solid var(--slate-100);}}
 tbody tr:last-child{{border-bottom:none;}}
-tbody tr:hover{{background:#f0f2f6;}}
-tbody td{{padding:9px 12px;vertical-align:middle;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border-right:1px solid #f0f2f6;}}
+tbody tr:hover{{background:var(--slate-100);}}
+tbody td{{padding:9px 12px;vertical-align:middle;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border-right:1px solid var(--slate-100);}}
 tbody td:last-child{{border-right:none;}}
 .natura-cell svg{{width:15px;height:15px;}}
 {ISSUER_BADGE_CSS}
-tfoot tr{{border-top:2px solid #d1d5db;background:#f8f9fa;}}
-tfoot td{{vertical-align:middle;white-space:nowrap;border-right:1px solid #e6e9ef;}}
+tfoot tr{{border-top:2px solid var(--slate-300);background:var(--slate-50);}}
+tfoot td{{vertical-align:middle;white-space:nowrap;border-right:1px solid var(--slate-200);}}
 tfoot td:last-child{{border-right:none;}}
 .num{{text-align:right;font-variant-numeric:tabular-nums;}}
 {_MODAL_CSS}

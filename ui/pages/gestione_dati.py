@@ -1,6 +1,7 @@
 """
 ui/pages/gestione_dati.py — Tab Gestione Dati: sistema, diagnostica e manutenzione.
 """
+from ui.theme_tokens import theme_color
 import logging
 import os
 import re
@@ -660,11 +661,11 @@ def _render_arricchimento(data: dict, ctx, quality: pd.DataFrame | None = None) 
             cat_color = macro_color(str(row.get("Cat", "")))
             pos = str(row.get("Posizione", ""))
             closed = pos.startswith(("Chiuso", "Rimborsato"))
-            pos_color = COLORS["info"] if pos.startswith("★") else "#9CA3AF"
+            pos_color = COLORS["info"] if pos.startswith("★") else theme_color("slate-400")
             styles = []
             for col in row.index:
                 if col in {"Ticker", "Cat"}:
-                    styles.append(f"color:{'#9CA3AF' if closed else cat_color};font-weight:700;")
+                    styles.append(f"color:{theme_color("slate-400") if closed else cat_color};font-weight:700;")
                 elif col == "Posizione":
                     styles.append(f"color:{pos_color};font-weight:700;")
                 else:

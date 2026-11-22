@@ -122,9 +122,9 @@ def render_summary(tab: DeltaGenerator, ctx: SimpleNamespace) -> None:
         )
         st.markdown("""
         <style>
-        .report-gen-preview { padding: 14px 16px; background: white; border: 1px solid #d1d5db; border-radius: 12px; margin-top: 10px; font-size: 0.90rem; line-height: 1.58; color: #374151; }
+        .report-gen-preview { padding: 14px 16px; background: white; border: 1px solid var(--slate-300); border-radius: 12px; margin-top: 10px; font-size: 0.90rem; line-height: 1.58; color: var(--slate-700); }
         .report-preview-list { margin: 0; padding-left: 1.05rem; }
-        .report-output-box { padding: 14px 16px; border: 1px solid #d1d5db; border-radius: 12px; background: #f8fafc; }
+        .report-output-box { padding: 14px 16px; border: 1px solid var(--slate-300); border-radius: 12px; background: var(--slate-50); }
         .report-download-gap { height: 12px; }
         </style>
         """, unsafe_allow_html=True)

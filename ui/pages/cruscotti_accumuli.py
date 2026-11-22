@@ -5,6 +5,8 @@ Consuma il tema centralizzato e delega i calcoli a core.services.accumuli.
 """
 from __future__ import annotations
 
+from ui.theme_tokens import theme_color
+
 import hashlib
 import json
 from types import SimpleNamespace
@@ -294,7 +296,7 @@ def _render_summary_table(summary: pd.DataFrame) -> None:
                 {"selector": "th.col0,td.col0", "props": [("min-width", "110px"), ("max-width", "130px")]},
                 {"selector": "th.col1,td.col1", "props": [("min-width", "48px"), ("max-width", "62px"), ("text-align", "center")]},
                 {"selector": "th.col2,td.col2", "props": [("min-width", "42px"), ("max-width", "52px")]},
-                {"selector": "th.col3,td.col3", "props": [("min-width", "66px"), ("max-width", "82px"), ("color", "#3B82F6"), ("font-weight", "800")]},
+                {"selector": "th.col3,td.col3", "props": [("min-width", "66px"), ("max-width", "82px"), ("color", theme_color("blue-500")), ("font-weight", "800")]},
                 {"selector": "th.col4,td.col4,th.col5,td.col5", "props": [("min-width", "72px"), ("max-width", "88px")]},
                 {"selector": "th.col6,td.col6,th.col7,td.col7,th.col8,td.col8,th.col9,td.col9", "props": [("min-width", "62px"), ("max-width", "82px")]},
                 {"selector": "th.col10,td.col10", "props": [("min-width", "82px"), ("max-width", "98px"), ("text-align", "center")]},

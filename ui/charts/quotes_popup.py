@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ui.theme_tokens import theme_color
+
 import json
 
 import pandas as pd
@@ -99,7 +101,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
         is_candidato = bool(info.get("candidato_acquisto", False))
         if in_portfolio:
             # Già posseduto: il concetto di "candidato all'acquisto" non si applica.
-            holding_label, holding_sort, holding_color, row_background = "-", "0", "#9CA3AF", ""
+            holding_label, holding_sort, holding_color, row_background = "-", "0", theme_color("slate-400"), ""
             holding_title = "In portafoglio"
         elif is_candidato:
             # ★/☆ invece di Sì/No: la colonna (4.6% larghezza, stessa di "Ptf"
@@ -109,9 +111,9 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
             row_background = f"background:{hex_to_rgba(COLORS['info'], 0.20)};"
             holding_title = "Candidato all'acquisto"
         else:
-            holding_label, holding_sort, holding_color = "☆", "2", "#9CA3AF"
+            holding_label, holding_sort, holding_color = "☆", "2", theme_color("slate-400")
             holding_title = "Osservato"
-            row_background = "background:#f3f4f6;"
+            row_background = "background:var(--slate-100);"
         nature = resolve_instrument_nature(data, info, in_portfolio)
         nature_color, icon_svg, nature_label = get_nature_visual(nature)
         # "Zero commissioni" esiste solo come campo per ETF/ETC (vedi
@@ -133,7 +135,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
         elif delta_val < 0:
             sym, sym_col, sym_sort = "▼", COLORS["danger"], "3"
         else:
-            sym, sym_col, sym_sort = "—", "#9CA3AF", "2"
+            sym, sym_col, sym_sort = "—", theme_color("slate-400"), "2"
         is_fam = is_nav_fund(ticker, tipo)
         if is_fam and "ERRORE" not in esito:
             esito_label, esito_title = "🔵 NAV", "Fondo gestito: NAV non confrontabile giornalmente"
@@ -143,7 +145,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
             esito_label, esito_title = "🟡 Warn.", esito
         else:
             esito_label, esito_title = "🔴 Err.", esito
-        esito_col = COLORS["success"] if "OK" in esito_label else "#2563EB" if "NAV" in esito_label else "#F59E0B" if "Warn" in esito_label else COLORS["danger"]
+        esito_col = COLORS["success"] if "OK" in esito_label else theme_color("blue-700") if "NAV" in esito_label else theme_color("amber-500") if "Warn" in esito_label else COLORS["danger"]
         latest_log_item = max(logs_by_ticker.get(ticker, []), key=lambda x: str(x.get("timestamp") or ""), default=None)
         # Sovrascrive esito_title con il messaggio esteso dal log (warning dettagliato)
         if "Warn" in esito_label and latest_log_item:
@@ -176,7 +178,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
             _delta_eur_fmt = fmt_num_it(_delta_eur, 3, signed=True)
             _delta_eur_col = COLORS["success"] if _delta_eur > 0 else COLORS["danger"]
         else:
-            _delta_eur_fmt, _delta_eur_col = "—", "#9CA3AF"
+            _delta_eur_fmt, _delta_eur_col = "—", theme_color("slate-400")
 
         rows_html += (
             f'<tr style="{row_background}">'
@@ -191,7 +193,7 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
             f'<td class="num" data-sort="{_sort_num(prezzo_prec)}">{fmt_num_it(prezzo_prec, 3)}</td>'
             f'<td class="num" data-sort="{_delta_eur_sort}" style="color:{_delta_eur_col};font-weight:700;">{_delta_eur_fmt}</td>'
             f'<td data-sort="{fonte}" title="{fonte}">{fonte}</td>'
-            f'<td class="num" data-sort="{_sort_dt}" style="color:#6b7280;white-space:nowrap;" title="{_title_dt}">{price_date_fmt}</td>'
+            f'<td class="num" data-sort="{_sort_dt}" style="color:var(--slate-500);white-space:nowrap;" title="{_title_dt}">{price_date_fmt}</td>'
             f'<td data-sort="{holding_sort}" style="text-align:center;color:{holding_color};font-weight:700;" title="{holding_title}">{holding_label}</td>'
             f'<td data-sort="{esito_label}" style="color:{esito_col};font-weight:700;"{esito_title_attr}>{esito_label}</td>'
             f'</tr>'
@@ -422,8 +424,8 @@ def render_quotes_table_with_popup(qdf, data, quotes_log):
     html_content = """<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
 *{box-sizing:border-box;margin:0;padding:0;}
-html,body{background:transparent;font-family:"Source Sans Pro",system-ui,-apple-system,sans-serif;font-size:__BODY_FONT__;overflow:hidden;color:#262730;}
-.tw{border:1px solid #e6e9ef;border-radius:8px;overflow:hidden;background:#fff;width:100%;}
+html,body{background:transparent;font-family:"Source Sans Pro",system-ui,-apple-system,sans-serif;font-size:__BODY_FONT__;overflow:hidden;color:var(--slate-800);}
+.tw{border:1px solid var(--slate-200);border-radius:8px;overflow:hidden;background:var(--white);width:100%;}
 table{width:100%;border-collapse:collapse;table-layout:fixed;}
 col.c-arrow{width:3.1%;}
 col.c-var{width:6.2%;}
@@ -438,20 +440,20 @@ col.c-source{width:8.2%;}
 col.c-date{width:8.4%;}
 col.c-ptf{width:4.6%;}
 col.c-status{width:7.8%;}
-thead th{background:#f0f2f6;font-size:__HEAD_FONT__;font-weight:600;line-height:1.12;letter-spacing:0;color:#262730;padding:__HEAD_PAD__;border-bottom:1px solid #e6e9ef;border-right:1px solid #e6e9ef;text-align:right;white-space:nowrap;position:relative;user-select:none;cursor:pointer;overflow:hidden;text-overflow:ellipsis;}
+thead th{background:var(--slate-100);font-size:__HEAD_FONT__;font-weight:600;line-height:1.12;letter-spacing:0;color:var(--slate-800);padding:__HEAD_PAD__;border-bottom:1px solid var(--slate-200);border-right:1px solid var(--slate-200);text-align:right;white-space:nowrap;position:relative;user-select:none;cursor:pointer;overflow:hidden;text-overflow:ellipsis;}
 thead th:last-child{border-right:none;}
 thead th:nth-child(1){text-align:center;cursor:default;padding:__FIRST_HEAD_PAD__;}
 thead th:nth-child(3),thead th:nth-child(4),thead th:nth-child(6),thead th:nth-child(10),thead th:nth-child(13){text-align:left;}
-thead th:hover:not(:nth-child(1)){background:#e3e6e9;}
-thead th .sort-ind{font-size:9px;margin-left:3px;color:#9094a3;}
-thead th.asc .sort-ind::after{content:'▲';color:#262730;}
-thead th.desc .sort-ind::after{content:'▼';color:#262730;}
+thead th:hover:not(:nth-child(1)){background:var(--slate-200);}
+thead th .sort-ind{font-size:9px;margin-left:3px;color:var(--slate-400);}
+thead th.asc .sort-ind::after{content:'▲';color:var(--slate-800);}
+thead th.desc .sort-ind::after{content:'▼';color:var(--slate-800);}
 .rh{position:absolute;right:0;top:0;height:100%;width:4px;cursor:col-resize;background:transparent;z-index:1;}
-.rh:hover{background:#9094a3;opacity:.4;}
-tbody tr{border-bottom:1px solid #f0f2f6;}
+.rh:hover{background:var(--slate-400);opacity:.4;}
+tbody tr{border-bottom:1px solid var(--slate-100);}
 tbody tr:last-child{border-bottom:none;}
-tbody tr:hover{background:#f0f2f6;}
-tbody td{padding:__BODY_PAD__;vertical-align:middle;line-height:1.18;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border-right:1px solid #f0f2f6;}
+tbody tr:hover{background:var(--slate-100);}
+tbody td{padding:__BODY_PAD__;vertical-align:middle;line-height:1.18;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border-right:1px solid var(--slate-100);}
 tbody td:last-child{border-right:none;}
 .type-icon{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;line-height:0;}
 .type-icon svg{width:18px;height:18px;display:block;fill:none;}
@@ -461,64 +463,64 @@ a.tk-link{text-decoration:none;font-weight:700;cursor:pointer;border-bottom:1.5p
 a.tk-link:hover{opacity:0.65;}
 #qmo{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center;}
 #qmo.on{display:flex;}
-#qmc{background:#fff;border-radius:18px;padding:18px 22px 16px;max-width:1020px;width:97%;box-shadow:0 12px 52px rgba(0,0,0,.26);position:relative;color:#1f2937;}
-#qmc-close{position:absolute;top:10px;right:14px;cursor:pointer;font-size:1.3rem;color:#9ca3af;background:none;border:none;line-height:1;}
-#qmc-close:hover{color:#374151;}
+#qmc{background:var(--white);border-radius:18px;padding:18px 22px 16px;max-width:1020px;width:97%;box-shadow:0 12px 52px rgba(0,0,0,.26);position:relative;color:var(--slate-800);}
+#qmc-close{position:absolute;top:10px;right:14px;cursor:pointer;font-size:1.3rem;color:var(--slate-400);background:none;border:none;line-height:1;}
+#qmc-close:hover{color:var(--slate-700);}
 .mc-cols{display:grid;grid-template-columns:36% 64%;gap:18px;align-items:start;}
 .mc-left{min-width:0;}
 .mc-right{min-width:0;display:flex;flex-direction:column;gap:10px;}
 .mc-ticker{font-size:1.8rem;font-weight:900;letter-spacing:-.01em;margin-bottom:2px;}
-.mc-nome{font-size:1.0rem;color:#374151;font-weight:600;}
-.mc-meta{font-size:0.85rem;color:#9ca3af;margin:4px 0 12px;}
+.mc-nome{font-size:1.0rem;color:var(--slate-700);font-weight:600;}
+.mc-meta{font-size:0.85rem;color:var(--slate-400);margin:4px 0 12px;}
 .mc-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;}
-.mc-kpi{border:1px solid #e5e7eb;border-radius:8px;padding:8px 12px;}
+.mc-kpi{border:1px solid var(--slate-200);border-radius:8px;padding:8px 12px;}
 .mc-kpi.span2{grid-column:1 / span 2;}
-.mc-kpi-l{font-size:0.82rem;text-transform:uppercase;color:#9ca3af;font-weight:700;letter-spacing:.04em;margin-bottom:3px;}
+.mc-kpi-l{font-size:0.82rem;text-transform:uppercase;color:var(--slate-400);font-weight:700;letter-spacing:.04em;margin-bottom:3px;}
 .mc-kpi-v{font-size:1.05rem;font-weight:700;font-variant-numeric:tabular-nums;}
-.pos{color:#1E8449;} .neg{color:#FF4B4B;}
-.mc-price-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:11px;padding:10px 14px;display:flex;align-items:baseline;gap:12px;}
+.pos{color:var(--success);} .neg{color:var(--danger);}
+.mc-price-box{background:var(--slate-50);border:1px solid var(--slate-200);border-radius:11px;padding:10px 14px;display:flex;align-items:baseline;gap:12px;}
 .mc-price-val{font-size:2.0rem;font-weight:800;font-variant-numeric:tabular-nums;}
-.mc-price-sub{font-size:0.95rem;color:#6b7280;}
-.mc-spark-label{font-size:0.78rem;text-transform:uppercase;color:#9ca3af;font-weight:700;letter-spacing:.05em;}
+.mc-price-sub{font-size:0.95rem;color:var(--slate-500);}
+.mc-spark-label{font-size:0.78rem;text-transform:uppercase;color:var(--slate-400);font-weight:700;letter-spacing:.05em;}
 .spark-wrap{display:flex;align-items:stretch;}
-.spark-y{position:relative;flex:none;width:58px;font:600 10px system-ui;color:#6b7280;}
+.spark-y{position:relative;flex:none;width:58px;font:600 10px system-ui;color:var(--slate-500);}
 .spark-y span{position:absolute;right:5px;transform:translateY(-50%);white-space:nowrap;}
 .qm-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:2px;}
-.qm-stat{border:1px solid #e5e7eb;border-radius:8px;padding:5px 9px;min-width:0;}
-.qm-stat-l{font-size:0.66rem;text-transform:uppercase;color:#9ca3af;font-weight:700;letter-spacing:.04em;}
+.qm-stat{border:1px solid var(--slate-200);border-radius:8px;padding:5px 9px;min-width:0;}
+.qm-stat-l{font-size:0.66rem;text-transform:uppercase;color:var(--slate-400);font-weight:700;letter-spacing:.04em;}
 .qm-stat-v{font-size:0.92rem;font-weight:700;font-variant-numeric:tabular-nums;}
-.qm-stat-s{font-size:0.7rem;color:#6b7280;}
+.qm-stat-s{font-size:0.7rem;color:var(--slate-500);}
 .qm-range{grid-column:1/-1;}
-.qm-range-bar{position:relative;height:8px;border-radius:4px;background:linear-gradient(90deg,#fecaca,#e5e7eb 50%,#bbf7d0);margin:7px 0 2px;}
-.qm-range-bar i{position:absolute;top:-4px;width:4px;height:16px;border-radius:2px;background:#374151;transform:translateX(-50%);}
-.qm-range-t{display:flex;justify-content:space-between;font-size:0.7rem;color:#6b7280;font-variant-numeric:tabular-nums;}
-svg.spark{flex:1;min-width:0;height:152px;display:block;border-radius:10px;background:#f9fafb;}
-.read-table{border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;background:#fff;}
+.qm-range-bar{position:relative;height:8px;border-radius:4px;background:linear-gradient(90deg,var(--red-200),var(--slate-200) 50%,var(--green-200));margin:7px 0 2px;}
+.qm-range-bar i{position:absolute;top:-4px;width:4px;height:16px;border-radius:2px;background:var(--slate-700);transform:translateX(-50%);}
+.qm-range-t{display:flex;justify-content:space-between;font-size:0.7rem;color:var(--slate-500);font-variant-numeric:tabular-nums;}
+svg.spark{flex:1;min-width:0;height:152px;display:block;border-radius:10px;background:var(--slate-50);}
+.read-table{border:1px solid var(--slate-200);border-radius:10px;overflow:hidden;background:var(--white);}
 .read-table table{width:100%;border-collapse:collapse;table-layout:fixed;}
-.read-table th,.read-table td{padding:5px 7px;border-bottom:1px solid #eef0f4;font-size:11px;line-height:1.15;}
-.read-table th{background:#f8fafc;text-align:left;color:#64748b;font-weight:700;}
+.read-table th,.read-table td{padding:5px 7px;border-bottom:1px solid var(--page-bg);font-size:11px;line-height:1.15;}
+.read-table th{background:var(--slate-50);text-align:left;color:var(--slate-500);font-weight:700;}
 .read-table th:first-child,.read-table td:first-child{width:92px;}
 .read-table td.num{text-align:right;font-variant-numeric:tabular-nums;}
 .read-table tr:last-child td{border-bottom:none;}
-.tag-ok{color:#1E8449;font-weight:700;}
-.tag-warn{color:#F59E0B;font-weight:700;}
-.tag-err{color:#FF4B4B;font-weight:700;}
-.tag-miss{color:#94a3b8;font-weight:700;}
-.mc-footer{font-size:0.78rem;color:#9ca3af;}
+.tag-ok{color:var(--success);font-weight:700;}
+.tag-warn{color:var(--amber-500);font-weight:700;}
+.tag-err{color:var(--danger);font-weight:700;}
+.tag-miss{color:var(--slate-400);font-weight:700;}
+.mc-footer{font-size:0.78rem;color:var(--slate-400);}
 /* Enrichment block */
-.enr-box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-top:4px;margin-bottom:12px;}
+.enr-box{background:var(--slate-50);border:1px solid var(--slate-200);border-radius:10px;padding:12px 14px;margin-top:4px;margin-bottom:12px;}
 .enr-hero{display:grid;gap:6px;margin-bottom:8px;}
 .enr-h3{grid-template-columns:repeat(3,1fr);}
 .enr-h2{grid-template-columns:repeat(2,1fr);}
-.enr-kpi{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:8px 6px;text-align:center;}
-.enr-kpi-v{font-size:19px;font-weight:800;line-height:1;margin-bottom:3px;color:#0f172a;}
-.enr-kpi-v.pos{color:#16a34a;} .enr-kpi-v.neg{color:#dc2626;}
-.enr-kpi-l{font-size:9.5px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.04em;}
-.enr-details{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:#475569;}
-.enr-details span b{color:#1e293b;}
-.enr-rating{color:#f59e0b;font-size:14px;letter-spacing:1px;}
-.enr-miss{font-size:11px;color:#94a3b8;padding:4px 0;}
-.enr-scheda{display:block;margin-top:8px;text-align:right;font-size:11px;font-weight:700;color:#0ea5e9;text-decoration:none;}
+.enr-kpi{background:var(--white);border:1px solid var(--slate-200);border-radius:8px;padding:8px 6px;text-align:center;}
+.enr-kpi-v{font-size:19px;font-weight:800;line-height:1;margin-bottom:3px;color:var(--slate-900);}
+.enr-kpi-v.pos{color:var(--green-600);} .enr-kpi-v.neg{color:var(--red-600);}
+.enr-kpi-l{font-size:9.5px;color:var(--slate-400);font-weight:700;text-transform:uppercase;letter-spacing:.04em;}
+.enr-details{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:var(--slate-600);}
+.enr-details span b{color:var(--slate-800);}
+.enr-rating{color:var(--amber-500);font-size:14px;letter-spacing:1px;}
+.enr-miss{font-size:11px;color:var(--slate-400);padding:4px 0;}
+.enr-scheda{display:block;margin-top:8px;text-align:right;font-size:11px;font-weight:700;color:var(--blue-500);text-decoration:none;}
 </style></head>
 <body>
 <div class="tw"><table id="quotes-table">
@@ -568,7 +570,7 @@ svg.spark{flex:1;min-width:0;height:152px;display:block;border-radius:10px;backg
     <div class="mc-right">
       <div class="mc-price-box">
         <div>
-          <div style="font-size:0.78rem;text-transform:uppercase;color:#9ca3af;font-weight:700;margin-bottom:2px;">Ultimo prezzo letto</div>
+          <div style="font-size:0.78rem;text-transform:uppercase;color:var(--slate-400);font-weight:700;margin-bottom:2px;">Ultimo prezzo letto</div>
           <div class="mc-price-val" id="qm-px"></div>
         </div>
         <div id="qm-delta" class="mc-price-sub"></div>
@@ -597,7 +599,7 @@ function kpi(label,val,cls){return '<div class="mc-kpi"><div class="mc-kpi-l">'+
 function kpiWide(label,val,cls){return '<div class="mc-kpi span2"><div class="mc-kpi-l">'+label+'</div><div class="mc-kpi-v'+(cls?' '+cls:'')+'">'+val+'</div></div>';}
 function buildReadingsTable(readings){
   var body=document.getElementById('qm-readings'); body.innerHTML='';
-  if(!readings||!readings.length){body.innerHTML='<tr><td colspan="6" style="color:#94a3b8;">Nessuna lettura disponibile</td></tr>'; return;}
+  if(!readings||!readings.length){body.innerHTML='<tr><td colspan="6" style="color:var(--slate-400);">Nessuna lettura disponibile</td></tr>'; return;}
   readings.slice().reverse().forEach(function(r){
     var cls=r.status==='ok'?'tag-ok':(r.status==='warning'?'tag-warn':(r.status==='missing'?'tag-miss':'tag-err'));
     var label=r.status==='ok'?'OK':(r.status==='warning'?'Warning':(r.status==='missing'?'Solo storico':'Errore'));
@@ -701,7 +703,7 @@ function showQuoteModal(tk){
     kpi('Storico',String(d.available_days||0)+' gg')+
     kpi('Log letture',String(d.log_days||0)+' / '+String(d.available_days||0))+
     kpiWide('Fonte / AGG.',(d.fonte||'n/d')+' · '+fmtDateIt(d.aggiornato))+
-    (d.source_url?kpiWide('Link fonte','<a href="'+d.source_url+'" target="_blank" rel="noopener" style="color:#2563EB;text-decoration:underline;word-break:break-all;font-size:0.82rem;">'+d.source_url+'</a>'):'');
+    (d.source_url?kpiWide('Link fonte','<a href="'+d.source_url+'" target="_blank" rel="noopener" style="color:var(--blue-700);text-decoration:underline;word-break:break-all;font-size:0.82rem;">'+d.source_url+'</a>'):'');
   sparklineReadings(d.daily_readings||[], positive, pmc);
   periodStats(d.daily_readings||[]);
   buildReadingsTable((d.daily_readings||[]).slice(-10));
@@ -731,7 +733,7 @@ function showQuoteModal(tk){
     enrHtml+='<div class="enr-miss">Dati finanziari non ancora caricati.</div>';
     enrHtml+='<a class="enr-scheda" href="http://localhost:8502/strumento/'+tk+'" target="_blank">Scheda completa →</a>';
   }
-  if(enr.error)enrHtml+='<div style="color:#f59e0b;font-size:11px;margin-top:4px;">⚠ '+enr.error+'</div>';
+  if(enr.error)enrHtml+='<div style="color:var(--amber-500);font-size:11px;margin-top:4px;">⚠ '+enr.error+'</div>';
   enrHtml+='</div>';
   document.getElementById('qm-enr').innerHTML=enrHtml;
   document.getElementById('qmo').classList.add('on');

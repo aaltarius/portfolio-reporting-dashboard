@@ -65,4 +65,6 @@ def render_html_iframe(
     scroll rimane quindi delegata al CSS/HTML interno e all'altezza passata.
     """
     _ = scrolling
-    return st.iframe(html, height=height, width=width, tab_index=tab_index)
+    from ui.theme_tokens import inject_theme
+
+    return st.iframe(inject_theme(html), height=height, width=width, tab_index=tab_index)

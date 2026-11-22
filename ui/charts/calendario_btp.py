@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from ui.theme_tokens import theme_color
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from core.config import COLORS
 from core.domain.calendar import TAX_RATE_GOV_PCT, estimate_maturity_tax
 from ui.charts.runtime import finalize_chart
 from ui.charts.settings import apply_settings, get_chart_setting
@@ -67,15 +68,15 @@ def build_btp_calendar_figure(
     min_data = df["data"].min()
     max_data = df["data"].max()
     ticker_label_x = min_data - pd.Timedelta(days=40)
-    past_line_color = "#0F8A38"
-    future_line_color = "#F59E0B"
-    elapsed_text_color = "#0F8A38"
+    past_line_color = theme_color("green-700")
+    future_line_color = theme_color("amber-500")
+    elapsed_text_color = theme_color("green-700")
     gov_color = macro_color("GOV")
     colors = {
-        ("cedola", "incassata"): COLORS["success"],
-        ("cedola", "futura"): COLORS["danger"],
-        ("scadenza", "incassata"): COLORS["success"],
-        ("scadenza", "futura"): "#F59E0B",
+        ("cedola", "incassata"): theme_color("success"),
+        ("cedola", "futura"): theme_color("danger"),
+        ("scadenza", "incassata"): theme_color("success"),
+        ("scadenza", "futura"): theme_color("amber-500"),
     }
 
     def _duration_label(start: pd.Timestamp, end: pd.Timestamp) -> str:
@@ -161,9 +162,9 @@ def build_btp_calendar_figure(
                 mode="markers+text",
                 marker=dict(
                     size=9,
-                    color="#64748B",
+                    color=theme_color("slate-500"),
                     symbol="circle",
-                    line=dict(color="#ffffff", width=1.1),
+                    line=dict(color=theme_color("white"), width=1.1),
                 ),
                 text=None,
                 hovertemplate=(
@@ -184,7 +185,7 @@ def build_btp_calendar_figure(
             yshift=12,
             xanchor="right",
             yanchor="bottom",
-            font=dict(size=10, color="#64748B"),
+            font=dict(size=10, color=theme_color("slate-500")),
             bgcolor="rgba(255,255,255,0.88)",
         )
 
@@ -206,7 +207,7 @@ def build_btp_calendar_figure(
                     size=marker_size,
                     color=color,
                     symbol=marker_symbol,
-                    line=dict(color="#ffffff", width=1.2),
+                    line=dict(color=theme_color("white"), width=1.2),
                 ),
                 text=part["importo"].map(lambda v: fmt_eur_it(v, 2)) if is_coupon and "importo" in part.columns else None,
                 textposition="top center",
@@ -251,7 +252,7 @@ def build_btp_calendar_figure(
                     yshift=12,
                     xanchor="left",
                     yanchor="bottom",
-                    font=dict(size=10, color="#64748B"),
+                    font=dict(size=10, color=theme_color("slate-500")),
                     bgcolor="rgba(255,255,255,0.88)",
                 )
 
@@ -278,7 +279,7 @@ def build_btp_calendar_figure(
         y1=1,
         xref="x",
         yref="paper",
-        line=dict(width=1.6, dash="dash", color="#64748B"),
+        line=dict(width=1.6, dash="dash", color=theme_color("slate-500")),
     )
     fig.add_annotation(
         x=today,
@@ -289,7 +290,7 @@ def build_btp_calendar_figure(
         showarrow=False,
         yanchor="bottom",
         yshift=8,
-        font=dict(size=11, color="#64748B"),
+        font=dict(size=11, color=theme_color("slate-500")),
         bgcolor="rgba(255,255,255,0.85)",
     )
 
@@ -359,20 +360,20 @@ def render_btp_calendar_table(
     st.markdown(
         f"""
         <div style="display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin:6px 0 10px 0;">
-          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid #e5e7eb;border-radius:999px;background:#f8fafc;font-size:0.78rem;color:#0F8A38;">
-            <span style="width:18px;height:0;border-top:3px solid #0F8A38;display:inline-block;"></span> Trascorso
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--slate-200);border-radius:999px;background:var(--slate-50);font-size:0.78rem;color:var(--green-700);">
+            <span style="width:18px;height:0;border-top:3px solid var(--green-700);display:inline-block;"></span> Trascorso
           </span>
-          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid #e5e7eb;border-radius:999px;background:#f8fafc;font-size:0.78rem;color:#92400e;">
-            <span style="width:18px;height:0;border-top:3px solid #F59E0B;display:inline-block;"></span> Residuo
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--slate-200);border-radius:999px;background:var(--slate-50);font-size:0.78rem;color:var(--amber-800);">
+            <span style="width:18px;height:0;border-top:3px solid var(--amber-500);display:inline-block;"></span> Residuo
           </span>
-          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid #e5e7eb;border-radius:999px;background:#f8fafc;font-size:0.78rem;color:#166534;">
-            <span style="width:10px;height:10px;border-radius:50%;background:{COLORS['success']};display:inline-block;"></span> Incassata
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--slate-200);border-radius:999px;background:var(--slate-50);font-size:0.78rem;color:var(--green-800);">
+            <span style="width:10px;height:10px;border-radius:50%;background:var(--success);display:inline-block;"></span> Incassata
           </span>
-          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid #e5e7eb;border-radius:999px;background:#f8fafc;font-size:0.78rem;color:#b91c1c;">
-            <span style="width:10px;height:10px;border-radius:50%;background:{COLORS['danger']};display:inline-block;"></span> Futura
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--slate-200);border-radius:999px;background:var(--slate-50);font-size:0.78rem;color:var(--red-700);">
+            <span style="width:10px;height:10px;border-radius:50%;background:var(--danger);display:inline-block;"></span> Futura
           </span>
-          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid #e5e7eb;border-radius:999px;background:#f8fafc;font-size:0.78rem;color:#475569;">
-            <span style="width:18px;height:0;border-top:2px dashed #64748B;display:inline-block;"></span> Oggi
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--slate-200);border-radius:999px;background:var(--slate-50);font-size:0.78rem;color:var(--slate-600);">
+            <span style="width:18px;height:0;border-top:2px dashed var(--slate-500);display:inline-block;"></span> Oggi
           </span>
         </div>
         """,
@@ -477,7 +478,7 @@ def render_btp_calendar_table(
         styles: list[str] = []
         for _ in row.index:
             if is_incassata:
-                styles.append("color:#DC2626;text-decoration:line-through;")
+                styles.append(f"color:{theme_color('red-600')};text-decoration:line-through;")
             else:
                 styles.append("")
         return styles
@@ -542,7 +543,7 @@ def render_btp_calendar_table(
     def _totale_row_style(row: pd.Series) -> list[str]:
         idx = row.name
         if idx == 1:  # di cui incassato
-            return ["color:#DC2626;text-decoration:line-through;font-weight:700;" for _ in row.index]
+            return [f"color:{theme_color('red-600')};text-decoration:line-through;font-weight:700;" for _ in row.index]
         return ["font-weight:700;" for _ in row.index]
 
     totale_styler = (

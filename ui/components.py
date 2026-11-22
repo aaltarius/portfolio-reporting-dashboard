@@ -142,7 +142,7 @@ def render_section_title(
             align-items:center;
             gap:10px;
             margin:0 0 4px 0;
-            color:var(--ptf-text, #111827);
+            color:var(--ptf-text, var(--slate-900));
             font-size:1.06rem;
             font-weight:800;
             line-height:1.2;

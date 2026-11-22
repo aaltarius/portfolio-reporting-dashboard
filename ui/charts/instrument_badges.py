@@ -9,14 +9,14 @@ import html
 from typing import Any
 
 ISSUER_BADGE_CSS = """
-.issuer-badge{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;margin-right:5px;border-radius:999px;font-size:9px;font-weight:900;line-height:1;vertical-align:-2px;border:1px solid rgba(15,23,42,.12);background:#f8fafc;color:#334155;}
+.issuer-badge{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;margin-right:5px;border-radius:999px;font-size:9px;font-weight:900;line-height:1;vertical-align:-2px;border:1px solid rgba(15,23,42,.12);background:var(--slate-50);color:var(--slate-700);}
 .issuer-badge.issuer-it{font-size:14px;border:none;background:transparent;min-width:18px;margin-right:4px;}
-.issuer-badge.issuer-amundi{background:#fff7ed;color:#b45309;}
-.issuer-badge.issuer-fineco{background:#fffbe6;color:#8a6d00;}
-.issuer-badge.issuer-ishares{background:#111827;color:#fff;}
-.issuer-badge.issuer-xtrackers{background:#eff6ff;color:#1d4ed8;}
-.issuer-badge.issuer-franklin{background:#ecfdf3;color:#047857;}
-.issuer-badge.issuer-vanguard{background:#fef2f2;color:#b91c1c;}
+.issuer-badge.issuer-amundi{background:var(--orange-50);color:var(--amber-700);}
+.issuer-badge.issuer-fineco{background:var(--yellow-50);color:var(--yellow-800);}
+.issuer-badge.issuer-ishares{background:var(--slate-900);color:var(--white);}
+.issuer-badge.issuer-xtrackers{background:var(--blue-50);color:var(--blue-700);}
+.issuer-badge.issuer-franklin{background:var(--green-50);color:var(--emerald-700);}
+.issuer-badge.issuer-vanguard{background:var(--red-50);color:var(--red-700);}
 """
 
 
@@ -47,7 +47,7 @@ def commission_badge(zero_commissioni_raw: Any) -> str:
     return (
         "<span title=\"Non a zero commissioni: l'acquisto comporta un costo di negoziazione\" "
         "style=\"display:inline-block;font-size:.7rem;font-weight:800;border-radius:4px;"
-        "padding:1px 4px;margin-left:3px;line-height:1.2;background:#fef9c3;color:#854d0e;\">€</span>"
+        "padding:1px 4px;margin-left:3px;line-height:1.2;background:var(--yellow-100);color:var(--yellow-800);\">€</span>"
     )
 
 
@@ -68,7 +68,7 @@ def enrichment_complete_badge(completeness: Any) -> str:
     return (
         "<span title=\"Anagrafica arricchita al 100%\" "
         "style=\"display:inline-block;font-size:.7rem;font-weight:800;border-radius:4px;"
-        "padding:1px 4px;margin-left:3px;line-height:1.2;background:#dcfce7;color:#166534;\">✓</span>"
+        "padding:1px 4px;margin-left:3px;line-height:1.2;background:var(--green-100);color:var(--green-800);\">✓</span>"
     )
 
 

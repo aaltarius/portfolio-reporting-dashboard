@@ -1357,25 +1357,25 @@ def _flow_card(title: str, rows: list[tuple[str, str]], total_label: str, total_
     """HTML card per il flowchart finanziario. rows = [(label, valore_formattato), ...]"""
     tot_color = COLORS["success"] if total_ok else COLORS["danger"]
     rows_html = "".join(
-        f'<tr><td style="padding:2px 6px;font-size:12px;color:#888;">{lbl}</td>'
+        f'<tr><td style="padding:2px 6px;font-size:12px;color:var(--slate-500);">{lbl}</td>'
         f'<td style="padding:2px 6px;font-size:12px;font-weight:600;text-align:right;">{val}</td></tr>'
         for lbl, val in rows
     )
     return (
-        f'<div style="border:1px solid #ccc;border-radius:8px;padding:10px 12px;'
-        f'background:var(--background-color,#fff);min-height:120px;">'
+        f'<div style="border:1px solid var(--slate-300);border-radius:8px;padding:10px 12px;'
+        f'background:var(--background-color,var(--white));min-height:120px;">'
         f'<div style="font-size:12px;font-weight:700;letter-spacing:.04em;'
-        f'text-transform:uppercase;margin-bottom:6px;color:#666;">{title}</div>'
+        f'text-transform:uppercase;margin-bottom:6px;color:var(--slate-600);">{title}</div>'
         f'<table style="width:100%;border-collapse:collapse;">{rows_html}'
-        f'<tr style="border-top:1px solid #ddd;">'
+        f'<tr style="border-top:1px solid var(--slate-300);">'
         f'<td style="padding:4px 6px;font-size:13px;font-weight:700;">{total_label}</td>'
         f'<td style="padding:4px 6px;font-size:14px;font-weight:800;text-align:right;color:{tot_color};">'
         f'{total_val}</td></tr></table></div>'
     )
 
 
-_ARROW_H = '<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:28px;color:#aaa;padding-top:30px;">&#8594;</div>'
-_ARROW_V = '<div style="text-align:center;font-size:24px;color:#aaa;padding:4px 0;">&#8595;</div>'
+_ARROW_H = '<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:28px;color:var(--slate-400);padding-top:30px;">&#8594;</div>'
+_ARROW_V = '<div style="text-align:center;font-size:24px;color:var(--slate-400);padding:4px 0;">&#8595;</div>'
 
 
 

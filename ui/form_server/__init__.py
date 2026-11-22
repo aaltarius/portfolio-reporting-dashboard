@@ -74,13 +74,13 @@ def _build_fastapi_app():
 
     @_app.middleware("http")
     async def _apply_setup_theme(request, call_next):
-        """Tutte le pagine HTML seguono palette e accento scelti in Setup (ui/form_server/setup_theme.py)."""
+        """Tutte le pagine HTML seguono palette e accento scelti in Setup (ui.theme_tokens.py)."""
         response = await call_next(request)
         if "text/html" not in response.headers.get("content-type", ""):
             return response
         from fastapi.responses import HTMLResponse
 
-        from ui.form_server.setup_theme import theme_style_block
+        from ui.theme_tokens import theme_style_block
 
         body = b"".join([chunk async for chunk in response.body_iterator]).decode("utf-8", "replace")
         try:

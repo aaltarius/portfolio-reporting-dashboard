@@ -140,7 +140,9 @@ def inject_theme_styles() -> None:
     }}
     </style>
     """
-    st.markdown(css, unsafe_allow_html=True)
+    from ui.theme_tokens import theme_style_block
+
+    st.markdown(css + theme_style_block(full=True), unsafe_allow_html=True)
 
 
 def _get_runtime_settings_payload() -> dict[str, Any]:

@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 
 from ui.form_server.shell import CSS
-from ui.form_server.setup_theme import resolve_form_colors
+from ui.theme_tokens import resolve_form_colors
 
 _CSS = """<style>
 :root{--pl-shade:rgba(15,23,42,.14);--pl-shade-mk:rgba(15,23,42,.35);--pl-band:rgba(79,70,229,.13)}

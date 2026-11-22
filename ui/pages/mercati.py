@@ -5,6 +5,8 @@ benchmark gia' presente nel dataset, cosi' resta leggera nei rerun Streamlit.
 """
 from __future__ import annotations
 
+from ui.theme_tokens import theme_color
+
 import math
 import html
 from datetime import datetime
@@ -233,9 +235,9 @@ def _market_refresh_status(rows: list[dict[str, Any]], all_rows: list[dict[str, 
         action = "Dati leggibili, ma non completamente freschi."
 
     palette = {
-        "green": (COLORS["success"], "#ecfdf5", "#bbf7d0"),
-        "yellow": (COLORS["warning"], "#fffbeb", "#fde68a"),
-        "red": (COLORS["danger"], "#fef2f2", "#fecaca"),
+        "green": (COLORS["success"], theme_color("green-50"), theme_color("green-200")),
+        "yellow": (COLORS["warning"], theme_color("amber-50"), theme_color("amber-200")),
+        "red": (COLORS["danger"], theme_color("red-50"), theme_color("red-200")),
     }
     color, bg, border = palette[tone]
     return {
@@ -266,7 +268,7 @@ def _render_market_refresh_status(status: dict[str, Any]) -> None:
             border:1px solid {status["border"]};
             border-radius:8px;
             background:{status["bg"]};
-            color:#334155;
+            color:var(--slate-700);
             font-size:12.4px;
             line-height:1.25;
         }}
@@ -538,8 +540,8 @@ def _build_base100_figure(frame: pd.DataFrame) -> go.Figure:
         P.get("orange", "#F97316"),
         P.get("purple", "#7C3AED"),
         P.get("red", "#DC2626"),
-        "#0F766E",
-        "#64748B",
+        theme_color("emerald-700"),
+        theme_color("slate-500"),
         "#CA8A04",
         "#0284C7",
     ]
@@ -590,11 +592,11 @@ def _build_returns_heatmap_figure(rows: list[dict[str, Any]]) -> go.Figure:
         xgap=2,
         ygap=2,
         colorscale=[
-            [0.0, "#dc2626"],
-            [0.44, "#fee2e2"],
-            [0.50, "#f8fafc"],
-            [0.56, "#dcfce7"],
-            [1.0, "#16a34a"],
+            [0.0, theme_color("red-600")],
+            [0.44, theme_color("red-100")],
+            [0.50, theme_color("slate-50")],
+            [0.56, theme_color("green-100")],
+            [1.0, theme_color("green-600")],
         ],
         zmid=0,
         colorbar=dict(title=dict(text="%", font=dict(size=14)), thickness=13, tickfont=dict(size=14)),
@@ -608,7 +610,7 @@ def _build_returns_heatmap_figure(rows: list[dict[str, Any]]) -> go.Figure:
         yaxis=dict(
             autorange="reversed",
             showticklabels=True,
-            tickfont=dict(size=19, color="#0f172a"),
+            tickfont=dict(size=19, color=theme_color("slate-900")),
             automargin=True,
         ),
         xaxis=dict(tickfont=dict(size=18), side="top"),
@@ -650,20 +652,20 @@ def _build_area_strength_figure(area_rows: list[dict[str, Any]]) -> go.Figure:
 
 def _heatmap_cell_colors(value: float | None) -> tuple[str, str, str]:
     if value is None:
-        return "#f8fafc", "#64748b", "#e2e8f0"
+        return theme_color("slate-50"), theme_color("slate-500"), theme_color("slate-200")
     if abs(value) < 0.00005:
-        return "#f8fafc", "#475569", "#e2e8f0"
+        return theme_color("slate-50"), theme_color("slate-600"), theme_color("slate-200")
     if value > 0:
         if value >= 0.02:
-            return "#16a34a", "#ffffff", "#15803d"
+            return theme_color("green-600"), theme_color("white"), theme_color("green-700")
         if value >= 0.005:
-            return "#bbf7d0", "#166534", "#86efac"
-        return "#dcfce7", "#166534", "#bbf7d0"
+            return theme_color("green-200"), theme_color("green-800"), theme_color("green-300")
+        return theme_color("green-100"), theme_color("green-800"), theme_color("green-200")
     if value <= -0.02:
-        return "#dc2626", "#ffffff", "#b91c1c"
+        return theme_color("red-600"), theme_color("white"), theme_color("red-700")
     if value <= -0.005:
-        return "#fecaca", "#991b1b", "#fca5a5"
-    return "#fee2e2", "#991b1b", "#fecaca"
+        return theme_color("red-200"), theme_color("red-800"), theme_color("red-300")
+    return theme_color("red-100"), theme_color("red-800"), theme_color("red-200")
 
 
 def _relative_strength_cell(value: float | None) -> str:
@@ -681,7 +683,7 @@ def _area_strength_bar_html(row: dict[str, Any], max_abs: float) -> str:
     pct = 0.0 if value is None or max_abs <= 0 else min(abs(value) / max_abs, 1.0) * 50.0
     color = COLORS["success"] if (value or 0.0) >= 0 else COLORS["danger"]
     if value is None:
-        fill_style = "left:50%;width:0%;background:#cbd5e1;"
+        fill_style = "left:50%;width:0%;background:var(--slate-300);"
     elif value >= 0:
         fill_style = f"left:50%;width:{pct:.1f}%;background:{color};"
     else:
@@ -736,20 +738,20 @@ def _relative_strength_map_html(rows: list[dict[str, Any]], area_rows: list[dict
         align-items:center;
         justify-content:center;
         border-radius:7px;
-        background:#eef2f7;
-        color:#334155;
+        background:var(--page-bg);
+        color:var(--slate-700);
         font-size:11.8px;
         font-weight:700;
         line-height:1;
     }}
-    .market-strength-label-head{{justify-content:center;background:#eef2f7;color:#334155;font-size:11.8px;text-transform:uppercase;letter-spacing:.02em;}}
+    .market-strength-label-head{{justify-content:center;background:var(--page-bg);color:var(--slate-700);font-size:11.8px;text-transform:uppercase;letter-spacing:.02em;}}
     .market-strength-section{{
         grid-column:1/-1;
         margin-top:4px;
         padding:4px 7px;
         border-radius:7px;
-        background:#f8fafc;
-        color:#0f172a;
+        background:var(--slate-50);
+        color:var(--slate-900);
         font-size:12.6px;
         line-height:1.1;
         font-weight:750;
@@ -763,14 +765,14 @@ def _relative_strength_map_html(rows: list[dict[str, Any]], area_rows: list[dict
         justify-content:center;
         gap:2px;
         padding:3px 7px;
-        border:1px solid #e2e8f0;
+        border:1px solid var(--slate-200);
         border-radius:7px;
-        background:#fff;
-        color:#0f172a;
+        background:var(--white);
+        color:var(--slate-900);
         overflow:hidden;
     }}
     .market-strength-label span{{font-size:12.6px;font-weight:650;line-height:1.08;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
-    .market-strength-label small{{font-size:9.5px;font-weight:500;color:#64748b;line-height:1;}}
+    .market-strength-label small{{font-size:9.5px;font-weight:500;color:var(--slate-500);line-height:1;}}
     .market-strength-cell{{
         min-height:29px;
         display:flex;
@@ -789,10 +791,10 @@ def _relative_strength_map_html(rows: list[dict[str, Any]], area_rows: list[dict
         gap:5px;
         padding-top:2px;
     }}
-    .market-area-title{{font-size:12.6px;font-weight:700;color:#0f172a;line-height:1.15;margin-bottom:1px;}}
+    .market-area-title{{font-size:12.6px;font-weight:700;color:var(--slate-900);line-height:1.15;margin-bottom:1px;}}
     .market-area-row{{display:grid;grid-template-columns:minmax(142px,.92fr) minmax(150px,1.4fr) 54px;gap:7px;align-items:center;}}
-    .market-area-label{{font-size:12.6px;font-weight:650;color:#0f172a;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
-    .market-area-track{{position:relative;height:11px;border-radius:999px;background:#eef2f7;overflow:hidden;border:1px solid #e2e8f0;}}
+    .market-area-label{{font-size:12.6px;font-weight:650;color:var(--slate-900);line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
+    .market-area-track{{position:relative;height:11px;border-radius:999px;background:var(--page-bg);overflow:hidden;border:1px solid var(--slate-200);}}
     .market-area-zero{{position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(15,23,42,.35);}}
     .market-area-fill{{position:absolute;top:0;bottom:0;border-radius:999px;}}
     .market-area-value{{font-size:11.8px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums;}}
@@ -859,30 +861,30 @@ def _style_market_table(dataframe: pd.DataFrame) -> pd.DataFrame:
         for col in perf_cols:
             tone = _pct_tone_from_text(row.get(col))
             if str(row.get(col) or "").lower() == "n/d":
-                styles.loc[idx, col] = "color:#94a3b8;background:#f8fafc;font-weight:700;"
+                styles.loc[idx, col] = "color:var(--slate-400);background:var(--slate-50);font-weight:700;"
             elif tone == "up":
-                styles.loc[idx, col] = "color:#047857;background:#ecfdf5;font-weight:800;"
+                styles.loc[idx, col] = "color:var(--emerald-700);background:var(--green-50);font-weight:800;"
             elif tone == "down":
-                styles.loc[idx, col] = "color:#b91c1c;background:#fef2f2;font-weight:800;"
+                styles.loc[idx, col] = "color:var(--red-700);background:var(--red-50);font-weight:800;"
             else:
-                styles.loc[idx, col] = "color:#64748b;background:#f8fafc;font-weight:700;"
+                styles.loc[idx, col] = "color:var(--slate-500);background:var(--slate-50);font-weight:700;"
         if "Fonte" in dataframe.columns:
             styles.loc[idx, "Fonte"] = (
-                "color:#1d4ed8;background:#eff6ff;font-weight:800;"
+                "color:var(--blue-700);background:var(--blue-50);font-weight:800;"
                 if str(row.get("Fonte") or "") == "Live"
-                else "color:#475569;background:#f1f5f9;font-weight:800;"
+                else "color:var(--slate-600);background:var(--slate-100);font-weight:800;"
             )
         if "Stato" in dataframe.columns:
             styles.loc[idx, "Stato"] = (
-                "color:#047857;background:#ecfdf5;font-weight:800;"
+                "color:var(--emerald-700);background:var(--green-50);font-weight:800;"
                 if str(row.get("Stato") or "") == "Aperto"
-                else "color:#b91c1c;background:#fef2f2;font-weight:800;"
+                else "color:var(--red-700);background:var(--red-50);font-weight:800;"
             )
         if "Prio" in dataframe.columns:
             styles.loc[idx, "Prio"] = (
-                "color:#1d4ed8;background:#eff6ff;font-weight:800;"
+                "color:var(--blue-700);background:var(--blue-50);font-weight:800;"
                 if str(row.get("Prio") or "") == "Core"
-                else "color:#64748b;background:#f8fafc;font-weight:700;"
+                else "color:var(--slate-500);background:var(--slate-50);font-weight:700;"
             )
     return styles
 
@@ -965,8 +967,8 @@ def _market_table_styler(display: pd.DataFrame):
             {"selector": "th", "props": [
                 ("font-size", "12.5px"),
                 ("font-weight", "750"),
-                ("color", "#475569"),
-                ("background", "#f8fafc"),
+                ("color", theme_color("slate-600")),
+                ("background", theme_color("slate-50")),
                 ("padding", "5px 5px"),
                 ("white-space", "nowrap"),
                 ("overflow", "hidden"),
@@ -1056,10 +1058,10 @@ def _render_section_overview(rows: list[dict[str, Any]]) -> None:
         """
         <style>
         .market-section-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:3px 0 12px 0;}
-        .market-section-chip{border:1px solid rgba(15,23,42,.10);border-radius:8px;background:#fff;padding:8px 9px;min-height:62px;}
-        .market-section-chip span{display:block;color:#475569;font-size:13px;font-weight:650;text-transform:uppercase;letter-spacing:.02em;line-height:1.14;}
+        .market-section-chip{border:1px solid rgba(15,23,42,.10);border-radius:8px;background:var(--white);padding:8px 9px;min-height:62px;}
+        .market-section-chip span{display:block;color:var(--slate-600);font-size:13px;font-weight:650;text-transform:uppercase;letter-spacing:.02em;line-height:1.14;}
         .market-section-chip b{display:block;margin-top:4px;font-size:.94rem;font-weight:700;font-variant-numeric:tabular-nums;}
-        .market-section-chip small{display:block;margin-top:3px;color:#64748b;font-size:11.8px;font-weight:500;line-height:1.2;}
+        .market-section-chip small{display:block;margin-top:3px;color:var(--slate-500);font-size:11.8px;font-weight:500;line-height:1.2;}
         @media(max-width:1100px){.market-section-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
         @media(max-width:720px){.market-section-grid{grid-template-columns:1fr;}}
         </style>
@@ -1072,7 +1074,7 @@ def _render_section_tables(rows: list[dict[str, Any]]) -> None:
     st.markdown(
         """
         <style>
-        .market-section-label{margin:15px 0 7px 0;font-size:15px;font-weight:700;text-transform:uppercase;letter-spacing:.02em;color:#334155;}
+        .market-section-label{margin:15px 0 7px 0;font-size:15px;font-weight:700;text-transform:uppercase;letter-spacing:.02em;color:var(--slate-700);}
         </style>
         """,
         unsafe_allow_html=True,
@@ -1252,19 +1254,19 @@ def _render_market_pulse(rows: list[dict[str, Any]]) -> None:
         f"""
         <style>
         .mcc-shell{{display:grid;grid-template-columns:1.08fr .92fr;gap:10px;margin:2px 0 12px 0;}}
-        .mcc-panel{{border:1px solid rgba(15,23,42,.10);border-radius:8px;background:#fff;padding:11px 12px;box-shadow:0 1px 2px rgba(15,23,42,.035);}}
+        .mcc-panel{{border:1px solid rgba(15,23,42,.10);border-radius:8px;background:var(--white);padding:11px 12px;box-shadow:0 1px 2px rgba(15,23,42,.035);}}
         .mcc-verdict{{display:flex;align-items:center;gap:9px;margin-bottom:7px;}}
         .mcc-dot{{width:10px;height:10px;border-radius:999px;background:{color};box-shadow:0 0 0 3px color-mix(in srgb,{color} 12%,transparent);}}
-        .mcc-kicker{{font-size:10.5px;text-transform:uppercase;letter-spacing:.045em;color:#64748b;font-weight:850;}}
+        .mcc-kicker{{font-size:10.5px;text-transform:uppercase;letter-spacing:.045em;color:var(--slate-500);font-weight:850;}}
         .mcc-title{{font-size:1.16rem;line-height:1.05;font-weight:900;color:{color};}}
-        .mcc-action{{color:#334155;font-size:13px;line-height:1.35;margin-top:4px;}}
+        .mcc-action{{color:var(--slate-700);font-size:13px;line-height:1.35;margin-top:4px;}}
         .mcc-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:9px;}}
-        .mcc-mini{{background:#f8fafc;border:1px solid #e2e8f0;border-radius:7px;padding:7px 8px;min-height:54px;}}
-        .mcc-mini span{{display:block;color:#64748b;font-size:10.5px;font-weight:850;text-transform:uppercase;letter-spacing:.035em;}}
-        .mcc-mini b{{display:block;margin-top:4px;color:#0f172a;font-size:13px;line-height:1.2;}}
+        .mcc-mini{{background:var(--slate-50);border:1px solid var(--slate-200);border-radius:7px;padding:7px 8px;min-height:54px;}}
+        .mcc-mini span{{display:block;color:var(--slate-500);font-size:10.5px;font-weight:850;text-transform:uppercase;letter-spacing:.035em;}}
+        .mcc-mini b{{display:block;margin-top:4px;color:var(--slate-900);font-size:13px;line-height:1.2;}}
         .mcc-side{{display:flex;flex-direction:column;gap:7px;}}
-        .mcc-bar-row{{display:flex;align-items:center;justify-content:space-between;color:#475569;font-size:12px;font-weight:800;margin-top:4px;}}
-        .mcc-bar{{height:7px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin:3px 0 6px;}}
+        .mcc-bar-row{{display:flex;align-items:center;justify-content:space-between;color:var(--slate-600);font-size:12px;font-weight:800;margin-top:4px;}}
+        .mcc-bar{{height:7px;background:var(--slate-200);border-radius:999px;overflow:hidden;margin:3px 0 6px;}}
         .mcc-bar span{{display:block;height:100%;border-radius:999px;}}
         @media(max-width:900px){{.mcc-shell{{grid-template-columns:1fr;}}.mcc-grid{{grid-template-columns:1fr;}}}}
         </style>
@@ -1312,7 +1314,7 @@ def _render_mercati_lazy_placeholder(data: dict[str, Any], cache_diag: dict[str,
         .market-lazy-shell{{
             border:1px solid rgba(15,23,42,.10);
             border-radius:10px;
-            background:linear-gradient(135deg,#ffffff 0%,#f8fafc 100%);
+            background:linear-gradient(135deg,var(--white) 0%,var(--slate-50) 100%);
             padding:14px 15px;
             margin:4px 0 12px 0;
             box-shadow:0 1px 2px rgba(15,23,42,.035);
@@ -1321,7 +1323,7 @@ def _render_mercati_lazy_placeholder(data: dict[str, Any], cache_diag: dict[str,
             display:flex;
             align-items:center;
             gap:9px;
-            color:#0f172a;
+            color:var(--slate-900);
             font-size:1.02rem;
             font-weight:780;
             line-height:1.18;
@@ -1335,7 +1337,7 @@ def _render_mercati_lazy_placeholder(data: dict[str, Any], cache_diag: dict[str,
             box-shadow:0 0 0 3px color-mix(in srgb,{P.get("blue", "#2563EB")} 13%,transparent);
         }}
         .market-lazy-text{{
-            color:#475569;
+            color:var(--slate-600);
             font-size:13.2px;
             line-height:1.42;
             margin-bottom:10px;
@@ -1346,15 +1348,15 @@ def _render_mercati_lazy_placeholder(data: dict[str, Any], cache_diag: dict[str,
             gap:8px;
         }}
         .market-lazy-kpi{{
-            border:1px solid #e2e8f0;
+            border:1px solid var(--slate-200);
             border-radius:8px;
-            background:#fff;
+            background:var(--white);
             padding:8px 9px;
             min-height:54px;
         }}
         .market-lazy-kpi span{{
             display:block;
-            color:#64748b;
+            color:var(--slate-500);
             font-size:10.8px;
             font-weight:750;
             text-transform:uppercase;
@@ -1363,7 +1365,7 @@ def _render_mercati_lazy_placeholder(data: dict[str, Any], cache_diag: dict[str,
         .market-lazy-kpi b{{
             display:block;
             margin-top:4px;
-            color:#0f172a;
+            color:var(--slate-900);
             font-size:13.4px;
             font-weight:760;
             line-height:1.2;

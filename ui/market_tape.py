@@ -218,11 +218,11 @@ def render_market_ticker_tape(data: dict | None, theme: ThemeConfig | None = Non
       background:color-mix(in srgb, {primary} 7%, #fff);
     }}
     .market-tape__chip.is-closed {{
-      border-color:color-mix(in srgb, {COLORS["danger"]} 34%, transparent);
-      background:color-mix(in srgb, {COLORS["danger"]} 7%, #fff);
+      border-color:color-mix(in srgb, var(--danger) 34%, transparent);
+      background:color-mix(in srgb, var(--danger) 7%, #fff);
     }}
     .market-tape__chip.is-closed .market-tape__status {{
-      color:{COLORS["danger"]};
+      color:var(--danger);
       font-weight:800;
     }}
     .market-tape__flag {{font-size:14px;line-height:1;}}

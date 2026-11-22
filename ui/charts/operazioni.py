@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ui.theme_tokens import theme_color
+
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -208,7 +210,7 @@ def build_purchase_installments_by_value_chart(purchase_df: pd.DataFrame, theme)
             marker=dict(
                 size=10,
                 color=theme.color_orange,
-                line=dict(color="#ffffff", width=1.5),
+                line=dict(color=theme_color("white"), width=1.5),
                 symbol="diamond",
             ),
             customdata=customdata,
