@@ -11,33 +11,6 @@ from ui.charts.natura_icons import get_nature_visual
 from ui.theme import bucket_color, macro_color, INSTRUMENT_PALETTE, P
 
 
-def build_composition_donut_chart(per_funzione: pd.Series, theme) -> go.Figure:
-    """Donut della composizione Core/Difensivo/Satellite (o per funzione)."""
-    fig = go.Figure()
-    if per_funzione is not None and not per_funzione.empty:
-        values = [float(v) for v in per_funzione.values]
-        total = sum(values)
-        labels = [
-            f"{label} - {fmt_eur_it(value, 2)} ({fmt_pct_it(value / total, 1)})" if total > 0 else str(label)
-            for label, value in zip(per_funzione.index, values)
-        ]
-        palette = [
-            getattr(theme, "color_blue", "#5B8DEF"), getattr(theme, "color_green", "#22c55e"),
-            getattr(theme, "color_orange", "#E8B960"), "#B07CC6", "#6FB3B8", "#E07A5F",
-            getattr(theme, "color_gray", "#94a3b8"), "#A3B18A", "#577590",
-        ]
-        fig.add_trace(go.Pie(
-            labels=labels,
-            values=values,
-            hole=0.55,
-            marker=dict(colors=palette[: len(per_funzione)]),
-            textinfo="percent",
-            hovertemplate="%{label}<extra></extra>",
-        ))
-        fig.update_traces(domain=dict(x=[0.0, 0.68]))
-    return finalize_chart(fig, "pianificazione_composizione")
-
-
 def build_ante_post_bucket_chart(bucket_df: pd.DataFrame, theme) -> go.Figure:
     """Mix Core/Difensivo/Satellite prima e dopo un ordine simulato."""
     fig = go.Figure()

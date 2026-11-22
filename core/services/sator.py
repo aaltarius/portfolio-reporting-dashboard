@@ -823,39 +823,6 @@ def apply_bucket_exposure_override(
 # Editor universo (metadati modificabili dall'utente)
 # --------------------------------------------------------------------------- #
 
-def build_sator_universe_editor_frame(data: dict[str, Any]) -> pd.DataFrame:
-    ensure_sator_metadata(data)
-    positions = compute_portfolio_state(data, include_closed=True).get("df", pd.DataFrame())
-    held = _tickers_posseduti(positions)
-    master = data.get("instrument_master", {}) if isinstance(data.get("instrument_master", {}), dict) else {}
-    rows = []
-    for item in data.get("strumenti", []) or []:
-        ticker = str(item.get("ticker") or "").strip().upper()
-        if not ticker:
-            continue
-        # solo l'universo investibile da SATOR: niente BTP (GOV) ne' fondi (FND)
-        if macro_cat(str(item.get("tipo") or "")) not in SATOR_INVESTIBLE_CATEGORIES:
-            continue
-        sator = ((master.get(ticker, {}).get("manual_overrides") or {}).get("sator") or {})
-        inf = infer_sator_metadata(item, ticker in held)
-        zero = bool(sator.get("zero_commission", inf["zero_commission"])) or \
-            str(sator.get("commission_mode") or inf["commission_mode"]) == "zero_commissioni"
-        rows.append({
-            "Ticker": ticker,
-            "Nome": item.get("nome", ticker),
-            "Attivo SATOR": bool(sator.get("active", inf["active"])),
-            "Stato": _resolve_sator_state(sator.get("state"), inf["state"]),
-            "Natura": _meta_strutturale(sator, inf, "nature"),
-            "Ruolo": _meta_strutturale(sator, inf, "role"),
-            "Zero commissioni": zero,
-            "TER %": round(_safe_float(sator.get("ter", inf["ter"]), 0.0) * 100.0, 3),
-            "Spread %": round(_safe_float(sator.get("spread_pct", inf["spread_pct"]), 0.0) * 100.0, 3),
-        })
-    if not rows:
-        return pd.DataFrame()
-    return pd.DataFrame(rows).sort_values("Ticker").reset_index(drop=True)
-
-
 def apply_sator_universe_editor_frame(data: dict[str, Any], editor_df: pd.DataFrame) -> int:
     if editor_df is None or editor_df.empty:
         return 0
@@ -902,111 +869,6 @@ def apply_sator_universe_editor_frame(data: dict[str, Any], editor_df: pd.DataFr
 # --------------------------------------------------------------------------- #
 # Recupero automatico dei costi (TER) dalla rete
 # --------------------------------------------------------------------------- #
-
-def _ter_from_info(info: dict) -> float | None:
-    """Estrae il TER (frazione) dai campi Yahoo. Normalizza % vs frazione."""
-    for key in ("annualReportExpenseRatio", "netExpenseRatio", "expenseRatio", "grossExpenseRatio"):
-        raw = info.get(key)
-        try:
-            val = float(raw)
-        except (TypeError, ValueError):
-            continue
-        if val <= 0:
-            continue
-        frazione = val / 100.0 if val > 0.03 else val   # normalizza % vs frazione
-        if 0.0 < frazione < 0.03:
-            return round(frazione, 6)
-    return None
-
-
-def _spread_from_info(info: dict) -> float | None:
-    """Spread denaro-lettera (frazione) da bid/ask Yahoo, con filtro di sanita'.
-
-    Accettato SOLO a mercato in contrattazione (i bid/ask di fine seduta sono
-    larghi e stantii) e solo se plausibile (<= 0,6%). Sopra quella soglia, o a
-    mercato chiuso, restituisce None: meglio nessun valore che uno inquinato.
-    """
-    if str(info.get("marketState") or "").upper() != "REGULAR":
-        return None
-    try:
-        bid = float(info.get("bid"))
-        ask = float(info.get("ask"))
-    except (TypeError, ValueError):
-        return None
-    if not (ask >= bid > 0):
-        return None
-    mid = (ask + bid) / 2.0
-    spread = (ask - bid) / mid if mid > 0 else None
-    if spread is not None and 0.0 < spread <= 0.006:
-        return round(spread, 6)
-    return None
-
-
-def _fetch_costs_for_symbol(symbol: str) -> dict[str, float | None]:
-    """Una sola chiamata Yahoo per TER e spread. Entrambi possono essere None."""
-    symbol = str(symbol or "").strip()
-    out: dict[str, float | None] = {"ter": None, "spread": None}
-    if not symbol:
-        return out
-    try:
-        import yfinance as yf
-    except Exception:
-        return out
-    try:
-        tk = yf.Ticker(symbol)
-        info = tk.get_info() if hasattr(tk, "get_info") else getattr(tk, "info", None)
-    except Exception:
-        info = None
-    if not isinstance(info, dict):
-        return out
-    out["ter"] = _ter_from_info(info)
-    out["spread"] = _spread_from_info(info)
-    return out
-
-
-def fetch_sator_costs_from_web(data: dict[str, Any], *, only_missing: bool = True) -> dict[str, list[str]]:
-    """Scarica da Yahoo TER e (a mercato aperto) spread, salvandoli nei metadati.
-
-    Il TER e' un dato stabile; lo spread viene scritto solo quando Yahoo lo
-    fornisce credibile (mercato in contrattazione e valore plausibile). In tutti
-    gli altri casi lo spread resta com'era. Restituisce l'esito per la UI.
-    """
-    ensure_sator_metadata(data)
-    master = data.setdefault("instrument_master", {})
-    ter_trovati: list[str] = []
-    spread_trovati: list[str] = []
-    non_trovati: list[str] = []
-    saltati: list[str] = []
-    for item in data.get("strumenti", []) or []:
-        ticker = str(item.get("ticker") or "").strip().upper()
-        if not ticker:
-            continue
-        sator = master.setdefault(ticker, {}).setdefault("manual_overrides", {}).setdefault("sator", {})
-        inferred = infer_sator_metadata(item, False)
-        if not bool(sator.get("active", inferred["active"])):
-            continue
-        ter_gia = _safe_float(sator.get("ter"), 0.0) > 0
-        spread_gia = _safe_float(sator.get("spread_pct"), 0.0) > 0
-        if only_missing and ter_gia and spread_gia:
-            saltati.append(ticker)
-            continue
-        costi = _fetch_costs_for_symbol(ticker)
-        if costi["ter"] is not None and (not only_missing or not ter_gia):
-            sator["ter"] = costi["ter"]
-            ter_trovati.append(f"{ticker} ({costi['ter'] * 100:.2f}%)")
-        if costi["spread"] is not None and (not only_missing or not spread_gia):
-            sator["spread_pct"] = costi["spread"]
-            spread_trovati.append(f"{ticker} ({costi['spread'] * 100:.3f}%)")
-        if costi["ter"] is None and costi["spread"] is None:
-            non_trovati.append(ticker)
-    return {
-        "ter_trovati": ter_trovati,
-        "spread_trovati": spread_trovati,
-        "non_trovati": non_trovati,
-        "saltati": saltati,
-    }
-
-
 
 def run_sator_analysis(
     data: dict[str, Any],
@@ -3254,37 +3116,6 @@ def build_sator_decision_record(
         "note": str(note or "").strip(),
         "actual_order": [],
     }
-
-
-def compare_decision_to_actual(decision: dict[str, Any]) -> pd.DataFrame:
-    proposal = pd.DataFrame(list(decision.get("order_lines", []) or []))
-    actual = pd.DataFrame(list(decision.get("actual_order", []) or []))
-    actual_present = not actual.empty
-    proposal_cols = ["Ticker", "ISIN", "Strumento", "Quote proposte", "Ultimo prezzo", "Importo proposto"]
-    compare_cols = proposal_cols + ["Quote effettive", "Importo effettivo", "Delta quote", "Delta importo"]
-    if proposal.empty and actual.empty:
-        return pd.DataFrame(columns=proposal_cols)
-    for frame in (proposal, actual):
-        defaults = {"ticker": "", "isin": "", "name": "", "shares": 0, "price": 0.0, "amount": 0.0}
-        for c, default in defaults.items():
-            if c not in frame.columns:
-                frame[c] = default
-    left = proposal.rename(columns={
-        "ticker": "Ticker",
-        "isin": "ISIN",
-        "name": "Strumento",
-        "shares": "Quote proposte",
-        "price": "Ultimo prezzo",
-        "amount": "Importo proposto",
-    })
-    if not actual_present:
-        return left.reindex(columns=proposal_cols).sort_values("Ticker").reset_index(drop=True)
-    merged = left.merge(
-        actual.rename(columns={"ticker": "Ticker", "shares": "Quote effettive", "amount": "Importo effettivo"}),
-        on="Ticker", how="outer").fillna(0)
-    merged["Delta quote"] = pd.to_numeric(merged["Quote effettive"], errors="coerce").fillna(0) - pd.to_numeric(merged["Quote proposte"], errors="coerce").fillna(0)
-    merged["Delta importo"] = pd.to_numeric(merged["Importo effettivo"], errors="coerce").fillna(0.0) - pd.to_numeric(merged["Importo proposto"], errors="coerce").fillna(0.0)
-    return merged.reindex(columns=compare_cols).sort_values(["Delta importo", "Ticker"], ascending=[False, True]).reset_index(drop=True)
 
 
 # --------------------------------------------------------------------------- #

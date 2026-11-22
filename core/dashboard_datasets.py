@@ -186,26 +186,6 @@ def _benchmark_source_is_stale(existing: dict[str, Any], *, threshold_days: int 
     return (today - last_valid).days > threshold_days
 
 
-def _record_auto_benchmark_fallback(
-    master_map: dict[str, Any], tk: str, bench_assignment: Any,
-    to_ticker: str, to_label: str,
-) -> bool:
-    """Compatibilita': non scrivere MAI benchmark nel master del JSON.
-
-    Tutte le scelte vengono effettuate dal resolver centrale e salvate
-    nell'archivio SQLite; i fallback locali sono deliberatamente disabilitati.
-    """
-    return False
-
-
-def _find_alive_family_fallback(
-    _data: dict[str, Any], bench_assignment: Any,
-    benchmark_runtime_cache: dict[str, dict[str, Any]],
-) -> tuple[str, str] | None:
-    """Nessun provider/parente scelto localmente dalla dashboard."""
-    return None
-
-
 def _benchmark_refresh_state(existing: dict[str, Any]) -> tuple[bool, str]:
     today = pd.Timestamp.now().date()
     needs_refresh = not existing

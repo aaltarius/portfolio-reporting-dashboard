@@ -107,22 +107,3 @@ def inspect_index_csv(content: bytes, *, min_points: int=20) -> HistoricalImport
                             hashlib.sha256(content).hexdigest(),changes)
 
 
-def import_index_csv(store:IndexStore, *, code:str, content:bytes, source:str) -> dict:
-    """Importa soltanto nel benchmark richiesto, dopo verifica esplicita della fonte.
-
-    L'etichetta source deve identificare una fonte realmente autorizzata;
-    l'utente non può rietichettare automaticamente codici provider ambigui.
-    """
-    if not store.has_series(code) or store._spec(code).asset_kind != 'index':
-        raise ValueError('Si possono importare soltanto indici gia registrati in archivio (non ETF, ETC o prezzi spot)')
-    source=' '.join(str(source or '').split())
-    if len(source)<8 or len(source)>240:
-        raise ValueError('Indicare una provenienza riconoscibile del CSV (almeno 8 caratteri)')
-    preview=inspect_index_csv(content)
-    origin='authorized_csv:'+preview.source_fingerprint[:16]
-    inserted=store.upsert(code, preview.values, source=origin,replace_existing=False)
-    store.mark_fetch(code,'manual_import_ok',source[:200])
-    return {'code':code,'loaded':len(preview.values),'added':inserted,
-            'oldest':preview.oldest,'newest':preview.newest,
-            'source':source,'sha256':preview.source_fingerprint,
-            'large_changes':preview.unusually_large_changes}

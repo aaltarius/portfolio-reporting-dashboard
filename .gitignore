@@ -79,3 +79,6 @@ Thumbs.db
 
 # Git worktrees (isolamento sessioni di lavoro)
 .worktrees/
+
+# area temporanea di pulizia (TD-05): non si versiona
+_archivio_temporaneo/

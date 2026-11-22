@@ -14,38 +14,6 @@ PAGE_ARTIFACT_STORAGES = {
 }
 
 
-@dataclass(frozen=True)
-class CacheProviderContract:
-    """Contratto operativo di un provider cache ammesso dall'orchestrazione."""
-
-    artifact_id: str
-    provider: str
-    storage: str
-    page_id: str
-    layer: str
-    clear_group: str
-    trigger: str
-    rerun_policy: str
-    action_scope: str
-
-
-def build_provider_contract(artifact_id: str) -> CacheProviderContract:
-    """Restituisce il contratto provider derivato dal registry centrale."""
-
-    spec = get_cache_artifact_spec(artifact_id)
-    return CacheProviderContract(
-        artifact_id=spec.artifact_id,
-        provider=_provider_for_spec(spec),
-        storage=spec.storage,
-        page_id=spec.page_id,
-        layer=spec.layer,
-        clear_group=spec.clear_group,
-        trigger=spec.trigger,
-        rerun_policy=spec.rerun_policy,
-        action_scope=spec.action_scope,
-    )
-
-
 def get_or_build_registered_artifact(
     *,
     artifact_id: str,

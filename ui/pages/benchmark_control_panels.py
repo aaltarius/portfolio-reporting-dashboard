@@ -36,11 +36,6 @@ def _date(value:Any)->str:
     except ValueError:return '—'
 
 
-def _datetime(value:Any)->str:
-    try:return datetime.fromisoformat(str(value).replace('Z','+00:00')).astimezone().strftime('%d/%m/%Y %H:%M')
-    except ValueError:return 'Mai registrato'
-
-
 def _number(value:Any)->float|None:
     try:
         if pd.isna(value):return None
@@ -60,20 +55,6 @@ def _grade(value:Any)->str:
 
 def _relation_text(grade:str)->str:
     return RELATION_EXPLAIN.get(grade,('Da verificare','Identità economica non sufficientemente documentata.'))[1]
-
-
-def _used_series_codes(snapshot:dict)->set[str]:
-    """Serie realmente assegnate; quelle in catalogo non pesano sui KPI attivi."""
-    result=set()
-    for a in (snapshot.get('assignments') or {}).values():
-        if not isinstance(a,dict):continue
-        code=str(a.get('ticker') or '')
-        if code:result.add(code)
-        for leg in (a.get('components') or []):
-            if isinstance(leg,dict):
-                c=str(leg.get('series_id') or '')
-                if c:result.add(c)
-    return result
 
 
 def _assigned_series(snapshot:dict, assignment:dict) -> list[dict]:

@@ -51,12 +51,6 @@ def _read_target(store:IndexStore,code:str) -> dict[str,float]:
     return store.read_fx(code) if code in FX_CODES else store.read(code)
 
 
-def _target_summary(code:str, store: IndexStore | None = None)->str:
-    if code in FX_CODES:
-        return 'Tasso di cambio '+FX_CODES[code]
-    return _validate_index(code, store).label
-
-
 def _parse_date(value: object) -> str:
     if isinstance(value, datetime):
         day = value.date()

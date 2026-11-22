@@ -234,15 +234,6 @@ def _format_pl_horizon_cell(value: Any) -> str:
         return "—"
 
 
-def _style_pl_horizon_total(row: pd.Series) -> list[str]:
-    if str(row.get("Ticker") or "") != "TOTALE":
-        return ["" for _ in row.index]
-    return [
-        "font-weight:800;background:rgba(59,130,246,0.08);border-top:2px solid rgba(59,130,246,0.22);"
-        for _ in row.index
-    ]
-
-
 def _build_ticker_color_map(category_df: pd.DataFrame | None, fallback: str) -> dict[str, str]:
     if category_df is None or category_df.empty or "Ticker" not in category_df.columns:
         return {}
@@ -257,23 +248,6 @@ def _build_ticker_color_map(category_df: pd.DataFrame | None, fallback: str) -> 
         cat = macro_cat(str(item.get(type_col) or ""))
         colors[ticker] = macro_color(cat) if cat else fallback
     return colors
-
-
-def _style_pl_horizon_ticker(row: pd.Series, ticker_colors: dict[str, str], fallback: str) -> list[str]:
-    styles = ["" for _ in row.index]
-    if "Ticker" not in row.index:
-        return styles
-    ticker_idx = list(row.index).index("Ticker")
-    ticker = str(row.get("Ticker") or "")
-    styles[ticker_idx] = (
-        f"color:{ticker_colors.get(ticker, fallback)} !important;"
-        "font-weight:900 !important;"
-        "font-size:0.90rem !important;"
-        "letter-spacing:0.01em;"
-        "-webkit-text-stroke:0.25px currentColor;"
-        "text-shadow:0 0 0 currentColor;"
-    )
-    return styles
 
 
 def _pl_horizon_signal(row: pd.Series) -> str:
@@ -294,42 +268,6 @@ def _pl_horizon_signal(row: pd.Series) -> str:
     if five_d >= three_d >= one_d:
         return "▼"
     return "◆"
-
-
-def _style_pl_horizon_signal(row: pd.Series) -> list[str]:
-    styles = ["" for _ in row.index]
-    if "Trend" not in row.index:
-        return styles
-    signal_idx = list(row.index).index("Trend")
-    signal = str(row.get("Trend") or "")
-    if signal == "▲":
-        styles[signal_idx] = f"color:{P['green']};font-weight:900;font-size:1.62rem;line-height:1;text-align:center !important;vertical-align:middle;"
-    elif signal == "▼":
-        styles[signal_idx] = f"color:{P['red']};font-weight:900;font-size:1.62rem;line-height:1;text-align:center !important;vertical-align:middle;"
-    elif signal == "◆":
-        styles[signal_idx] = f"color:{P['orange']};font-weight:900;font-size:1.42rem;line-height:1;text-align:center !important;vertical-align:middle;"
-    elif signal == "→":
-        styles[signal_idx] = f"color:{P['muted']};font-weight:900;font-size:1.62rem;line-height:1;text-align:center !important;vertical-align:middle;"
-    else:
-        styles[signal_idx] = f"color:{P['muted']};font-weight:700;text-align:center !important;vertical-align:middle;"
-    return styles
-
-
-def _style_pl_horizon_values(row: pd.Series, numeric_values: pd.DataFrame, partial_flags: pd.DataFrame) -> list[str]:
-    styles = ["" for _ in row.index]
-    for idx, col in enumerate(row.index):
-        if col not in numeric_values.columns:
-            continue
-        value = numeric_values.loc[row.name, col] if row.name in numeric_values.index else None
-        style = color_pl(value)
-        try:
-            is_partial = bool(partial_flags.loc[row.name, col]) if col in partial_flags.columns and row.name in partial_flags.index else False
-        except Exception:
-            is_partial = False
-        if is_partial:
-            style = f"color:{P['muted']} !important;font-weight:650;font-style:italic;background:rgba(148,163,184,0.10);"
-        styles[idx] = style
-    return styles
 
 
 def _pl_horizon_signal_style(signal: str) -> str:

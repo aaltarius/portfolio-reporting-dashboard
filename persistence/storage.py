@@ -861,11 +861,6 @@ def default_sator_decisions():
     return {"schema_version": SCHEMA_VERSION, "items": []}
 
 
-def default_benchmark_cache():
-    # Compatibilità solo per client di dati LIVE; storico benchmark MAI JSON.
-    return {"market_live_data": {}}
-
-
 def default_meta():
     return {
         "schema_version": SCHEMA_VERSION,
@@ -974,30 +969,6 @@ def _normalize_meta_payload(payload):
 def _audit_timestamp() -> str:
     """Timestamp locale uniforme per gli eventi di audit."""
     return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-
-
-def _summarize_settings_changes(previous: dict, current: dict) -> list[str]:
-    """Restituisce le macro-sezioni settings cambiate tra due payload normalizzati."""
-    tracked_sections = [
-        "portfolio_profile",
-        "calculations_metrics",
-        "benchmarking",
-        "alerts",
-        "sator",
-        "reporting_export",
-        "ui_preferences",
-        "market_auto_refresh",
-        "backup",
-        "auditing",
-        "newsletter",
-        "i18n",
-    ]
-    changed = [
-        section
-        for section in tracked_sections
-        if previous.get(section) != current.get(section)
-    ]
-    return changed
 
 
 def describe_audit_event(entry: dict | None) -> dict[str, str]:

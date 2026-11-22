@@ -154,12 +154,3 @@ def clear_runtime_caches(*, clear_group: str | None = None) -> int:
     return cleared
 
 
-def registered_runtime_provider_ids() -> tuple[str, ...]:
-    """Artifact registry che possono ospitare adapter runtime ufficiali."""
-
-    return tuple(
-        spec.artifact_id
-        for spec in iter_cache_artifact_specs()
-        if spec.storage in {"process_memory_lru", "runtime_memory_plus_cache_file"}
-        or spec.status == "registered_provider"
-    )

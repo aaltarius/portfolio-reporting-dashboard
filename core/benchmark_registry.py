@@ -98,22 +98,6 @@ def _confidence_label(value: float) -> str:
     return "Bassa"
 
 
-def _duration_years(inst: dict[str, Any], master: dict[str, Any]) -> float | None:
-    """`duration_modificata` (arricchimento PDF gia' esistente sullo
-    strumento reale) se disponibile — necessario alla curva sovrana per i
-    titoli di stato singoli. `None` se assente o non numerico: il motore
-    degrada da solo (curva con floor minimo, vedi `sovereign_curve.py`)."""
-    raw = master.get("duration_modificata")
-    if raw is None:
-        raw = inst.get("duration_modificata")
-    if raw is None:
-        return None
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return None
-
-
 def resolve_instrument_benchmark(
     instrument: dict[str, Any] | None = None,
     *, ticker: str | None = None, isin: str | None = None,
@@ -160,7 +144,6 @@ def resolve_instrument_benchmark(
         operational_kind=verified.kind,resolution_level='VERIFIED',
         relation_grade=verified.grade,coverage_obs=len(verified.series),
         components=tuple(verified.components))
-
 
 
 def known_benchmark_catalog() -> list[tuple[str, str]]:

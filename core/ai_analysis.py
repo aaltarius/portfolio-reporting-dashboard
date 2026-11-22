@@ -165,20 +165,6 @@ def build_gemini_prompt(
     return f"{base}\n\nDati portafoglio (JSON):\n```json\n{portfolio_json}\n```"
 
 
-def list_gemini_models(api_key: str) -> list[str]:
-    """Restituisce i modelli disponibili per questa chiave che supportano generateContent."""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-    response = requests.get(url, timeout=15)
-    if response.status_code != 200:
-        raise RuntimeError(f"Errore {response.status_code}: {response.text[:300]}")
-    models = response.json().get("models", [])
-    return [
-        m["name"].replace("models/", "")
-        for m in models
-        if "generateContent" in m.get("supportedGenerationMethods", [])
-    ]
-
-
 def _parse_gemini_error(response: requests.Response) -> str:
     """Estrae il messaggio di errore strutturato dalla risposta Gemini."""
     try:

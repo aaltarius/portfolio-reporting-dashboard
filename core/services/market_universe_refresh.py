@@ -237,19 +237,6 @@ def refresh_market_universe_live_data(
     return report
 
 
-def format_market_refresh_report(report: dict[str, Any]) -> str:
-    requested = int(report.get("requested") or 0)
-    updated = int(report.get("updated") or 0)
-    unchanged = int(report.get("unchanged") or 0)
-    recovered = updated + unchanged
-    failed = len(report.get("failed") or [])
-    return (
-        f"Mercati aggiornati: {recovered} serie recuperate "
-        f"({updated} modificate, {unchanged} gia' allineate), "
-        f"{failed} non disponibili su {requested} richieste."
-    )
-
-
 def format_market_combined_refresh_report(report: dict[str, Any]) -> str:
     live = report.get("live") if isinstance(report.get("live"), dict) else {}
     storico = report.get("storico") if isinstance(report.get("storico"), dict) else {}

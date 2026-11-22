@@ -161,10 +161,6 @@ def get_effective_summary_settings(settings: dict[str, Any] | None) -> dict[str,
     }
 
 
-def get_effective_page_mode(settings: dict[str, Any] | None) -> str:
-    return str(get_runtime_ui_settings(settings).get("page_mode", PAGE_MODE_PER_PAGINA))
-
-
 def get_effective_figure_cache_strategy(
     settings: dict[str, Any] | None,
     *,
@@ -218,30 +214,6 @@ def get_effective_quotazioni_full_resolution(settings: dict[str, Any] | None) ->
     e deliberata, quindi il ricalcolo di tutti i grafici che ne consegue e'
     accettabile."""
     return bool(get_ui_preferences(settings).get("quotazioni_full_resolution", False))
-
-
-def resolve_page_render_mode(
-    settings: dict[str, Any] | None,
-    *,
-    local_mode: Any = None,
-    default_local: str = "Rapida",
-) -> dict[str, Any]:
-    page_mode = get_effective_page_mode(settings)
-    show_controls = page_mode == PAGE_MODE_PER_PAGINA
-    if page_mode == PAGE_MODE_COMPLETA:
-        render_mode = "Completa"
-    elif page_mode == PAGE_MODE_RAPIDA:
-        render_mode = "Rapida"
-    else:
-        render_mode = str(local_mode or default_local or "Rapida")
-        if render_mode not in {"Rapida", "Completa"}:
-            render_mode = "Rapida"
-    return {
-        "page_mode": page_mode,
-        "show_controls": show_controls,
-        "render_mode": render_mode,
-        "include_advanced": render_mode == "Completa",
-    }
 
 
 # Opzioni di sola diagnosi: cambiano cosa viene mostrato o registrato, non i calcoli.

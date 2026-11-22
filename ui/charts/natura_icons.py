@@ -186,18 +186,6 @@ _NATURE_VISUALS: dict[str, tuple[str, str, str]] = {
 }
 
 
-def get_natura_visual(label: str) -> tuple[str, str]:
-    """Ritorna (colore_hex, markup_svg) per un'etichetta di natura. Le
-    etichette 'Azionario {paese}' diverse da 'Azionario globale core' usano
-    un'icona generica paese-singolo; etichette sconosciute usano il fallback
-    diversificata."""
-    if label in _STATIC_VISUALS:
-        return _STATIC_VISUALS[label]
-    if label.startswith("Azionario ") and label != "Azionario globale core":
-        return _AZIONARIO_PAESE_SINGOLO
-    return _DIVERSIFICATA
-
-
 def get_nature_visual(nature: str) -> tuple[str, str, str]:
     """Ritorna (colore_hex, markup_svg, etichetta_display) per una nature
     SATOR (non un'etichetta libera - vedi CAP_MORBIDO_NATURA/SATOR_NATURE_VALUES

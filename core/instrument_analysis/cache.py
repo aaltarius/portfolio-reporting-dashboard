@@ -30,40 +30,10 @@ _resolution_cache_lock = threading.Lock()
 _resolution_cache_state: dict[str, Any] = {"path": None, "mtime": None, "data": None}
 
 
-def _cache_dir() -> Path:
-    return Path(DATA_DIR) / "cache" / _CACHE_SUBDIR
-
-
-def resolution_cache_path() -> Path:
-    return _cache_dir() / "resolution.json"
-
-
-def series_cache_path() -> Path:
-    return _cache_dir() / "series.json"
-
-
 def resolution_cache_key(ticker: str, isin: str) -> str:
     tk = str(ticker or "").strip().upper()
     isincode = str(isin or "").strip().upper()
     return f"{tk}|{isincode}"
-
-
-def _read_json(path: Path) -> dict[str, Any]:
-    try:
-        if path.exists():
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {}
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = str(path) + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False, default=str)
-    os.replace(tmp, str(path))
 
 
 def load_resolution_cache() -> dict[str, Any]:
