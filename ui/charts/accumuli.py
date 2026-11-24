@@ -68,6 +68,25 @@ def build_accumulo_price_pmc_chart(series: pd.DataFrame, operations: pd.DataFram
                 )
             )
 
+    # Pallino verde sul prezzo più recente, un po' più grande di quelli rossi
+    # degli acquisti: permette di vedere a colpo d'occhio quanto dista dal PMC
+    # e dai singoli acquisti periodici.
+    price_last = pd.to_numeric(plot.get("Prezzo"), errors="coerce")
+    valid_last = price_last.dropna()
+    if not valid_last.empty:
+        last_idx = valid_last.index[-1]
+        fig.add_trace(
+            go.Scatter(
+                x=[plot.loc[last_idx, "Data"]],
+                y=[float(valid_last.iloc[-1])],
+                name="Prezzo attuale",
+                mode="markers",
+                cliponaxis=False,
+                marker=dict(color=P["green"], size=11, line=dict(color="white", width=1.4)),
+                hovertemplate="%{x|%d/%m/%Y}<br>Prezzo attuale: %{y:,.4f} €<extra></extra>",
+            )
+        )
+
     # Linea di riferimento orizzontale sul PMC di oggi (non il PMC storico, che
     # è già la linea tratteggiata sopra): mostra dove si colloca il costo medio
     # attuale rispetto a tutta la distribuzione dei prezzi del periodo — è la

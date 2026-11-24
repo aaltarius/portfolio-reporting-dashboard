@@ -941,7 +941,7 @@ CHARTS: dict[str, dict[str, Any]] = {
      'dynamic_y_to_initial_range': True,
      'dynamic_y_by_button': True,
      'dynamic_y_padding': 0.08,
-     'margin_delta': {'t': 0, 'b': -18, 'l': 0, 'r': -20},
+     'margin_delta': {'t': 0, 'b': -18, 'l': 0, 'r': -4},
      'y_nticks': 8,
      'x_nticks': 12,
      'y_title': '€/quota',
