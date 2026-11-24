@@ -68,6 +68,10 @@ def render_overview(container: DeltaGenerator, ctx: SimpleNamespace) -> None:
 
         pl_attuale_posizioni = tv - tc
         pl_attuale_color = P_dict["green"] if pl_attuale_posizioni >= 0 else P_dict["red"]
+        # Azzurro = il blu della palette, lo stesso di «Liquidità Disponibile» e della linea P/L storico.
+        azzurro = P_dict["blue"]
+        # Controvalore attuale: verde se supera il capitale versato residuo, rosso se è inferiore.
+        controvalore_color = P_dict["green"] if tv >= capitale_versato_residuo else P_dict["red"]
         _formula_style = "display:block;margin-top:4px;font-size:inherit;line-height:inherit;opacity:0.92;"
         capitale_sub = (
             f"di cui capitale rientrato:<br>{fmt_eur_it(capitale_rientrato, 2)}"
@@ -98,16 +102,16 @@ def render_overview(container: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 "P/L Pos. Aperte <span title=\"Risultato delle sole posizioni aperte ai prezzi correnti.\" style=\"cursor:help; font-size:0.82em; opacity:0.8;\">ⓘ</span>",
                 f"{fmt_eur_it(pl_attuale_posizioni, 2, signed=True)}<br><span style='font-size:1rem;font-weight:800'>{fmt_pct_it((pl_attuale_posizioni/abs(tc)) if abs(tc)>1e-9 else 0, 2, signed=True)}</span>",
                 pl_attuale_sub,
-                accent=P_dict["blue"],
-                value_color=P_dict["blue"]
+                accent=pl_color,
+                value_color=pl_color
             )
         with c2:
             kpi_card(
                 "P/L Storico <span title=\"Somma del P/L aperto e del realizzato netto gia' maturato.\" style=\"cursor:help; font-size:0.82em; opacity:0.8;\">ⓘ</span>",
                 f"{fmt_eur_it(pl_totale, 2, signed=True)}<br><span style='font-size:1rem;font-weight:800'>{fmt_pct_it(pp, 2, signed=True)}</span>",
                 pl_storico_sub,
-                accent=pl_color,
-                value_color=pl_color
+                accent=P_dict["blue"],
+                value_color=P_dict["blue"]
             )
         with c3:
             kpi_card(
@@ -149,16 +153,16 @@ def render_overview(container: DeltaGenerator, ctx: SimpleNamespace) -> None:
                 "Controvalore<br>Attuale",
                 fmt_eur_it(tv, 2),
                 valore_attuale_sub,
-                accent=P_dict["blue"],
-                value_color=P_dict["blue"]
+                accent=controvalore_color,
+                value_color=controvalore_color
             )
         with pk4:
             kpi_card(
                 "Proventi<br>Netti",
                 fmt_eur_it(proventi_netti_totali, 2),
                 proventi_sub,
-                accent=P_dict["green"],
-                value_color=P_dict["green"]
+                accent=azzurro,
+                value_color=azzurro
             )
         with pk5:
             kpi_card(

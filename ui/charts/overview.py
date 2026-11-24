@@ -154,6 +154,7 @@ def build_overview_time_chart(dfh_top, da_frame, view, pl_color, pl_total, chart
                 y=chart_pl_storico,
                 mode="lines",
                 name="P/L storico",
+                legendrank=2,
                 line=dict(color=P["blue"], width=2.0, dash="dash"),
                 fill="tozeroy",
                 fillcolor=hex_to_rgba(theme.colors["success"], 0.06) if float(pl_total) >= 0 else hex_to_rgba(theme.colors["danger"], 0.06),
@@ -174,6 +175,7 @@ def build_overview_time_chart(dfh_top, da_frame, view, pl_color, pl_total, chart
                 y=chart_pl_attuale,
                 mode="lines",
                 name="P/L pos. aperte",
+                legendrank=1,
                 line=dict(color=pl_color, width=2.2),
                 hovertemplate="Data: %{x|%d/%m/%Y}<br>P/L posizioni aperte: € %{y:,.2f}<extra></extra>",
             )
@@ -184,6 +186,7 @@ def build_overview_time_chart(dfh_top, da_frame, view, pl_color, pl_total, chart
                 y=chart_pl_tr,
                 mode="lines",
                 name="Total return",
+                legendrank=3,
                 line=dict(color=P["orange"], width=2.8),
                 fill="tonexty",
                 fillcolor=hex_to_rgba(P["orange"], 0.12),
@@ -198,6 +201,8 @@ def build_overview_time_chart(dfh_top, da_frame, view, pl_color, pl_total, chart
             theme=theme,
             value_formatter=lambda v: fmt_eur_it(v, 2),
         )
+        # Plotly con riempimento «tonexty» mostra la legenda al contrario: ordine esplicito, guidato da legendrank.
+        fig.update_layout(legend=dict(traceorder="normal"))
         return finalize_chart(
             fig,
             "overview_pl_portafoglio",
